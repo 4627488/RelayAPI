@@ -63,6 +63,26 @@ export interface CreatedApiKey extends PublicApiKey {
   key: string;
 }
 
+export type CredentialProxyType = "socks5" | "socks5h";
+
+export interface CredentialProxyConfig {
+  enabled: boolean;
+  type: CredentialProxyType;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+export interface PublicCredentialProxyConfig {
+  enabled: boolean;
+  type: CredentialProxyType;
+  host: string;
+  port: number;
+  username: string;
+  passwordSet?: boolean;
+}
+
 export interface CodexTokenBundle {
   access_token: string;
   refresh_token: string;
@@ -81,6 +101,7 @@ export interface CodexCredentialRecord {
   priority: number;
   weight: number;
   fastEnabled: boolean;
+  proxy: PublicCredentialProxyConfig | null;
   usageHealth?: CodexAccountUsageHealth;
   expiresAt: string | null;
   lastRefreshAt: string | null;
@@ -92,9 +113,10 @@ export interface CodexCredentialRecord {
   metadata: Record<string, unknown>;
 }
 
-export interface CodexCredentialWithTokens extends CodexCredentialRecord {
+export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
+  proxy: CredentialProxyConfig | null;
   tokens: CodexTokenBundle;
-}
+};
 
 export interface ChannelRecord {
   id: string;

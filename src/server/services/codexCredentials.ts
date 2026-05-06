@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { serverConfig } from "@/src/server/config/env";
 import { HttpError } from "@/src/server/http/errors";
+import { proxiedFetch } from "@/src/server/net/proxy";
 import {
   deleteCodexCredential,
   getCodexCredentialWithTokens,
@@ -27,6 +28,8 @@ import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
   CodexTokenBundle,
+  CredentialProxyConfig,
+  CredentialProxyType,
 } from "@/src/shared/types/entities";
 
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
@@ -218,6 +221,7 @@ export function patchCodexCredentialRouting(
     priority?: number;
     weight?: number;
     fastEnabled?: boolean;
+    proxy?: unknown;
   },
 ) {
   const existing = getCodexCredentialWithTokens(id);
@@ -237,6 +241,9 @@ export function patchCodexCredentialRouting(
       "Fast service tier is only available for Pro / Pro 20x credentials",
     );
   }
+  const proxyPatch = Object.hasOwn(input, "proxy")
+    ? { proxy: normalizeCredentialProxyPatch(input.proxy, existing.proxy) }
+    : {};
   const updated = updateCodexCredential(id, {
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
     ...(input.priority !== undefined
@@ -246,6 +253,7 @@ export function patchCodexCredentialRouting(
       ? { weight: Math.max(1, normalizeInteger(input.weight, 1)) }
       : {}),
     ...(fastEnabled !== undefined ? { fastEnabled } : {}),
+    ...proxyPatch,
   });
   if (!updated) {
     throw new HttpError(
@@ -373,7 +381,7 @@ async function refreshCodexCredentialWithTokens(id: string) {
     refresh_token: credential.tokens.refresh_token,
     scope: "openid profile email",
   });
-  const tokenResponse = await tokenRequest(body);
+  const tokenResponse = await tokenRequest(body, credential.proxy);
   return saveTokenResponse(tokenResponse, credential);
 }
 
@@ -420,20 +428,27 @@ async function exchangeCodeForTokens(input: {
   });
   // OAuth route responses also get public metadata only.
   return publicCredential(
-    await saveTokenResponse(await tokenRequest(body), null),
+    await saveTokenResponse(await tokenRequest(body, null), null),
   );
 }
 
-async function tokenRequest(body: URLSearchParams) {
-  const response = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
+async function tokenRequest(
+  body: URLSearchParams,
+  proxy: CredentialProxyConfig | null,
+) {
+  const response = await proxiedFetch(
+    TOKEN_URL,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      body,
+      signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
     },
-    body,
-    signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
-  });
+    proxy,
+  );
   const text = await response.text();
   const parsed = parseMaybeJson<Record<string, unknown>>(text) || { raw: text };
   if (!response.ok) {
@@ -584,6 +599,16 @@ function publicCredential(
     priority: credential.priority,
     weight: credential.weight,
     fastEnabled: credential.fastEnabled,
+    proxy: credential.proxy
+      ? {
+          enabled: credential.proxy.enabled,
+          type: credential.proxy.type,
+          host: credential.proxy.host,
+          port: credential.proxy.port,
+          username: credential.proxy.username,
+          passwordSet: Boolean(credential.proxy.password),
+        }
+      : null,
     usageHealth: credentialUsageHealth([credential.id])[credential.id],
     expiresAt: credential.expiresAt,
     lastRefreshAt: credential.lastRefreshAt,
@@ -692,6 +717,139 @@ function numberValue(value: unknown) {
 function normalizeInteger(value: unknown, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+}
+
+function normalizeCredentialProxyPatch(
+  input: unknown,
+  existingProxy: CredentialProxyConfig | null,
+): CredentialProxyConfig | null {
+  if (input === null || input === false) {
+    return null;
+  }
+  if (typeof input === "string") {
+    return parseProxyUrl(input, existingProxy?.enabled ?? true);
+  }
+  const object = objectValue(input);
+  if (!object) {
+    throw new HttpError(
+      400,
+      "invalid_credential_proxy",
+      "Credential proxy must be a SOCKS5 URL, object, or null",
+    );
+  }
+
+  const url = stringValue(object.url);
+  if (url) {
+    const parsed = parseProxyUrl(url, existingProxy?.enabled ?? true);
+    return {
+      ...parsed,
+      enabled:
+        object.enabled !== undefined ? Boolean(object.enabled) : parsed.enabled,
+    };
+  }
+
+  const type = normalizeProxyType(
+    object.type,
+    existingProxy?.type || "socks5h",
+  );
+  const host = stringValue(object.host) || existingProxy?.host || "";
+  const port = normalizePort(object.port ?? existingProxy?.port);
+  const username =
+    object.username !== undefined
+      ? stringValue(object.username)
+      : existingProxy?.username || "";
+  const password =
+    object.password !== undefined
+      ? stringValue(object.password)
+      : existingProxy?.password || "";
+  const enabled =
+    object.enabled !== undefined
+      ? Boolean(object.enabled)
+      : (existingProxy?.enabled ?? true);
+
+  assertProxyEndpoint({ type, host, port });
+  return {
+    enabled,
+    type,
+    host,
+    port,
+    username,
+    password,
+  };
+}
+
+function parseProxyUrl(input: string, enabled: boolean): CredentialProxyConfig {
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    throw new HttpError(
+      400,
+      "invalid_credential_proxy_url",
+      "Invalid proxy URL",
+    );
+  }
+  const type = normalizeProxyType(parsed.protocol.replace(/:$/, ""), "socks5h");
+  const host = parsed.hostname;
+  const port = normalizePort(parsed.port);
+  const username = decodeURIComponent(parsed.username || "");
+  const password = decodeURIComponent(parsed.password || "");
+  assertProxyEndpoint({ type, host, port });
+  return {
+    enabled,
+    type,
+    host,
+    port,
+    username,
+    password,
+  };
+}
+
+function normalizeProxyType(
+  value: unknown,
+  fallback: CredentialProxyType,
+): CredentialProxyType {
+  const type = stringValue(value).toLowerCase();
+  if (type === "socks5" || type === "socks5h") {
+    return type;
+  }
+  if (!type) {
+    return fallback;
+  }
+  throw new HttpError(
+    400,
+    "unsupported_credential_proxy_type",
+    "Only socks5 and socks5h credential proxies are supported",
+  );
+}
+
+function normalizePort(value: unknown) {
+  const port =
+    typeof value === "number"
+      ? value
+      : Number.parseInt(String(value || ""), 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new HttpError(
+      400,
+      "invalid_credential_proxy_port",
+      "Credential proxy port must be between 1 and 65535",
+    );
+  }
+  return port;
+}
+
+function assertProxyEndpoint(input: {
+  type: CredentialProxyType;
+  host: string;
+  port: number;
+}) {
+  if (!input.host.trim()) {
+    throw new HttpError(
+      400,
+      "missing_credential_proxy_host",
+      "Credential proxy host is required",
+    );
+  }
 }
 
 function isFastServiceTierPlan(planType: string) {

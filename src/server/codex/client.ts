@@ -2,6 +2,7 @@ import "server-only";
 
 import crypto from "node:crypto";
 import { serverConfig } from "@/src/server/config/env";
+import { proxiedFetch } from "@/src/server/net/proxy";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
 import type { ChannelRecord, UsageSnapshot } from "@/src/shared/types/entities";
 
@@ -44,7 +45,7 @@ export async function codexFetch(
   if (!credential.tokens.access_token) {
     throw new Error("Saved Codex credential does not contain access_token");
   }
-  const response = await fetch(
+  const response = await proxiedFetch(
     toCodexUrl(input.channel.baseUrl, upstreamPath),
     {
       method: "POST",
@@ -59,6 +60,7 @@ export async function codexFetch(
       ),
       signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
     },
+    credential.proxy,
   );
   return { response, credential };
 }

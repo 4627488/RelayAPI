@@ -5,6 +5,8 @@ import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
   CodexTokenBundle,
+  CredentialProxyConfig,
+  PublicCredentialProxyConfig,
 } from "@/src/shared/types/entities";
 import {
   decryptJson,
@@ -20,6 +22,7 @@ type CodexCredentialRow = {
   account_id: string;
   plan_type: string;
   token_envelope: string;
+  proxy_envelope: string | null;
   enabled: number;
   priority: number;
   weight: number;
@@ -37,6 +40,7 @@ export interface SaveCodexCredentialInput {
   accountId: string;
   planType: string;
   tokens: CodexTokenBundle;
+  proxy?: CredentialProxyConfig | null;
   enabled?: boolean;
   priority?: number;
   weight?: number;
@@ -74,21 +78,22 @@ export function getFirstCodexCredential() {
 }
 
 export function upsertCodexCredential(input: SaveCodexCredentialInput) {
-  const existing = getCodexCredentialById(input.id);
+  const existing = getCodexCredentialWithTokens(input.id);
   const now = new Date().toISOString();
   const createdAt = existing?.createdAt || now;
   getMainDb()
     .prepare(
       `INSERT INTO codex_credentials (
         id, provider, email, account_id, plan_type, token_envelope,
-        enabled, priority, weight, expires_at, last_refresh_at, last_used_at,
-        metadata_json, created_at, updated_at
-      ) VALUES (?, 'codex', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        proxy_envelope, enabled, priority, weight, expires_at, last_refresh_at,
+        last_used_at, metadata_json, created_at, updated_at
+      ) VALUES (?, 'codex', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         email = excluded.email,
         account_id = excluded.account_id,
         plan_type = excluded.plan_type,
         token_envelope = excluded.token_envelope,
+        proxy_envelope = excluded.proxy_envelope,
         enabled = excluded.enabled,
         priority = excluded.priority,
         weight = excluded.weight,
@@ -103,6 +108,7 @@ export function upsertCodexCredential(input: SaveCodexCredentialInput) {
       input.accountId,
       input.planType,
       encryptJson(input.tokens),
+      encryptedProxyEnvelope(input.proxy, existing?.proxy),
       (input.enabled ?? existing?.enabled ?? true) ? 1 : 0,
       input.priority ?? existing?.priority ?? 100,
       Math.max(1, input.weight ?? existing?.weight ?? 1),
@@ -128,6 +134,7 @@ export function updateCodexCredential(
       | "priority"
       | "weight"
       | "fastEnabled"
+      | "proxy"
       | "lastUsedAt"
       | "cooldownUntil"
       | "lastError"
@@ -149,14 +156,15 @@ export function updateCodexCredential(
   getMainDb()
     .prepare(
       `UPDATE codex_credentials SET
-        enabled = ?, priority = ?, weight = ?, last_used_at = ?,
-        metadata_json = ?, updated_at = ?
+        enabled = ?, priority = ?, weight = ?, proxy_envelope = ?,
+        last_used_at = ?, metadata_json = ?, updated_at = ?
       WHERE id = ?`,
     )
     .run(
       next.enabled ? 1 : 0,
       next.priority,
       Math.max(1, next.weight),
+      next.proxy ? encryptJson(next.proxy) : null,
       next.lastUsedAt,
       jsonStringify(metadata),
       new Date().toISOString(),
@@ -198,6 +206,7 @@ function toCodexCredentialRecord(
     priority: row.priority,
     weight: row.weight,
     fastEnabled: metadata.fast_service_tier === true,
+    proxy: publicProxyFromEnvelope(row.proxy_envelope),
     expiresAt: row.expires_at,
     lastRefreshAt: row.last_refresh_at,
     lastUsedAt: row.last_used_at,
@@ -218,6 +227,43 @@ function toCodexCredentialWithTokens(
 ): CodexCredentialWithTokens {
   return {
     ...toCodexCredentialRecord(row),
+    proxy: credentialProxyFromEnvelope(row.proxy_envelope),
     tokens: decryptJson<CodexTokenBundle>(row.token_envelope),
+  };
+}
+
+function encryptedProxyEnvelope(
+  proxy: CredentialProxyConfig | null | undefined,
+  existingProxy: CredentialProxyConfig | null | undefined,
+) {
+  const nextProxy = proxy === undefined ? existingProxy : proxy;
+  return nextProxy ? encryptJson(nextProxy) : null;
+}
+
+function credentialProxyFromEnvelope(envelope: string | null) {
+  if (!envelope) {
+    return null;
+  }
+  try {
+    return decryptJson<CredentialProxyConfig>(envelope);
+  } catch {
+    return null;
+  }
+}
+
+function publicProxyFromEnvelope(
+  envelope: string | null,
+): PublicCredentialProxyConfig | null {
+  const proxy = credentialProxyFromEnvelope(envelope);
+  if (!proxy) {
+    return null;
+  }
+  return {
+    enabled: proxy.enabled,
+    type: proxy.type,
+    host: proxy.host,
+    port: proxy.port,
+    username: proxy.username,
+    passwordSet: Boolean(proxy.password),
   };
 }

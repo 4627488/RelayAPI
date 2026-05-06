@@ -4,6 +4,7 @@ import type {
   CreatedApiKey,
   PublicApiKey,
   CodexCredentialRecord,
+  CredentialProxyType,
   JsonValue,
 } from "@/src/shared/types/entities";
 
@@ -92,6 +93,19 @@ export type ApiKeyPayload = {
   rateLimitPerMinute?: number | null;
   expiresAt?: string | null;
 };
+
+export type CredentialProxyPayload =
+  | null
+  | string
+  | {
+      enabled?: boolean;
+      type?: CredentialProxyType;
+      url?: string;
+      host?: string;
+      port?: number;
+      username?: string;
+      password?: string;
+    };
 
 export type ChannelPayload = {
   name?: string;
@@ -267,6 +281,7 @@ export function updateCredentialRouting(
     priority?: number;
     weight?: number;
     fastEnabled?: boolean;
+    proxy?: CredentialProxyPayload;
   },
 ) {
   return adminRequest<CodexCredentialRecord>(

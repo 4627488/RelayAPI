@@ -122,6 +122,7 @@ import type {
   ChannelRecord,
   ChannelStatus,
   CodexCredentialRecord,
+  CredentialProxyType,
   CreatedApiKey,
   PublicApiKey,
   UsageStatsRow,
@@ -164,6 +165,15 @@ type ApiKeyFormState = {
   tokenLimitDaily: string;
   rateLimitPerMinute: string;
   expiresAt: string;
+};
+
+type CredentialProxyFormState = {
+  enabled: boolean;
+  type: CredentialProxyType;
+  host: string;
+  port: string;
+  username: string;
+  password: string;
 };
 
 type ChannelFormState = {
@@ -2110,6 +2120,13 @@ function CredentialsSection({
 
                       <div className="flex items-center gap-2 text-sm">
                         <span className="shrink-0 text-muted-foreground">
+                          请求代理：
+                        </span>
+                        <CredentialProxyBadge credential={credential} />
+                      </div>
+
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="shrink-0 text-muted-foreground">
                           过期时间：
                         </span>
                         <span className="min-w-0 truncate">
@@ -2265,6 +2282,232 @@ function CredentialRoutingControls({
         {formatNumber(credential.weight)} · Fast{" "}
         {credential.fastEnabled && fastAvailable ? "开启" : "关闭"} · 最后使用{" "}
         {formatNullableDate(credential.lastUsedAt)}
+      </div>
+    </div>
+  );
+}
+
+function CredentialProxyControls({
+  credential,
+  disabled,
+  onSaved,
+}: {
+  credential: CodexCredentialRecord;
+  disabled: boolean;
+  onSaved: (credential: CodexCredentialRecord) => void;
+}) {
+  const [form, setForm] = React.useState(() => credentialProxyForm(credential));
+  const [saving, setSaving] = React.useState(false);
+  const [clearing, setClearing] = React.useState(false);
+  const proxy = credential.proxy;
+
+  function patchForm(patch: Partial<CredentialProxyFormState>) {
+    setForm((current) => ({ ...current, ...patch }));
+  }
+
+  async function saveProxy() {
+    const host = form.host.trim();
+    const port = integerValue(form.port, 0);
+    if (!host) {
+      toast.error("请输入 SOCKS5 代理主机");
+      return;
+    }
+    if (port < 1 || port > 65535) {
+      toast.error("代理端口必须在 1 到 65535 之间");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const payload: {
+        enabled: boolean;
+        type: CredentialProxyType;
+        host: string;
+        port: number;
+        username: string;
+        password?: string;
+      } = {
+        enabled: form.enabled,
+        type: form.type,
+        host,
+        port,
+        username: form.username.trim(),
+      };
+      if (form.password.trim()) {
+        payload.password = form.password;
+      }
+      const updated = await updateCredentialRouting(credential.id, {
+        proxy: payload,
+      });
+      setForm(credentialProxyForm(updated));
+      onSaved(updated);
+      toast.success("凭据请求代理已保存");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function clearProxy() {
+    setClearing(true);
+    try {
+      const updated = await updateCredentialRouting(credential.id, {
+        proxy: null,
+      });
+      setForm(credentialProxyForm(updated));
+      onSaved(updated);
+      toast.success("凭据请求代理已清除");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  async function clearPassword() {
+    if (!proxy) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updateCredentialRouting(credential.id, {
+        proxy: {
+          enabled: proxy.enabled,
+          type: proxy.type,
+          host: proxy.host,
+          port: proxy.port,
+          username: proxy.username,
+          password: "",
+        },
+      });
+      setForm(credentialProxyForm(updated));
+      onSaved(updated);
+      toast.success("代理密码已清除");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const pending = disabled || saving || clearing;
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="font-medium">请求代理</div>
+          <div className="text-xs text-muted-foreground">
+            为该凭据的 Codex 请求、token 刷新和额度刷新配置 SOCKS5 代理。
+            推荐使用 socks5h 让 DNS 解析也走代理。
+          </div>
+        </div>
+        <Switch
+          checked={form.enabled}
+          disabled={pending}
+          size="sm"
+          onCheckedChange={(checked) =>
+            patchForm({ enabled: Boolean(checked) })
+          }
+        />
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-[0.8fr_1fr_0.7fr]">
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          协议
+          <select
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={pending}
+            value={form.type}
+            onChange={(event) =>
+              patchForm({ type: event.target.value as CredentialProxyType })
+            }
+          >
+            <option value="socks5h">socks5h</option>
+            <option value="socks5">socks5</option>
+          </select>
+        </label>
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          主机
+          <Input
+            disabled={pending}
+            value={form.host}
+            placeholder="127.0.0.1"
+            onChange={(event) => patchForm({ host: event.target.value })}
+          />
+        </label>
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          端口
+          <Input
+            disabled={pending}
+            inputMode="numeric"
+            value={form.port}
+            placeholder="1080"
+            onChange={(event) => patchForm({ port: event.target.value })}
+          />
+        </label>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          用户名（可选）
+          <Input
+            disabled={pending}
+            value={form.username}
+            placeholder="username"
+            onChange={(event) => patchForm({ username: event.target.value })}
+          />
+        </label>
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          密码（留空则保持原密码）
+          <Input
+            disabled={pending}
+            type="password"
+            value={form.password}
+            placeholder={
+              proxy?.passwordSet ? "已设置，留空保持不变" : "password"
+            }
+            onChange={(event) => patchForm({ password: event.target.value })}
+          />
+        </label>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs text-muted-foreground">
+          当前：{credentialProxyText(credential)}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={pending || !proxy?.passwordSet}
+            onClick={clearPassword}
+          >
+            {saving && <Spinner data-icon="inline-start" />}
+            清除密码
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={pending || !proxy}
+            onClick={clearProxy}
+          >
+            {clearing && <Spinner data-icon="inline-start" />}
+            清除代理
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={pending}
+            onClick={saveProxy}
+          >
+            {saving && <Spinner data-icon="inline-start" />}
+            保存代理
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -2617,12 +2860,23 @@ function CredentialSettingsDialog({
                       : "未开启"
                   }
                 />
+                <CredentialInfoItem
+                  label="请求代理"
+                  value={credentialProxyText(credential)}
+                />
               </div>
             </FieldGroup>
           </FieldSet>
 
           <CredentialRoutingControls
             key={`${credential.id}:${credential.priority}:${credential.weight}:${credential.enabled}`}
+            credential={credential}
+            disabled={disabled}
+            onSaved={onSaved}
+          />
+
+          <CredentialProxyControls
+            key={`${credential.id}:${credential.proxy?.enabled}:${credential.proxy?.type}:${credential.proxy?.host}:${credential.proxy?.port}:${credential.proxy?.username}:${credential.proxy?.passwordSet}`}
             credential={credential}
             disabled={disabled}
             onSaved={onSaved}
@@ -2676,6 +2930,30 @@ function CredentialSettingsDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CredentialProxyBadge({
+  credential,
+}: {
+  credential: CodexCredentialRecord;
+}) {
+  const proxy = credential.proxy;
+  if (!proxy) {
+    return <Badge variant="outline">未配置</Badge>;
+  }
+  return (
+    <Badge
+      variant="outline"
+      className={
+        proxy.enabled
+          ? "border-emerald-500/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+          : "border-border bg-muted/60 text-muted-foreground"
+      }
+      title={credentialProxyText(credential)}
+    >
+      {proxy.enabled ? "已启用" : "已停用"} · {proxy.type}
+    </Badge>
   );
 }
 
@@ -4016,6 +4294,31 @@ function channelFormToPayload(form: ChannelFormState): ChannelPayload {
     weight: Math.max(1, integerValue(form.weight, 1)),
     modelAllowlist: parseList(form.modelAllowlist),
   };
+}
+
+function credentialProxyForm(
+  credential: CodexCredentialRecord,
+): CredentialProxyFormState {
+  const proxy = credential.proxy;
+  return {
+    enabled: proxy?.enabled ?? true,
+    type: proxy?.type ?? "socks5h",
+    host: proxy?.host ?? "",
+    port: proxy?.port ? String(proxy.port) : "1080",
+    username: proxy?.username ?? "",
+    password: "",
+  };
+}
+
+function credentialProxyText(credential: CodexCredentialRecord) {
+  const proxy = credential.proxy;
+  if (!proxy) {
+    return "未配置";
+  }
+  const auth = proxy.username
+    ? `${proxy.username}${proxy.passwordSet ? ":******" : ""}@`
+    : "";
+  return `${proxy.enabled ? "已启用" : "已停用"} · ${proxy.type}://${auth}${proxy.host}:${proxy.port}`;
 }
 
 function assertChannel(channel: ChannelRecord | null | undefined) {

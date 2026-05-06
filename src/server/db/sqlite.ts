@@ -117,6 +117,7 @@ function migrateMainDb(db: DatabaseSync) {
         account_id TEXT NOT NULL DEFAULT '',
         plan_type TEXT NOT NULL DEFAULT '',
         token_envelope TEXT NOT NULL,
+        proxy_envelope TEXT,
         enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
         priority INTEGER NOT NULL DEFAULT 100,
         weight INTEGER NOT NULL DEFAULT 1,
@@ -250,6 +251,10 @@ function migrateMainDb(db: DatabaseSync) {
       FROM channels
       WHERE credential_id IS NOT NULL AND credential_id <> '';
     `);
+  });
+
+  applyMigration(db, "005_credential_proxy", (database) => {
+    addColumnIfMissing(database, "codex_credentials", "proxy_envelope", "TEXT");
   });
 }
 

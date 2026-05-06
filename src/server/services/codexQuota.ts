@@ -2,6 +2,7 @@ import "server-only";
 
 import { serverConfig } from "@/src/server/config/env";
 import { HttpError } from "@/src/server/http/errors";
+import { proxiedFetch } from "@/src/server/net/proxy";
 import { getCodexCredentialById } from "@/src/server/repositories/codexCredentials";
 import {
   getCodexQuotaCacheByCredentialId,
@@ -118,14 +119,18 @@ export async function getCodexQuota({
     );
   }
 
-  const response = await fetch(WHAM_USAGE_URL, {
-    method: "GET",
-    headers: buildQuotaHeaders({
-      accessToken: credential.tokens.access_token,
-      accountId: credential.accountId,
-    }),
-    signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
-  });
+  const response = await proxiedFetch(
+    WHAM_USAGE_URL,
+    {
+      method: "GET",
+      headers: buildQuotaHeaders({
+        accessToken: credential.tokens.access_token,
+        accountId: credential.accountId,
+      }),
+      signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
+    },
+    credential.proxy,
+  );
 
   const text = await response.text();
   const body = parseMaybeJson<unknown>(text) || { raw: text };
