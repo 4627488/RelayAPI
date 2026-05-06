@@ -9,6 +9,7 @@ import {
 import { listApiKeyPublicRecords } from "@/src/server/services/apiKeys";
 import { listChannelRecords } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
+import { getPublicGlobalSettings } from "@/src/server/services/settings";
 import type { AdminOverviewStats } from "@/src/shared/types/entities";
 import {
   initializeWebAccessKey,
@@ -54,6 +55,7 @@ export default async function Home() {
   const channels = listChannelRecords();
   const requestLogs = queryRequestLogs({ limit: 50, offset: 0 });
   const overviewStats = getAdminOverviewStats() as AdminOverviewStats;
+  const globalSettings = getPublicGlobalSettings();
   const initialNow = new Date().getTime();
 
   return (
@@ -79,6 +81,7 @@ export default async function Home() {
         },
       }}
       initialOverviewStats={overviewStats}
+      initialGlobalSettings={globalSettings}
       initialNow={initialNow}
     />
   );

@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { serverConfig } from "@/src/server/config/env";
 import { proxiedFetch } from "@/src/server/net/proxy";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
+import { getGlobalProxySetting } from "@/src/server/services/settings";
 import type { ChannelRecord, UsageSnapshot } from "@/src/shared/types/entities";
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -60,7 +61,11 @@ export async function codexFetch(
       ),
       signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
     },
-    credential.proxy,
+    credential.proxy?.enabled
+      ? credential.proxy
+      : credential.useGlobalProxy
+        ? getGlobalProxySetting()
+        : null,
   );
   return { response, credential };
 }

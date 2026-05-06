@@ -6,6 +6,8 @@ import nodeFetch, {
 import { SocksProxyAgent } from "socks-proxy-agent";
 import type { CredentialProxyConfig } from "@/src/shared/types/entities";
 
+const proxyAgents = new Map<string, SocksProxyAgent>();
+
 export async function proxiedFetch(
   url: string,
   init: RequestInit = {},
@@ -15,7 +17,7 @@ export async function proxiedFetch(
     return fetch(url, init);
   }
 
-  const agent = new SocksProxyAgent(proxyUrl(proxy));
+  const agent = getProxyAgent(proxy);
   try {
     const response = await nodeFetch(url, {
       method: init.method,
@@ -40,6 +42,23 @@ export async function proxiedFetch(
       `Proxy request failed via ${publicProxyLabel(proxy)}: ${errorMessage(error)}`,
     );
   }
+}
+
+function getProxyAgent(proxy: CredentialProxyConfig) {
+  const url = proxyUrl(proxy);
+  const existing = proxyAgents.get(url);
+  if (existing) {
+    return existing;
+  }
+  const agent = new SocksProxyAgent(url, {
+    keepAlive: true,
+    keepAliveMsecs: 30_000,
+    maxSockets: 256,
+    maxFreeSockets: 32,
+    timeout: 300_000,
+  });
+  proxyAgents.set(url, agent);
+  return agent;
 }
 
 function proxyUrl(proxy: CredentialProxyConfig) {

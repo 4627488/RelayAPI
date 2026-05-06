@@ -3,6 +3,10 @@ import "server-only";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import type {
+  CredentialProxyConfig,
+  CredentialProxyType,
+} from "@/src/shared/types/entities";
 
 const projectRoot = path.join(/*turbopackIgnore: true*/ process.cwd());
 
@@ -48,6 +52,44 @@ function resolvePathList(value: string | undefined) {
     .map((item) => (path.isAbsolute(item) ? item : projectPath(item)));
 }
 
+function resolveGlobalProxy(): CredentialProxyConfig | null {
+  const raw =
+    process.env.RELAY_GLOBAL_SOCKS_PROXY ||
+    process.env.RELAY_GLOBAL_PROXY ||
+    process.env.CODEX_PROXY ||
+    "";
+  const value = raw.trim();
+  if (!value) {
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("Global proxy must be a valid socks5:// or socks5h:// URL");
+  }
+
+  const type = parsed.protocol.replace(/:$/, "").toLowerCase();
+  if (type !== "socks5" && type !== "socks5h") {
+    throw new Error("Global proxy only supports socks5:// and socks5h:// URLs");
+  }
+
+  const port = Number.parseInt(parsed.port || "", 10);
+  if (!parsed.hostname || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("Global proxy URL must include host and port");
+  }
+
+  return {
+    enabled: true,
+    type: type as CredentialProxyType,
+    host: parsed.hostname,
+    port,
+    username: decodeURIComponent(parsed.username || ""),
+    password: decodeURIComponent(parsed.password || ""),
+  };
+}
+
 const port = intEnv("PORT", 3000);
 const dataDir = resolveFromProject(process.env.DATA_DIR, projectPath("data"));
 
@@ -81,6 +123,7 @@ export const serverConfig = {
   ).replace(/\/+$/, ""),
   codexDefaultModel: process.env.CODEX_DEFAULT_MODEL || "gpt-5.3-codex",
   requestTimeoutMs: intEnv("REQUEST_TIMEOUT_MS", 300_000),
+  globalProxy: resolveGlobalProxy(),
   userAgent:
     process.env.CODEX_USER_AGENT ||
     "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)",

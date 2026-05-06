@@ -9,6 +9,7 @@ import {
   upsertCodexQuotaCache,
 } from "@/src/server/repositories/quota";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
+import { getGlobalProxySetting } from "@/src/server/services/settings";
 import type { CodexCredentialRecord } from "@/src/shared/types/entities";
 
 export const WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
@@ -129,7 +130,11 @@ export async function getCodexQuota({
       }),
       signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
     },
-    credential.proxy,
+    credential.proxy?.enabled
+      ? credential.proxy
+      : credential.useGlobalProxy
+        ? getGlobalProxySetting()
+        : null,
   );
 
   const text = await response.text();

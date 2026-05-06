@@ -58,6 +58,7 @@ Useful environment variables:
 - `CODEX_BASE_URL`
 - `CODEX_DEFAULT_MODEL`
 - `REQUEST_TIMEOUT_MS`
+- `RELAY_GLOBAL_SOCKS_PROXY` / `RELAY_GLOBAL_PROXY` / `CODEX_PROXY` using `socks5://...` or `socks5h://...` as an environment fallback for OAuth callback token exchange only; refresh_token and quota refreshes use only credential-specific proxies, or direct connection when unset
 - `RELAY_ENCRYPTION_KEY`
 - `RELAY_WEB_ACCESS_KEY`
 - `WEB_ACCESS_KEY`

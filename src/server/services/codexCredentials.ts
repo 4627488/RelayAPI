@@ -24,6 +24,7 @@ import {
   takeOAuthPendingState,
 } from "@/src/server/repositories/oauthPendingStates";
 import { randomId, sha256 } from "@/src/server/services/crypto";
+import { getGlobalProxySetting } from "@/src/server/services/settings";
 import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
@@ -221,6 +222,7 @@ export function patchCodexCredentialRouting(
     priority?: number;
     weight?: number;
     fastEnabled?: boolean;
+    useGlobalProxy?: boolean;
     proxy?: unknown;
   },
 ) {
@@ -253,6 +255,9 @@ export function patchCodexCredentialRouting(
       ? { weight: Math.max(1, normalizeInteger(input.weight, 1)) }
       : {}),
     ...(fastEnabled !== undefined ? { fastEnabled } : {}),
+    ...(input.useGlobalProxy !== undefined
+      ? { useGlobalProxy: Boolean(input.useGlobalProxy) }
+      : {}),
     ...proxyPatch,
   });
   if (!updated) {
@@ -381,7 +386,11 @@ async function refreshCodexCredentialWithTokens(id: string) {
     refresh_token: credential.tokens.refresh_token,
     scope: "openid profile email",
   });
-  const tokenResponse = await tokenRequest(body, credential.proxy);
+  const tokenResponse = await tokenRequest(
+    body,
+    credential.proxy,
+    credential.useGlobalProxy,
+  );
   return saveTokenResponse(tokenResponse, credential);
 }
 
@@ -428,13 +437,14 @@ async function exchangeCodeForTokens(input: {
   });
   // OAuth route responses also get public metadata only.
   return publicCredential(
-    await saveTokenResponse(await tokenRequest(body, null), null),
+    await saveTokenResponse(await tokenRequest(body, null, true), null),
   );
 }
 
 async function tokenRequest(
   body: URLSearchParams,
   proxy: CredentialProxyConfig | null,
+  useGlobalProxyFallback: boolean,
 ) {
   const response = await proxiedFetch(
     TOKEN_URL,
@@ -447,7 +457,11 @@ async function tokenRequest(
       body,
       signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
     },
-    proxy,
+    proxy?.enabled
+      ? proxy
+      : useGlobalProxyFallback
+        ? getGlobalProxySetting()
+        : null,
   );
   const text = await response.text();
   const parsed = parseMaybeJson<Record<string, unknown>>(text) || { raw: text };
@@ -599,6 +613,7 @@ function publicCredential(
     priority: credential.priority,
     weight: credential.weight,
     fastEnabled: credential.fastEnabled,
+    useGlobalProxy: credential.useGlobalProxy,
     proxy: credential.proxy
       ? {
           enabled: credential.proxy.enabled,

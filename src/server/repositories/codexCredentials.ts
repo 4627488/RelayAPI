@@ -134,6 +134,7 @@ export function updateCodexCredential(
       | "priority"
       | "weight"
       | "fastEnabled"
+      | "useGlobalProxy"
       | "proxy"
       | "lastUsedAt"
       | "cooldownUntil"
@@ -150,6 +151,7 @@ export function updateCodexCredential(
   const metadata = {
     ...next.metadata,
     fast_service_tier: next.fastEnabled,
+    use_global_proxy: next.useGlobalProxy,
     cooldown_until: next.cooldownUntil,
     last_error: next.lastError,
   };
@@ -206,6 +208,7 @@ function toCodexCredentialRecord(
     priority: row.priority,
     weight: row.weight,
     fastEnabled: metadata.fast_service_tier === true,
+    useGlobalProxy: metadata.use_global_proxy === true,
     proxy: publicProxyFromEnvelope(row.proxy_envelope),
     expiresAt: row.expires_at,
     lastRefreshAt: row.last_refresh_at,

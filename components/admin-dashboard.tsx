@@ -104,6 +104,7 @@ import {
   listCredentials,
   logoutWebSession,
   refreshCredential,
+  updateGlobalSettings,
   startCodexOAuth,
   WEB_AUTH_EXPIRED_EVENT,
   updateApiKey,
@@ -124,6 +125,7 @@ import type {
   CodexCredentialRecord,
   CredentialProxyType,
   CreatedApiKey,
+  GlobalSettingsRecord,
   PublicApiKey,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
@@ -134,10 +136,17 @@ type AdminDashboardProps = {
   initialCredentials: CodexCredentialRecord[];
   initialRequestLogsPage: RequestLogsPage;
   initialOverviewStats: AdminOverviewStats;
+  initialGlobalSettings: GlobalSettingsRecord;
   initialNow: number;
 };
 
-type SectionId = "overview" | "apiKeys" | "credentials" | "channels" | "logs";
+type SectionId =
+  | "overview"
+  | "apiKeys"
+  | "credentials"
+  | "channels"
+  | "settings"
+  | "logs";
 type LogStatusFilter = "all" | "success" | "error";
 
 type NavigationItem = {
@@ -229,6 +238,7 @@ export function AdminDashboard({
   initialCredentials,
   initialRequestLogsPage,
   initialOverviewStats,
+  initialGlobalSettings,
   initialNow,
 }: AdminDashboardProps) {
   const [activeSection, setActiveSection] =
@@ -236,6 +246,9 @@ export function AdminDashboard({
   const [apiKeys, setApiKeys] = React.useState(initialApiKeys);
   const [channels, setChannels] = React.useState(initialChannels);
   const [credentials, setCredentials] = React.useState(initialCredentials);
+  const [globalSettings, setGlobalSettings] = React.useState(
+    initialGlobalSettings,
+  );
   const [requestLogs, setRequestLogs] = React.useState(
     initialRequestLogsPage.data,
   );
@@ -290,6 +303,7 @@ export function AdminDashboard({
       setApiKeys(snapshot.apiKeys);
       setChannels(snapshot.channels);
       setCredentials(snapshot.credentials);
+      setGlobalSettings(snapshot.globalSettings);
       setRequestLogs(snapshot.requestLogs);
       setOverviewStats(snapshot.overviewStats);
       setSnapshotTime(snapshot.generatedAt);
@@ -443,6 +457,12 @@ export function AdminDashboard({
       description: "最近请求",
       icon: FileTextIcon,
       count: requestLogs.length,
+    },
+    {
+      id: "settings",
+      label: "设置",
+      description: "全局配置",
+      icon: SettingsIcon,
     },
   ];
 
@@ -634,6 +654,13 @@ export function AdminDashboard({
                 onUpdated={handleChannelUpdated}
               />
             )}
+            {activeSection === "settings" && (
+              <SettingsSection
+                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.updatedAt}`}
+                settings={globalSettings}
+                onSaved={setGlobalSettings}
+              />
+            )}
             {activeSection === "logs" && (
               <LogsSection
                 initialRequestLogsPage={{
@@ -647,6 +674,261 @@ export function AdminDashboard({
         </div>
       </div>
     </main>
+  );
+}
+
+function SettingsSection({
+  settings,
+  onSaved,
+}: {
+  settings: GlobalSettingsRecord;
+  onSaved: (settings: GlobalSettingsRecord) => void;
+}) {
+  const [form, setForm] = React.useState(() =>
+    globalSettingsProxyForm(settings),
+  );
+  const [saving, setSaving] = React.useState(false);
+  const [clearing, setClearing] = React.useState(false);
+  const proxy = settings.proxy;
+
+  function patchForm(patch: Partial<CredentialProxyFormState>) {
+    setForm((current) => ({ ...current, ...patch }));
+  }
+
+  async function saveProxy() {
+    const host = form.host.trim();
+    const port = integerValue(form.port, 0);
+    if (!host) {
+      toast.error("请输入全局 SOCKS5 代理主机");
+      return;
+    }
+    if (port < 1 || port > 65535) {
+      toast.error("代理端口必须在 1 到 65535 之间");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const payload: {
+        enabled: boolean;
+        type: CredentialProxyType;
+        host: string;
+        port: number;
+        username: string;
+        password?: string;
+      } = {
+        enabled: form.enabled,
+        type: form.type,
+        host,
+        port,
+        username: form.username.trim(),
+      };
+      if (form.password.trim()) {
+        payload.password = form.password;
+      }
+      const updated = await updateGlobalSettings({ proxy: payload });
+      onSaved(updated);
+      setForm(globalSettingsProxyForm(updated));
+      toast.success("OAuth 登录代理已保存");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function clearProxy() {
+    setClearing(true);
+    try {
+      const updated = await updateGlobalSettings({ proxy: null });
+      onSaved(updated);
+      setForm(globalSettingsProxyForm(updated));
+      toast.success("OAuth 登录代理已清除");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  async function clearPassword() {
+    if (!proxy) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updateGlobalSettings({
+        proxy: {
+          enabled: proxy.enabled,
+          type: proxy.type,
+          host: proxy.host,
+          port: proxy.port,
+          username: proxy.username,
+          password: "",
+        },
+      });
+      onSaved(updated);
+      setForm(globalSettingsProxyForm(updated));
+      toast.success("全局代理密码已清除");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const pending = saving || clearing;
+
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>全局设置</CardTitle>
+          <CardDescription>
+            配置 OAuth 登录专用 SOCKS5 代理。该全局代理只用于 OAuth callback
+            换取 token；token 刷新和额度刷新只使用凭据代理，凭据未配置则直连。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <Alert className="items-start">
+            <SettingsIcon className="size-4" />
+            <AlertTitle>生效范围</AlertTitle>
+            <AlertDescription>
+              全局代理只用于 OAuth 登录 callback 换 token。后续 refresh_token
+              和额度查询不会使用全局代理。
+            </AlertDescription>
+          </Alert>
+
+          <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="font-medium">OAuth 登录代理</div>
+                <div className="text-xs text-muted-foreground">
+                  当前来源：{globalProxySourceLabel(settings.proxySource)} ·
+                  当前：
+                  {globalProxyText(settings)}
+                </div>
+              </div>
+              <Switch
+                checked={form.enabled}
+                disabled={pending}
+                size="sm"
+                onCheckedChange={(checked) =>
+                  patchForm({ enabled: Boolean(checked) })
+                }
+              />
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-[0.8fr_1fr_0.7fr]">
+              <label className="grid gap-1 text-xs text-muted-foreground">
+                协议
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={pending}
+                  value={form.type}
+                  onChange={(event) =>
+                    patchForm({
+                      type: event.target.value as CredentialProxyType,
+                    })
+                  }
+                >
+                  <option value="socks5h">socks5h</option>
+                  <option value="socks5">socks5</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs text-muted-foreground">
+                主机
+                <Input
+                  disabled={pending}
+                  value={form.host}
+                  placeholder="127.0.0.1"
+                  onChange={(event) => patchForm({ host: event.target.value })}
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-muted-foreground">
+                端口
+                <Input
+                  disabled={pending}
+                  inputMode="numeric"
+                  value={form.port}
+                  placeholder="1080"
+                  onChange={(event) => patchForm({ port: event.target.value })}
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="grid gap-1 text-xs text-muted-foreground">
+                用户名（可选）
+                <Input
+                  disabled={pending}
+                  value={form.username}
+                  placeholder="username"
+                  onChange={(event) =>
+                    patchForm({ username: event.target.value })
+                  }
+                />
+              </label>
+              <label className="grid gap-1 text-xs text-muted-foreground">
+                密码（留空则保持原密码）
+                <Input
+                  disabled={pending}
+                  type="password"
+                  value={form.password}
+                  placeholder={
+                    proxy?.passwordSet ? "已设置，留空保持不变" : "password"
+                  }
+                  onChange={(event) =>
+                    patchForm({ password: event.target.value })
+                  }
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-muted-foreground">
+                数据库配置更新时间：{formatNullableDate(settings.updatedAt)}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={
+                    pending ||
+                    settings.proxySource !== "database" ||
+                    !proxy?.passwordSet
+                  }
+                  onClick={clearPassword}
+                >
+                  {saving && <Spinner data-icon="inline-start" />}
+                  清除密码
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={pending || settings.proxySource !== "database"}
+                  onClick={clearProxy}
+                >
+                  {clearing && <Spinner data-icon="inline-start" />}
+                  清除数据库代理
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={pending}
+                  onClick={saveProxy}
+                >
+                  {saving && <Spinner data-icon="inline-start" />}
+                  保存全局代理
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -1787,7 +2069,7 @@ function CredentialsSection({
       credential: CodexCredentialRecord,
       options: { forceRefresh?: boolean; silent?: boolean } = {},
     ) => {
-      const forceRefresh = options.forceRefresh ?? true;
+      const forceRefresh = options.forceRefresh ?? false;
       setQuotaLoading(credential.id, true);
       setQuotaErrors((current) => {
         if (!(credential.id in current)) {
@@ -1850,7 +2132,7 @@ function CredentialsSection({
         return;
       }
       quotaLoadRequestedRef.current.add(credential.id);
-      void loadQuota(credential, { forceRefresh: true, silent: true });
+      void loadQuota(credential, { forceRefresh: false, silent: true });
     });
   }, [credentials, loadQuota]);
 
@@ -1923,7 +2205,7 @@ function CredentialsSection({
       if (importedCredentials.length > 0) {
         await onRefreshData();
         importedCredentials.forEach((credential) => {
-          void loadQuota(credential, { forceRefresh: true, silent: true });
+          void loadQuota(credential, { forceRefresh: false, silent: true });
         });
       }
 
@@ -2365,6 +2647,23 @@ function CredentialProxyControls({
     }
   }
 
+  async function saveUseGlobalProxy(useGlobalProxy: boolean) {
+    setSaving(true);
+    try {
+      const updated = await updateCredentialRouting(credential.id, {
+        useGlobalProxy,
+      });
+      onSaved(updated);
+      toast.success(
+        useGlobalProxy ? "已允许使用全局代理" : "已关闭全局代理回退",
+      );
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function clearPassword() {
     if (!proxy) {
       return;
@@ -2410,6 +2709,21 @@ function CredentialProxyControls({
           onCheckedChange={(checked) =>
             patchForm({ enabled: Boolean(checked) })
           }
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/50 p-2">
+        <div>
+          <div className="font-medium">使用全局代理</div>
+          <div className="text-xs text-muted-foreground">
+            当前凭据代理未配置或未启用时，回退使用全局代理；关闭则直连。
+          </div>
+        </div>
+        <Switch
+          checked={credential.useGlobalProxy}
+          disabled={pending}
+          size="sm"
+          onCheckedChange={(checked) => saveUseGlobalProxy(Boolean(checked))}
         />
       </div>
 
@@ -2475,7 +2789,8 @@ function CredentialProxyControls({
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs text-muted-foreground">
-          当前：{credentialProxyText(credential)}
+          当前：{credentialProxyText(credential)} · 全局代理回退：
+          {credential.useGlobalProxy ? "开启" : "关闭"}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -2863,6 +3178,10 @@ function CredentialSettingsDialog({
                 <CredentialInfoItem
                   label="请求代理"
                   value={credentialProxyText(credential)}
+                />
+                <CredentialInfoItem
+                  label="全局代理回退"
+                  value={credential.useGlobalProxy ? "已开启" : "已关闭"}
                 />
               </div>
             </FieldGroup>
@@ -4294,6 +4613,40 @@ function channelFormToPayload(form: ChannelFormState): ChannelPayload {
     weight: Math.max(1, integerValue(form.weight, 1)),
     modelAllowlist: parseList(form.modelAllowlist),
   };
+}
+
+function globalSettingsProxyForm(
+  settings: GlobalSettingsRecord,
+): CredentialProxyFormState {
+  const proxy = settings.proxy;
+  return {
+    enabled: proxy?.enabled ?? true,
+    type: proxy?.type ?? "socks5h",
+    host: proxy?.host ?? "",
+    port: proxy?.port ? String(proxy.port) : "1080",
+    username: proxy?.username ?? "",
+    password: "",
+  };
+}
+
+function globalProxyText(settings: GlobalSettingsRecord) {
+  const proxy = settings.proxy;
+  if (!proxy) {
+    return "未配置";
+  }
+  const auth = proxy.username
+    ? `${proxy.username}${proxy.passwordSet ? ":******" : ""}@`
+    : "";
+  return `${proxy.enabled ? "已启用" : "已停用"} · ${proxy.type}://${auth}${proxy.host}:${proxy.port}`;
+}
+
+function globalProxySourceLabel(source: GlobalSettingsRecord["proxySource"]) {
+  const labels: Record<GlobalSettingsRecord["proxySource"], string> = {
+    database: "数据库",
+    environment: "环境变量",
+    none: "未配置",
+  };
+  return labels[source] || source;
 }
 
 function credentialProxyForm(

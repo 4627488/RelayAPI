@@ -5,6 +5,7 @@ import type {
   PublicApiKey,
   CodexCredentialRecord,
   CredentialProxyType,
+  GlobalSettingsRecord,
   JsonValue,
 } from "@/src/shared/types/entities";
 
@@ -165,6 +166,7 @@ export type AdminDashboardSnapshot = {
   apiKeys: PublicApiKey[];
   channels: ChannelRecord[];
   credentials: CodexCredentialRecord[];
+  globalSettings: GlobalSettingsRecord;
   requestLogs: AdminDashboardRequestLogRow[];
   overviewStats: AdminOverviewStats;
   generatedAt: number;
@@ -281,6 +283,7 @@ export function updateCredentialRouting(
     priority?: number;
     weight?: number;
     fastEnabled?: boolean;
+    useGlobalProxy?: boolean;
     proxy?: CredentialProxyPayload;
   },
 ) {
@@ -348,6 +351,19 @@ export function getOverview() {
   return adminRequest<AdminOverviewStats>("/api/admin/overview");
 }
 
+export function getGlobalSettings() {
+  return adminRequest<GlobalSettingsRecord>("/api/admin/settings");
+}
+
+export function updateGlobalSettings(payload: {
+  proxy?: CredentialProxyPayload;
+}) {
+  return adminRequest<GlobalSettingsRecord>("/api/admin/settings", {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
 export function getRequestLogsPage(
   options: {
     limit?: number;
@@ -380,19 +396,27 @@ export async function getDashboardSnapshot(
   options: { requestLogLimit?: number } = {},
 ): Promise<AdminDashboardSnapshot> {
   const requestLogLimit = options.requestLogLimit ?? 100;
-  const [apiKeys, channels, credentials, requestLogs, overviewStats] =
-    await Promise.all([
-      listApiKeys(),
-      listChannels(),
-      listCredentials(),
-      getRequestLogs(requestLogLimit),
-      getOverview(),
-    ]);
+  const [
+    apiKeys,
+    channels,
+    credentials,
+    globalSettings,
+    requestLogs,
+    overviewStats,
+  ] = await Promise.all([
+    listApiKeys(),
+    listChannels(),
+    listCredentials(),
+    getGlobalSettings(),
+    getRequestLogs(requestLogLimit),
+    getOverview(),
+  ]);
 
   return {
     apiKeys,
     channels,
     credentials,
+    globalSettings,
     requestLogs,
     overviewStats,
     generatedAt: Date.now(),

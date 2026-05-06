@@ -101,6 +101,7 @@ export interface CodexCredentialRecord {
   priority: number;
   weight: number;
   fastEnabled: boolean;
+  useGlobalProxy: boolean;
   proxy: PublicCredentialProxyConfig | null;
   usageHealth?: CodexAccountUsageHealth;
   expiresAt: string | null;
@@ -117,6 +118,12 @@ export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
   proxy: CredentialProxyConfig | null;
   tokens: CodexTokenBundle;
 };
+
+export interface GlobalSettingsRecord {
+  proxy: PublicCredentialProxyConfig | null;
+  proxySource: "database" | "environment" | "none";
+  updatedAt: string | null;
+}
 
 export interface ChannelRecord {
   id: string;
