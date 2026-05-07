@@ -123,6 +123,7 @@ export const serverConfig = {
   ).replace(/\/+$/, ""),
   codexDefaultModel: process.env.CODEX_DEFAULT_MODEL || "gpt-5.3-codex",
   requestTimeoutMs: intEnv("REQUEST_TIMEOUT_MS", 300_000),
+  streamRequestTimeoutMs: intEnv("STREAM_REQUEST_TIMEOUT_MS", 1_800_000),
   globalProxy: resolveGlobalProxy(),
   userAgent:
     process.env.CODEX_USER_AGENT ||

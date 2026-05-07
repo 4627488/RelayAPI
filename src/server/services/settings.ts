@@ -17,6 +17,7 @@ import type {
 } from "@/src/shared/types/entities";
 
 const GLOBAL_PROXY_SETTING_KEY = "global_proxy";
+const FULL_REQUEST_LOGGING_SETTING_KEY = "full_request_logging";
 
 export function getGlobalProxySetting(): CredentialProxyConfig | null {
   const stored = readStoredGlobalProxy();
@@ -25,24 +26,38 @@ export function getGlobalProxySetting(): CredentialProxyConfig | null {
 
 export function getPublicGlobalSettings(): GlobalSettingsRecord {
   const stored = readStoredGlobalProxy();
+  const fullRequestLoggingEnabled = getFullRequestLoggingSetting();
   if (stored) {
     return {
       proxy: publicProxy(stored),
       proxySource: "database",
-      updatedAt: getSettingUpdatedAt(GLOBAL_PROXY_SETTING_KEY),
+      fullRequestLoggingEnabled,
+      updatedAt: latestUpdatedAt(
+        getSettingUpdatedAt(GLOBAL_PROXY_SETTING_KEY),
+        getSettingUpdatedAt(FULL_REQUEST_LOGGING_SETTING_KEY),
+      ),
     };
   }
   if (serverConfig.globalProxy) {
     return {
       proxy: publicProxy(serverConfig.globalProxy),
       proxySource: "environment",
-      updatedAt: null,
+      fullRequestLoggingEnabled,
+      updatedAt: getSettingUpdatedAt(FULL_REQUEST_LOGGING_SETTING_KEY),
     };
   }
-  return { proxy: null, proxySource: "none", updatedAt: null };
+  return {
+    proxy: null,
+    proxySource: "none",
+    fullRequestLoggingEnabled,
+    updatedAt: getSettingUpdatedAt(FULL_REQUEST_LOGGING_SETTING_KEY),
+  };
 }
 
-export function patchGlobalSettings(input: { proxy?: unknown }) {
+export function patchGlobalSettings(input: {
+  proxy?: unknown;
+  fullRequestLoggingEnabled?: unknown;
+}) {
   if (Object.hasOwn(input, "proxy")) {
     const proxy = normalizeProxyInput(input.proxy, readStoredGlobalProxy());
     if (proxy) {
@@ -51,7 +66,17 @@ export function patchGlobalSettings(input: { proxy?: unknown }) {
       deleteSettingValue(GLOBAL_PROXY_SETTING_KEY);
     }
   }
+  if (Object.hasOwn(input, "fullRequestLoggingEnabled")) {
+    upsertSettingValue(
+      FULL_REQUEST_LOGGING_SETTING_KEY,
+      input.fullRequestLoggingEnabled ? "1" : "0",
+    );
+  }
   return getPublicGlobalSettings();
+}
+
+export function getFullRequestLoggingSetting() {
+  return getSettingValue(FULL_REQUEST_LOGGING_SETTING_KEY) === "1";
 }
 
 function readStoredGlobalProxy() {
@@ -177,7 +202,9 @@ function assertProxyEndpoint(input: { host: string; port: number }) {
   }
 }
 
-function publicProxy(proxy: CredentialProxyConfig): PublicCredentialProxyConfig {
+function publicProxy(
+  proxy: CredentialProxyConfig,
+): PublicCredentialProxyConfig {
   return {
     enabled: proxy.enabled,
     type: proxy.type,
@@ -196,4 +223,8 @@ function objectValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function latestUpdatedAt(...values: Array<string | null>) {
+  return values.filter(Boolean).sort().at(-1) || null;
 }

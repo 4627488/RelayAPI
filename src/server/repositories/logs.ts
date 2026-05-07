@@ -2,6 +2,7 @@ import "server-only";
 
 import { getLogDb, getMainDb } from "@/src/server/db/sqlite";
 import { jsonStringify, randomId } from "@/src/server/services/crypto";
+import type { StageTimingEntry } from "@/src/server/http/stageTimer";
 import type {
   AdminOverviewStats,
   AdminOverviewTotals,
@@ -35,6 +36,27 @@ export interface RequestLogInput {
   errorMessage?: string | null;
 }
 
+export interface RequestLogDetailInput {
+  requestHeaders?: Record<string, string> | null;
+  requestBodyText?: string | null;
+  requestBodyTruncated?: boolean;
+  requestBodyBytes?: number;
+  forwardedBodyText?: string | null;
+  forwardedBodyTruncated?: boolean;
+  forwardedBodyBytes?: number;
+  upstreamStatusCode?: number | null;
+  upstreamHeaders?: Record<string, string> | null;
+  upstreamBodyText?: string | null;
+  upstreamBodyTruncated?: boolean;
+  upstreamBodyBytes?: number;
+  errorName?: string | null;
+  errorMessage?: string | null;
+  errorStack?: string | null;
+  errorCause?: unknown;
+  detail?: unknown;
+  stageTimings?: StageTimingEntry[];
+}
+
 export function appendRequestLog(input: RequestLogInput) {
   const usage = input.usage || {
     promptTokens: 0,
@@ -42,6 +64,7 @@ export function appendRequestLog(input: RequestLogInput) {
     totalTokens: 0,
   };
   const completedAt = input.completedAt || new Date().toISOString();
+  const id = randomId("reqlog");
   getLogDb()
     .prepare(
       `INSERT INTO request_logs (
@@ -52,7 +75,7 @@ export function appendRequestLog(input: RequestLogInput) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
-      randomId("reqlog"),
+      id,
       input.startedAt,
       completedAt,
       input.method,
@@ -90,6 +113,70 @@ export function appendRequestLog(input: RequestLogInput) {
       usage,
     });
   }
+
+  return id;
+}
+
+export function appendRequestLogDetail(
+  requestLogId: string,
+  input: RequestLogDetailInput,
+) {
+  const now = new Date().toISOString();
+  getLogDb()
+    .prepare(
+      `INSERT INTO request_log_details (
+        request_log_id, created_at, updated_at, request_headers_json,
+        request_body_text, request_body_truncated, request_body_bytes,
+        forwarded_body_text, forwarded_body_truncated, forwarded_body_bytes,
+        upstream_status_code, upstream_headers_json, upstream_body_text,
+        upstream_body_truncated, upstream_body_bytes, error_name,
+        error_message, error_stack, error_cause_json, detail_json,
+        stage_timings_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(request_log_id) DO UPDATE SET
+        updated_at = excluded.updated_at,
+        request_headers_json = COALESCE(excluded.request_headers_json, request_log_details.request_headers_json),
+        request_body_text = COALESCE(excluded.request_body_text, request_log_details.request_body_text),
+        request_body_truncated = CASE WHEN excluded.request_body_text IS NULL THEN request_log_details.request_body_truncated ELSE excluded.request_body_truncated END,
+        request_body_bytes = CASE WHEN excluded.request_body_text IS NULL THEN request_log_details.request_body_bytes ELSE excluded.request_body_bytes END,
+        forwarded_body_text = COALESCE(excluded.forwarded_body_text, request_log_details.forwarded_body_text),
+        forwarded_body_truncated = CASE WHEN excluded.forwarded_body_text IS NULL THEN request_log_details.forwarded_body_truncated ELSE excluded.forwarded_body_truncated END,
+        forwarded_body_bytes = CASE WHEN excluded.forwarded_body_text IS NULL THEN request_log_details.forwarded_body_bytes ELSE excluded.forwarded_body_bytes END,
+        upstream_status_code = COALESCE(excluded.upstream_status_code, request_log_details.upstream_status_code),
+        upstream_headers_json = COALESCE(excluded.upstream_headers_json, request_log_details.upstream_headers_json),
+        upstream_body_text = COALESCE(excluded.upstream_body_text, request_log_details.upstream_body_text),
+        upstream_body_truncated = CASE WHEN excluded.upstream_body_text IS NULL THEN request_log_details.upstream_body_truncated ELSE excluded.upstream_body_truncated END,
+        upstream_body_bytes = CASE WHEN excluded.upstream_body_text IS NULL THEN request_log_details.upstream_body_bytes ELSE excluded.upstream_body_bytes END,
+        error_name = COALESCE(excluded.error_name, request_log_details.error_name),
+        error_message = COALESCE(excluded.error_message, request_log_details.error_message),
+        error_stack = COALESCE(excluded.error_stack, request_log_details.error_stack),
+        error_cause_json = COALESCE(excluded.error_cause_json, request_log_details.error_cause_json),
+        detail_json = COALESCE(excluded.detail_json, request_log_details.detail_json),
+        stage_timings_json = COALESCE(excluded.stage_timings_json, request_log_details.stage_timings_json)`,
+    )
+    .run(
+      requestLogId,
+      now,
+      now,
+      input.requestHeaders ? jsonStringify(input.requestHeaders) : null,
+      input.requestBodyText ?? null,
+      input.requestBodyTruncated ? 1 : 0,
+      Math.max(0, Math.floor(input.requestBodyBytes || 0)),
+      input.forwardedBodyText ?? null,
+      input.forwardedBodyTruncated ? 1 : 0,
+      Math.max(0, Math.floor(input.forwardedBodyBytes || 0)),
+      input.upstreamStatusCode ?? null,
+      input.upstreamHeaders ? jsonStringify(input.upstreamHeaders) : null,
+      input.upstreamBodyText ?? null,
+      input.upstreamBodyTruncated ? 1 : 0,
+      Math.max(0, Math.floor(input.upstreamBodyBytes || 0)),
+      input.errorName || null,
+      input.errorMessage || null,
+      input.errorStack || null,
+      input.errorCause === undefined ? null : safeDetailJson(input.errorCause),
+      input.detail === undefined ? null : safeDetailJson(input.detail),
+      input.stageTimings ? jsonStringify(input.stageTimings) : null,
+    );
 }
 
 export function appendUsageRecord(input: {
@@ -246,6 +333,35 @@ export interface PublicRequestLogRow {
   error_code: string | null;
 }
 
+export interface PublicRequestLogDetail {
+  log: PublicRequestLogRow & {
+    completed_at: string;
+    error_message: string | null;
+  };
+  detail: {
+    request_headers: Record<string, string> | null;
+    request_body_text: string | null;
+    request_body_truncated: boolean;
+    request_body_bytes: number;
+    forwarded_body_text: string | null;
+    forwarded_body_truncated: boolean;
+    forwarded_body_bytes: number;
+    upstream_status_code: number | null;
+    upstream_headers: Record<string, string> | null;
+    upstream_body_text: string | null;
+    upstream_body_truncated: boolean;
+    upstream_body_bytes: number;
+    error_name: string | null;
+    error_message: string | null;
+    error_stack: string | null;
+    error_cause: unknown;
+    detail: unknown;
+    stage_timings: StageTimingEntry[];
+    created_at: string | null;
+    updated_at: string | null;
+  } | null;
+}
+
 export function latestRequestLogs(limit = 20): PublicRequestLogRow[] {
   return queryRequestLogs({ limit, offset: 0 }).data;
 }
@@ -267,6 +383,46 @@ export interface RequestLogQueryResult {
   errorCount: number;
   totalTokens: number;
   avgLatencyMs: number;
+}
+
+export function getRequestLogDetail(id: string): PublicRequestLogDetail | null {
+  const row = getLogDb()
+    .prepare(
+      `SELECT
+        id, started_at, completed_at, method, path, request_type, stream,
+        model, status_code, latency_ms, api_key_id, api_key_prefix,
+        api_key_name, channel_name, credential_email, prompt_tokens,
+        completion_tokens, total_tokens, error_code, error_message
+      FROM request_logs
+      WHERE id = ?`,
+    )
+    .get(id) as Record<string, unknown> | undefined;
+  if (!row) {
+    return null;
+  }
+
+  const detailRow = getLogDb()
+    .prepare(
+      `SELECT
+        created_at, updated_at, request_headers_json, request_body_text,
+        request_body_truncated, request_body_bytes, forwarded_body_text,
+        forwarded_body_truncated, forwarded_body_bytes, upstream_status_code,
+        upstream_headers_json, upstream_body_text, upstream_body_truncated,
+        upstream_body_bytes, error_name, error_message, error_stack,
+        error_cause_json, detail_json, stage_timings_json
+      FROM request_log_details
+      WHERE request_log_id = ?`,
+    )
+    .get(id) as Record<string, unknown> | undefined;
+
+  return {
+    log: {
+      ...toPublicRequestLogRow(attachApiKeyNames([row])[0] || row),
+      completed_at: String(row.completed_at || ""),
+      error_message: nullableString(row.error_message),
+    },
+    detail: detailRow ? toPublicRequestLogDetailRow(detailRow) : null,
+  };
 }
 
 export function queryRequestLogs(
@@ -904,6 +1060,31 @@ function numberValue(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function toPublicRequestLogDetailRow(row: Record<string, unknown>) {
+  return {
+    request_headers: parseJsonObject(row.request_headers_json),
+    request_body_text: nullableString(row.request_body_text),
+    request_body_truncated: Boolean(row.request_body_truncated),
+    request_body_bytes: numberValue(row.request_body_bytes),
+    forwarded_body_text: nullableString(row.forwarded_body_text),
+    forwarded_body_truncated: Boolean(row.forwarded_body_truncated),
+    forwarded_body_bytes: numberValue(row.forwarded_body_bytes),
+    upstream_status_code: numberValue(row.upstream_status_code) || null,
+    upstream_headers: parseJsonObject(row.upstream_headers_json),
+    upstream_body_text: nullableString(row.upstream_body_text),
+    upstream_body_truncated: Boolean(row.upstream_body_truncated),
+    upstream_body_bytes: numberValue(row.upstream_body_bytes),
+    error_name: nullableString(row.error_name),
+    error_message: nullableString(row.error_message),
+    error_stack: nullableString(row.error_stack),
+    error_cause: parseJsonValue(row.error_cause_json),
+    detail: parseJsonValue(row.detail_json),
+    stage_timings: parseStageTimings(row.stage_timings_json),
+    created_at: nullableString(row.created_at),
+    updated_at: nullableString(row.updated_at),
+  };
+}
+
 function toPublicRequestLogRow(
   row: Record<string, unknown>,
 ): PublicRequestLogRow {
@@ -959,4 +1140,58 @@ function attachApiKeyNames(rows: Array<Record<string, unknown>>) {
 
 function nullableString(value: unknown) {
   return value === null || value === undefined ? null : String(value);
+}
+
+function safeDetailJson(value: unknown) {
+  try {
+    return jsonStringify(value);
+  } catch {
+    return jsonStringify(String(value));
+  }
+}
+
+function parseJsonObject(value: unknown): Record<string, string> | null {
+  const parsed = parseJsonValue(value);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  return Object.fromEntries(
+    Object.entries(parsed as Record<string, unknown>).map(([key, item]) => [
+      key,
+      String(item ?? ""),
+    ]),
+  );
+}
+
+function parseStageTimings(value: unknown): StageTimingEntry[] {
+  const parsed = parseJsonValue(value);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+      const row = item as Record<string, unknown>;
+      return {
+        name: String(row.name || ""),
+        label: String(row.label || row.name || ""),
+        startedAtMs: numberValue(row.startedAtMs),
+        endedAtMs: numberValue(row.endedAtMs),
+        durationMs: numberValue(row.durationMs),
+      };
+    })
+    .filter((item): item is StageTimingEntry => Boolean(item?.name));
+}
+
+function parseJsonValue(value: unknown) {
+  if (typeof value !== "string" || !value) {
+    return null;
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 }

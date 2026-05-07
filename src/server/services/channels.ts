@@ -240,24 +240,12 @@ export function recordChannelFailure(
     return;
   }
 
-  let penalty = 8;
-  let cooldownMs = 0;
-  if (statusCode && statusCode >= 500) {
-    penalty = 15;
-    cooldownMs = 60 * 1000;
-  }
+  const penalty = statusCode && statusCode >= 500 ? 15 : 8;
   const nextScore = clamp(channel.healthScore - penalty, 0, 100);
-  const cooldownUntil = cooldownMs
-    ? new Date(Date.now() + cooldownMs).toISOString()
-    : null;
   const next = updateChannel(channel.id, {
-    status: cooldownUntil
-      ? "cooling_down"
-      : nextScore >= 40
-        ? "degraded"
-        : "cooling_down",
+    status: nextScore >= 60 ? "healthy" : "degraded",
     healthScore: nextScore,
-    cooldownUntil,
+    cooldownUntil: null,
     lastError: input.message || null,
   });
   appendChannelHealthEvent({
@@ -267,7 +255,7 @@ export function recordChannelFailure(
     eventType: "failure",
     statusCode,
     healthScore: next?.healthScore ?? nextScore,
-    cooldownUntil,
+    cooldownUntil: null,
     message: input.message || null,
   });
 }

@@ -98,6 +98,7 @@ import {
   getCredentialQuota,
   getDashboardSnapshot,
   getOverview,
+  getRequestLogDetail,
   getRequestLogsPage,
   importCredentialJson,
   listChannels,
@@ -115,6 +116,7 @@ import {
   type ChannelPayload,
   type CodexQuotaReport,
   type OAuthStartResponse,
+  type RequestLogDetail,
   type RequestLogsPage,
 } from "@/lib/admin-api";
 import type {
@@ -640,6 +642,7 @@ export function AdminDashboard({
             {activeSection === "credentials" && (
               <CredentialsSection
                 credentials={credentials}
+                globalSettings={globalSettings}
                 onDeleted={handleCredentialDeleted}
                 onRefreshData={refreshCredentialAndChannelData}
                 onUpdated={handleCredentialUpdated}
@@ -656,7 +659,7 @@ export function AdminDashboard({
             )}
             {activeSection === "settings" && (
               <SettingsSection
-                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.updatedAt}`}
+                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.updatedAt}`}
                 settings={globalSettings}
                 onSaved={setGlobalSettings}
               />
@@ -689,6 +692,7 @@ function SettingsSection({
   );
   const [saving, setSaving] = React.useState(false);
   const [clearing, setClearing] = React.useState(false);
+  const [loggingSaving, setLoggingSaving] = React.useState(false);
   const proxy = settings.proxy;
 
   function patchForm(patch: Partial<CredentialProxyFormState>) {
@@ -777,6 +781,21 @@ function SettingsSection({
     }
   }
 
+  async function updateFullRequestLogging(enabled: boolean) {
+    setLoggingSaving(true);
+    try {
+      const updated = await updateGlobalSettings({
+        fullRequestLoggingEnabled: enabled,
+      });
+      onSaved(updated);
+      toast.success(enabled ? "完整转发日志已开启" : "完整转发日志已关闭");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setLoggingSaving(false);
+    }
+  }
+
   const pending = saving || clearing;
 
   return (
@@ -798,6 +817,26 @@ function SettingsSection({
               和额度查询不会使用全局代理。
             </AlertDescription>
           </Alert>
+
+          <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="font-medium">记录完整日志</div>
+                <div className="text-xs text-muted-foreground">
+                  开启后记录完整请求 body、转发到上游的 payload
+                  和上游响应；关闭后只保留概要日志与报错详情。
+                </div>
+              </div>
+              <Switch
+                checked={settings.fullRequestLoggingEnabled}
+                disabled={loggingSaving}
+                size="sm"
+                onCheckedChange={(checked) =>
+                  void updateFullRequestLogging(Boolean(checked))
+                }
+              />
+            </div>
+          </div>
 
           <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
             <div className="flex items-center justify-between gap-3">
@@ -2010,11 +2049,13 @@ function ApiKeyDeleteDialog({
 
 function CredentialsSection({
   credentials,
+  globalSettings,
   onDeleted,
   onRefreshData,
   onUpdated,
 }: {
   credentials: CodexCredentialRecord[];
+  globalSettings: GlobalSettingsRecord;
   onDeleted: (id: string) => void;
   onRefreshData: () => Promise<{
     credentials: CodexCredentialRecord[];
@@ -2404,7 +2445,10 @@ function CredentialsSection({
                         <span className="shrink-0 text-muted-foreground">
                           请求代理：
                         </span>
-                        <CredentialProxyBadge credential={credential} />
+                        <CredentialProxyBadge
+                          credential={credential}
+                          globalSettings={globalSettings}
+                        />
                       </div>
 
                       <div className="flex items-center gap-2 text-sm">
@@ -3254,26 +3298,66 @@ function CredentialSettingsDialog({
 
 function CredentialProxyBadge({
   credential,
+  globalSettings,
 }: {
   credential: CodexCredentialRecord;
+  globalSettings: GlobalSettingsRecord;
 }) {
   const proxy = credential.proxy;
-  if (!proxy) {
-    return <Badge variant="outline">未配置</Badge>;
+  if (proxy?.enabled) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-emerald-500/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+        title={credentialProxyText(credential)}
+      >
+        已启用 · {proxy.type}
+      </Badge>
+    );
   }
-  return (
-    <Badge
-      variant="outline"
-      className={
-        proxy.enabled
-          ? "border-emerald-500/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-          : "border-border bg-muted/60 text-muted-foreground"
-      }
-      title={credentialProxyText(credential)}
-    >
-      {proxy.enabled ? "已启用" : "已停用"} · {proxy.type}
-    </Badge>
-  );
+
+  if (credential.useGlobalProxy) {
+    const globalProxy = globalSettings.proxy;
+    if (!globalProxy) {
+      return (
+        <Badge
+          variant="outline"
+          className="border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+          title="已开启全局代理回退，但当前未配置全局代理"
+        >
+          全局代理 · 未配置
+        </Badge>
+      );
+    }
+    return (
+      <Badge
+        variant="outline"
+        className={
+          globalProxy.enabled
+            ? "border-sky-500/45 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+            : "border-border bg-muted/60 text-muted-foreground"
+        }
+        title={`全局代理（${globalProxySourceLabel(globalSettings.proxySource)}）：${globalProxyText(globalSettings)}`}
+      >
+        全局代理 · {globalProxy.enabled ? "已启用" : "已停用"} ·{" "}
+        {globalProxy.type}
+      </Badge>
+    );
+  }
+
+  if (proxy) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-border bg-muted/60 text-muted-foreground"
+        title={credentialProxyText(credential)}
+      >
+        已停用 · {proxy.type}
+      </Badge>
+    );
+  }
+
+  return <Badge variant="outline">未配置</Badge>;
 }
 
 function CredentialInfoItem({
@@ -3949,6 +4033,10 @@ function LogsSection({
     React.useState<LogStatusFilter>("all");
   const [pageSize, setPageSize] = React.useState(initialRequestLogsPage.limit);
   const [loading, setLoading] = React.useState(false);
+  const [detailOpen, setDetailOpen] = React.useState(false);
+  const [detailLoading, setDetailLoading] = React.useState(false);
+  const [selectedDetail, setSelectedDetail] =
+    React.useState<RequestLogDetail | null>(null);
 
   const totalPages = Math.max(1, logsPage.totalPages);
   const pageStart = logsPage.total > 0 ? logsPage.offset + 1 : 0;
@@ -3999,6 +4087,20 @@ function LogsSection({
   function search(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void loadLogs({ page: 1, query: queryInput });
+  }
+
+  async function openLogDetail(id: string) {
+    setDetailOpen(true);
+    setDetailLoading(true);
+    setSelectedDetail(null);
+    try {
+      setSelectedDetail(await getRequestLogDetail(id));
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+      setDetailOpen(false);
+    } finally {
+      setDetailLoading(false);
+    }
   }
 
   return (
@@ -4135,6 +4237,7 @@ function LogsSection({
                     <TableHead>延迟</TableHead>
                     <TableHead>密钥 / 通道</TableHead>
                     <TableHead>Token</TableHead>
+                    <TableHead>操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -4182,6 +4285,17 @@ function LogsSection({
                           输入 {formatNumber(log.prompt_tokens)} / 输出{" "}
                           {formatNumber(log.completion_tokens)}
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void openLogDetail(log.id)}
+                        >
+                          <FileTextIcon data-icon="inline-start" />
+                          详细
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -4251,8 +4365,263 @@ function LogsSection({
           )}
         </CardContent>
       </Card>
+
+      <RequestLogDetailDialog
+        open={detailOpen}
+        loading={detailLoading}
+        detail={selectedDetail}
+        onOpenChange={setDetailOpen}
+      />
     </div>
   );
+}
+
+function RequestLogDetailDialog({
+  open,
+  loading,
+  detail,
+  onOpenChange,
+}: {
+  open: boolean;
+  loading: boolean;
+  detail: RequestLogDetail | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const log = detail?.log;
+  const body = detail?.detail;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-5xl">
+        <DialogHeader>
+          <DialogTitle>请求日志详情</DialogTitle>
+          <DialogDescription>
+            {log
+              ? `${log.method} ${log.path} · ${log.request_type}`
+              : "加载详细日志中..."}
+          </DialogDescription>
+        </DialogHeader>
+        {loading ? (
+          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+            <Spinner /> 正在加载详情...
+          </div>
+        ) : !log ? (
+          <EmptyState
+            icon={FileTextIcon}
+            title="没有详情"
+            description="未找到该请求日志的详情数据。"
+            compact
+          />
+        ) : (
+          <div className="grid gap-4">
+            <div className="grid gap-3 rounded-lg border border-border/60 p-3 text-sm md:grid-cols-3">
+              <div>
+                <div className="text-xs text-muted-foreground">开始时间</div>
+                <LocalDateTime value={log.started_at} />
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">完成时间</div>
+                <LocalDateTime value={log.completed_at} />
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">状态 / 延迟</div>
+                <div className="flex items-center gap-2">
+                  {renderStatusCodeBadge(log.status_code)}
+                  <span>{formatDuration(log.latency_ms)}</span>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">模型</div>
+                <div>{log.model || "-"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">密钥</div>
+                <div>{log.api_key_name || "未知密钥"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">通道 / 凭据</div>
+                <div>
+                  {log.channel_name || "-"} · {log.credential_email || "-"}
+                </div>
+              </div>
+            </div>
+
+            {!body ? (
+              <EmptyState
+                icon={FileTextIcon}
+                title="暂无详细内容"
+                description="旧日志或关闭完整日志时的成功请求可能只有概要数据；报错请求会保留错误详情。"
+                compact
+              />
+            ) : (
+              <div className="grid gap-4">
+                <StageTimingsBlock timings={body.stage_timings} />
+                <DetailBlock
+                  title="请求 Headers"
+                  value={formatDetailValue(body.request_headers)}
+                />
+                <DetailBlock
+                  title="请求 Body"
+                  value={body.request_body_text}
+                  truncated={body.request_body_truncated}
+                  bytes={body.request_body_bytes}
+                />
+                <DetailBlock
+                  title="转发到上游的 Body"
+                  value={body.forwarded_body_text}
+                  truncated={body.forwarded_body_truncated}
+                  bytes={body.forwarded_body_bytes}
+                />
+                <DetailBlock
+                  title={`上游响应${body.upstream_status_code ? ` · ${body.upstream_status_code}` : ""}`}
+                  value={body.upstream_body_text}
+                  truncated={body.upstream_body_truncated}
+                  bytes={body.upstream_body_bytes}
+                />
+                <DetailBlock
+                  title="上游 Headers"
+                  value={formatDetailValue(body.upstream_headers)}
+                />
+                {(body.error_message ||
+                  body.error_stack ||
+                  log.error_message) && (
+                  <DetailBlock
+                    title={`错误详情${body.error_name ? ` · ${body.error_name}` : ""}`}
+                    value={[
+                      body.error_message || log.error_message || "",
+                      body.error_stack || "",
+                      formatDetailValue(body.error_cause),
+                      formatDetailValue(body.detail),
+                    ]
+                      .filter(Boolean)
+                      .join("\n\n")}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
+            关闭
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function StageTimingsBlock({
+  timings,
+}: {
+  timings: NonNullable<RequestLogDetail["detail"]>["stage_timings"];
+}) {
+  if (!timings.length) {
+    return null;
+  }
+  const total = Math.max(
+    ...timings.map((item) => item.endedAtMs),
+    ...timings.map((item) => item.durationMs),
+    1,
+  );
+  return (
+    <div className="grid gap-3 rounded-lg border border-border/60 p-3">
+      <div>
+        <div className="font-medium">阶段耗时</div>
+        <div className="text-xs text-muted-foreground">
+          记录每个转发阶段的相对开始、结束和耗时；不受完整日志开关影响。
+        </div>
+      </div>
+      <div className="grid gap-2">
+        {timings.map((item, index) => (
+          <div
+            key={`${item.name}:${index}`}
+            className="grid gap-1 rounded-md bg-muted/25 p-2 text-xs"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium">{item.label || item.name}</span>
+              <span className="font-mono text-muted-foreground">
+                {formatDuration(item.durationMs)} ·{" "}
+                {formatNumber(item.startedAtMs)}-{formatNumber(item.endedAtMs)}
+                ms
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary"
+                style={{
+                  width: `${Math.max(2, Math.min(100, (item.durationMs / total) * 100))}%`,
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DetailBlock({
+  title,
+  value,
+  truncated,
+  bytes,
+}: {
+  title: string;
+  value: string | null | undefined;
+  truncated?: boolean;
+  bytes?: number;
+}) {
+  const displayValue = value || "-";
+  return (
+    <div className="grid gap-2 rounded-lg border border-border/60 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium">
+          {title}
+          {truncated && (
+            <Badge className="ml-2" variant="secondary">
+              已截断
+            </Badge>
+          )}
+          {bytes ? (
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              {formatNumber(bytes)} bytes
+            </span>
+          ) : null}
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={!value}
+          onClick={() => value && void copyText(value)}
+        >
+          <CopyIcon data-icon="inline-start" />
+          复制
+        </Button>
+      </div>
+      <pre className="max-h-96 overflow-auto whitespace-pre-wrap wrap-break-word rounded-md bg-muted/40 p-3 text-xs leading-relaxed">
+        {displayValue}
+      </pre>
+    </div>
+  );
+}
+
+function formatDetailValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function MetricCard({

@@ -374,6 +374,48 @@ function migrateLogDb(db: DatabaseSync) {
     "003_request_logs_credential_index",
     "CREATE INDEX IF NOT EXISTS idx_request_logs_credential ON request_logs(credential_id, started_at);",
   );
+
+  applyMigration(
+    db,
+    "004_request_log_details",
+    `
+      CREATE TABLE IF NOT EXISTS request_log_details (
+        request_log_id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        request_headers_json TEXT,
+        request_body_text TEXT,
+        request_body_truncated INTEGER NOT NULL DEFAULT 0 CHECK (request_body_truncated IN (0, 1)),
+        request_body_bytes INTEGER NOT NULL DEFAULT 0,
+        forwarded_body_text TEXT,
+        forwarded_body_truncated INTEGER NOT NULL DEFAULT 0 CHECK (forwarded_body_truncated IN (0, 1)),
+        forwarded_body_bytes INTEGER NOT NULL DEFAULT 0,
+        upstream_status_code INTEGER,
+        upstream_headers_json TEXT,
+        upstream_body_text TEXT,
+        upstream_body_truncated INTEGER NOT NULL DEFAULT 0 CHECK (upstream_body_truncated IN (0, 1)),
+        upstream_body_bytes INTEGER NOT NULL DEFAULT 0,
+        error_name TEXT,
+        error_message TEXT,
+        error_stack TEXT,
+        error_cause_json TEXT,
+        detail_json TEXT,
+        stage_timings_json TEXT
+      ) STRICT;
+
+      CREATE INDEX IF NOT EXISTS idx_request_log_details_updated
+        ON request_log_details(updated_at);
+    `,
+  );
+
+  applyMigration(db, "005_request_log_stage_timings", (database) => {
+    addColumnIfMissing(
+      database,
+      "request_log_details",
+      "stage_timings_json",
+      "TEXT",
+    );
+  });
 }
 
 function addColumnIfMissing(

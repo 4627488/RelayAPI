@@ -67,6 +67,41 @@ export type AdminDashboardRequestLogRow = {
   error_code: string | null;
 };
 
+export type RequestLogDetail = {
+  log: AdminDashboardRequestLogRow & {
+    completed_at: string;
+    error_message: string | null;
+  };
+  detail: {
+    request_headers: Record<string, string> | null;
+    request_body_text: string | null;
+    request_body_truncated: boolean;
+    request_body_bytes: number;
+    forwarded_body_text: string | null;
+    forwarded_body_truncated: boolean;
+    forwarded_body_bytes: number;
+    upstream_status_code: number | null;
+    upstream_headers: Record<string, string> | null;
+    upstream_body_text: string | null;
+    upstream_body_truncated: boolean;
+    upstream_body_bytes: number;
+    error_name: string | null;
+    error_message: string | null;
+    error_stack: string | null;
+    error_cause: unknown;
+    detail: unknown;
+    stage_timings: Array<{
+      name: string;
+      label: string;
+      startedAtMs: number;
+      endedAtMs: number;
+      durationMs: number;
+    }>;
+    created_at: string | null;
+    updated_at: string | null;
+  } | null;
+};
+
 export type RequestLogStatusFilter = "all" | "success" | "error" | "stream";
 
 export type RequestLogsPage = {
@@ -357,11 +392,18 @@ export function getGlobalSettings() {
 
 export function updateGlobalSettings(payload: {
   proxy?: CredentialProxyPayload;
+  fullRequestLoggingEnabled?: boolean;
 }) {
   return adminRequest<GlobalSettingsRecord>("/api/admin/settings", {
     method: "PATCH",
     body: payload,
   });
+}
+
+export function getRequestLogDetail(id: string) {
+  return adminRequest<RequestLogDetail>(
+    `/api/admin/request-logs/${encodePath(id)}`,
+  );
 }
 
 export function getRequestLogsPage(

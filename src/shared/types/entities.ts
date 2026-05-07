@@ -122,6 +122,7 @@ export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
 export interface GlobalSettingsRecord {
   proxy: PublicCredentialProxyConfig | null;
   proxySource: "database" | "environment" | "none";
+  fullRequestLoggingEnabled: boolean;
   updatedAt: string | null;
 }
 

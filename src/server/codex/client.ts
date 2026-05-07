@@ -5,6 +5,7 @@ import { serverConfig } from "@/src/server/config/env";
 import { proxiedFetch } from "@/src/server/net/proxy";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
 import { getGlobalProxySetting } from "@/src/server/services/settings";
+import type { StageTimer } from "@/src/server/http/stageTimer";
 import type { ChannelRecord, UsageSnapshot } from "@/src/shared/types/entities";
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -40,34 +41,73 @@ export async function codexFetch(
     stream: boolean;
     sourceHeaders: Headers;
     channel: ChannelRecord;
+    timing?: StageTimer;
   },
 ) {
-  const credential = await ensureFreshCredential(input.channel.credentialId);
+  const credential =
+    (await input.timing?.timeAsync(
+      "ensure_credential",
+      "获取/刷新 Codex 凭据",
+      () => ensureFreshCredential(input.channel.credentialId),
+    )) ?? (await ensureFreshCredential(input.channel.credentialId));
   if (!credential.tokens.access_token) {
     throw new Error("Saved Codex credential does not contain access_token");
   }
-  const response = await proxiedFetch(
-    toCodexUrl(input.channel.baseUrl, upstreamPath),
-    {
-      method: "POST",
-      headers: buildCodexHeaders(credential, {
-        stream: input.stream,
-        sourceHeaders: input.sourceHeaders,
+  const upstreamPayload =
+    input.timing?.time("prepare_upstream_payload", "构造上游 Payload", () =>
+      prepareCodexPayloadForUpstream(payload, {
+        fastServiceTier: shouldUsePriorityServiceTier(credential),
       }),
-      body: JSON.stringify(
-        prepareCodexPayloadForUpstream(payload, {
-          fastServiceTier: shouldUsePriorityServiceTier(credential),
-        }),
+    ) ??
+    prepareCodexPayloadForUpstream(payload, {
+      fastServiceTier: shouldUsePriorityServiceTier(credential),
+    });
+  const response =
+    (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
+      proxiedFetch(
+        toCodexUrl(input.channel.baseUrl, upstreamPath),
+        {
+          method: "POST",
+          headers: buildCodexHeaders(credential, {
+            stream: input.stream,
+            sourceHeaders: input.sourceHeaders,
+          }),
+          body: JSON.stringify(upstreamPayload),
+          signal: AbortSignal.timeout(
+            input.stream
+              ? serverConfig.streamRequestTimeoutMs
+              : serverConfig.requestTimeoutMs,
+          ),
+        },
+        credential.proxy?.enabled
+          ? credential.proxy
+          : credential.useGlobalProxy
+            ? getGlobalProxySetting()
+            : null,
       ),
-      signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
-    },
-    credential.proxy?.enabled
-      ? credential.proxy
-      : credential.useGlobalProxy
-        ? getGlobalProxySetting()
-        : null,
-  );
-  return { response, credential };
+    )) ??
+    (await proxiedFetch(
+      toCodexUrl(input.channel.baseUrl, upstreamPath),
+      {
+        method: "POST",
+        headers: buildCodexHeaders(credential, {
+          stream: input.stream,
+          sourceHeaders: input.sourceHeaders,
+        }),
+        body: JSON.stringify(upstreamPayload),
+        signal: AbortSignal.timeout(
+          input.stream
+            ? serverConfig.streamRequestTimeoutMs
+            : serverConfig.requestTimeoutMs,
+        ),
+      },
+      credential.proxy?.enabled
+        ? credential.proxy
+        : credential.useGlobalProxy
+          ? getGlobalProxySetting()
+          : null,
+    ));
+  return { response, credential, upstreamPayload };
 }
 
 export async function codexJson(
@@ -77,17 +117,24 @@ export async function codexJson(
     stream: boolean;
     sourceHeaders: Headers;
     channel: ChannelRecord;
+    timing?: StageTimer;
   },
 ) {
-  const { response, credential } = await codexFetch(
+  const { response, credential, upstreamPayload } = await codexFetch(
     upstreamPath,
     payload,
     input,
   );
-  const text = await response.text();
+  const text =
+    (await input.timing?.timeAsync(
+      "read_upstream_body",
+      "读取上游响应 Body",
+      () => response.text(),
+    )) ?? (await response.text());
   return {
     response,
     credential,
+    upstreamPayload,
     text,
     json: parseMaybeJson<unknown>(text),
   };
@@ -735,20 +782,37 @@ export function sanitizeToolCallArguments(
   try {
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      if (
-        !Object.hasOwn(parsed, "session_id") ||
-        parsed.session_id === "" ||
-        (typeof parsed.session_id === "string" &&
-          parsed.session_id.trim() === "")
-      ) {
+      if (shouldNormalizeEmptySessionId(parsed.session_id)) {
         parsed.session_id = null;
       }
       return JSON.stringify(parsed);
     }
   } catch {
-    return raw.replace(/"session_id"\s*:\s*"\s*"/g, '"session_id":null');
+    return raw.replace(
+      /"session_id"\s*:\s*"\s*(?:\/?null|\/?undefined|none)?\s*"/gi,
+      '"session_id":null',
+    );
   }
   return raw;
+}
+
+function shouldNormalizeEmptySessionId(value: unknown) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized === "" ||
+    normalized === "null" ||
+    normalized === "/null" ||
+    normalized === "undefined" ||
+    normalized === "/undefined" ||
+    normalized === "none" ||
+    normalized === "/none"
+  );
 }
 
 export function isSpawnAgentTool(toolName: string) {

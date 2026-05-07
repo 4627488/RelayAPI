@@ -10,18 +10,31 @@ import {
 } from "@/src/server/codex/client";
 import type { UsageSnapshot } from "@/src/shared/types/entities";
 
+type ByteStreamController = ReadableStreamDefaultController<Uint8Array>;
+
+interface ToolCallStreamState {
+  key: string;
+  index: number;
+  id: string;
+  name: string;
+  rawArguments: string;
+  announced: boolean;
+  argumentDeltasStreamed: boolean;
+  argumentsFlushed: boolean;
+  bufferArguments: boolean;
+}
+
 interface ChatStreamState {
   id: string;
   created: number;
   model: string;
   toolNameMaps: ToolNameMaps | null;
-  functionCallIndex: number;
-  currentToolName: string;
-  currentToolArguments: string;
-  currentToolArgumentsFlushed: boolean;
-  shouldBufferToolArguments: boolean;
-  hasReceivedArgumentsDelta: boolean;
-  hasToolCallAnnounced: boolean;
+  nextToolCallIndex: number;
+  toolCallsByKey: Map<string, ToolCallStreamState>;
+  toolCallsByOutputIndex: Map<number, ToolCallStreamState>;
+  lastToolCall: ToolCallStreamState | null;
+  hasEmittedToolCall: boolean;
+  upstreamCompleted: boolean;
   done: boolean;
   usage: UsageSnapshot;
 }
@@ -32,81 +45,152 @@ export function createOpenAIChatSseStream(
     fallbackModel: string;
     toolNameMaps: ToolNameMaps | null;
     onCompleted?: (usage: UsageSnapshot) => void;
+    onError?: (error: unknown, usage: UsageSnapshot) => void;
   },
 ) {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   const state: ChatStreamState = {
-    id: "",
-    created: 0,
+    id: `chatcmpl-${cryptoRandomId()}`,
+    created: Math.floor(Date.now() / 1000),
     model: input.fallbackModel || serverConfig.codexDefaultModel,
     toolNameMaps: input.toolNameMaps,
-    functionCallIndex: -1,
-    currentToolName: "",
-    currentToolArguments: "",
-    currentToolArgumentsFlushed: false,
-    shouldBufferToolArguments: false,
-    hasReceivedArgumentsDelta: false,
-    hasToolCallAnnounced: false,
+    nextToolCallIndex: 0,
+    toolCallsByKey: new Map(),
+    toolCallsByOutputIndex: new Map(),
+    lastToolCall: null,
+    hasEmittedToolCall: false,
+    upstreamCompleted: false,
     done: false,
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   };
   let buffer = "";
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let canceled = false;
+  let completionReported = false;
 
-  return upstreamBody.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        buffer = processCodexSseForOpenAIChat(
-          buffer + decoder.decode(chunk, { stream: true }),
-          controller,
-          encoder,
-          state,
-        );
-      },
-      flush(controller) {
-        const tail = decoder.decode();
-        if (tail) {
-          buffer = processCodexSseForOpenAIChat(
-            buffer + tail,
-            controller,
-            encoder,
-            state,
-          );
+  function clearHeartbeat() {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+  }
+
+  function reportCompletedOnce() {
+    if (!completionReported) {
+      completionReported = true;
+      input.onCompleted?.(state.usage);
+    }
+  }
+
+  function reportErrorOnce(error: unknown) {
+    if (!completionReported) {
+      completionReported = true;
+      input.onError?.(error, state.usage);
+    }
+  }
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      reader = upstreamBody.getReader();
+      heartbeat = setInterval(() => {
+        safeEnqueue(controller, encoder.encode(": relayapi ping\n\n"));
+      }, 10_000);
+
+      void (async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader!.read();
+            if (done) {
+              break;
+            }
+            if (!value) {
+              continue;
+            }
+            buffer = processCodexSseForOpenAIChat(
+              buffer + decoder.decode(value, { stream: true }),
+              controller,
+              encoder,
+              state,
+            );
+          }
+
+          const tail = decoder.decode();
+          if (tail) {
+            buffer = processCodexSseForOpenAIChat(
+              buffer + tail,
+              controller,
+              encoder,
+              state,
+            );
+          }
+          if (buffer.trim()) {
+            buffer = processCodexSseForOpenAIChat(
+              `${buffer}\n\n`,
+              controller,
+              encoder,
+              state,
+            );
+          }
+          if (state.upstreamCompleted) {
+            if (!state.done) {
+              flushAllBufferedOpenAIChatToolArguments(
+                controller,
+                encoder,
+                state,
+              );
+              writeOpenAIChatDone(
+                controller,
+                encoder,
+                state,
+                state.hasEmittedToolCall ? "tool_calls" : "stop",
+              );
+            }
+            reportCompletedOnce();
+          } else {
+            const error = new Error(
+              "Upstream stream ended before response.completed; refusing to synthesize a truncated Chat Completions response",
+            );
+            reportErrorOnce(error);
+            writeOpenAIChatStreamError(controller, encoder, error);
+          }
+        } catch (error) {
+          if (!canceled) {
+            reportErrorOnce(error);
+            writeOpenAIChatStreamError(controller, encoder, error);
+          }
+        } finally {
+          clearHeartbeat();
+          reader?.releaseLock();
+          safeClose(controller);
         }
-        if (buffer.trim()) {
-          processCodexSseForOpenAIChat(
-            `${buffer}\n`,
-            controller,
-            encoder,
-            state,
-          );
-        }
-        if (!state.done) {
-          flushBufferedOpenAIChatToolArguments(controller, encoder, state);
-          const finishReason =
-            state.functionCallIndex !== -1 ? "tool_calls" : "stop";
-          writeOpenAIChatDone(controller, encoder, state, finishReason);
-        }
-        input.onCompleted?.(state.usage);
-      },
-    }),
-  );
+      })();
+    },
+    cancel() {
+      canceled = true;
+      clearHeartbeat();
+      void reader?.cancel().catch(() => undefined);
+    },
+  });
 }
 
 function processCodexSseForOpenAIChat(
   text: string,
-  controller: TransformStreamDefaultController<Uint8Array>,
+  controller: ByteStreamController,
   encoder: TextEncoder,
   state: ChatStreamState,
 ) {
-  const lines = text.split(/\r?\n/);
-  const rest = lines.pop() || "";
-  for (const line of lines) {
-    if (!line.startsWith("data:")) {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const blocks = normalized.split("\n\n");
+  const rest = blocks.pop() || "";
+
+  for (const block of blocks) {
+    const data = extractSseData(block);
+    if (!data) {
       continue;
     }
-    const data = line.slice(5).trim();
-    if (!data || data === "[DONE]") {
+    if (data === "[DONE]") {
       continue;
     }
     let event: Record<string, unknown>;
@@ -117,12 +201,43 @@ function processCodexSseForOpenAIChat(
     }
     handleCodexEventAsOpenAIChat(event, controller, encoder, state);
   }
+
   return rest;
+}
+
+function extractSseData(block: string) {
+  const dataLines: string[] = [];
+  const bareJsonLines: string[] = [];
+  for (const rawLine of block.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith(":")) {
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      let data = line.slice(5);
+      if (data.startsWith(" ")) {
+        data = data.slice(1);
+      }
+      dataLines.push(data);
+      continue;
+    }
+    if (
+      line.startsWith("event:") ||
+      line.startsWith("id:") ||
+      line.startsWith("retry:")
+    ) {
+      continue;
+    }
+    if (line.startsWith("{") || line.startsWith("[")) {
+      bareJsonLines.push(line);
+    }
+  }
+  return (dataLines.length > 0 ? dataLines : bareJsonLines).join("\n").trim();
 }
 
 function handleCodexEventAsOpenAIChat(
   event: Record<string, unknown>,
-  controller: TransformStreamDefaultController<Uint8Array>,
+  controller: ByteStreamController,
   encoder: TextEncoder,
   state: ChatStreamState,
 ) {
@@ -161,67 +276,64 @@ function handleCodexEventAsOpenAIChat(
       if (item.type !== "function_call") {
         return;
       }
-      state.functionCallIndex += 1;
-      state.currentToolName = restoreOriginalToolName(
-        stringValue(item.name),
-        state.toolNameMaps,
-      );
-      state.currentToolArguments = "";
-      state.currentToolArgumentsFlushed = false;
-      state.shouldBufferToolArguments = isSpawnAgentTool(state.currentToolName);
-      state.hasReceivedArgumentsDelta = false;
-      state.hasToolCallAnnounced = true;
-      writeOpenAIChatToolCall(controller, encoder, state, item, "");
+      const toolCall = upsertToolCallFromCodexEvent(state, event, item);
+      announceOpenAIChatToolCall(controller, encoder, state, toolCall);
+      flushPendingNormalArguments(controller, encoder, state, toolCall);
       return;
     }
     case "response.function_call_arguments.delta": {
-      state.hasReceivedArgumentsDelta = true;
       const deltaValue = stringValue(event.delta);
-      if (state.shouldBufferToolArguments) {
-        state.currentToolArguments += deltaValue;
-      } else {
-        writeOpenAIChatToolArguments(controller, encoder, state, deltaValue);
+      if (!deltaValue) {
+        return;
       }
+      const toolCall = getOrCreateToolCallForArgumentsEvent(state, event);
+      if (!toolCall.announced || toolCall.bufferArguments) {
+        toolCall.rawArguments += deltaValue;
+        return;
+      }
+      writeOpenAIChatToolArguments(
+        controller,
+        encoder,
+        state,
+        toolCall,
+        deltaValue,
+      );
+      toolCall.argumentDeltasStreamed = true;
       return;
     }
-    case "response.function_call_arguments.done":
-      if (!state.hasReceivedArgumentsDelta && event.arguments) {
-        state.currentToolArguments = stringValue(event.arguments);
+    case "response.function_call_arguments.done": {
+      const toolCall = getOrCreateToolCallForArgumentsEvent(state, event);
+      const fullArguments = stringValue(event.arguments);
+      if (fullArguments && !toolCall.argumentDeltasStreamed) {
+        toolCall.rawArguments = fullArguments;
       }
-      flushBufferedOpenAIChatToolArguments(controller, encoder, state);
+      flushCompletedToolArguments(controller, encoder, state, toolCall);
       return;
+    }
     case "response.output_item.done": {
       const item = objectValue(event.item) || {};
       if (item.type !== "function_call") {
         return;
       }
-      if (state.hasToolCallAnnounced) {
-        state.hasToolCallAnnounced = false;
-        return;
+      const toolCall = upsertToolCallFromCodexEvent(state, event, item);
+      announceOpenAIChatToolCall(controller, encoder, state, toolCall);
+      const fullArguments = stringValue(item.arguments);
+      if (fullArguments && !toolCall.argumentDeltasStreamed) {
+        toolCall.rawArguments = fullArguments;
       }
-      state.functionCallIndex += 1;
-      state.currentToolName = restoreOriginalToolName(
-        stringValue(item.name),
-        state.toolNameMaps,
-      );
-      state.currentToolArguments = stringValue(item.arguments);
-      state.currentToolArgumentsFlushed = false;
-      state.shouldBufferToolArguments = isSpawnAgentTool(state.currentToolName);
-      writeOpenAIChatToolCall(controller, encoder, state, item, "");
-      flushBufferedOpenAIChatToolArguments(controller, encoder, state);
+      flushCompletedToolArguments(controller, encoder, state, toolCall);
       return;
     }
     case "response.completed": {
+      state.upstreamCompleted = true;
       const response = objectValue(event.response) || {};
       state.usage = normalizeUsage(response.usage);
-      flushBufferedOpenAIChatToolArguments(controller, encoder, state);
-      const finishReason =
-        state.functionCallIndex !== -1 ? "tool_calls" : "stop";
+      flushAllBufferedOpenAIChatToolArguments(controller, encoder, state);
       writeOpenAIChatDone(
         controller,
         encoder,
         state,
-        finishReason,
+        state.hasEmittedToolCall ? "tool_calls" : "stop",
         state.usage,
       );
       return;
@@ -231,76 +343,249 @@ function handleCodexEventAsOpenAIChat(
   }
 }
 
-function writeOpenAIChatToolCall(
-  controller: TransformStreamDefaultController<Uint8Array>,
+function upsertToolCallFromCodexEvent(
+  state: ChatStreamState,
+  event: Record<string, unknown>,
+  item: Record<string, unknown>,
+) {
+  const key =
+    toolCallKeyFromCodexEvent(event, item) || `seq:${state.nextToolCallIndex}`;
+  let toolCall = state.toolCallsByKey.get(key);
+  const outputIndex = integerValue(event.output_index);
+  if (!toolCall && outputIndex !== null) {
+    toolCall = state.toolCallsByOutputIndex.get(outputIndex);
+  }
+  if (!toolCall) {
+    toolCall = {
+      key,
+      index: state.nextToolCallIndex,
+      id: "",
+      name: "",
+      rawArguments: "",
+      announced: false,
+      argumentDeltasStreamed: false,
+      argumentsFlushed: false,
+      bufferArguments: true,
+    };
+    state.nextToolCallIndex += 1;
+  }
+
+  const restoredName = restoreOriginalToolName(
+    stringValue(item.name) || toolCall.name,
+    state.toolNameMaps,
+  );
+  toolCall.key = key;
+  toolCall.id =
+    stringValue(item.call_id) ||
+    stringValue(item.id) ||
+    toolCall.id ||
+    `call_${cryptoRandomId()}`;
+  toolCall.name = restoredName || toolCall.name;
+  toolCall.bufferArguments = !toolCall.name || isSpawnAgentTool(toolCall.name);
+
+  state.toolCallsByKey.set(key, toolCall);
+  if (outputIndex !== null) {
+    state.toolCallsByOutputIndex.set(outputIndex, toolCall);
+  }
+  state.lastToolCall = toolCall;
+  return toolCall;
+}
+
+function getOrCreateToolCallForArgumentsEvent(
+  state: ChatStreamState,
+  event: Record<string, unknown>,
+) {
+  const key = toolCallKeyFromCodexEvent(event, null);
+  if (key) {
+    const existing = state.toolCallsByKey.get(key);
+    if (existing) {
+      state.lastToolCall = existing;
+      return existing;
+    }
+  }
+
+  const outputIndex = integerValue(event.output_index);
+  if (outputIndex !== null) {
+    const existing = state.toolCallsByOutputIndex.get(outputIndex);
+    if (existing) {
+      state.lastToolCall = existing;
+      return existing;
+    }
+  }
+
+  if (!key && outputIndex === null && state.lastToolCall) {
+    return state.lastToolCall;
+  }
+
+  const fallbackKey =
+    key ||
+    (outputIndex !== null
+      ? `idx:${outputIndex}`
+      : `seq:${state.nextToolCallIndex}`);
+  const toolCall: ToolCallStreamState = {
+    key: fallbackKey,
+    index: state.nextToolCallIndex,
+    id: `call_${cryptoRandomId()}`,
+    name: "",
+    rawArguments: "",
+    announced: false,
+    argumentDeltasStreamed: false,
+    argumentsFlushed: false,
+    bufferArguments: true,
+  };
+  state.nextToolCallIndex += 1;
+  state.toolCallsByKey.set(fallbackKey, toolCall);
+  if (outputIndex !== null) {
+    state.toolCallsByOutputIndex.set(outputIndex, toolCall);
+  }
+  state.lastToolCall = toolCall;
+  return toolCall;
+}
+
+function toolCallKeyFromCodexEvent(
+  event: Record<string, unknown>,
+  item: Record<string, unknown> | null,
+) {
+  const itemId = stringValue(event.item_id) || stringValue(item?.id);
+  if (itemId) {
+    return `item:${itemId}`;
+  }
+  const callId = stringValue(event.call_id) || stringValue(item?.call_id);
+  if (callId) {
+    return `call:${callId}`;
+  }
+  const outputIndex = integerValue(event.output_index);
+  if (outputIndex !== null) {
+    return `idx:${outputIndex}`;
+  }
+  return "";
+}
+
+function announceOpenAIChatToolCall(
+  controller: ByteStreamController,
   encoder: TextEncoder,
   state: ChatStreamState,
-  item: Record<string, unknown>,
-  argumentsText: string,
+  toolCall: ToolCallStreamState,
 ) {
+  if (toolCall.announced || !toolCall.name) {
+    return;
+  }
   writeOpenAIChatChunk(controller, encoder, state, {
     role: "assistant",
     tool_calls: [
       {
-        index: state.functionCallIndex,
-        id: stringValue(item.call_id),
+        index: toolCall.index,
+        id: toolCall.id,
         type: "function",
         function: {
-          name:
-            state.currentToolName ||
-            restoreOriginalToolName(stringValue(item.name), state.toolNameMaps),
-          arguments: argumentsText,
+          name: toolCall.name,
+          arguments: "",
         },
       },
     ],
   });
+  toolCall.announced = true;
+  state.hasEmittedToolCall = true;
+}
+
+function flushPendingNormalArguments(
+  controller: ByteStreamController,
+  encoder: TextEncoder,
+  state: ChatStreamState,
+  toolCall: ToolCallStreamState,
+) {
+  if (
+    !toolCall.announced ||
+    toolCall.bufferArguments ||
+    toolCall.argumentDeltasStreamed ||
+    !toolCall.rawArguments
+  ) {
+    return;
+  }
+  writeOpenAIChatToolArguments(
+    controller,
+    encoder,
+    state,
+    toolCall,
+    toolCall.rawArguments,
+  );
+  toolCall.argumentDeltasStreamed = true;
+  toolCall.rawArguments = "";
+}
+
+function flushCompletedToolArguments(
+  controller: ByteStreamController,
+  encoder: TextEncoder,
+  state: ChatStreamState,
+  toolCall: ToolCallStreamState,
+) {
+  if (toolCall.argumentsFlushed || !toolCall.announced) {
+    return;
+  }
+
+  if (toolCall.bufferArguments) {
+    const argumentsText = sanitizeToolCallArguments(
+      toolCall.name,
+      toolCall.rawArguments || "{}",
+    );
+    writeOpenAIChatToolArguments(
+      controller,
+      encoder,
+      state,
+      toolCall,
+      argumentsText,
+    );
+    toolCall.rawArguments = "";
+    toolCall.argumentsFlushed = true;
+    return;
+  }
+
+  if (!toolCall.argumentDeltasStreamed && toolCall.rawArguments) {
+    writeOpenAIChatToolArguments(
+      controller,
+      encoder,
+      state,
+      toolCall,
+      toolCall.rawArguments,
+    );
+    toolCall.argumentDeltasStreamed = true;
+    toolCall.rawArguments = "";
+  }
+  toolCall.argumentsFlushed = true;
+}
+
+function flushAllBufferedOpenAIChatToolArguments(
+  controller: ByteStreamController,
+  encoder: TextEncoder,
+  state: ChatStreamState,
+) {
+  for (const toolCall of state.toolCallsByKey.values()) {
+    flushCompletedToolArguments(controller, encoder, state, toolCall);
+  }
 }
 
 function writeOpenAIChatToolArguments(
-  controller: TransformStreamDefaultController<Uint8Array>,
+  controller: ByteStreamController,
   encoder: TextEncoder,
   state: ChatStreamState,
+  toolCall: ToolCallStreamState,
   argumentsText: string,
 ) {
-  if (state.functionCallIndex < 0 || !argumentsText) {
+  if (!toolCall.announced || !argumentsText) {
     return;
   }
   writeOpenAIChatChunk(controller, encoder, state, {
     tool_calls: [
       {
-        index: state.functionCallIndex,
+        index: toolCall.index,
         function: { arguments: argumentsText },
       },
     ],
   });
 }
 
-function flushBufferedOpenAIChatToolArguments(
-  controller: TransformStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder,
-  state: ChatStreamState,
-) {
-  if (
-    state.functionCallIndex < 0 ||
-    state.currentToolArgumentsFlushed ||
-    (!state.currentToolArguments && !state.shouldBufferToolArguments)
-  ) {
-    return;
-  }
-  const rawArguments =
-    state.currentToolArguments || (state.shouldBufferToolArguments ? "{}" : "");
-  const argumentsText = sanitizeToolCallArguments(
-    state.currentToolName,
-    rawArguments,
-  );
-  writeOpenAIChatToolArguments(controller, encoder, state, argumentsText);
-  state.currentToolArguments = "";
-  state.currentToolArgumentsFlushed = true;
-  state.shouldBufferToolArguments = false;
-}
-
 function writeOpenAIChatChunk(
-  controller: TransformStreamDefaultController<Uint8Array>,
+  controller: ByteStreamController,
   encoder: TextEncoder,
   state: ChatStreamState,
   delta: Record<string, unknown>,
@@ -308,9 +593,9 @@ function writeOpenAIChatChunk(
   usage: UsageSnapshot | null = null,
 ) {
   const chunk = {
-    id: state.id || `chatcmpl-${cryptoRandomId()}`,
+    id: state.id,
     object: "chat.completion.chunk",
-    created: state.created || Math.floor(Date.now() / 1000),
+    created: state.created,
     model: state.model || serverConfig.codexDefaultModel,
     choices: [
       {
@@ -329,11 +614,31 @@ function writeOpenAIChatChunk(
         }
       : {}),
   };
-  controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+  safeEnqueue(controller, encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+}
+
+function writeOpenAIChatStreamError(
+  controller: ByteStreamController,
+  encoder: TextEncoder,
+  error: unknown,
+) {
+  const message = error instanceof Error ? error.message : String(error);
+  const payload = {
+    error: {
+      message,
+      type: "stream_error",
+      code: "upstream_stream_incomplete",
+    },
+  };
+  safeEnqueue(
+    controller,
+    encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
+  );
+  safeEnqueue(controller, encoder.encode("data: [DONE]\n\n"));
 }
 
 function writeOpenAIChatDone(
-  controller: TransformStreamDefaultController<Uint8Array>,
+  controller: ByteStreamController,
   encoder: TextEncoder,
   state: ChatStreamState,
   finishReason: string,
@@ -343,8 +648,25 @@ function writeOpenAIChatDone(
     return;
   }
   writeOpenAIChatChunk(controller, encoder, state, {}, finishReason, usage);
-  controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+  safeEnqueue(controller, encoder.encode("data: [DONE]\n\n"));
   state.done = true;
+}
+
+function safeEnqueue(controller: ByteStreamController, chunk: Uint8Array) {
+  try {
+    controller.enqueue(chunk);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function safeClose(controller: ByteStreamController) {
+  try {
+    controller.close();
+  } catch {
+    // Stream was already closed or canceled by the client.
+  }
 }
 
 function cryptoRandomId() {
@@ -374,4 +696,15 @@ function numberValue(value: unknown) {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function integerValue(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value >= 0 ? value : null;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+  return null;
 }
