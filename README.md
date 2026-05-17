@@ -1,185 +1,86 @@
 # RelayAPI
 
-## Web 访问密钥
+RelayAPI - 一站式管理你的 Codex OAuth
 
-首次启动服务时，RelayAPI 会自动生成一个 `relay_web_...` Web 访问密钥并输出到控制台。访问 Web 管理页面时必须输入这个密钥；验证成功后会写入一个 HTTP-only 会话 Cookie。
+[快速开始](#快速开始) | [Web 访问密钥](#web-访问密钥) | [管理后台](#web-管理后台)
 
-密钥明文只在首次生成时显示一次，哈希会保存到 `data/.relay-web-access-key`。如果丢失密钥，可以停止服务、删除该文件后重新启动，系统会生成新的 Web 访问密钥。
+---
 
-也可以通过环境变量 `RELAY_WEB_ACCESS_KEY`（或 `WEB_ACCESS_KEY`）指定固定 Web 访问密钥；设置后不会自动生成密钥文件。
+![Dashboard](img/dashboard.png)
+![Channels](img/channel.png)
+![OAuth](img/oauth.png)
 
-Layered Next.js relay for Codex/OpenAI-compatible traffic.
+---
 
-This implementation uses:
+## 项目简介
 
-- Next.js App Router route handlers.
-- Node 24 built-in `node:sqlite` for SQLite access.
-- Two SQLite databases:
-  - `data/relay-main.sqlite` for configuration and current operational state.
-  - `data/relay-log.sqlite` for request history, usage, health, and audit data.
-- Automatic channel routing. There is no frontend-selected “active credential”.
+RelayAPI 是一个基于 Next.js App Router 的分层中继服务，用于管理 Codex / OpenAI-compatible 请求流量、API Key、Codex 凭据、渠道路由、请求日志与用量状态。
 
-## Requirements
+项目特性：
+
+- 支持 OpenAI-compatible Relay 接口。
+- 支持 Codex OAuth 凭据接入与配额刷新。
+- 支持 API Key 管理与 Web 管理后台。
+- 支持自动渠道路由，无需前端选择“当前凭据”。
+- 使用双 SQLite 数据库存储配置、运行状态、日志、审计与用量数据。
+- 使用 Node.js 24 内置 `node:sqlite`，避免额外 native SQLite 依赖。
+- 暂不支持 imge
+
+## 环境要求
 
 - Node.js `>=24.0.0`
 - pnpm
 
-`node:sqlite` is still marked experimental by Node, so build/start output may include Node's experimental warning. The project intentionally uses it to avoid adding native SQLite dependencies.
+> `node:sqlite` 在 Node.js 中仍标记为 experimental，因此构建或启动时可能会看到实验性功能提示，这是预期行为。
 
-## Development
+## 快速开始
 
-```/dev/null/commands.sh#L1-3
-pnpm install
-pnpm dev
+```yaml
+services:
+  relay-api:
+    image: sipcink/relay-api:latest
+    container_name: relay-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      DATA_DIR: /app/data
+    volumes:
+      - relay-api-data:/app/data
+
+volumes:
+  relay-api-data:
+    name: relay-api-data
 ```
 
-Open `http://localhost:3000` for the server-rendered dashboard.
+## Web 访问密钥
 
-## Storage and secrets
+首次启动服务时，RelayAPI 会自动生成一个 `relay_web_...` Web 访问密钥，并在首次启动日志中输出。使用 Docker Compose 部署时，可以通过以下命令查看：
 
-Runtime data is ignored by git:
-
-```/dev/null/tree.txt#L1-4
-data/
-  relay-main.sqlite
-  relay-log.sqlite
-  .relay-encryption-key
-  .relay-web-access-key
+```bash
+docker logs relay-api
 ```
 
-Set `RELAY_ENCRYPTION_KEY` or `RELAY_SECRET` in production. If neither is provided, a local `data/.relay-encryption-key` is generated lazily when encrypted Codex tokens are first stored or read.
+访问 Web 管理页面时必须输入该密钥；验证成功后，系统会写入 HTTP-only 会话 Cookie。
 
-Useful environment variables:
+密钥明文只会在首次生成时显示一次，哈希会保存到：
 
-- `DATA_DIR`
-- `RELAY_MAIN_DB_PATH`
-- `RELAY_LOG_DB_PATH`
-- `CODEX_REDIRECT_URI`
-- `CODEX_BASE_URL`
-- `CODEX_DEFAULT_MODEL`
-- `REQUEST_TIMEOUT_MS`
-- `RELAY_GLOBAL_SOCKS_PROXY` / `RELAY_GLOBAL_PROXY` / `CODEX_PROXY` using `socks5://...` or `socks5h://...` as an environment fallback for OAuth callback token exchange only; refresh_token and quota refreshes use only credential-specific proxies, or direct connection when unset
-- `RELAY_ENCRYPTION_KEY`
-- `RELAY_WEB_ACCESS_KEY`
-- `WEB_ACCESS_KEY`
-- `RELAY_IMPORT_LEGACY_CREDENTIALS=1`
-- `RELAY_LEGACY_CREDENTIAL_DIRS` using the OS path delimiter
-
-Legacy credential import is opt-in. Put JSON credential files under `data/auths` or configure `RELAY_LEGACY_CREDENTIAL_DIRS`, then set `RELAY_IMPORT_LEGACY_CREDENTIALS=1`.
-
-## Web admin and Admin API quick start
-
-Open `http://localhost:3000` and enter the Web access key. The Web UI stores an HTTP-only `relay_web_session` cookie that protects `/api/admin/*` routes.
-
-To call Admin API routes with curl, first log in and save the Web session cookie:
-
-```/dev/null/commands.sh#L1-5
-curl -c relay-web-cookie.txt -X POST http://localhost:3000/api/auth/web-login \
-  -H "Content-Type: application/json" \
-  -d '{"accessKey":"relay_web_..."}'
+```text
+data/.relay-web-access-key
 ```
 
-Create an API key:
+如果密钥丢失，可以停止服务，删除该文件后重新启动，系统会生成新的 Web 访问密钥。
 
-```/dev/null/commands.sh#L1-7
-curl -b relay-web-cookie.txt -X POST http://localhost:3000/api/admin/api-keys \
-  -H "Content-Type: application/json" \
-  -d '{"name":"local key"}'
+也可以通过环境变量指定固定 Web 访问密钥：
+
+```env
+RELAY_WEB_ACCESS_KEY=relay_web_...
+# 或
+WEB_ACCESS_KEY=relay_web_...
 ```
 
-The plaintext key is returned only once. Store it securely. To end the Web session, use the UI logout button or call `POST /api/auth/web-logout`.
+设置后不会自动生成密钥文件。
 
-Start Codex OAuth in the browser using the demo-compatible HTML flow:
-
-```/dev/null/commands.sh#L1-2
-open http://localhost:3000/auth/login
-```
-
-The default `CODEX_REDIRECT_URI` is intentionally aligned with `CLIProxyAPI`'s Codex OAuth flow:
-
-```/dev/null/env.txt#L1-1
-http://localhost:1455/auth/callback
-```
-
-RelayAPI does not need to own port `1455`; copy the final browser callback URL and paste it back into RelayAPI.
-
-You can also start OAuth through JSON:
-
-```/dev/null/commands.sh#L1-2
-curl -b relay-web-cookie.txt -X POST http://localhost:3000/api/admin/codex/credentials/oauth/start
-```
-
-Open the returned `authUrl`. If your OAuth flow redirects to a local URL that cannot be reached by the server, paste the callback URL back:
-
-```/dev/null/commands.sh#L1-4
-curl -b relay-web-cookie.txt -X POST http://localhost:3000/api/admin/codex/credentials/oauth/callback \
-  -H "Content-Type: application/json" \
-  -d '{"callbackUrl":"http://localhost:1455/auth/callback?code=...&state=..."}'
-```
-
-List resources:
-
-```/dev/null/commands.sh#L1-4
-curl -b relay-web-cookie.txt http://localhost:3000/api/admin/api-keys
-curl -b relay-web-cookie.txt http://localhost:3000/api/admin/codex/credentials
-curl -b relay-web-cookie.txt http://localhost:3000/api/admin/channels
-```
-
-After saving a Codex credential, create or update a channel and bind the credential to it. Channels are the routing unit; credentials are resources bound to channels.
-
-Refresh quota for a credential:
-
-```/dev/null/commands.sh#L1-2
-curl -b relay-web-cookie.txt "http://localhost:3000/api/admin/codex/credentials/<credential-id>/quota?refresh=1"
-```
-
-## Relay endpoints
-
-External relay endpoints require a bearer API key created through the admin API.
-
-```/dev/null/commands.sh#L1-11
-curl http://localhost:3000/v1/models \
-  -H "Authorization: Bearer relay_sk_..."
-
-curl -X POST http://localhost:3000/v1/responses \
-  -H "Authorization: Bearer relay_sk_..." \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-5.3-codex","input":"hello"}'
-
-curl -X POST http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer relay_sk_..." \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-5.5(xhigh)","messages":[{"role":"user","content":"hello"}]}'
-```
-
-For Codex text models, append `(high)` or `(xhigh)` to the model name to control reasoning effort. The relay strips the suffix before calling upstream and sends `reasoning.effort` accordingly, so `gpt-5.5(xhigh)` is routed as `gpt-5.5` with xhigh thinking. `/v1/models` also exposes these suffixed aliases.
-
-Implemented relay routes:
-
-- `GET /v1/models`
-- `POST /v1/responses`
-- `POST /v1/responses/compact`
-- `POST /v1/chat/completions`
-- `POST /api/codex/responses`
-- `POST /api/codex/responses/compact`
-- `POST /backend-api/codex/responses`
-- `POST /backend-api/codex/responses/compact`
-
-## Production checklist
-
-- Run as a single persistent Node.js instance, or ensure only one writer uses the SQLite files.
-- Mount a persistent volume for `DATA_DIR` or explicit DB paths.
-- Set `RELAY_WEB_ACCESS_KEY` to a strong secret instead of relying on a generated local file.
-- Set `RELAY_ENCRYPTION_KEY` or `RELAY_SECRET` before storing Codex credentials.
-- Set `CODEX_REDIRECT_URI` to the callback URI used by your OAuth flow.
-- Keep the Web admin behind HTTPS so the HTTP-only session cookie is marked secure.
-- Do not expose `data/` or environment variables through static hosting or logs.
-- Run `pnpm build` before deployment and smoke test login, OAuth, API key creation, channel routing, and logs.
-
-## Checks
-
-```/dev/null/commands.sh#L1-3
-pnpm lint
-pnpm exec tsc --noEmit --pretty false
-pnpm build
-```
