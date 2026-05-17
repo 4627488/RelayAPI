@@ -2,7 +2,7 @@
 
 RelayAPI - 一站式管理你的 Codex OAuth
 
-[快速开始](#快速开始) | [Web 访问密钥](#web-访问密钥) | [管理后台](#web-管理后台)
+[快速开始](#快速开始) | [Web 访问密钥](#web-访问密钥) | [管理后台](#web-管理后台) | [LinuxDO](https://linux.do/)
 
 ---
 
