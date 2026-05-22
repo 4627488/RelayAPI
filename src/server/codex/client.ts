@@ -3,6 +3,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { serverConfig } from "@/src/server/config/env";
 import { parseCodexSseFrames } from "@/src/server/codex/sse";
+import { codexWebSocketResponse } from "@/src/server/codex/websocket";
 import { proxiedFetch } from "@/src/server/net/proxy";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
 import { getGlobalProxySetting } from "@/src/server/services/settings";
@@ -46,6 +47,12 @@ const THINKING_SUFFIX_LEVELS = new Set([
   "xhigh",
 ]);
 
+const CODEX_REASONING_INCLUDE = ["reasoning.encrypted_content"];
+const CODEX_IMAGE_GENERATION_TOOL = {
+  type: "image_generation",
+  output_format: "png",
+};
+
 export interface ToolNameMaps {
   originalToShort: Map<string, string>;
   shortToOriginal: Map<string, string>;
@@ -79,6 +86,7 @@ export async function codexFetch(
     sourceHeaders: Headers;
     channel: ChannelRecord;
     promptCacheKey?: string | null;
+    transport?: "http" | "websocket";
     timing?: StageTimer;
   },
 ) {
@@ -95,28 +103,87 @@ export async function codexFetch(
     payload,
     input.promptCacheKey,
   );
+  const useWebSocket =
+    input.transport === "websocket" &&
+    credential.upstreamTransport === "websocket" &&
+    upstreamPath === "/responses";
   const upstreamPayload =
     input.timing?.time("prepare_upstream_payload", "构造上游 Payload", () =>
       prepareCodexPayloadForUpstream(payload, {
         fastServiceTier: shouldUsePriorityServiceTier(credential),
         promptCacheKey,
+        planType: credential.planType,
+        transport: useWebSocket ? "websocket" : "http",
       }),
     ) ??
     prepareCodexPayloadForUpstream(payload, {
       fastServiceTier: shouldUsePriorityServiceTier(credential),
       promptCacheKey,
+      planType: credential.planType,
+      transport: useWebSocket ? "websocket" : "http",
     });
+  const proxy = credential.proxy?.enabled
+    ? credential.proxy
+    : credential.useGlobalProxy
+      ? getGlobalProxySetting()
+      : null;
+  const url = toCodexUrl(input.channel.baseUrl, upstreamPath);
+  const headers = buildCodexHeaders(credential, {
+    stream: input.stream,
+    sourceHeaders: input.sourceHeaders,
+    promptCacheKey,
+  });
+  if (useWebSocket) {
+    const response = await codexWebSocketResponse({
+      httpUrl: url,
+      headers,
+      payload: upstreamPayload,
+      proxy,
+      timeoutMs: serverConfig.requestTimeoutMs,
+    });
+    if (response.status === 426) {
+      const fallbackResponse =
+        (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
+          proxiedFetch(
+            url,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify(upstreamPayload),
+              signal: AbortSignal.timeout(
+                input.stream
+                  ? serverConfig.streamRequestTimeoutMs
+                  : serverConfig.requestTimeoutMs,
+              ),
+            },
+            proxy,
+          ),
+        )) ??
+        (await proxiedFetch(
+          url,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify(upstreamPayload),
+            signal: AbortSignal.timeout(
+              input.stream
+                ? serverConfig.streamRequestTimeoutMs
+                : serverConfig.requestTimeoutMs,
+            ),
+          },
+          proxy,
+        ));
+      return { response: fallbackResponse, credential, upstreamPayload };
+    }
+    return { response, credential, upstreamPayload };
+  }
   const response =
     (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
       proxiedFetch(
-        toCodexUrl(input.channel.baseUrl, upstreamPath),
+        url,
         {
           method: "POST",
-          headers: buildCodexHeaders(credential, {
-            stream: input.stream,
-            sourceHeaders: input.sourceHeaders,
-            promptCacheKey,
-          }),
+          headers,
           body: JSON.stringify(upstreamPayload),
           signal: AbortSignal.timeout(
             input.stream
@@ -124,22 +191,14 @@ export async function codexFetch(
               : serverConfig.requestTimeoutMs,
           ),
         },
-        credential.proxy?.enabled
-          ? credential.proxy
-          : credential.useGlobalProxy
-            ? getGlobalProxySetting()
-            : null,
+        proxy,
       ),
     )) ??
     (await proxiedFetch(
-      toCodexUrl(input.channel.baseUrl, upstreamPath),
+      url,
       {
         method: "POST",
-        headers: buildCodexHeaders(credential, {
-          stream: input.stream,
-          sourceHeaders: input.sourceHeaders,
-          promptCacheKey,
-        }),
+        headers,
         body: JSON.stringify(upstreamPayload),
         signal: AbortSignal.timeout(
           input.stream
@@ -147,11 +206,7 @@ export async function codexFetch(
             : serverConfig.requestTimeoutMs,
         ),
       },
-      credential.proxy?.enabled
-        ? credential.proxy
-        : credential.useGlobalProxy
-          ? getGlobalProxySetting()
-          : null,
+      proxy,
     ));
   return { response, credential, upstreamPayload };
 }
@@ -164,6 +219,7 @@ export async function codexJson(
     sourceHeaders: Headers;
     channel: ChannelRecord;
     promptCacheKey?: string | null;
+    transport?: "http" | "websocket";
     timing?: StageTimer;
   },
 ) {
@@ -212,8 +268,10 @@ function buildCodexHeaders(
   for (const name of [
     "version",
     "x-codex-turn-metadata",
+    "x-codex-turn-state",
     "x-client-request-id",
     "x-codex-beta-features",
+    "x-responsesapi-include-timing-metrics",
   ]) {
     const value = input.sourceHeaders.get(name);
     if (value) {
@@ -251,10 +309,15 @@ function canonicalHeaderName(name: string) {
 
 export function prepareCodexPayloadForUpstream(
   payload: unknown,
-  options: { fastServiceTier?: boolean; promptCacheKey?: string | null } = {},
-) {
+  options: {
+    fastServiceTier?: boolean;
+    promptCacheKey?: string | null;
+    planType?: string | null;
+    transport?: "http" | "websocket";
+  } = {},
+): Record<string, unknown> {
   if (!isRecord(payload)) {
-    return payload;
+    return {};
   }
   const upstreamPayload = cloneJsonObject(payload);
   const promptCacheKey = resolveCodexPromptCacheKey(
@@ -264,14 +327,23 @@ export function prepareCodexPayloadForUpstream(
   if (promptCacheKey) {
     upstreamPayload.prompt_cache_key = promptCacheKey;
   }
-  // Service tier is server-controlled. Do not let clients opt into priority
-  // by sending service_tier in the request body.
-  delete upstreamPayload.service_tier;
+  if (
+    upstreamPayload.service_tier &&
+    upstreamPayload.service_tier !== "priority"
+  ) {
+    delete upstreamPayload.service_tier;
+  }
   if (options.fastServiceTier) {
     upstreamPayload.service_tier = "priority";
   }
   applyModelThinkingSuffix(upstreamPayload);
-  normalizeRawCodexPayloadForUpstream(upstreamPayload);
+  normalizeRawCodexPayloadForUpstream(upstreamPayload, {
+    preservePreviousResponseId: options.transport === "websocket",
+  });
+  normalizeCodexBuiltinTools(upstreamPayload);
+  ensureImageGenerationTool(upstreamPayload, {
+    planType: options.planType,
+  });
   return upstreamPayload;
 }
 
@@ -384,6 +456,8 @@ export function normalizeResponsesPayload(
   payload.instructions = payload.instructions ?? "";
   payload.stream = Boolean(input.stream);
   payload.store = false;
+  payload.parallel_tool_calls = true;
+  payload.include = [...CODEX_REASONING_INCLUDE];
 
   if (typeof payload.input === "string") {
     payload.input = [textMessage("user", payload.input, false)];
@@ -406,6 +480,8 @@ export function normalizeCompactPayload(inputPayload: unknown) {
   const payload = normalizeResponsesPayload(inputPayload, { stream: false });
   delete payload.stream;
   delete payload.store;
+  delete payload.include;
+  delete payload.parallel_tool_calls;
   return payload;
 }
 
@@ -413,7 +489,7 @@ export function normalizeRawCodexResponsesPayload(inputPayload: unknown) {
   const payload = cloneJsonObject(inputPayload);
   payload.store = false;
   payload.parallel_tool_calls = true;
-  payload.include = ["reasoning.encrypted_content"];
+  payload.include = [...CODEX_REASONING_INCLUDE];
   normalizeRawCodexPayloadForUpstream(payload);
   return payload;
 }
@@ -452,7 +528,7 @@ export function chatCompletionsToCodex(
       outInput.push({
         type: "function_call_output",
         call_id: stringValue(message.tool_call_id),
-        output: stringifyToolOutput(message.content),
+        output: toolOutputToCodex(message.content),
       });
       continue;
     }
@@ -481,10 +557,18 @@ export function chatCompletionsToCodex(
   }
 
   if (payload.reasoning_effort) {
-    out.reasoning = { effort: payload.reasoning_effort };
+    out.reasoning = { effort: payload.reasoning_effort, summary: "auto" };
   } else if (isRecord(payload.reasoning)) {
-    out.reasoning = cloneJsonObject(payload.reasoning);
+    out.reasoning = {
+      ...cloneJsonObject(payload.reasoning),
+      effort: payload.reasoning.effort ?? "medium",
+      summary: payload.reasoning.summary ?? "auto",
+    };
+  } else {
+    out.reasoning = { effort: "medium", summary: "auto" };
   }
+  out.parallel_tool_calls = true;
+  out.include = [...CODEX_REASONING_INCLUDE];
 
   if (Array.isArray(payload.tools) && payload.tools.length > 0) {
     out.tools = payload.tools.map((rawTool) => {
@@ -565,8 +649,79 @@ function textMessage(role: string, text: unknown, assistant: boolean) {
   };
 }
 
-function stringifyToolOutput(content: unknown) {
-  return typeof content === "string" ? content : JSON.stringify(content ?? "");
+function toolOutputToCodex(content: unknown) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content.map((item) => toolOutputPartToCodex(item));
+  }
+  return JSON.stringify(content ?? "");
+}
+
+function toolOutputPartToCodex(rawItem: unknown) {
+  const item = isRecord(rawItem) ? rawItem : {};
+  switch (item.type) {
+    case "text":
+      return { type: "input_text", text: stringValue(item.text) };
+    case "image_url": {
+      const imageUrl = isRecord(item.image_url)
+        ? stringValue(item.image_url.url)
+        : stringValue(item.image_url);
+      const fileId = isRecord(item.image_url)
+        ? stringValue(item.image_url.file_id)
+        : "";
+      if (!imageUrl && !fileId) {
+        return toolOutputFallbackPart(item);
+      }
+      const part: Record<string, unknown> = { type: "input_image" };
+      if (imageUrl) {
+        part.image_url = imageUrl;
+      }
+      if (fileId) {
+        part.file_id = fileId;
+      }
+      if (isRecord(item.image_url) && item.image_url.detail) {
+        part.detail = item.image_url.detail;
+      }
+      return part;
+    }
+    case "file": {
+      const file = isRecord(item.file) ? item.file : {};
+      const fileId = stringValue(file.file_id);
+      const fileData = stringValue(file.file_data);
+      const fileUrl = stringValue(file.file_url);
+      if (!fileId && !fileData && !fileUrl) {
+        return toolOutputFallbackPart(item);
+      }
+      const part: Record<string, unknown> = { type: "input_file" };
+      if (fileId) {
+        part.file_id = fileId;
+      }
+      if (fileData) {
+        part.file_data = fileData;
+      }
+      if (fileUrl) {
+        part.file_url = fileUrl;
+      }
+      if (file.filename) {
+        part.filename = file.filename;
+      }
+      return part;
+    }
+    default:
+      return toolOutputFallbackPart(rawItem);
+  }
+}
+
+function toolOutputFallbackPart(item: unknown) {
+  return {
+    type: "input_text",
+    text:
+      isRecord(item) || Array.isArray(item)
+        ? JSON.stringify(item)
+        : String(item ?? ""),
+  };
 }
 
 function normalizeToolChoice(toolChoice: unknown, toolNameMaps: ToolNameMaps) {
@@ -965,19 +1120,21 @@ function isFastServiceTierPlan(planType: string) {
   );
 }
 
-function normalizeRawCodexPayloadForUpstream(payload: Record<string, unknown>) {
+function normalizeRawCodexPayloadForUpstream(
+  payload: Record<string, unknown>,
+  options: { preservePreviousResponseId?: boolean } = {},
+) {
   if (payload.instructions === undefined || payload.instructions === null) {
     payload.instructions = "";
   }
 
-  // These fields are either rejected by Codex upstream or should be controlled
-  // by Relay instead of client payloads when shared OAuth credentials are used.
-  delete payload.previous_response_id;
+  // Match CLIProxyAPI's Codex upstream compatibility cleanup.
+  if (!options.preservePreviousResponseId) {
+    delete payload.previous_response_id;
+  }
   delete payload.user;
   delete payload.temperature;
   delete payload.top_p;
-  delete payload.top_k;
-  delete payload.max_tokens;
   delete payload.max_output_tokens;
   delete payload.max_completion_tokens;
   delete payload.stream_options;
@@ -996,16 +1153,12 @@ function stripUnsupportedCodexFields(
   delete payload.user;
   delete payload.temperature;
   delete payload.top_p;
-  delete payload.top_k;
-  delete payload.max_tokens;
   delete payload.max_output_tokens;
   delete payload.max_completion_tokens;
   delete payload.stream_options;
   if (!input.allowStore) {
     delete payload.store;
   }
-  delete payload.include;
-  delete payload.parallel_tool_calls;
   delete payload.context_management;
   delete payload.truncation;
   delete payload.prompt_cache_retention;
@@ -1034,12 +1187,91 @@ function normalizeReasoningForCodex(payload: Record<string, unknown>) {
   const effort = normalizeReasoningEffort(reasoning.effort);
   const enabledEffort = reasoningEnabledToEffort(reasoning.enabled);
   const normalizedEffort = effort || enabledEffort;
+  const next = cloneJsonObject(reasoning);
+  delete next.enabled;
 
   if (normalizedEffort) {
-    payload.reasoning = { effort: normalizedEffort };
+    next.effort = normalizedEffort;
+  } else {
+    delete next.effort;
+  }
+  stripUndefinedDeep(next);
+  if (Object.keys(next).length > 0) {
+    payload.reasoning = next;
   } else {
     delete payload.reasoning;
   }
+}
+
+function normalizeCodexBuiltinTools(payload: Record<string, unknown>) {
+  if (Array.isArray(payload.tools)) {
+    payload.tools = payload.tools.map((tool) => normalizeCodexBuiltinTool(tool));
+  }
+  if (isRecord(payload.tool_choice)) {
+    payload.tool_choice = normalizeCodexBuiltinToolChoice(payload.tool_choice);
+  }
+}
+
+function normalizeCodexBuiltinToolChoice(toolChoice: Record<string, unknown>) {
+  const next = cloneJsonObject(toolChoice);
+  const normalizedType = normalizeCodexBuiltinToolType(next.type);
+  if (normalizedType) {
+    next.type = normalizedType;
+  }
+  if (Array.isArray(next.tools)) {
+    next.tools = next.tools.map((tool: unknown) =>
+      normalizeCodexBuiltinTool(tool),
+    );
+  }
+  return next;
+}
+
+function normalizeCodexBuiltinTool(rawTool: unknown) {
+  if (!isRecord(rawTool)) {
+    return rawTool;
+  }
+  const tool = cloneJsonObject(rawTool);
+  const normalizedType = normalizeCodexBuiltinToolType(tool.type);
+  if (normalizedType) {
+    tool.type = normalizedType;
+  }
+  return tool;
+}
+
+function normalizeCodexBuiltinToolType(type: unknown) {
+  switch (stringValue(type)) {
+    case "web_search_preview":
+    case "web_search_preview_2025_03_11":
+      return "web_search";
+    default:
+      return "";
+  }
+}
+
+function ensureImageGenerationTool(
+  payload: Record<string, unknown>,
+  input: { planType?: string | null } = {},
+) {
+  const model = stringValue(payload.model).trim();
+  if (model.endsWith("spark") || isFreeCodexPlan(input.planType)) {
+    return;
+  }
+  if (!Array.isArray(payload.tools)) {
+    payload.tools = [{ ...CODEX_IMAGE_GENERATION_TOOL }];
+    return;
+  }
+  if (
+    payload.tools.some(
+      (tool) => isRecord(tool) && tool.type === "image_generation",
+    )
+  ) {
+    return;
+  }
+  payload.tools = [...payload.tools, { ...CODEX_IMAGE_GENERATION_TOOL }];
+}
+
+function isFreeCodexPlan(planType: unknown) {
+  return stringValue(planType).trim().toLowerCase() === "free";
 }
 
 function normalizeReasoningEffort(value: unknown) {

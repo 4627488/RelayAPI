@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { serverConfig } from "@/src/server/config/env";
-import { HttpError } from "@/src/server/http/errors";
+import { HttpError, logServerError } from "@/src/server/http/errors";
 import { proxiedFetch } from "@/src/server/net/proxy";
 import {
   deleteCodexCredential,
@@ -26,6 +26,7 @@ import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
   CodexTokenBundle,
+  CodexUpstreamTransport,
   CredentialProxyConfig,
   CredentialProxyType,
 } from "@/src/shared/types/entities";
@@ -219,6 +220,7 @@ export function patchCodexCredentialRouting(
     priority?: number;
     weight?: number;
     fastEnabled?: boolean;
+    upstreamTransport?: CodexUpstreamTransport;
     useGlobalProxy?: boolean;
     proxy?: unknown;
   },
@@ -240,6 +242,9 @@ export function patchCodexCredentialRouting(
       "Fast service tier is only available for Pro / Pro 20x credentials",
     );
   }
+  const upstreamTransport = Object.hasOwn(input, "upstreamTransport")
+    ? normalizeCodexUpstreamTransport(input.upstreamTransport)
+    : undefined;
   const proxyPatch = Object.hasOwn(input, "proxy")
     ? { proxy: normalizeCredentialProxyPatch(input.proxy, existing.proxy) }
     : {};
@@ -252,6 +257,7 @@ export function patchCodexCredentialRouting(
       ? { weight: Math.max(1, normalizeInteger(input.weight, 1)) }
       : {}),
     ...(fastEnabled !== undefined ? { fastEnabled } : {}),
+    ...(upstreamTransport !== undefined ? { upstreamTransport } : {}),
     ...(input.useGlobalProxy !== undefined
       ? { useGlobalProxy: Boolean(input.useGlobalProxy) }
       : {}),
@@ -312,8 +318,8 @@ export function importCodexCredentialFromJson(
   input: unknown,
   options: { filename?: string } = {},
 ) {
-  const parsed = objectValue(input);
-  if (!parsed) {
+  const raw = objectValue(input);
+  if (!raw) {
     throw new HttpError(
       400,
       "invalid_codex_credential_json",
@@ -321,14 +327,8 @@ export function importCodexCredentialFromJson(
     );
   }
 
+  const { parsed, sourceFormat } = normalizeImportedCodexCredential(raw);
   const type = stringValue(parsed.type);
-  if (type && type !== "codex") {
-    throw new HttpError(
-      400,
-      "invalid_codex_credential_type",
-      "Uploaded credential JSON is not a Codex credential",
-    );
-  }
 
   const tokens: CodexTokenBundle = {
     access_token: stringValue(parsed.access_token),
@@ -358,11 +358,14 @@ export function importCodexCredentialFromJson(
   const accountId =
     stringValue(parsed.account_id) ||
     stringValue(parsed.accountId) ||
-    stringValue(auth?.chatgpt_account_id);
+    stringValue(auth?.chatgpt_account_id) ||
+    stringValue(auth?.chatgpt_user_id);
   const planType =
     stringValue(parsed.plan_type) ||
     stringValue(parsed.planType) ||
-    stringValue(auth?.chatgpt_plan_type);
+    stringValue(auth?.chatgpt_plan_type) ||
+    planTypeFromImportedType(type) ||
+    planTypeFromCredentialName(stringValue(parsed.name));
   const id =
     stringValue(parsed.id) || createCredentialId({ email, accountId, tokens });
 
@@ -372,6 +375,8 @@ export function importCodexCredentialFromJson(
   const enabled = booleanValue(parsed.enabled);
   const disabled = booleanValue(parsed.disabled);
   const fastEnabled = booleanValue(parsed.fast_enabled ?? parsed.fastEnabled);
+  const upstreamTransport =
+    parsed.upstream_transport ?? parsed.upstreamTransport;
   const useGlobalProxy = booleanValue(
     parsed.use_global_proxy ?? parsed.useGlobalProxy,
   );
@@ -398,10 +403,17 @@ export function importCodexCredentialFromJson(
     metadata: {
       ...(metadata || {}),
       imported_from: "web_upload",
+      import_format: sourceFormat,
       import_filename: options.filename,
       imported_at: new Date().toISOString(),
       source_disabled: parsed.disabled,
       ...(fastEnabled !== undefined ? { fast_service_tier: fastEnabled } : {}),
+      ...(upstreamTransport !== undefined
+        ? {
+            upstream_transport:
+              normalizeCodexUpstreamTransport(upstreamTransport),
+          }
+        : {}),
       ...(useGlobalProxy !== undefined
         ? { use_global_proxy: useGlobalProxy }
         : {}),
@@ -435,12 +447,20 @@ async function refreshCodexCredentialWithTokens(id: string) {
     refresh_token: credential.tokens.refresh_token,
     scope: "openid profile email",
   });
-  const tokenResponse = await tokenRequest(
-    body,
-    credential.proxy,
-    credential.useGlobalProxy,
-  );
-  return saveTokenResponse(tokenResponse, credential);
+  try {
+    const tokenResponse = await tokenRequest(
+      body,
+      credential.proxy,
+      credential.useGlobalProxy,
+    );
+    return await saveTokenResponse(tokenResponse, credential);
+  } catch (error) {
+    logServerError(error, {
+      operation: "codex.refresh_token",
+      metadata: codexCredentialLogMetadata(credential),
+    });
+    throw error;
+  }
 }
 
 export async function ensureFreshCredential(id: string) {
@@ -484,10 +504,21 @@ async function exchangeCodeForTokens(input: {
     redirect_uri: input.redirectUri,
     code_verifier: input.codeVerifier,
   });
-  // OAuth route responses also get public metadata only.
-  return publicCredential(
-    await saveTokenResponse(await tokenRequest(body, null, true), null),
-  );
+  try {
+    // OAuth route responses also get public metadata only.
+    return publicCredential(
+      await saveTokenResponse(await tokenRequest(body, null, true), null),
+    );
+  } catch (error) {
+    logServerError(error, {
+      operation: "codex.oauth.exchange_token",
+      metadata: {
+        redirectUri: input.redirectUri,
+        useGlobalProxyFallback: true,
+      },
+    });
+    throw error;
+  }
 }
 
 async function tokenRequest(
@@ -519,7 +550,11 @@ async function tokenRequest(
       response.status,
       "codex_token_request_failed",
       `Token request failed with HTTP ${response.status}`,
-      parsed,
+      {
+        upstreamStatus: response.status,
+        upstreamStatusText: response.statusText,
+        upstreamBody: parsed,
+      },
     );
   }
   return parsed;
@@ -647,6 +682,8 @@ function exportCodexCredentialJson(credential: CodexCredentialWithTokens) {
     weight: credential.weight,
     fast_enabled: credential.fastEnabled,
     fastEnabled: credential.fastEnabled,
+    upstream_transport: credential.upstreamTransport,
+    upstreamTransport: credential.upstreamTransport,
     use_global_proxy: credential.useGlobalProxy,
     useGlobalProxy: credential.useGlobalProxy,
     proxy: credential.proxy,
@@ -669,6 +706,7 @@ function publicCredential(
     priority: credential.priority,
     weight: credential.weight,
     fastEnabled: credential.fastEnabled,
+    upstreamTransport: credential.upstreamTransport,
     useGlobalProxy: credential.useGlobalProxy,
     proxy: credential.proxy
       ? {
@@ -689,6 +727,24 @@ function publicCredential(
     createdAt: credential.createdAt,
     updatedAt: credential.updatedAt,
     metadata: credential.metadata,
+  };
+}
+
+function codexCredentialLogMetadata(credential: CodexCredentialWithTokens) {
+  return {
+    credentialId: credential.id,
+    email: credential.email,
+    accountId: credential.accountId,
+    planType: credential.planType,
+    upstreamTransport: credential.upstreamTransport,
+    useGlobalProxy: credential.useGlobalProxy,
+    proxy: credential.proxy?.enabled
+      ? {
+          type: credential.proxy.type,
+          host: credential.proxy.host,
+          port: credential.proxy.port,
+        }
+      : null,
   };
 }
 
@@ -807,6 +863,98 @@ function numberValue(value: unknown) {
 function normalizeInteger(value: unknown, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+}
+
+function normalizeImportedCodexCredential(input: Record<string, unknown>) {
+  const sub2apiCredentials = objectValue(input.credentials);
+  if (sub2apiCredentials) {
+    return {
+      sourceFormat: "sub2api",
+      parsed: {
+        ...input,
+        ...sub2apiCredentials,
+        type:
+          planTypeFromCredentialName(stringValue(input.name)) ||
+          stringValue(sub2apiCredentials.plan_type) ||
+          stringValue(input.plan_type) ||
+          "codex",
+        account_id:
+          sub2apiCredentials.chatgpt_account_id ||
+          sub2apiCredentials.account_id ||
+          sub2apiCredentials.chatgpt_user_id,
+        accountId:
+          sub2apiCredentials.chatgpt_account_id ||
+          sub2apiCredentials.accountId ||
+          sub2apiCredentials.chatgpt_user_id,
+        expired:
+          isoStringFromUnixSeconds(sub2apiCredentials.expires_at) ||
+          stringValue(sub2apiCredentials.expired),
+        last_refresh:
+          stringValue(sub2apiCredentials.last_refresh) ||
+          stringValue(input.updated_at),
+        disabled:
+          input.enabled !== undefined
+            ? !Boolean(input.enabled)
+            : input.disabled,
+        metadata: {
+          ...(objectValue(input.metadata) || {}),
+          sub2api_name: stringValue(input.name),
+          sub2api_platform: stringValue(input.platform),
+          sub2api_organization_id: stringValue(
+            sub2apiCredentials.organization_id,
+          ),
+        },
+      },
+    };
+  }
+
+  const type = stringValue(input.type);
+  return {
+    sourceFormat: type === "codex" ? "relayapi" : "cpa",
+    parsed: input,
+  };
+}
+
+function isoStringFromUnixSeconds(value: unknown) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+  return new Date(seconds * 1000).toISOString();
+}
+
+function planTypeFromImportedType(type: string) {
+  const normalized = type.trim().toLowerCase();
+  if (
+    ["free", "plus", "pro", "team", "enterprise", "codex"].includes(normalized)
+  ) {
+    return normalized;
+  }
+  return "";
+}
+
+function planTypeFromCredentialName(name: string) {
+  const firstPart = name.split("-", 1)[0]?.trim().toLowerCase() || "";
+  return planTypeFromImportedType(firstPart);
+}
+
+function normalizeCodexUpstreamTransport(
+  value: unknown,
+): CodexUpstreamTransport {
+  const normalized = stringValue(value)
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  if (normalized === "websocket" || normalized === "ws") {
+    return "websocket";
+  }
+  if (normalized === "http" || normalized === "https") {
+    return "http";
+  }
+  throw new HttpError(
+    400,
+    "unsupported_codex_upstream_transport",
+    "Codex upstream transport must be http or websocket",
+  );
 }
 
 function normalizeCredentialProxyPatch(

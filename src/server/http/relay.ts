@@ -1,6 +1,14 @@
 import "server-only";
 
 import { createModelsResponse } from "@/src/server/codex/models";
+import {
+  buildImagesApiResponseFromSseText,
+  buildImagesEditsJsonRequest,
+  buildImagesEditsMultipartRequest,
+  buildImagesGenerationsRequest,
+  createImagesSseStream,
+  type CodexImagesRequest,
+} from "@/src/server/codex/images";
 import { CodexResponsesSseFramer } from "@/src/server/codex/sse";
 import {
   chatCompletionsToCodex,
@@ -26,6 +34,7 @@ import {
 import {
   appendRequestLog,
   appendRequestLogDetail,
+  type RequestLogInput,
 } from "@/src/server/repositories/logs";
 import { authenticateRelayRequest } from "@/src/server/services/apiKeys";
 import {
@@ -34,6 +43,7 @@ import {
   selectChannel,
 } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
+import { maybeAutoPruneRequestLogs } from "@/src/server/services/logRetention";
 import { getFullRequestLoggingSetting } from "@/src/server/services/settings";
 import type {
   ChannelRecord,
@@ -78,7 +88,7 @@ export async function handleModels(request: Request) {
           modelAllowlist: apiKey.modelAllowlist,
         }),
     );
-    const logId = appendRequestLog({
+    const logId = appendRequestLogWithAutoPrune({
       startedAt,
       method: request.method,
       path: new URL(request.url).pathname,
@@ -159,7 +169,7 @@ export async function handleOpenAIResponses(request: Request) {
       stream: true,
       sourceHeaders: request.headers,
       channel,
-      promptCacheKey: codexPromptCacheKeyForApiKey(apiKey),
+      promptCacheKey: null,
       timing,
     });
     const raw = timing.time(
@@ -253,6 +263,356 @@ export async function handleRawCodexCompact(request: Request) {
   });
 }
 
+export async function handleImagesGenerations(request: Request) {
+  return handleImagesProxy(request, {
+    requestType: "images.generations",
+    buildRequest: async (timing) => {
+      const input = await timing.timeAsync(
+        "read_request_body",
+        "读取图片请求 Body",
+        () => readJsonObject(request),
+      );
+      return timing.time("normalize_payload", "构造图片生成 Payload", () =>
+        buildImagesGenerationsRequest(input),
+      );
+    },
+  });
+}
+
+export async function handleImagesEdits(request: Request) {
+  return handleImagesProxy(request, {
+    requestType: "images.edits",
+    buildRequest: async (timing) => {
+      const contentType = request.headers.get("content-type") || "";
+      if (contentType.toLowerCase().startsWith("application/json")) {
+        const input = await timing.timeAsync(
+          "read_request_body",
+          "读取图片编辑 JSON Body",
+          () => readJsonObject(request),
+        );
+        return timing.time("normalize_payload", "构造图片编辑 Payload", () =>
+          buildImagesEditsJsonRequest(input),
+        );
+      }
+      const formData = await timing.timeAsync(
+        "read_request_body",
+        "读取图片编辑 Multipart Body",
+        async () => {
+          try {
+            return await request.formData();
+          } catch {
+            throw new HttpError(
+              400,
+              "invalid_multipart_form",
+              "Request body must be valid multipart/form-data or JSON",
+            );
+          }
+        },
+      );
+      return await timing.timeAsync(
+        "normalize_payload",
+        "构造图片编辑 Payload",
+        () => buildImagesEditsMultipartRequest(formData),
+      );
+    },
+  });
+}
+
+async function handleImagesProxy(
+  request: Request,
+  input: {
+    requestType: string;
+    buildRequest: (timing: StageTimer) => Promise<CodexImagesRequest>;
+  },
+) {
+  const startedAt = new Date().toISOString();
+  const start = Date.now();
+  const timing = createStageTimer();
+  let apiKey: RelayApiKeyContext | null = null;
+  let channel: ChannelRecord | null = null;
+  let imageRequest: CodexImagesRequest | null = null;
+  try {
+    apiKey = timing.time("authenticate", "认证 API Key", () =>
+      authenticateRelayRequest(request),
+    );
+    imageRequest = await input.buildRequest(timing);
+    const selected = timing.time("select_channel", "选择通道", () =>
+      selectChannel({ model: imageRequest!.model, apiKey: apiKey! }),
+    );
+    channel = selected.channel;
+
+    if (isFreeCodexPlan(selected.credential.planType)) {
+      throw new HttpError(
+        403,
+        "image_generation_not_available",
+        "Image generation is not available for Free Codex credentials",
+      );
+    }
+
+    if (imageRequest.stream) {
+      return await forwardImagesStream({
+        request,
+        startedAt,
+        start,
+        apiKey,
+        channel,
+        imageRequest,
+        requestType: input.requestType,
+        timing,
+      });
+    }
+
+    const result = await codexJson("/responses", imageRequest.payload, {
+      stream: true,
+      sourceHeaders: request.headers,
+      channel,
+      promptCacheKey: null,
+      transport: "websocket",
+      timing,
+    });
+    if (!result.response.ok) {
+      recordChannelFailure(channel, {
+        statusCode: result.response.status,
+        message: result.text.slice(0, 500),
+      });
+      appendSuccessLog({
+        request,
+        startedAt,
+        start,
+        apiKey,
+        channel,
+        credentialEmail: result.credential.email,
+        requestType: input.requestType,
+        stream: false,
+        model: imageRequest.model,
+        statusCode: result.response.status,
+        usage: emptyUsage(),
+        errorCode: "upstream_error",
+        errorMessage: result.text.slice(0, 500),
+        requestBody: imageRequest.requestBody,
+        forwardedBody: result.upstreamPayload,
+        upstreamHeaders: result.response.headers,
+        upstreamBody: result.text,
+        timing,
+      });
+      return upstreamErrorResponse(result.response.status);
+    }
+
+    let responsePayload: Record<string, unknown>;
+    try {
+      responsePayload = timing.time("transform_response", "转换图片响应", () =>
+        buildImagesApiResponseFromSseText(
+          result.text,
+          imageRequest!.responseFormat,
+        ),
+      );
+    } catch (error) {
+      const statusCode = error instanceof HttpError ? error.status : 502;
+      const errorCode =
+        error instanceof HttpError ? error.code : "image_response_error";
+      const message = error instanceof Error ? error.message : String(error);
+      recordChannelFailure(channel, {
+        statusCode,
+        message,
+      });
+      appendSuccessLog({
+        request,
+        startedAt,
+        start,
+        apiKey,
+        channel,
+        credentialEmail: result.credential.email,
+        requestType: input.requestType,
+        stream: false,
+        model: imageRequest.model,
+        statusCode,
+        usage: emptyUsage(),
+        errorCode,
+        errorMessage: message.slice(0, 500),
+        requestBody: imageRequest.requestBody,
+        forwardedBody: result.upstreamPayload,
+        upstreamHeaders: result.response.headers,
+        upstreamBody: result.text,
+        error,
+        timing,
+      });
+      return errorToResponse(error);
+    }
+    recordChannelSuccess(channel);
+    appendSuccessLog({
+      request,
+      startedAt,
+      start,
+      apiKey,
+      channel,
+      credentialEmail: result.credential.email,
+      requestType: input.requestType,
+      stream: false,
+      model: imageRequest.model,
+      statusCode: 200,
+      usage: emptyUsage(),
+      requestBody: imageRequest.requestBody,
+      forwardedBody: result.upstreamPayload,
+      upstreamHeaders: result.response.headers,
+      upstreamBody: result.text,
+      timing,
+    });
+    return Response.json(responsePayload, { status: 200 });
+  } catch (error) {
+    if (channel) {
+      recordChannelFailure(channel, {
+        message: error instanceof Error ? error.message : "request failed",
+      });
+    }
+    appendErrorLog(
+      request,
+      startedAt,
+      start,
+      input.requestType,
+      error,
+      apiKey,
+      channel,
+      imageRequest?.requestBody,
+      timing,
+    );
+    return errorToResponse(error);
+  }
+}
+
+async function forwardImagesStream(input: {
+  request: Request;
+  startedAt: string;
+  start: number;
+  apiKey: RelayApiKeyContext;
+  channel: ChannelRecord;
+  imageRequest: CodexImagesRequest;
+  requestType: string;
+  timing?: StageTimer;
+}) {
+  const { response, credential, upstreamPayload } = await codexFetch(
+    "/responses",
+    input.imageRequest.payload,
+    {
+      stream: true,
+      sourceHeaders: input.request.headers,
+      channel: input.channel,
+      promptCacheKey: null,
+      transport: "websocket",
+      timing: input.timing,
+    },
+  );
+  const headers = withStreamingHeaders(
+    withDefaultContentType(
+      copyUpstreamHeaders(response.headers),
+      "text/event-stream; charset=utf-8",
+    ),
+  );
+  if (!response.ok) {
+    const errorText = input.timing
+      ? await input.timing.timeAsync(
+          "read_upstream_error_body",
+          "读取上游错误响应 Body",
+          () => response.text(),
+        )
+      : await response.text();
+    recordChannelFailure(input.channel, {
+      statusCode: response.status,
+      message: errorText.slice(0, 500) || response.statusText,
+    });
+    appendSuccessLog({
+      request: input.request,
+      startedAt: input.startedAt,
+      start: input.start,
+      apiKey: input.apiKey,
+      channel: input.channel,
+      credentialEmail: credential.email,
+      requestType: input.requestType,
+      stream: true,
+      model: input.imageRequest.model,
+      statusCode: response.status,
+      usage: emptyUsage(),
+      errorCode: "upstream_error",
+      errorMessage: (errorText || response.statusText).slice(0, 500),
+      requestBody: input.imageRequest.requestBody,
+      forwardedBody: upstreamPayload,
+      upstreamHeaders: response.headers,
+      upstreamBody: errorText,
+      timing: input.timing,
+    });
+    return upstreamErrorResponse(response.status);
+  }
+
+  const fullLog = getFullRequestLoggingSetting();
+  const upstreamCapture = createTextCapture();
+  const body = response.body
+    ? createImagesSseStream(
+        tapStream(
+          response.body,
+          fullLog ? upstreamCapture : null,
+          input.timing,
+        ),
+        {
+          responseFormat: input.imageRequest.responseFormat,
+          streamPrefix: input.imageRequest.streamPrefix,
+          onFirstEvent: () => {
+            input.timing?.mark("stream_first_token", "收到图片流首个事件");
+          },
+          onCompleted: () => {
+            recordChannelSuccess(input.channel);
+            appendSuccessLog({
+              request: input.request,
+              startedAt: input.startedAt,
+              start: input.start,
+              apiKey: input.apiKey,
+              channel: input.channel,
+              credentialEmail: credential.email,
+              requestType: input.requestType,
+              stream: true,
+              model: input.imageRequest.model,
+              statusCode: response.status,
+              usage: emptyUsage(),
+              requestBody: input.imageRequest.requestBody,
+              forwardedBody: upstreamPayload,
+              upstreamHeaders: response.headers,
+              upstreamBody: upstreamCapture.text,
+              timing: input.timing,
+            });
+          },
+          onError: (error) => {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            recordChannelFailure(input.channel, {
+              statusCode: 502,
+              message,
+            });
+            appendSuccessLog({
+              request: input.request,
+              startedAt: input.startedAt,
+              start: input.start,
+              apiKey: input.apiKey,
+              channel: input.channel,
+              credentialEmail: credential.email,
+              requestType: input.requestType,
+              stream: true,
+              model: input.imageRequest.model,
+              statusCode: 502,
+              usage: emptyUsage(),
+              errorCode: "stream_error",
+              errorMessage: message.slice(0, 500),
+              requestBody: input.imageRequest.requestBody,
+              forwardedBody: upstreamPayload,
+              upstreamHeaders: response.headers,
+              upstreamBody: upstreamCapture.text,
+              error,
+              timing: input.timing,
+            });
+          },
+        },
+      )
+    : null;
+  return new Response(body, { status: response.status, headers });
+}
+
 export async function handleChatCompletions(request: Request) {
   const startedAt = new Date().toISOString();
   const start = Date.now();
@@ -288,6 +648,7 @@ export async function handleChatCompletions(request: Request) {
           sourceHeaders: request.headers,
           channel,
           promptCacheKey: codexPromptCacheKeyForApiKey(apiKey),
+          transport: "websocket",
           timing,
         },
       );
@@ -541,7 +902,7 @@ async function handleRawCodexProxy(
       stream: false,
       sourceHeaders: request.headers,
       channel,
-      promptCacheKey: codexPromptCacheKeyForApiKey(apiKey),
+      promptCacheKey: null,
       timing,
     });
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
@@ -623,6 +984,7 @@ async function forwardCodexStream(input: {
   requestBody?: unknown;
   forwardedBody?: unknown;
   exposeUpstreamErrors?: boolean;
+  promptCacheKey?: string | null;
   timing?: StageTimer;
 }) {
   const model =
@@ -634,7 +996,8 @@ async function forwardCodexStream(input: {
       stream: true,
       sourceHeaders: input.request.headers,
       channel: input.channel,
-      promptCacheKey: codexPromptCacheKeyForApiKey(input.apiKey),
+      promptCacheKey: input.promptCacheKey,
+      transport: input.upstreamPath === "/responses" ? "websocket" : "http",
       timing: input.timing,
     },
   );
@@ -933,9 +1296,9 @@ function appendSuccessLog(input: {
   };
   const logId = input.timing
     ? input.timing.time("append_summary_log", "写入概要日志", () =>
-        appendRequestLog(logPayload),
+        appendRequestLogWithAutoPrune(logPayload),
       )
-    : appendRequestLog(logPayload);
+    : appendRequestLogWithAutoPrune(logPayload);
   appendOptionalRequestDetail(logId, {
     request: input.request,
     full: getFullRequestLoggingSetting(),
@@ -982,9 +1345,9 @@ function appendErrorLog(
   };
   const logId = timing
     ? timing.time("append_summary_log", "写入概要日志", () =>
-        appendRequestLog(logPayload),
+        appendRequestLogWithAutoPrune(logPayload),
       )
-    : appendRequestLog(logPayload);
+    : appendRequestLogWithAutoPrune(logPayload);
   appendOptionalRequestDetail(logId, {
     request,
     full: getFullRequestLoggingSetting(),
@@ -993,6 +1356,12 @@ function appendErrorLog(
     forceError: true,
     timing,
   });
+  return logId;
+}
+
+function appendRequestLogWithAutoPrune(input: RequestLogInput) {
+  const logId = appendRequestLog(input);
+  maybeAutoPruneRequestLogs();
   return logId;
 }
 
@@ -1206,6 +1575,10 @@ function withStreamingHeaders(headers: Headers) {
   headers.set("Connection", "keep-alive");
   headers.set("X-Accel-Buffering", "no");
   return headers;
+}
+
+function isFreeCodexPlan(planType: string) {
+  return planType.trim().toLowerCase() === "free";
 }
 
 function stringValue(value: unknown) {

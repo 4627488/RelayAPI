@@ -83,6 +83,8 @@ export interface PublicCredentialProxyConfig {
   passwordSet?: boolean;
 }
 
+export type CodexUpstreamTransport = "http" | "websocket";
+
 export interface CodexTokenBundle {
   access_token: string;
   refresh_token: string;
@@ -101,6 +103,7 @@ export interface CodexCredentialRecord {
   priority: number;
   weight: number;
   fastEnabled: boolean;
+  upstreamTransport: CodexUpstreamTransport;
   useGlobalProxy: boolean;
   proxy: PublicCredentialProxyConfig | null;
   usageHealth?: CodexAccountUsageHealth;

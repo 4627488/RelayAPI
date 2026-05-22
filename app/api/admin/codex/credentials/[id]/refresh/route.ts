@@ -11,11 +11,16 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  let id = "";
   try {
     requireWebRequest(request);
-    const { id } = await context.params;
+    ({ id } = await context.params);
     return Response.json(await refreshCodexCredential(id));
   } catch (error) {
-    return errorToResponse(error);
+    return errorToResponse(error, {
+      operation: "codex.refresh_token",
+      request,
+      metadata: id ? { credentialId: id } : undefined,
+    });
   }
 }

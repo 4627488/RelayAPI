@@ -12,6 +12,9 @@ export async function POST(request: Request) {
     requireWebRequest(request);
     return Response.json(startOAuthLoginSession());
   } catch (error) {
-    return errorToResponse(error);
+    return errorToResponse(error, {
+      operation: "codex.oauth.start",
+      request,
+    });
   }
 }

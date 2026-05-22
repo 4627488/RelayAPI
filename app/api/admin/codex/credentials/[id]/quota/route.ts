@@ -11,9 +11,10 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  let id = "";
   try {
     requireWebRequest(request);
-    const { id } = await context.params;
+    ({ id } = await context.params);
     const searchParams = new URL(request.url).searchParams;
     return Response.json(
       await getCodexQuota({
@@ -25,6 +26,10 @@ export async function GET(
       }),
     );
   } catch (error) {
-    return errorToResponse(error);
+    return errorToResponse(error, {
+      operation: "codex.quota.refresh",
+      request,
+      metadata: id ? { credentialId: id } : undefined,
+    });
   }
 }

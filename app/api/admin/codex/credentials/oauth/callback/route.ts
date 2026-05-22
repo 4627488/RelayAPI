@@ -18,7 +18,10 @@ export async function POST(request: Request) {
     const searchParams = parseOAuthCallbackInput(callbackInput);
     return Response.json(await finishOAuthCallback(searchParams));
   } catch (error) {
-    return errorToResponse(error);
+    return errorToResponse(error, {
+      operation: "codex.oauth.callback",
+      request,
+    });
   }
 }
 
@@ -29,7 +32,10 @@ export async function GET(request: Request) {
       await finishOAuthCallback(new URL(request.url).searchParams),
     );
   } catch (error) {
-    return errorToResponse(error);
+    return errorToResponse(error, {
+      operation: "codex.oauth.callback",
+      request,
+    });
   }
 }
 

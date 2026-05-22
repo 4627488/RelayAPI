@@ -129,6 +129,7 @@ import type {
   ChannelRecord,
   ChannelStatus,
   CodexCredentialRecord,
+  CodexUpstreamTransport,
   CredentialProxyType,
   CreatedApiKey,
   GlobalSettingsRecord,
@@ -952,7 +953,7 @@ function SettingsSection({
                 <div className="font-medium">日志保留与清理</div>
                 <div className="text-xs text-muted-foreground">
                   概要日志会影响总览统计；详细日志包含请求/响应体，建议保留更短时间。
-                  清理只删除早于保留天数的数据。
+                  系统会在请求日志写入时按策略自动清理；“立即清理”只用于马上执行一次。
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -2728,6 +2729,7 @@ function CredentialRoutingControls({
     priority?: number;
     weight?: number;
     fastEnabled?: boolean;
+    upstreamTransport?: CodexUpstreamTransport;
   }) {
     setSaving(true);
     try {
@@ -2742,13 +2744,10 @@ function CredentialRoutingControls({
   }
 
   return (
-    <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+    <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5 text-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="font-medium">凭据路由</div>
-          <div className="text-xs text-muted-foreground">
-            通道内按凭据优先级、权重和健康度选择。
-          </div>
         </div>
         <Switch
           checked={credential.enabled}
@@ -2759,27 +2758,40 @@ function CredentialRoutingControls({
           }
         />
       </div>
-      <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/50 p-2">
-        <div>
-          <div className="font-medium">Fast</div>
-          <div className="text-xs text-muted-foreground">
-            请求时注入 service_tier: priority，仅 Pro / Pro 20x 可用。
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/50 p-2">
+          <div>
+            <div className="font-medium">Fast</div>
+            <div className="text-xs text-muted-foreground">
+              Pro / Pro 20x 可用
+            </div>
           </div>
+          <Switch
+            checked={credential.fastEnabled && fastAvailable}
+            disabled={disabled || saving || !fastAvailable}
+            size="sm"
+            onCheckedChange={(checked) =>
+              saveRouting({ fastEnabled: Boolean(checked) })
+            }
+          />
         </div>
-        <Switch
-          checked={credential.fastEnabled && fastAvailable}
-          disabled={disabled || saving || !fastAvailable}
-          size="sm"
-          onCheckedChange={(checked) =>
-            saveRouting({ fastEnabled: Boolean(checked) })
-          }
-        />
+        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/50 p-2">
+          <div>
+            <div className="font-medium">WebSocket</div>
+            <div className="text-xs text-muted-foreground">流式 /responses</div>
+          </div>
+          <Switch
+            checked={credential.upstreamTransport === "websocket"}
+            disabled={disabled || saving}
+            size="sm"
+            onCheckedChange={(checked) =>
+              saveRouting({
+                upstreamTransport: checked ? "websocket" : "http",
+              })
+            }
+          />
+        </div>
       </div>
-      {!fastAvailable && (
-        <div className="text-xs text-muted-foreground">
-          当前计划 {codexPlanLabel(credential.planType)} 不支持 Fast。
-        </div>
-      )}
       <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
         <Input
           aria-label="凭据优先级"
@@ -2814,8 +2826,8 @@ function CredentialRoutingControls({
       <div className="text-xs text-muted-foreground">
         当前：优先级 {formatNumber(credential.priority)} · 权重{" "}
         {formatNumber(credential.weight)} · Fast{" "}
-        {credential.fastEnabled && fastAvailable ? "开启" : "关闭"} · 最后使用{" "}
-        {formatNullableDate(credential.lastUsedAt)}
+        {credential.fastEnabled && fastAvailable ? "开" : "关"} ·{" "}
+        {credentialUpstreamTransportText(credential.upstreamTransport)}
       </div>
     </div>
   );
@@ -2945,14 +2957,10 @@ function CredentialProxyControls({
   const pending = disabled || saving || clearing;
 
   return (
-    <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+    <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5 text-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="font-medium">请求代理</div>
-          <div className="text-xs text-muted-foreground">
-            为该凭据的 Codex 请求、token 刷新和额度刷新配置 SOCKS5 代理。
-            推荐使用 socks5h 让 DNS 解析也走代理。
-          </div>
         </div>
         <Switch
           checked={form.enabled}
@@ -2967,9 +2975,7 @@ function CredentialProxyControls({
       <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/50 p-2">
         <div>
           <div className="font-medium">使用全局代理</div>
-          <div className="text-xs text-muted-foreground">
-            当前凭据代理未配置或未启用时，回退使用全局代理；关闭则直连。
-          </div>
+          <div className="text-xs text-muted-foreground">无本地代理时回退</div>
         </div>
         <Switch
           checked={credential.useGlobalProxy}
@@ -3041,7 +3047,7 @@ function CredentialProxyControls({
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs text-muted-foreground">
-          当前：{credentialProxyText(credential)} · 全局代理回退：
+          当前：{credentialProxyText(credential)} · 全局：
           {credential.useGlobalProxy ? "开启" : "关闭"}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -3384,157 +3390,111 @@ function CredentialSettingsDialog({
       >
         <SettingsIcon />
       </Button>
-      <DialogContent className="sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>凭据设置</DialogTitle>
-          <DialogDescription>
-            管理 {accountName} 的账号信息、凭据路由和危险操作。
-          </DialogDescription>
+      <DialogContent className="max-h-[88vh] gap-3 overflow-y-auto sm:max-w-4xl">
+        <DialogHeader className="pr-8">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <DialogTitle>凭据设置</DialogTitle>
+              <DialogDescription className="mt-1 truncate">
+                {accountName}
+              </DialogDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">
+                {codexPlanLabel(credential.planType)}
+              </Badge>
+              <Badge variant={credential.enabled ? "secondary" : "outline"}>
+                {credential.enabled ? "已启用" : "已禁用"}
+              </Badge>
+              <Badge variant="outline">
+                {credentialUpstreamTransportText(credential.upstreamTransport)}
+              </Badge>
+            </div>
+          </div>
         </DialogHeader>
 
-        <div className="grid gap-4">
-          <FieldSet>
-            <FieldLegend>账号设置</FieldLegend>
-            <FieldGroup>
-              <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm sm:grid-cols-2">
-                <CredentialInfoItem label="邮箱" value={credential.email} />
-                <CredentialInfoItem
-                  label="账号 ID"
+        <div className="grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
+          <aside className="grid h-fit gap-3">
+            <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5 text-sm">
+              <div className="min-w-0">
+                <div className="truncate font-medium" title={accountName}>
+                  {accountName}
+                </div>
+                <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                  {credential.id}
+                </div>
+              </div>
+              <div className="grid gap-1.5 text-xs text-muted-foreground">
+                <CredentialCompactRow label="邮箱" value={credential.email} />
+                <CredentialCompactRow
+                  label="账号"
                   value={credential.accountId}
                 />
-                <CredentialInfoItem
-                  label="计划"
-                  value={codexPlanLabel(credential.planType)}
-                />
-                <CredentialInfoItem
-                  label="凭据 ID"
-                  value={credential.id}
-                  mono
-                />
-                <CredentialInfoItem
-                  label="Token 过期时间"
+                <CredentialCompactRow
+                  label="过期"
                   value={formatNullableDate(credential.expiresAt)}
                 />
-                <CredentialInfoItem
-                  label="最后刷新"
-                  value={formatNullableDate(credential.lastRefreshAt)}
-                />
-                <CredentialInfoItem
-                  label="最后使用"
+                <CredentialCompactRow
+                  label="使用"
                   value={formatNullableDate(credential.lastUsedAt)}
                 />
-                <CredentialInfoItem
-                  label="冷却至"
-                  value={formatNullableDate(credential.cooldownUntil)}
-                />
-                <CredentialInfoItem
-                  label="路由状态"
-                  value={credential.enabled ? "已启用" : "已禁用"}
-                />
-                <CredentialInfoItem
-                  label="Fast"
-                  value={
-                    credential.fastEnabled &&
-                    isFastCredentialPlan(credential.planType)
-                      ? "已开启"
-                      : "未开启"
-                  }
-                />
-                <CredentialInfoItem
-                  label="请求代理"
-                  value={credentialProxyText(credential)}
-                />
-                <CredentialInfoItem
-                  label="全局代理回退"
-                  value={credential.useGlobalProxy ? "已开启" : "已关闭"}
-                />
               </div>
-            </FieldGroup>
-          </FieldSet>
+            </div>
 
-          <CredentialRoutingControls
-            key={`${credential.id}:${credential.priority}:${credential.weight}:${credential.enabled}`}
-            credential={credential}
-            disabled={disabled}
-            onSaved={onSaved}
-          />
+            <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="justify-start"
+                disabled={disabled || refreshingToken}
+                onClick={refreshTokenFromSettings}
+              >
+                {refreshingToken ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <RefreshCwIcon data-icon="inline-start" />
+                )}
+                刷新 token
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="justify-start"
+                disabled={disabled || exporting}
+                onClick={exportCredentialFromSettings}
+              >
+                {exporting ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <DownloadIcon data-icon="inline-start" />
+                )}
+                导出凭据
+              </Button>
+              <CredentialDeleteSettingsAction
+                credential={credential}
+                disabled={disabled}
+                onConfirm={onDeleted}
+              />
+            </div>
+          </aside>
 
-          <CredentialProxyControls
-            key={`${credential.id}:${credential.proxy?.enabled}:${credential.proxy?.type}:${credential.proxy?.host}:${credential.proxy?.port}:${credential.proxy?.username}:${credential.proxy?.passwordSet}`}
-            credential={credential}
-            disabled={disabled}
-            onSaved={onSaved}
-          />
+          <section className="grid min-w-0 gap-3">
+            <CredentialRoutingControls
+              key={`${credential.id}:${credential.priority}:${credential.weight}:${credential.enabled}:${credential.fastEnabled}:${credential.upstreamTransport}`}
+              credential={credential}
+              disabled={disabled}
+              onSaved={onSaved}
+            />
 
-          <FieldSet>
-            <FieldLegend>账号操作</FieldLegend>
-            <FieldGroup>
-              <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="font-medium">刷新 Codex token</div>
-                    <div className="text-xs text-muted-foreground">
-                      使用保存的 refresh_token 更新访问 token，不会把 token
-                      明文返回浏览器。
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={disabled || refreshingToken}
-                    onClick={refreshTokenFromSettings}
-                  >
-                    {refreshingToken ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <RefreshCwIcon data-icon="inline-start" />
-                    )}
-                    刷新 token
-                  </Button>
-                </div>
-
-                <Separator />
-
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="font-medium">导出凭据</div>
-                    <div className="text-xs text-muted-foreground">
-                      下载可重新导入的 JSON 备份，包含 token 明文和代理密码。
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={disabled || exporting}
-                    onClick={exportCredentialFromSettings}
-                  >
-                    {exporting ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <DownloadIcon data-icon="inline-start" />
-                    )}
-                    导出此凭据
-                  </Button>
-                </div>
-
-                <Separator />
-
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="font-medium text-destructive">删除凭据</div>
-                    <div className="text-xs text-muted-foreground">
-                      删除后会移除该凭据、额度缓存，并从多凭据通道中解绑。
-                    </div>
-                  </div>
-                  <CredentialDeleteSettingsAction
-                    credential={credential}
-                    disabled={disabled}
-                    onConfirm={onDeleted}
-                  />
-                </div>
-              </div>
-            </FieldGroup>
-          </FieldSet>
+            <CredentialProxyControls
+              key={`${credential.id}:${credential.proxy?.enabled}:${credential.proxy?.type}:${credential.proxy?.host}:${credential.proxy?.port}:${credential.proxy?.username}:${credential.proxy?.passwordSet}`}
+              credential={credential}
+              disabled={disabled}
+              onSaved={onSaved}
+            />
+          </section>
         </div>
       </DialogContent>
     </Dialog>
@@ -3605,24 +3565,22 @@ function CredentialProxyBadge({
   return <Badge variant="outline">未配置</Badge>;
 }
 
-function CredentialInfoItem({
+function CredentialCompactRow({
   label,
-  mono = false,
   value,
 }: {
   label: string;
-  mono?: boolean;
   value: React.ReactNode;
 }) {
   return (
-    <div className="min-w-0">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div
-        className={`mt-1 truncate ${mono ? "font-mono text-xs" : "font-medium"}`}
+    <div className="flex min-w-0 items-center justify-between gap-2">
+      <span className="shrink-0">{label}</span>
+      <span
+        className="min-w-0 truncate text-right font-medium text-foreground"
         title={typeof value === "string" ? value : undefined}
       >
-        {value || <span className="text-muted-foreground">-</span>}
-      </div>
+        {value || "-"}
+      </span>
     </div>
   );
 }
@@ -3655,7 +3613,9 @@ function CredentialDeleteSettingsAction({
     <AlertDialog open={open} onOpenChange={setOpen}>
       <Button
         type="button"
+        size="sm"
         variant="destructive"
+        className="justify-start"
         disabled={disabled}
         onClick={() => setOpen(true)}
       >
@@ -4479,7 +4439,7 @@ function LogsSection({
                     <TableHead>请求</TableHead>
                     <TableHead>模型</TableHead>
                     <TableHead>状态</TableHead>
-                    <TableHead>延迟</TableHead>
+                    <TableHead>首字延迟</TableHead>
                     <TableHead>密钥 / 通道</TableHead>
                     <TableHead>Token</TableHead>
                     <TableHead>操作</TableHead>
@@ -4511,7 +4471,9 @@ function LogsSection({
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>{formatDuration(log.latency_ms)}</TableCell>
+                      <TableCell>
+                        {formatNullableDuration(log.first_token_latency_ms)}
+                      </TableCell>
                       <TableCell>
                         <div>{log.api_key_name || "未知密钥"}</div>
                         <div className="font-mono text-xs text-muted-foreground">
@@ -4943,7 +4905,7 @@ function buildOverviewTrendMetrics(
       icon: DatabaseIcon,
     },
     {
-      title: "今日首字延迟",
+      title: "今日平均首字延迟",
       value: formatDuration(today.avgFirstTokenLatencyMs),
       description: `p95 ${formatDuration(today.p95FirstTokenLatencyMs)} · ${formatTokenNumber(Math.round(today.tokensPerSecond))} token/秒`,
       changeLabel: formatChangePercent(latencyChange.value),
@@ -5536,6 +5498,10 @@ function credentialProxyText(credential: CodexCredentialRecord) {
   return `${proxy.enabled ? "已启用" : "已停用"} · ${proxy.type}://${auth}${proxy.host}:${proxy.port}`;
 }
 
+function credentialUpstreamTransportText(transport: CodexUpstreamTransport) {
+  return transport === "websocket" ? "WebSocket" : "HTTP";
+}
+
 function assertChannel(channel: ChannelRecord | null | undefined) {
   if (!channel) {
     throw new Error("缺少通道");
@@ -5681,6 +5647,9 @@ function credentialUploadPayloads(parsed: unknown) {
   if (Array.isArray(parsed.credentials)) {
     return parsed.credentials.filter(isRecord);
   }
+  if (Array.isArray(parsed.accounts)) {
+    return parsed.accounts.filter(isRecord);
+  }
   if (Array.isArray(parsed.data)) {
     return parsed.data.filter(isRecord);
   }
@@ -5790,6 +5759,12 @@ function formatDuration(value: number) {
     return `${Math.round(value)} ms`;
   }
   return `${(value / 1000).toFixed(2)} s`;
+}
+
+function formatNullableDuration(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? formatDuration(value)
+    : "-";
 }
 
 function formatNumber(value: number) {

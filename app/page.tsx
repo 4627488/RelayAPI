@@ -30,6 +30,7 @@ type RequestLogRow = {
   model: string;
   status_code: number;
   latency_ms: number;
+  first_token_latency_ms: number | null;
   api_key_prefix: string | null;
   api_key_name: string | null;
   channel_name: string | null;

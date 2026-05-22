@@ -5,6 +5,7 @@ import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
   CodexTokenBundle,
+  CodexUpstreamTransport,
   CredentialProxyConfig,
   PublicCredentialProxyConfig,
 } from "@/src/shared/types/entities";
@@ -143,6 +144,7 @@ export function updateCodexCredential(
       | "priority"
       | "weight"
       | "fastEnabled"
+      | "upstreamTransport"
       | "useGlobalProxy"
       | "proxy"
       | "lastUsedAt"
@@ -160,6 +162,7 @@ export function updateCodexCredential(
   const metadata = {
     ...next.metadata,
     fast_service_tier: next.fastEnabled,
+    upstream_transport: next.upstreamTransport,
     use_global_proxy: next.useGlobalProxy,
     cooldown_until: next.cooldownUntil,
     last_error: next.lastError,
@@ -217,6 +220,7 @@ function toCodexCredentialRecord(
     priority: row.priority,
     weight: row.weight,
     fastEnabled: metadata.fast_service_tier === true,
+    upstreamTransport: codexUpstreamTransportFromMetadata(metadata),
     useGlobalProxy: metadata.use_global_proxy === true,
     proxy: publicProxyFromEnvelope(row.proxy_envelope),
     expiresAt: row.expires_at,
@@ -232,6 +236,16 @@ function toCodexCredentialRecord(
 
 function stringOrNull(value: unknown) {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function codexUpstreamTransportFromMetadata(
+  metadata: Record<string, unknown>,
+): CodexUpstreamTransport {
+  const value = metadata.upstream_transport;
+  if (value === "http" || value === "websocket") {
+    return value;
+  }
+  return "websocket";
 }
 
 function toCodexCredentialWithTokens(

@@ -446,6 +446,7 @@ export interface PublicRequestLogRow {
   model: string;
   status_code: number;
   latency_ms: number;
+  first_token_latency_ms: number | null;
   api_key_prefix: string | null;
   api_key_name: string | null;
   channel_name: string | null;
@@ -519,10 +520,11 @@ export function getRequestLogDetail(id: string): PublicRequestLogDetail | null {
     .prepare(
       `SELECT
         id, started_at, completed_at, method, path, request_type, stream,
-        model, status_code, latency_ms, api_key_id, api_key_prefix,
-        api_key_name, channel_name, credential_email, prompt_tokens,
-        completion_tokens, total_tokens, cached_tokens, error_code,
-        error_message
+        model, status_code, latency_ms,
+        ${firstTokenLatencySelect("request_logs")},
+        api_key_id, api_key_prefix, api_key_name, channel_name,
+        credential_email, prompt_tokens, completion_tokens, total_tokens,
+        cached_tokens, error_code, error_message
       FROM request_logs
       WHERE id = ?`,
     )
@@ -565,9 +567,11 @@ export function queryRequestLogs(
     .prepare(
       `SELECT
         id, started_at, method, path, request_type, stream, model,
-        status_code, latency_ms, api_key_id, api_key_prefix, api_key_name,
-        channel_name, credential_email, prompt_tokens, completion_tokens,
-        total_tokens, cached_tokens, error_code
+        status_code, latency_ms,
+        ${firstTokenLatencySelect("request_logs")},
+        api_key_id, api_key_prefix, api_key_name, channel_name,
+        credential_email, prompt_tokens, completion_tokens, total_tokens,
+        cached_tokens, error_code
       FROM request_logs
       ${where}
       ORDER BY started_at DESC
@@ -1415,6 +1419,27 @@ function numberValue(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function nullableNumber(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function firstTokenLatencySelect(tableAlias: string) {
+  const alias = safeLatencyColumnName(tableAlias);
+  return `(
+    SELECT COALESCE(
+      MAX(CASE WHEN json_extract(value, '$.name') = 'stream_first_token' THEN json_extract(value, '$.startedAtMs') END),
+      MAX(CASE WHEN json_extract(value, '$.name') = 'stream_first_chunk' THEN json_extract(value, '$.startedAtMs') END)
+    )
+    FROM request_log_details,
+      json_each(request_log_details.stage_timings_json)
+    WHERE request_log_details.request_log_id = ${alias}.id
+  ) AS first_token_latency_ms`;
+}
+
 function toPublicRequestLogDetailRow(row: Record<string, unknown>) {
   return {
     request_headers: parseJsonObject(row.request_headers_json),
@@ -1453,6 +1478,7 @@ function toPublicRequestLogRow(
     model: String(row.model || ""),
     status_code: Number(row.status_code || 0),
     latency_ms: Number(row.latency_ms || 0),
+    first_token_latency_ms: nullableNumber(row.first_token_latency_ms),
     api_key_prefix: nullableString(row.api_key_prefix),
     api_key_name: nullableString(row.api_key_name),
     channel_name: nullableString(row.channel_name),

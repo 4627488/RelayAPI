@@ -281,5 +281,6 @@ function errorMessage(error: unknown) {
 function wrapProxyError(proxy: CredentialProxyConfig, error: unknown) {
   return new Error(
     `Proxy request failed via ${publicProxyLabel(proxy)}: ${errorMessage(error)}`,
+    { cause: error },
   );
 }

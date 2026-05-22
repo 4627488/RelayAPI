@@ -1,7 +1,7 @@
 import "server-only";
 
 import { serverConfig } from "@/src/server/config/env";
-import { HttpError } from "@/src/server/http/errors";
+import { HttpError, logServerError } from "@/src/server/http/errors";
 import { proxiedFetch } from "@/src/server/net/proxy";
 import { getCodexCredentialById } from "@/src/server/repositories/codexCredentials";
 import {
@@ -10,7 +10,10 @@ import {
 } from "@/src/server/repositories/quota";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
 import { getGlobalProxySetting } from "@/src/server/services/settings";
-import type { CodexCredentialRecord } from "@/src/shared/types/entities";
+import type {
+  CodexCredentialRecord,
+  CodexCredentialWithTokens,
+} from "@/src/shared/types/entities";
 
 export const WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
@@ -104,65 +107,84 @@ export async function getCodexQuota({
     return missingQuotaResponse(credential);
   }
 
-  const credential = await ensureFreshCredential(credentialId);
-  if (!credential.tokens.access_token) {
-    throw new HttpError(
-      400,
-      "missing_access_token",
-      "Saved Codex credential does not contain an access token",
+  let credential: CodexCredentialWithTokens | null = null;
+  try {
+    credential = await ensureFreshCredential(credentialId);
+    if (!credential.tokens.access_token) {
+      throw new HttpError(
+        400,
+        "missing_access_token",
+        "Saved Codex credential does not contain an access token",
+      );
+    }
+    if (!credential.accountId) {
+      throw new HttpError(
+        400,
+        "missing_account_id",
+        "Saved Codex credential does not contain an account id",
+      );
+    }
+
+    const response = await proxiedFetch(
+      WHAM_USAGE_URL,
+      {
+        method: "GET",
+        headers: buildQuotaHeaders({
+          accessToken: credential.tokens.access_token,
+          accountId: credential.accountId,
+        }),
+        signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
+      },
+      credential.proxy?.enabled
+        ? credential.proxy
+        : credential.useGlobalProxy
+          ? getGlobalProxySetting()
+          : null,
     );
-  }
-  if (!credential.accountId) {
-    throw new HttpError(
-      400,
-      "missing_account_id",
-      "Saved Codex credential does not contain an account id",
-    );
-  }
 
-  const response = await proxiedFetch(
-    WHAM_USAGE_URL,
-    {
-      method: "GET",
-      headers: buildQuotaHeaders({
-        accessToken: credential.tokens.access_token,
-        accountId: credential.accountId,
-      }),
-      signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
-    },
-    credential.proxy?.enabled
-      ? credential.proxy
-      : credential.useGlobalProxy
-        ? getGlobalProxySetting()
-        : null,
-  );
+    const text = await response.text();
+    const body = parseMaybeJson<unknown>(text) || { raw: text };
+    if (!response.ok) {
+      throw new HttpError(
+        response.status,
+        "codex_quota_request_failed",
+        `Quota request failed with HTTP ${response.status}`,
+        {
+          upstreamStatus: response.status,
+          upstreamStatusText: response.statusText,
+          upstreamBody: body,
+        },
+      );
+    }
 
-  const text = await response.text();
-  const body = parseMaybeJson<unknown>(text) || { raw: text };
-  if (!response.ok) {
-    throw new HttpError(
-      response.status,
-      "codex_quota_request_failed",
-      `Quota request failed with HTTP ${response.status}`,
-      body,
-    );
+    const report = normalizeQuotaResponse(body, credential);
+    // Quota cache belongs to the main DB because automatic channel routing may
+    // use current quota state in a later routing slice.
+    upsertCodexQuotaCache({
+      credentialId: credential.id,
+      status: report.status,
+      cache: reportToRecord(report),
+      retrievedAt: report.retrieved_at,
+    });
+
+    const publicReport = markQuotaCacheState(reportToRecord(report), "fresh");
+    if (includeRaw) {
+      return { ...publicReport, raw: body };
+    }
+    return publicReport;
+  } catch (error) {
+    logServerError(error, {
+      operation: "codex.quota.refresh",
+      metadata: {
+        ...(credential
+          ? codexQuotaCredentialLogMetadata(credential)
+          : { credentialId }),
+        includeRaw,
+        forceRefresh,
+      },
+    });
+    throw error;
   }
-
-  const report = normalizeQuotaResponse(body, credential);
-  // Quota cache belongs to the main DB because automatic channel routing may
-  // use current quota state in a later routing slice.
-  upsertCodexQuotaCache({
-    credentialId: credential.id,
-    status: report.status,
-    cache: reportToRecord(report),
-    retrievedAt: report.retrieved_at,
-  });
-
-  const publicReport = markQuotaCacheState(reportToRecord(report), "fresh");
-  if (includeRaw) {
-    return { ...publicReport, raw: body };
-  }
-  return publicReport;
 }
 
 function markQuotaCacheState(
@@ -202,6 +224,25 @@ function buildQuotaHeaders(input: { accessToken: string; accountId: string }) {
     "Content-Type": "application/json",
     "User-Agent": serverConfig.userAgent,
     "Chatgpt-Account-Id": input.accountId,
+  };
+}
+
+function codexQuotaCredentialLogMetadata(
+  credential: CodexCredentialWithTokens,
+) {
+  return {
+    credentialId: credential.id,
+    email: credential.email,
+    accountId: credential.accountId,
+    planType: credential.planType,
+    useGlobalProxy: credential.useGlobalProxy,
+    proxy: credential.proxy?.enabled
+      ? {
+          type: credential.proxy.type,
+          host: credential.proxy.host,
+          port: credential.proxy.port,
+        }
+      : null,
   };
 }
 

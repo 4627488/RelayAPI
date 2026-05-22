@@ -1,3 +1,4 @@
+import { errorToResponse } from "@/src/server/http/errors";
 import { startOAuthLoginSession } from "@/src/server/services/codexCredentials";
 import { isWebRequestAuthenticated } from "@/src/server/services/webAccess";
 
@@ -11,10 +12,17 @@ export async function GET(request: Request) {
     return Response.redirect(new URL("/", request.url), 303);
   }
 
-  const session = startOAuthLoginSession();
-  return new Response(renderOAuthLogin(session), {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
+  try {
+    const session = startOAuthLoginSession();
+    return new Response(renderOAuthLogin(session), {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  } catch (error) {
+    return errorToResponse(error, {
+      operation: "codex.oauth.login_page",
+      request,
+    });
+  }
 }
 
 function renderOAuthLogin(session: {

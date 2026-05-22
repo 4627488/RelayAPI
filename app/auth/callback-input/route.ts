@@ -24,6 +24,9 @@ export async function POST(request: Request) {
       303,
     );
   } catch (error) {
-    return errorToResponse(error);
+    return errorToResponse(error, {
+      operation: "codex.oauth.callback_input",
+      request,
+    });
   }
 }

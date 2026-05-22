@@ -1,6 +1,7 @@
 import type {
   AdminOverviewStats,
   ChannelRecord,
+  CodexUpstreamTransport,
   CreatedApiKey,
   PublicApiKey,
   CodexCredentialRecord,
@@ -57,6 +58,7 @@ export type AdminDashboardRequestLogRow = {
   model: string;
   status_code: number;
   latency_ms: number;
+  first_token_latency_ms: number | null;
   api_key_prefix: string | null;
   api_key_name: string | null;
   channel_name: string | null;
@@ -335,6 +337,7 @@ export function updateCredentialRouting(
     priority?: number;
     weight?: number;
     fastEnabled?: boolean;
+    upstreamTransport?: CodexUpstreamTransport;
     useGlobalProxy?: boolean;
     proxy?: CredentialProxyPayload;
   },
