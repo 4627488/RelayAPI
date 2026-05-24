@@ -713,7 +713,7 @@ export function AdminDashboard({
             )}
             {activeSection === "settings" && (
               <SettingsSection
-                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.requestLogRetentionDays}:${globalSettings.requestLogDetailRetentionDays}:${globalSettings.updatedAt}`}
+                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.userAgentSource}:${globalSettings.userAgent}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.requestLogRetentionDays}:${globalSettings.requestLogDetailRetentionDays}:${globalSettings.updatedAt}`}
                 settings={globalSettings}
                 onSaved={setGlobalSettings}
               />
@@ -746,6 +746,8 @@ function SettingsSection({
   );
   const [saving, setSaving] = React.useState(false);
   const [clearing, setClearing] = React.useState(false);
+  const [userAgent, setUserAgent] = React.useState(settings.userAgent);
+  const [userAgentSaving, setUserAgentSaving] = React.useState(false);
   const [loggingSaving, setLoggingSaving] = React.useState(false);
   const [retentionSaving, setRetentionSaving] = React.useState(false);
   const [pruning, setPruning] = React.useState(false);
@@ -841,6 +843,37 @@ function SettingsSection({
       toast.error(adminErrorMessage(error));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveUserAgent() {
+    const value = userAgent.trim();
+    setUserAgentSaving(true);
+    try {
+      const updated = await updateGlobalSettings({ userAgent: value || null });
+      onSaved(updated);
+      setUserAgent(updated.userAgent);
+      toast.success(
+        value ? "全局 User-Agent 已保存" : "全局 User-Agent 已清除",
+      );
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setUserAgentSaving(false);
+    }
+  }
+
+  async function clearUserAgent() {
+    setUserAgentSaving(true);
+    try {
+      const updated = await updateGlobalSettings({ userAgent: null });
+      onSaved(updated);
+      setUserAgent(updated.userAgent);
+      toast.success("已回退到环境变量或默认 User-Agent");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setUserAgentSaving(false);
     }
   }
 
@@ -943,8 +976,8 @@ function SettingsSection({
         <CardHeader>
           <CardTitle>全局设置</CardTitle>
           <CardDescription>
-            配置 OAuth 登录专用 SOCKS5 代理。该全局代理只用于 OAuth callback
-            换取 token；token 刷新和额度刷新只使用凭据代理，凭据未配置则直连。
+            配置 Codex 上游 User-Agent、日志策略和 OAuth 登录专用 SOCKS5
+            代理。凭据也可以单独覆盖 User-Agent。
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
@@ -952,10 +985,57 @@ function SettingsSection({
             <SettingsIcon className="size-4" />
             <AlertTitle>生效范围</AlertTitle>
             <AlertDescription>
-              全局代理只用于 OAuth 登录 callback 换 token。后续 refresh_token
-              和额度查询不会使用全局代理。
+              User-Agent 按“凭据覆盖 → 数据库全局设置 →
+              环境变量/默认值”生效。全局代理只用于 OAuth 登录 callback 换
+              token；后续 refresh_token 和额度查询默认不使用全局代理。
             </AlertDescription>
           </Alert>
+
+          <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="grid gap-1">
+                <div className="font-medium">Codex User-Agent</div>
+                <div className="text-xs text-muted-foreground">
+                  当前来源：{userAgentSourceLabel(settings.userAgentSource)}
+                  。用于 Codex
+                  请求和额度刷新；留空保存会回退到环境变量或默认值。
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={
+                    userAgentSaving || settings.userAgentSource !== "database"
+                  }
+                  onClick={clearUserAgent}
+                >
+                  {userAgentSaving && <Spinner data-icon="inline-start" />}
+                  清除数据库配置
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={userAgentSaving}
+                  onClick={saveUserAgent}
+                >
+                  {userAgentSaving && <Spinner data-icon="inline-start" />}
+                  保存 User-Agent
+                </Button>
+              </div>
+            </div>
+            <Textarea
+              className="min-h-20 font-mono text-xs"
+              disabled={userAgentSaving}
+              value={userAgent}
+              placeholder={settings.userAgent}
+              onChange={(event) => setUserAgent(event.target.value)}
+            />
+            <div className="text-xs text-muted-foreground">
+              当前生效：{settings.userAgent || "未配置"}
+            </div>
+          </div>
 
           <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
             <div className="flex items-center justify-between gap-3">
@@ -3200,6 +3280,90 @@ function CredentialRoutingControls({
   );
 }
 
+function CredentialUserAgentControls({
+  credential,
+  disabled,
+  onSaved,
+}: {
+  credential: CodexCredentialRecord;
+  disabled: boolean;
+  onSaved: (credential: CodexCredentialRecord) => void;
+}) {
+  const [value, setValue] = React.useState(credential.userAgent ?? "");
+  const [saving, setSaving] = React.useState(false);
+
+  async function saveUserAgent(userAgent: string | null) {
+    setSaving(true);
+    try {
+      const updated = await updateCredentialRouting(credential.id, {
+        userAgent,
+      });
+      onSaved(updated);
+      setValue(updated.userAgent ?? "");
+      toast.success(
+        updated.userAgent
+          ? "凭据 User-Agent 已保存"
+          : "凭据 User-Agent 已清除，将使用全局设置",
+      );
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const pending = disabled || saving;
+
+  return (
+    <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5 text-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="grid gap-1">
+          <div className="font-medium">User-Agent 覆盖</div>
+          <div className="text-xs text-muted-foreground">
+            留空则使用全局设置。该值会用于此凭据的 Codex 请求和额度刷新。
+          </div>
+        </div>
+        <Badge variant={credential.userAgent ? "secondary" : "outline"}>
+          {credential.userAgent ? "凭据自定义" : "使用全局"}
+        </Badge>
+      </div>
+      <Textarea
+        className="min-h-20 font-mono text-xs"
+        disabled={pending}
+        value={value}
+        placeholder="使用全局 User-Agent"
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs text-muted-foreground">
+          当前：{credential.userAgent || "使用全局 User-Agent"}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={pending || !credential.userAgent}
+            onClick={() => saveUserAgent(null)}
+          >
+            {saving && <Spinner data-icon="inline-start" />}
+            清除覆盖
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={pending}
+            onClick={() => saveUserAgent(value.trim() || null)}
+          >
+            {saving && <Spinner data-icon="inline-start" />}
+            保存 User-Agent
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CredentialProxyControls({
   credential,
   disabled,
@@ -3893,6 +4057,13 @@ function CredentialSettingsDialog({
           <section className="grid min-w-0 gap-3">
             <CredentialRoutingControls
               key={`${credential.id}:${credential.priority}:${credential.weight}:${credential.enabled}:${credential.fastEnabled}:${credential.upstreamTransport}`}
+              credential={credential}
+              disabled={disabled}
+              onSaved={onSaved}
+            />
+
+            <CredentialUserAgentControls
+              key={`${credential.id}:${credential.userAgent ?? "global"}`}
               credential={credential}
               disabled={disabled}
               onSaved={onSaved}
@@ -5901,6 +6072,15 @@ function globalProxySourceLabel(source: GlobalSettingsRecord["proxySource"]) {
     database: "数据库",
     environment: "环境变量",
     none: "未配置",
+  };
+  return labels[source] || source;
+}
+
+function userAgentSourceLabel(source: GlobalSettingsRecord["userAgentSource"]) {
+  const labels: Record<GlobalSettingsRecord["userAgentSource"], string> = {
+    database: "数据库",
+    environment: "环境变量",
+    default: "默认值",
   };
   return labels[source] || source;
 }

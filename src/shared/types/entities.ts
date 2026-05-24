@@ -126,6 +126,7 @@ export interface CodexCredentialRecord {
   weight: number;
   fastEnabled: boolean;
   upstreamTransport: CodexUpstreamTransport;
+  userAgent: string | null;
   useGlobalProxy: boolean;
   proxyPoolId: string | null;
   proxy: PublicCredentialProxyConfig | null;
@@ -148,6 +149,8 @@ export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
 export interface GlobalSettingsRecord {
   proxy: PublicCredentialProxyConfig | null;
   proxySource: "database" | "environment" | "none";
+  userAgent: string;
+  userAgentSource: "database" | "environment" | "default";
   fullRequestLoggingEnabled: boolean;
   requestLogRetentionDays: number | null;
   requestLogDetailRetentionDays: number | null;

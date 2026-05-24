@@ -9,6 +9,7 @@ import {
   ensureFreshCredential,
   resolveCredentialProxy,
 } from "@/src/server/services/codexCredentials";
+import { getEffectiveCodexUserAgent } from "@/src/server/services/settings";
 import type { StageTimer } from "@/src/server/http/stageTimer";
 import type {
   ChannelRecord,
@@ -260,11 +261,12 @@ function buildCodexHeaders(
     promptCacheKey?: string | null;
   },
 ) {
+  const userAgent = getEffectiveCodexUserAgent(credential);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${credential.tokens.access_token}`,
     Accept: input.stream ? "text/event-stream" : "application/json",
-    "User-Agent": serverConfig.userAgent,
+    "User-Agent": userAgent,
     Originator: serverConfig.codexOriginator,
   };
   for (const name of [

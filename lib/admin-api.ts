@@ -351,6 +351,7 @@ export function updateCredentialRouting(
     weight?: number;
     fastEnabled?: boolean;
     upstreamTransport?: CodexUpstreamTransport;
+    userAgent?: string | null;
     useGlobalProxy?: boolean;
     proxyPoolId?: string | null;
     proxy?: CredentialProxyPayload;
@@ -463,6 +464,7 @@ export function getGlobalSettings() {
 
 export function updateGlobalSettings(payload: {
   proxy?: CredentialProxyPayload;
+  userAgent?: string | null;
   fullRequestLoggingEnabled?: boolean;
   requestLogRetentionDays?: number;
   requestLogDetailRetentionDays?: number;

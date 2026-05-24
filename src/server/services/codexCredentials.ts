@@ -22,7 +22,11 @@ import {
   takeOAuthPendingState,
 } from "@/src/server/repositories/oauthPendingStates";
 import { randomId, sha256 } from "@/src/server/services/crypto";
-import { getGlobalProxySetting } from "@/src/server/services/settings";
+import {
+  getEffectiveCodexUserAgent,
+  getGlobalProxySetting,
+  normalizeCodexUserAgentInput,
+} from "@/src/server/services/settings";
 import { getProxyPoolCredentialProxy } from "@/src/server/services/proxyPool";
 import type {
   CodexCredentialRecord,
@@ -223,6 +227,7 @@ export function patchCodexCredentialRouting(
     weight?: number;
     fastEnabled?: boolean;
     upstreamTransport?: CodexUpstreamTransport;
+    userAgent?: string | null;
     useGlobalProxy?: boolean;
     proxyPoolId?: string | null;
     proxy?: unknown;
@@ -251,6 +256,9 @@ export function patchCodexCredentialRouting(
   const proxyPatch = Object.hasOwn(input, "proxy")
     ? { proxy: normalizeCredentialProxyPatch(input.proxy, existing.proxy) }
     : {};
+  const userAgentPatch = Object.hasOwn(input, "userAgent")
+    ? { userAgent: normalizeCodexUserAgentInput(input.userAgent) }
+    : {};
   const proxyPoolPatch = Object.hasOwn(input, "proxyPoolId")
     ? { proxyPoolId: normalizeProxyPoolId(input.proxyPoolId) }
     : {};
@@ -264,6 +272,7 @@ export function patchCodexCredentialRouting(
       : {}),
     ...(fastEnabled !== undefined ? { fastEnabled } : {}),
     ...(upstreamTransport !== undefined ? { upstreamTransport } : {}),
+    ...userAgentPatch,
     ...(input.useGlobalProxy !== undefined
       ? { useGlobalProxy: Boolean(input.useGlobalProxy) }
       : {}),
@@ -402,6 +411,11 @@ export function importCodexCredentialFromJson(
   const useGlobalProxy = booleanValue(
     parsed.use_global_proxy ?? parsed.useGlobalProxy,
   );
+  const userAgent = Object.hasOwn(parsed, "user_agent")
+    ? normalizeCodexUserAgentInput(parsed.user_agent)
+    : Object.hasOwn(parsed, "userAgent")
+      ? normalizeCodexUserAgentInput(parsed.userAgent)
+      : undefined;
   const metadata = objectValue(parsed.metadata);
 
   const saved = upsertCodexCredential({
@@ -439,6 +453,7 @@ export function importCodexCredentialFromJson(
       ...(useGlobalProxy !== undefined
         ? { use_global_proxy: useGlobalProxy }
         : {}),
+      ...(userAgent !== undefined ? { user_agent: userAgent } : {}),
     },
   });
   if (!saved) {
@@ -475,6 +490,7 @@ async function refreshCodexCredentialWithTokens(id: string) {
       credential.proxy,
       credential.proxyPoolId,
       credential.useGlobalProxy,
+      getEffectiveCodexUserAgent(credential),
     );
     return await saveTokenResponse(tokenResponse, credential);
   } catch (error) {
@@ -549,6 +565,7 @@ async function tokenRequest(
   proxy: CredentialProxyConfig | null,
   proxyPoolId: string | null,
   useGlobalProxyFallback: boolean,
+  userAgent = getEffectiveCodexUserAgent(),
 ) {
   const response = await proxiedFetch(
     TOKEN_URL,
@@ -557,6 +574,7 @@ async function tokenRequest(
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
+        "User-Agent": userAgent,
       },
       body,
       signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
@@ -710,6 +728,8 @@ function exportCodexCredentialJson(credential: CodexCredentialWithTokens) {
     upstreamTransport: credential.upstreamTransport,
     use_global_proxy: credential.useGlobalProxy,
     useGlobalProxy: credential.useGlobalProxy,
+    user_agent: credential.userAgent,
+    userAgent: credential.userAgent,
     proxy: credential.proxy,
     metadata: credential.metadata,
     created_at: credential.createdAt,
@@ -731,6 +751,7 @@ function publicCredential(
     weight: credential.weight,
     fastEnabled: credential.fastEnabled,
     upstreamTransport: credential.upstreamTransport,
+    userAgent: credential.userAgent,
     useGlobalProxy: credential.useGlobalProxy,
     proxyPoolId: credential.proxyPoolId,
     proxy: credential.proxy
