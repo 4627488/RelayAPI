@@ -1135,6 +1135,7 @@ function createCodexUsageMeterStream(
   let usage = emptyUsage();
   let firstTokenReported = false;
   let upstreamCompleted = false;
+  let upstreamErrored = false;
   let completionReported = false;
 
   function reportFirstTokenOnce() {
@@ -1175,6 +1176,10 @@ function createCodexUsageMeterStream(
         () => {
           upstreamCompleted = true;
         },
+        (error) => {
+          upstreamErrored = true;
+          reportErrorOnce(error);
+        },
       );
       controller.enqueue(encoder.encode(frame.frame));
     }
@@ -1200,11 +1205,18 @@ function createCodexUsageMeterStream(
             () => {
               upstreamCompleted = true;
             },
+            (error) => {
+              upstreamErrored = true;
+              reportErrorOnce(error);
+            },
           );
           controller.enqueue(encoder.encode(frame.frame));
         }
         if (upstreamCompleted) {
           reportCompletedOnce();
+          return;
+        }
+        if (upstreamErrored) {
           return;
         }
         const error = new Error(
@@ -1222,6 +1234,7 @@ function handleCodexStreamFrame(
   onUsage: (usage: UsageSnapshot) => void,
   onFirstToken: () => void,
   onCompleted: () => void,
+  onError: (error: unknown) => void,
 ) {
   if (!event) {
     return;
@@ -1237,7 +1250,26 @@ function handleCodexStreamFrame(
   if (event.type === "response.completed") {
     onUsage(extractUsageFromCodexResponse(event.response || event));
     onCompleted();
+    return;
   }
+  if (event.type === "error") {
+    onError(codexUpstreamStreamError(event));
+  }
+}
+
+function codexUpstreamStreamError(event: Record<string, unknown>) {
+  const error =
+    event.error && typeof event.error === "object" && !Array.isArray(event.error)
+      ? (event.error as Record<string, unknown>)
+      : event;
+  const message =
+    stringValue(error.message) ||
+    stringValue(error.code) ||
+    "Upstream Codex stream returned an error";
+  const out = new Error(message);
+  const withDetails = out as Error & { details?: unknown };
+  withDetails.details = event;
+  return out;
 }
 
 function codexStreamErrorFrame(error: unknown) {
