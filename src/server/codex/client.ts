@@ -226,13 +226,16 @@ function buildCodexHeaders(
     "Content-Type": "application/json",
     Authorization: `Bearer ${credential.tokens.access_token}`,
     Accept: input.stream ? "text/event-stream" : "application/json",
-    "User-Agent": serverConfig.userAgent,
-    Originator: serverConfig.codexOriginator,
+    "User-Agent": input.sourceHeaders.get("user-agent") || serverConfig.userAgent,
+    Originator:
+      input.sourceHeaders.get("originator") || serverConfig.codexOriginator,
   };
   for (const name of [
     "version",
+    "thread-id",
     "x-codex-turn-metadata",
     "x-codex-turn-state",
+    "x-codex-window-id",
     "x-client-request-id",
     "x-codex-beta-features",
     "x-responsesapi-include-timing-metrics",
