@@ -1,6 +1,6 @@
 services:
   relay-api:
-    image: sipcink/relay-api:latest
+    image: ghcr.io/4627488/relayapi:latest
     container_name: relay-api
     restart: unless-stopped
     ports:
