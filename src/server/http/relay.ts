@@ -52,6 +52,8 @@ import type {
 } from "@/src/shared/types/entities";
 
 const DETAIL_TEXT_LIMIT = 512 * 1024;
+const JSON_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
+const MULTIPART_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
 const SENSITIVE_HEADER_NAMES = new Set([
   "authorization",
   "cookie",
@@ -299,8 +301,14 @@ export async function handleImagesEdits(request: Request) {
         "读取图片编辑 Multipart Body",
         async () => {
           try {
+            assertContentLength(request, MULTIPART_BODY_LIMIT_BYTES, {
+              requireKnownLength: true,
+            });
             return await request.formData();
-          } catch {
+          } catch (error) {
+            if (error instanceof HttpError) {
+              throw error;
+            }
             throw new HttpError(
               400,
               "invalid_multipart_form",
@@ -1530,24 +1538,89 @@ function tapStream(
 }
 
 async function readJsonObject(request: Request) {
-  const contentLength = Number(request.headers.get("content-length") || 0);
-  if (contentLength > 25 * 1024 * 1024) {
-    throw new HttpError(413, "body_too_large", "Request body is too large");
-  }
-  let parsed: unknown;
+  assertContentLength(request, JSON_BODY_LIMIT_BYTES);
+  const text = await readRequestTextWithLimit(request, JSON_BODY_LIMIT_BYTES);
   try {
-    parsed = await request.json();
-  } catch {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new HttpError(
+        400,
+        "invalid_json_object",
+        "Request body must be a JSON object",
+      );
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
     throw new HttpError(400, "invalid_json", "Request body must be valid JSON");
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new HttpError(
-      400,
-      "invalid_json_object",
-      "Request body must be a JSON object",
-    );
+}
+
+function assertContentLength(
+  request: Request,
+  limitBytes: number,
+  options: { requireKnownLength?: boolean } = {},
+) {
+  const raw = request.headers.get("content-length");
+  if (!raw) {
+    if (options.requireKnownLength) {
+      throw new HttpError(
+        411,
+        "content_length_required",
+        "Content-Length is required for this request",
+      );
+    }
+    return;
   }
-  return parsed as Record<string, unknown>;
+  const contentLength = Number(raw);
+  if (!Number.isFinite(contentLength) || contentLength < 0) {
+    throw new HttpError(400, "invalid_content_length", "Invalid Content-Length");
+  }
+  if (contentLength > limitBytes) {
+    throw new HttpError(413, "body_too_large", "Request body is too large");
+  }
+}
+
+async function readRequestTextWithLimit(request: Request, limitBytes: number) {
+  if (!request.body) {
+    return "";
+  }
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+      total += value.byteLength;
+      if (total > limitBytes) {
+        throw new HttpError(413, "body_too_large", "Request body is too large");
+      }
+      chunks.push(value);
+    }
+  } catch {
+    reader.releaseLock();
+    throw;
+  }
+  reader.releaseLock();
+  return new TextDecoder().decode(concatUint8Arrays(chunks, total));
+}
+
+function concatUint8Arrays(chunks: Uint8Array[], total: number) {
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
 }
 
 function upstreamErrorResponse(status: number) {

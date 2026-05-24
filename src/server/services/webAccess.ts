@@ -101,23 +101,41 @@ export function requireWebRequest(request: Request) {
   if (!isWebRequestAuthenticated(request)) {
     throw new HttpError(401, "web_auth_required", "Web access key is required");
   }
+  if (isUnsafeMethod(request.method) && !isSameOriginRequest(request)) {
+    throw new HttpError(
+      403,
+      "csrf_origin_mismatch",
+      "Request origin is not allowed",
+    );
+  }
 }
 
-export function webSessionCookieOptions(requestUrl: string) {
+export function requireWebMutationRequest(request: Request) {
+  requireWebRequest(request);
+  if (!isSameOriginRequest(request)) {
+    throw new HttpError(
+      403,
+      "csrf_origin_mismatch",
+      "Request origin is not allowed",
+    );
+  }
+}
+
+export function webSessionCookieOptions(request: Request | string) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: isHttpsUrl(requestUrl),
+    secure: isSecureRequest(request),
     path: "/",
     maxAge: WEB_SESSION_TTL_SECONDS,
   };
 }
 
-export function expiredWebSessionCookieOptions(requestUrl: string) {
+export function expiredWebSessionCookieOptions(request: Request | string) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: isHttpsUrl(requestUrl),
+    secure: isSecureRequest(request),
     path: "/",
     maxAge: 0,
   };
@@ -285,6 +303,57 @@ function readCookie(cookieHeader: string | null, name: string) {
     }
   }
   return null;
+}
+
+function isSameOriginRequest(request: Request) {
+  const requestOrigin = originFromUrl(request.url);
+  if (!requestOrigin) {
+    return false;
+  }
+
+  const origin = request.headers.get("origin");
+  if (origin) {
+    return originFromUrl(origin) === requestOrigin;
+  }
+
+  const referer = request.headers.get("referer");
+  if (referer) {
+    return originFromUrl(referer) === requestOrigin;
+  }
+
+  // Non-browser clients may omit both headers; SameSite cookies still protect
+  // browsers, and direct API clients cannot forge a valid signed session cookie.
+  return true;
+}
+
+function isUnsafeMethod(method: string) {
+  return !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
+}
+
+function originFromUrl(input: string) {
+  try {
+    return new URL(input).origin;
+  } catch {
+    return "";
+  }
+}
+
+function isSecureRequest(input: Request | string) {
+  if (process.env.RELAY_SECURE_COOKIES === "1") {
+    return true;
+  }
+  if (typeof input === "string") {
+    return isHttpsUrl(input);
+  }
+  const forwardedProto = input.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim()
+    .toLowerCase();
+  if (forwardedProto) {
+    return forwardedProto === "https";
+  }
+  return isHttpsUrl(input.url);
 }
 
 function isHttpsUrl(input: string) {

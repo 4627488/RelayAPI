@@ -4,6 +4,8 @@ import { HttpError } from "@/src/server/http/errors";
 
 const DEFAULT_IMAGES_MAIN_MODEL = "gpt-5.4-mini";
 const DEFAULT_IMAGES_TOOL_MODEL = "gpt-image-2";
+const MAX_IMAGE_EDIT_FILES = 10;
+const MAX_IMAGE_EDIT_FILE_BYTES = 20 * 1024 * 1024;
 
 type ImageAction = "generate" | "edit";
 type ImageStreamPrefix = "image_generation" | "image_edit";
@@ -127,6 +129,13 @@ export async function buildImagesEditsMultipartRequest(
       400,
       "missing_image_input",
       "Invalid request: image is required",
+    );
+  }
+  if (files.length > MAX_IMAGE_EDIT_FILES) {
+    throw new HttpError(
+      413,
+      "too_many_image_inputs",
+      `At most ${MAX_IMAGE_EDIT_FILES} image files are allowed`,
     );
   }
 
@@ -655,6 +664,13 @@ function mimeTypeFromOutputFormat(outputFormat: string) {
 }
 
 async function fileToDataUrl(file: File) {
+  if (file.size > MAX_IMAGE_EDIT_FILE_BYTES) {
+    throw new HttpError(
+      413,
+      "image_file_too_large",
+      "Image file is too large",
+    );
+  }
   const bytes = Buffer.from(await file.arrayBuffer());
   const mediaType = file.type || "application/octet-stream";
   return `data:${mediaType};base64,${bytes.toString("base64")}`;

@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     cookieStore.set(
       WEB_SESSION_COOKIE,
       "",
-      expiredWebSessionCookieOptions(request.url),
+      expiredWebSessionCookieOptions(request),
     );
     return Response.json({ authenticated: false });
   } catch (error) {

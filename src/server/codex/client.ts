@@ -133,68 +133,8 @@ export async function codexFetch(
     sourceHeaders: input.sourceHeaders,
     promptCacheKey,
   });
-  if (useWebSocket) {
-    const response = await codexWebSocketResponse({
-      httpUrl: url,
-      headers,
-      payload: upstreamPayload,
-      proxy,
-      timeoutMs: serverConfig.requestTimeoutMs,
-    });
-    if (response.status === 426) {
-      const fallbackResponse =
-        (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
-          proxiedFetch(
-            url,
-            {
-              method: "POST",
-              headers,
-              body: JSON.stringify(upstreamPayload),
-              signal: AbortSignal.timeout(
-                input.stream
-                  ? serverConfig.streamRequestTimeoutMs
-                  : serverConfig.requestTimeoutMs,
-              ),
-            },
-            proxy,
-          ),
-        )) ??
-        (await proxiedFetch(
-          url,
-          {
-            method: "POST",
-            headers,
-            body: JSON.stringify(upstreamPayload),
-            signal: AbortSignal.timeout(
-              input.stream
-                ? serverConfig.streamRequestTimeoutMs
-                : serverConfig.requestTimeoutMs,
-            ),
-          },
-          proxy,
-        ));
-      return { response: fallbackResponse, credential, upstreamPayload };
-    }
-    return { response, credential, upstreamPayload };
-  }
-  const response =
-    (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
-      proxiedFetch(
-        url,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify(upstreamPayload),
-          signal: AbortSignal.timeout(
-            input.stream
-              ? serverConfig.streamRequestTimeoutMs
-              : serverConfig.requestTimeoutMs,
-          ),
-        },
-        proxy,
-      ),
-    )) ??
-    (await proxiedFetch(
+  const fetchHttp = () =>
+    proxiedFetch(
       url,
       {
         method: "POST",
@@ -207,7 +147,37 @@ export async function codexFetch(
         ),
       },
       proxy,
-    ));
+    );
+  if (useWebSocket) {
+    let response: Response;
+    try {
+      response = await codexWebSocketResponse({
+        httpUrl: url,
+        headers,
+        payload: upstreamPayload,
+        proxy,
+        timeoutMs: serverConfig.requestTimeoutMs,
+      });
+    } catch {
+      const fallbackResponse =
+        (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
+          fetchHttp(),
+        )) ?? (await fetchHttp());
+      return { response: fallbackResponse, credential, upstreamPayload };
+    }
+    if (response.status === 426) {
+      const fallbackResponse =
+        (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
+          fetchHttp(),
+        )) ?? (await fetchHttp());
+      return { response: fallbackResponse, credential, upstreamPayload };
+    }
+    return { response, credential, upstreamPayload };
+  }
+  const response =
+    (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
+      fetchHttp(),
+    )) ?? (await fetchHttp());
   return { response, credential, upstreamPayload };
 }
 

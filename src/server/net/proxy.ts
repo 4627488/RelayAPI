@@ -3,6 +3,7 @@ import "server-only";
 import nodeFetch, {
   type RequestInit as NodeFetchRequestInit,
 } from "node-fetch";
+import { HttpError } from "@/src/server/http/errors";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import type { CredentialProxyConfig } from "@/src/shared/types/entities";
 
@@ -14,6 +15,7 @@ type CachedProxyAgent = {
 const proxyAgents = new Map<string, CachedProxyAgent>();
 const PROXY_AGENT_IDLE_TTL_MS = 10 * 60 * 1000;
 const PROXY_AGENT_RETRYABLE_ERROR_CODES = new Set([
+  "EAI_AGAIN",
   "ECONNRESET",
   "EPIPE",
   "ETIMEDOUT",
@@ -23,6 +25,7 @@ const PROXY_AGENT_RETRYABLE_ERROR_CODES = new Set([
   "UND_ERR_SOCKET",
   "UND_ERR_CONNECT_TIMEOUT",
 ]);
+const UPSTREAM_FETCH_RETRY_DELAYS_MS = [250, 1_000];
 
 export async function proxiedFetch(
   url: string,
@@ -30,7 +33,7 @@ export async function proxiedFetch(
   proxy: CredentialProxyConfig | null | undefined,
 ): Promise<Response> {
   if (!proxy?.enabled) {
-    return fetch(url, init);
+    return retryUpstreamFetch(url, init, () => fetch(url, init));
   }
 
   const proxyKey = proxyUrl(proxy);
@@ -80,6 +83,54 @@ async function doProxyFetch(
     status: response.status,
     statusText: response.statusText,
     headers,
+  });
+}
+
+async function retryUpstreamFetch(
+  url: string,
+  init: RequestInit,
+  fetchOnce: () => Promise<Response>,
+) {
+  let lastError: unknown;
+  for (
+    let attempt = 0;
+    attempt <= UPSTREAM_FETCH_RETRY_DELAYS_MS.length;
+    attempt += 1
+  ) {
+    try {
+      return await fetchOnce();
+    } catch (error) {
+      lastError = error;
+      if (
+        attempt >= UPSTREAM_FETCH_RETRY_DELAYS_MS.length ||
+        init.signal?.aborted ||
+        !isRetryableProxyError(error)
+      ) {
+        throw upstreamNetworkError(url, error);
+      }
+      await abortableDelay(UPSTREAM_FETCH_RETRY_DELAYS_MS[attempt], init.signal);
+    }
+  }
+  throw upstreamNetworkError(url, lastError);
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal | null) {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  if (signal.aborted) {
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -249,7 +300,9 @@ function isRetryableProxyError(error: unknown) {
     message.includes("other side closed") ||
     message.includes("socket") ||
     message.includes("timed out") ||
+    message.includes("getaddrinfo") ||
     message.includes("econnreset") ||
+    message.includes("eai_again") ||
     message.includes("aborted") ||
     message.includes("network")
   ) {
@@ -278,9 +331,34 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "request failed";
 }
 
-function wrapProxyError(proxy: CredentialProxyConfig, error: unknown) {
-  return new Error(
-    `Proxy request failed via ${publicProxyLabel(proxy)}: ${errorMessage(error)}`,
+function upstreamHost(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function upstreamNetworkError(url: string, error: unknown) {
+  if (error instanceof HttpError) {
+    return error;
+  }
+  return new HttpError(
+    502,
+    "upstream_network_error",
+    `Upstream network request failed for ${upstreamHost(url)}: ${errorMessage(error)}`,
     { cause: error },
+  );
+}
+
+function wrapProxyError(proxy: CredentialProxyConfig, error: unknown) {
+  if (error instanceof HttpError) {
+    return error;
+  }
+  return new HttpError(
+    502,
+    "upstream_network_error",
+    `Proxy request failed via ${publicProxyLabel(proxy)}: ${errorMessage(error)}`,
+    { proxy: publicProxyLabel(proxy), cause: error },
   );
 }

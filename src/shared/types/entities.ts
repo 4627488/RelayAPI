@@ -160,6 +160,7 @@ export interface RelayApiKeyContext {
   modelAllowlist: string[];
   channelAllowlist: string[];
   tokenLimitDaily: number | null;
+  rateLimitPerMinute: number | null;
 }
 
 export interface RelayRequestContext {

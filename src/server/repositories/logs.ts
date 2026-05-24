@@ -436,6 +436,19 @@ export function getApiKeyDailyUsage(apiKeyId: string, day = new Date()) {
   return Number(row?.total_tokens || 0);
 }
 
+export function getApiKeyRequestCountSince(apiKeyId: string, since: Date) {
+  const row = getLogDb()
+    .prepare(
+      `SELECT COUNT(*) AS request_count
+       FROM request_logs
+       WHERE api_key_id = ? AND started_at >= ?`,
+    )
+    .get(apiKeyId, since.toISOString()) as
+    | { request_count: number }
+    | undefined;
+  return Number(row?.request_count || 0);
+}
+
 export interface PublicRequestLogRow {
   id: string;
   started_at: string;

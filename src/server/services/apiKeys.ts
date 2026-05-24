@@ -15,9 +15,15 @@ import {
   toPublicApiKey,
   updateApiKey,
 } from "@/src/server/repositories/apiKeys";
-import { getApiKeyDailyUsage } from "@/src/server/repositories/logs";
+import {
+  getApiKeyDailyUsage,
+  getApiKeyRequestCountSince,
+} from "@/src/server/repositories/logs";
 import { base64Url, randomId, sha256 } from "@/src/server/services/crypto";
 import { HttpError } from "@/src/server/http/errors";
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const inFlightRateLimitBuckets = new Map<string, number[]>();
 
 export interface CreateApiKeyInput {
   name?: string;
@@ -125,6 +131,7 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
       "API key daily token limit has been reached",
     );
   }
+  enforceRateLimit(record.id, record.rateLimitPerMinute);
   markApiKeyUsed(record.id);
   return {
     id: record.id,
@@ -134,6 +141,7 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
     modelAllowlist: record.modelAllowlist,
     channelAllowlist: record.channelAllowlist,
     tokenLimitDaily: record.tokenLimitDaily,
+    rateLimitPerMinute: record.rateLimitPerMinute,
   };
 }
 
@@ -153,6 +161,31 @@ function extractApiKey(request: Request) {
 
 function hashApiKey(key: string) {
   return sha256(key.trim());
+}
+
+function enforceRateLimit(apiKeyId: string, limit: number | null) {
+  if (!limit) {
+    return;
+  }
+  const now = Date.now();
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const recentInFlight = (inFlightRateLimitBuckets.get(apiKeyId) || []).filter(
+    (timestamp) => timestamp >= windowStart,
+  );
+  const persistedCount = getApiKeyRequestCountSince(
+    apiKeyId,
+    new Date(windowStart),
+  );
+  if (persistedCount + recentInFlight.length >= limit) {
+    inFlightRateLimitBuckets.set(apiKeyId, recentInFlight);
+    throw new HttpError(
+      429,
+      "rate_limit_exceeded",
+      "API key rate limit has been reached",
+    );
+  }
+  recentInFlight.push(now);
+  inFlightRateLimitBuckets.set(apiKeyId, recentInFlight);
 }
 
 function cleanString(value: unknown) {

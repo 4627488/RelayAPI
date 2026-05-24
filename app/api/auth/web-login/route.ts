@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     cookieStore.set(
       WEB_SESSION_COOKIE,
       createWebSessionToken(),
-      webSessionCookieOptions(request.url),
+      webSessionCookieOptions(request),
     );
 
     return Response.json({ authenticated: true });
