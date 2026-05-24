@@ -1605,9 +1605,9 @@ async function readRequestTextWithLimit(request: Request, limitBytes: number) {
       }
       chunks.push(value);
     }
-  } catch {
+  } catch (error) {
     reader.releaseLock();
-    throw;
+    throw error;
   }
   reader.releaseLock();
   return new TextDecoder().decode(concatUint8Arrays(chunks, total));

@@ -12,13 +12,6 @@
     "start": "next start",
     "lint": "eslint"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "msw",
-      "sharp",
-      "unrs-resolver"
-    ]
-  },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
     "class-variance-authority": "^0.7.1",
@@ -30,7 +23,6 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "3.8.0",
-    "shadcn": "^4.6.0",
     "socks-proxy-agent": "^10.0.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
@@ -43,7 +35,22 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "shadcn": "^4.6.0",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "msw",
+      "sharp",
+      "unrs-resolver"
+    ],
+    "overrides": {
+      "brace-expansion@5.0.5": "5.0.6",
+      "hono": "4.12.18",
+      "ip-address": "10.2.0",
+      "postcss": "8.5.14",
+      "qs": "6.15.2"
+    }
   }
 }
