@@ -18,13 +18,13 @@ RelayAPI 是一个基于 Next.js App Router 的分层中继服务，用于管理
 
 项目特性：
 
-- 支持 OpenAI-compatible Relay 接口。
+- 支持 OpenAI-compatible  接口。
 - 支持 Codex OAuth 凭据接入与配额刷新。
 - 支持 API Key 管理与 Web 管理后台。
 - 支持自动渠道路由，无需前端选择“当前凭据”。
 - 使用双 SQLite 数据库存储配置、运行状态、日志、审计与用量数据。
 - 使用 Node.js 24 内置 `node:sqlite`，避免额外 native SQLite 依赖。
-- 暂不支持 imge
+- 支持 imge
 
 ## 环境要求
 
