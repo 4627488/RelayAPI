@@ -1162,10 +1162,7 @@ function createCodexUsageMeterStream(
     handlers.onError(error, usage);
   }
 
-  function processText(
-    text: string,
-    controller: TransformStreamDefaultController<Uint8Array>,
-  ) {
+  function processText(text: string) {
     for (const frame of framer.push(text)) {
       handleCodexStreamFrame(
         frame.event,
@@ -1181,19 +1178,19 @@ function createCodexUsageMeterStream(
           reportErrorOnce(error);
         },
       );
-      controller.enqueue(encoder.encode(frame.frame));
     }
   }
 
   return upstreamBody.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
-        processText(decoder.decode(chunk, { stream: true }), controller);
+        controller.enqueue(chunk);
+        processText(decoder.decode(chunk, { stream: true }));
       },
       flush(controller) {
         const tail = decoder.decode();
         if (tail) {
-          processText(tail, controller);
+          processText(tail);
         }
         for (const frame of framer.flush()) {
           handleCodexStreamFrame(
@@ -1210,7 +1207,6 @@ function createCodexUsageMeterStream(
               reportErrorOnce(error);
             },
           );
-          controller.enqueue(encoder.encode(frame.frame));
         }
         if (upstreamCompleted) {
           reportCompletedOnce();
