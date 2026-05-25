@@ -48,6 +48,10 @@ const THINKING_SUFFIX_LEVELS = new Set([
 ]);
 
 const CODEX_REASONING_INCLUDE = ["reasoning.encrypted_content"];
+const CODEX_IMAGE_GENERATION_TOOL = {
+  type: "image_generation",
+  output_format: "png",
+};
 
 export interface ToolNameMaps {
   originalToShort: Map<string, string>;
@@ -108,12 +112,14 @@ export async function codexFetch(
       prepareCodexPayloadForUpstream(payload, {
         fastServiceTier: shouldUsePriorityServiceTier(credential),
         promptCacheKey,
+        planType: credential.planType,
         transport: useWebSocket ? "websocket" : "http",
       }),
     ) ??
     prepareCodexPayloadForUpstream(payload, {
       fastServiceTier: shouldUsePriorityServiceTier(credential),
       promptCacheKey,
+      planType: credential.planType,
       transport: useWebSocket ? "websocket" : "http",
     });
   const proxy = credential.proxy?.enabled
@@ -279,6 +285,7 @@ export function prepareCodexPayloadForUpstream(
   options: {
     fastServiceTier?: boolean;
     promptCacheKey?: string | null;
+    planType?: string | null;
     transport?: "http" | "websocket";
   } = {},
 ): Record<string, unknown> {
@@ -307,6 +314,9 @@ export function prepareCodexPayloadForUpstream(
     preservePreviousResponseId: options.transport === "websocket",
   });
   normalizeCodexBuiltinTools(upstreamPayload);
+  ensureImageGenerationTool(upstreamPayload, {
+    planType: options.planType,
+  });
   return upstreamPayload;
 }
 
@@ -1209,6 +1219,32 @@ function normalizeCodexBuiltinToolType(type: unknown) {
     default:
       return "";
   }
+}
+
+function ensureImageGenerationTool(
+  payload: Record<string, unknown>,
+  input: { planType?: string | null } = {},
+) {
+  const model = stringValue(payload.model).trim();
+  if (model.endsWith("spark") || isFreeCodexPlan(input.planType)) {
+    return;
+  }
+  if (!Array.isArray(payload.tools)) {
+    payload.tools = [{ ...CODEX_IMAGE_GENERATION_TOOL }];
+    return;
+  }
+  if (
+    payload.tools.some(
+      (tool) => isRecord(tool) && tool.type === "image_generation",
+    )
+  ) {
+    return;
+  }
+  payload.tools = [...payload.tools, { ...CODEX_IMAGE_GENERATION_TOOL }];
+}
+
+function isFreeCodexPlan(planType: unknown) {
+  return stringValue(planType).trim().toLowerCase() === "free";
 }
 
 function normalizeReasoningEffort(value: unknown) {
