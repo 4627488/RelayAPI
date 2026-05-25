@@ -306,7 +306,7 @@ function readCookie(cookieHeader: string | null, name: string) {
 }
 
 function isSameOriginRequest(request: Request) {
-  const requestOrigin = originFromUrl(request.url);
+  const requestOrigin = originFromRequest(request);
   if (!requestOrigin) {
     return false;
   }
@@ -326,6 +326,29 @@ function isSameOriginRequest(request: Request) {
   return true;
 }
 
+function originFromRequest(request: Request) {
+  const urlOrigin = originFromUrl(request.url);
+  const requestUrl = parseUrl(request.url);
+  if (!requestUrl) {
+    return urlOrigin;
+  }
+
+  const host =
+    firstHeaderValue(request.headers.get("x-forwarded-host")) ||
+    request.headers.get("host") ||
+    requestUrl.host;
+  if (!host) {
+    return urlOrigin;
+  }
+
+  const proto =
+    firstHeaderValue(request.headers.get("x-forwarded-proto")) ||
+    requestUrl.protocol.replace(/:$/, "") ||
+    "http";
+
+  return originFromUrl(`${proto}://${host}`);
+}
+
 function isUnsafeMethod(method: string) {
   return !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
 }
@@ -338,6 +361,18 @@ function originFromUrl(input: string) {
   }
 }
 
+function parseUrl(input: string) {
+  try {
+    return new URL(input);
+  } catch {
+    return null;
+  }
+}
+
+function firstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || "";
+}
+
 function isSecureRequest(input: Request | string) {
   if (process.env.RELAY_SECURE_COOKIES === "1") {
     return true;
@@ -345,11 +380,9 @@ function isSecureRequest(input: Request | string) {
   if (typeof input === "string") {
     return isHttpsUrl(input);
   }
-  const forwardedProto = input.headers
-    .get("x-forwarded-proto")
-    ?.split(",")[0]
-    ?.trim()
-    .toLowerCase();
+  const forwardedProto = firstHeaderValue(
+    input.headers.get("x-forwarded-proto"),
+  ).toLowerCase();
   if (forwardedProto) {
     return forwardedProto === "https";
   }
