@@ -2,10 +2,7 @@ import { cookies } from "next/headers";
 
 import { AdminDashboard } from "@/components/admin-dashboard";
 import { WebAccessLogin } from "@/components/auth/web-access-login";
-import {
-  getAdminOverviewStats,
-  queryRequestLogs,
-} from "@/src/server/repositories/logs";
+import { getAdminOverviewStats } from "@/src/server/repositories/logs";
 import { listApiKeyPublicRecords } from "@/src/server/services/apiKeys";
 import { listChannelRecords } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
@@ -52,45 +49,52 @@ export default async function Home() {
     return <WebAccessLogin />;
   }
 
-  // Server Component: read initial public metadata directly from server services
-  // so the browser never receives database modules, token envelopes, or key hashes.
-  const apiKeys = listApiKeyPublicRecords();
-  const codexCredentials = await listPublicCodexCredentials();
-  const channels = listChannelRecords();
-  const proxyPool = listPublicProxyPoolItems();
-  const requestLogs = queryRequestLogs({
-    limit: 50,
-    offset: 0,
-    skipTotal: true,
-  });
+  // Keep the initial admin payload lean for low-bandwidth deployments. The
+  // larger lists are loaded by the client only when their tab is opened.
+  const apiKeysForCounts = listApiKeyPublicRecords();
+  const channelsForCounts = listChannelRecords();
+  const codexCredentialsForCounts = await listPublicCodexCredentials();
+  const proxyPoolForCounts = listPublicProxyPoolItems();
   const overviewStats = getAdminOverviewStats() as AdminOverviewStats;
   const globalSettings = getPublicGlobalSettings();
   const initialNow = new Date().getTime();
 
   return (
     <AdminDashboard
-      initialApiKeys={apiKeys}
-      initialChannels={channels}
-      initialCredentials={codexCredentials}
-      initialProxyPool={proxyPool}
+      initialApiKeys={[]}
+      initialChannels={[]}
+      initialCredentials={[]}
+      initialProxyPool={[]}
       initialRequestLogsPage={{
         object: "list",
-        data: requestLogs.data as RequestLogRow[],
-        limit: requestLogs.limit,
+        data: [] as RequestLogRow[],
+        limit: 25,
         page: 1,
-        offset: requestLogs.offset,
-        total: requestLogs.total,
+        offset: 0,
+        total: 0,
         totalPages: 1,
         summary: {
-          errorCount: requestLogs.errorCount,
-          totalTokens: requestLogs.totalTokens,
-          cachedTokens: requestLogs.cachedTokens,
-          cacheHitRate: requestLogs.cacheHitRate,
-          avgLatencyMs: requestLogs.avgLatencyMs,
+          errorCount: 0,
+          totalTokens: 0,
+          cachedTokens: 0,
+          cacheHitRate: 0,
+          avgLatencyMs: 0,
         },
       }}
       initialOverviewStats={overviewStats}
       initialGlobalSettings={globalSettings}
+      initialResourceCounts={{
+        apiKeys: apiKeysForCounts.length,
+        enabledApiKeys: apiKeysForCounts.filter((key) => key.enabled).length,
+        channels: channelsForCounts.length,
+        enabledChannels: channelsForCounts.filter((channel) => channel.enabled)
+          .length,
+        healthyChannels: channelsForCounts.filter(
+          (channel) => channel.status === "healthy",
+        ).length,
+        credentials: codexCredentialsForCounts.length,
+        proxyPool: proxyPoolForCounts.length,
+      }}
       initialNow={initialNow}
     />
   );

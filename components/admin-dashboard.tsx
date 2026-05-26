@@ -101,11 +101,12 @@ import {
   downloadCredentialsExport,
   finishCodexOAuth,
   getCredentialQuota,
-  getDashboardSnapshot,
+  getGlobalSettings,
   getOverview,
   getRequestLogDetail,
   getRequestLogsPage,
   importCredentialJson,
+  listApiKeys,
   listChannels,
   listCredentials,
   listProxyPoolItems,
@@ -151,6 +152,7 @@ type AdminDashboardProps = {
   initialRequestLogsPage: RequestLogsPage;
   initialOverviewStats: AdminOverviewStats;
   initialGlobalSettings: GlobalSettingsRecord;
+  initialResourceCounts: AdminResourceCounts;
   initialNow: number;
 };
 
@@ -163,6 +165,21 @@ type SectionId =
   | "settings"
   | "logs";
 type LogStatusFilter = "all" | "success" | "error";
+
+type AdminResourceCounts = {
+  apiKeys: number;
+  enabledApiKeys: number;
+  channels: number;
+  enabledChannels: number;
+  healthyChannels: number;
+  credentials: number;
+  proxyPool: number;
+};
+
+type LoadedDataState = Record<
+  Exclude<SectionId, "overview">,
+  boolean
+>;
 
 type NavigationItem = {
   id: SectionId;
@@ -279,6 +296,7 @@ export function AdminDashboard({
   initialRequestLogsPage,
   initialOverviewStats,
   initialGlobalSettings,
+  initialResourceCounts,
   initialNow,
 }: AdminDashboardProps) {
   const [activeSection, setActiveSection] =
@@ -293,6 +311,14 @@ export function AdminDashboard({
   const [requestLogs, setRequestLogs] = React.useState(
     initialRequestLogsPage.data,
   );
+  const [loadedData, setLoadedData] = React.useState<LoadedDataState>({
+    apiKeys: initialApiKeys.length > 0,
+    credentials: initialCredentials.length > 0,
+    proxyPool: initialProxyPool.length > 0,
+    channels: initialChannels.length > 0,
+    settings: true,
+    logs: initialRequestLogsPage.data.length > 0,
+  });
   const [overviewStats, setOverviewStats] =
     React.useState(initialOverviewStats);
   const [snapshotTime, setSnapshotTime] = React.useState(initialNow);
@@ -337,23 +363,75 @@ export function AdminDashboard({
     };
   }, [returnToLogin]);
 
+  const refreshOverviewStats = React.useCallback(async () => {
+    const stats = await getOverview();
+    setOverviewStats(stats);
+    setSnapshotTime(Date.now());
+    return stats;
+  }, []);
+
+  const loadSectionData = React.useCallback(
+    async (section: SectionId, force = false) => {
+      if (section !== "overview" && !force && loadedData[section]) {
+        return;
+      }
+
+      setRefreshing(true);
+      try {
+        if (section === "overview") {
+          await refreshOverviewStats();
+        } else if (section === "apiKeys") {
+          setApiKeys(await listApiKeys());
+        } else if (section === "credentials") {
+          const [nextCredentials, nextChannels, nextProxyPool] =
+            await Promise.all([
+              listCredentials(),
+              listChannels(),
+              listProxyPoolItems(),
+            ]);
+          setCredentials(nextCredentials);
+          setChannels(nextChannels);
+          setProxyPool(nextProxyPool);
+          setLoadedData((current) => ({
+            ...current,
+            channels: true,
+            proxyPool: true,
+          }));
+        } else if (section === "proxyPool") {
+          setProxyPool(await listProxyPoolItems());
+        } else if (section === "channels") {
+          const [nextChannels, nextCredentials] = await Promise.all([
+            listChannels(),
+            listCredentials(),
+          ]);
+          setChannels(nextChannels);
+          setCredentials(nextCredentials);
+          setLoadedData((current) => ({ ...current, credentials: true }));
+        } else if (section === "settings") {
+          setGlobalSettings(await getGlobalSettings());
+        } else if (section === "logs") {
+          const result = await getRequestLogsPage({
+            limit: initialRequestLogsPage.limit,
+            page: 1,
+          });
+          setRequestLogs(result.data);
+        }
+        setLoadedData((current) => ({ ...current, [section]: true }));
+        setSnapshotTime(Date.now());
+        return true;
+      } catch (error) {
+        toast.error(adminErrorMessage(error));
+        return false;
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [initialRequestLogsPage.limit, loadedData, refreshOverviewStats],
+  );
+
   async function refreshDashboard() {
-    setRefreshing(true);
-    try {
-      const snapshot = await getDashboardSnapshot({ requestLogLimit: 100 });
-      setApiKeys(snapshot.apiKeys);
-      setChannels(snapshot.channels);
-      setCredentials(snapshot.credentials);
-      setProxyPool(snapshot.proxyPool);
-      setGlobalSettings(snapshot.globalSettings);
-      setRequestLogs(snapshot.requestLogs);
-      setOverviewStats(snapshot.overviewStats);
-      setSnapshotTime(snapshot.generatedAt);
-      toast.success("管理数据已刷新");
-    } catch (error) {
-      toast.error(adminErrorMessage(error));
-    } finally {
-      setRefreshing(false);
+    if (await loadSectionData(activeSection, true)) {
+      toast.success("当前页面数据已刷新");
     }
   }
 
@@ -370,15 +448,9 @@ export function AdminDashboard({
     }
   }
 
-  async function refreshOverviewStats() {
-    const stats = await getOverview();
-    setOverviewStats(stats);
-    setSnapshotTime(Date.now());
-    return stats;
-  }
-
   function handleRequestLogsLoaded(logs: AdminDashboardRequestLogRow[]) {
     setRequestLogs(logs);
+    setLoadedData((current) => ({ ...current, logs: true }));
     setSnapshotTime(Date.now());
   }
 
@@ -455,13 +527,27 @@ export function AdminDashboard({
   }
 
   const totals = overviewStats.totals;
-  const enabledApiKeyCount = apiKeys.filter((key) => key.enabled).length;
-  const enabledChannelCount = channels.filter(
-    (channel) => channel.enabled,
-  ).length;
-  const healthyChannelCount = channels.filter(
-    (channel) => channel.status === "healthy",
-  ).length;
+  const apiKeyCount = loadedData.apiKeys
+    ? apiKeys.length
+    : initialResourceCounts.apiKeys;
+  const enabledApiKeyCount = loadedData.apiKeys
+    ? apiKeys.filter((key) => key.enabled).length
+    : initialResourceCounts.enabledApiKeys;
+  const channelCount = loadedData.channels
+    ? channels.length
+    : initialResourceCounts.channels;
+  const enabledChannelCount = loadedData.channels
+    ? channels.filter((channel) => channel.enabled).length
+    : initialResourceCounts.enabledChannels;
+  const healthyChannelCount = loadedData.channels
+    ? channels.filter((channel) => channel.status === "healthy").length
+    : initialResourceCounts.healthyChannels;
+  const credentialCount = loadedData.credentials
+    ? credentials.length
+    : initialResourceCounts.credentials;
+  const proxyPoolCount = loadedData.proxyPool
+    ? proxyPool.length
+    : initialResourceCounts.proxyPool;
   const successRate = ratio(totals.successCount, totals.requestCount);
   const hasOperationalData = totals.requestCount > 0;
 
@@ -477,28 +563,28 @@ export function AdminDashboard({
       label: "凭据",
       description: "Codex 账号",
       icon: UserRoundIcon,
-      count: credentials.length,
+      count: credentialCount,
     },
     {
       id: "proxyPool",
       label: "代理池",
       description: "SOCKS 代理",
       icon: DatabaseIcon,
-      count: proxyPool.length,
+      count: proxyPoolCount,
     },
     {
       id: "channels",
       label: "通道",
       description: "路由通道",
       icon: RouteIcon,
-      count: channels.length,
+      count: channelCount,
     },
     {
       id: "apiKeys",
       label: "密钥",
       description: "API 密钥",
       icon: KeyRoundIcon,
-      count: apiKeys.length,
+      count: apiKeyCount,
     },
     {
       id: "logs",
@@ -597,7 +683,12 @@ export function AdminDashboard({
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setActiveSection(item.id)}
+                    onClick={() => {
+                      setActiveSection(item.id);
+                      if (item.id !== "overview") {
+                        void loadSectionData(item.id);
+                      }
+                    }}
                     className={[
                       "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors",
                       active
@@ -668,9 +759,9 @@ export function AdminDashboard({
           <section className="min-w-0">
             {activeSection === "overview" && (
               <OverviewSection
-                apiKeyCount={apiKeys.length}
-                channelCount={channels.length}
-                credentialCount={credentials.length}
+                apiKeyCount={apiKeyCount}
+                channelCount={channelCount}
+                credentialCount={credentialCount}
                 enabledChannelCount={enabledChannelCount}
                 hasOperationalData={hasOperationalData}
                 overviewStats={overviewStats}
@@ -720,6 +811,7 @@ export function AdminDashboard({
             )}
             {activeSection === "logs" && (
               <LogsSection
+                key={`${requestLogs[0]?.id ?? "empty"}:${requestLogs.length}`}
                 initialRequestLogsPage={{
                   ...initialRequestLogsPage,
                   data: requestLogs,
