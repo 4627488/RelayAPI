@@ -93,9 +93,11 @@ import {
   adminErrorMessage,
   createApiKey,
   createChannel,
+  createProxyPoolItem,
   deleteApiKey,
   deleteChannel,
   deleteCredential,
+  deleteProxyPoolItem,
   downloadCredentialsExport,
   finishCodexOAuth,
   getCredentialQuota,
@@ -106,6 +108,7 @@ import {
   importCredentialJson,
   listChannels,
   listCredentials,
+  listProxyPoolItems,
   logoutWebSession,
   pruneRequestLogs,
   refreshCredential,
@@ -115,11 +118,13 @@ import {
   updateApiKey,
   updateChannel,
   updateCredentialRouting,
+  updateProxyPoolItem,
   type AdminDashboardRequestLogRow,
   type ApiKeyPayload,
   type ChannelPayload,
   type CodexQuotaReport,
   type OAuthStartResponse,
+  type ProxyPoolPayload,
   type RequestLogDetail,
   type RequestLogsPage,
 } from "@/lib/admin-api";
@@ -133,6 +138,7 @@ import type {
   CredentialProxyType,
   CreatedApiKey,
   GlobalSettingsRecord,
+  ProxyPoolRecord,
   PublicApiKey,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
@@ -141,6 +147,7 @@ type AdminDashboardProps = {
   initialApiKeys: PublicApiKey[];
   initialChannels: ChannelRecord[];
   initialCredentials: CodexCredentialRecord[];
+  initialProxyPool: ProxyPoolRecord[];
   initialRequestLogsPage: RequestLogsPage;
   initialOverviewStats: AdminOverviewStats;
   initialGlobalSettings: GlobalSettingsRecord;
@@ -151,6 +158,7 @@ type SectionId =
   | "overview"
   | "apiKeys"
   | "credentials"
+  | "proxyPool"
   | "channels"
   | "settings"
   | "logs";
@@ -211,6 +219,11 @@ type CredentialProxyFormState = {
   password: string;
 };
 
+type ProxyPoolFormState = CredentialProxyFormState & {
+  name: string;
+  notes: string;
+};
+
 type ChannelFormState = {
   name: string;
   credentialIds: string;
@@ -262,6 +275,7 @@ export function AdminDashboard({
   initialApiKeys,
   initialChannels,
   initialCredentials,
+  initialProxyPool,
   initialRequestLogsPage,
   initialOverviewStats,
   initialGlobalSettings,
@@ -272,6 +286,7 @@ export function AdminDashboard({
   const [apiKeys, setApiKeys] = React.useState(initialApiKeys);
   const [channels, setChannels] = React.useState(initialChannels);
   const [credentials, setCredentials] = React.useState(initialCredentials);
+  const [proxyPool, setProxyPool] = React.useState(initialProxyPool);
   const [globalSettings, setGlobalSettings] = React.useState(
     initialGlobalSettings,
   );
@@ -329,6 +344,7 @@ export function AdminDashboard({
       setApiKeys(snapshot.apiKeys);
       setChannels(snapshot.channels);
       setCredentials(snapshot.credentials);
+      setProxyPool(snapshot.proxyPool);
       setGlobalSettings(snapshot.globalSettings);
       setRequestLogs(snapshot.requestLogs);
       setOverviewStats(snapshot.overviewStats);
@@ -462,6 +478,13 @@ export function AdminDashboard({
       description: "Codex 账号",
       icon: UserRoundIcon,
       count: credentials.length,
+    },
+    {
+      id: "proxyPool",
+      label: "代理池",
+      description: "SOCKS 代理",
+      icon: DatabaseIcon,
+      count: proxyPool.length,
     },
     {
       id: "channels",
@@ -667,9 +690,16 @@ export function AdminDashboard({
               <CredentialsSection
                 credentials={credentials}
                 globalSettings={globalSettings}
+                proxyPool={proxyPool}
                 onDeleted={handleCredentialDeleted}
                 onRefreshData={refreshCredentialAndChannelData}
                 onUpdated={handleCredentialUpdated}
+              />
+            )}
+            {activeSection === "proxyPool" && (
+              <ProxyPoolSection
+                proxyPool={proxyPool}
+                onChanged={setProxyPool}
               />
             )}
             {activeSection === "channels" && (
@@ -683,7 +713,7 @@ export function AdminDashboard({
             )}
             {activeSection === "settings" && (
               <SettingsSection
-                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.requestLogRetentionDays}:${globalSettings.requestLogDetailRetentionDays}:${globalSettings.updatedAt}`}
+                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.userAgentSource}:${globalSettings.userAgent}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.codexAutoDisableRefreshExhausted}:${globalSettings.requestLogRetentionDays}:${globalSettings.requestLogDetailRetentionDays}:${globalSettings.updatedAt}`}
                 settings={globalSettings}
                 onSaved={setGlobalSettings}
               />
@@ -716,7 +746,10 @@ function SettingsSection({
   );
   const [saving, setSaving] = React.useState(false);
   const [clearing, setClearing] = React.useState(false);
+  const [userAgent, setUserAgent] = React.useState(settings.userAgent);
+  const [userAgentSaving, setUserAgentSaving] = React.useState(false);
   const [loggingSaving, setLoggingSaving] = React.useState(false);
+  const [refreshPolicySaving, setRefreshPolicySaving] = React.useState(false);
   const [retentionSaving, setRetentionSaving] = React.useState(false);
   const [pruning, setPruning] = React.useState(false);
   const [retentionForm, setRetentionForm] = React.useState(() => ({
@@ -814,6 +847,37 @@ function SettingsSection({
     }
   }
 
+  async function saveUserAgent() {
+    const value = userAgent.trim();
+    setUserAgentSaving(true);
+    try {
+      const updated = await updateGlobalSettings({ userAgent: value || null });
+      onSaved(updated);
+      setUserAgent(updated.userAgent);
+      toast.success(
+        value ? "全局 User-Agent 已保存" : "全局 User-Agent 已清除",
+      );
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setUserAgentSaving(false);
+    }
+  }
+
+  async function clearUserAgent() {
+    setUserAgentSaving(true);
+    try {
+      const updated = await updateGlobalSettings({ userAgent: null });
+      onSaved(updated);
+      setUserAgent(updated.userAgent);
+      toast.success("已回退到环境变量或默认 User-Agent");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setUserAgentSaving(false);
+    }
+  }
+
   async function updateFullRequestLogging(enabled: boolean) {
     setLoggingSaving(true);
     try {
@@ -826,6 +890,25 @@ function SettingsSection({
       toast.error(adminErrorMessage(error));
     } finally {
       setLoggingSaving(false);
+    }
+  }
+
+  async function updateCodexAutoDisableRefreshExhausted(enabled: boolean) {
+    setRefreshPolicySaving(true);
+    try {
+      const updated = await updateGlobalSettings({
+        codexAutoDisableRefreshExhausted: enabled,
+      });
+      onSaved(updated);
+      toast.success(
+        enabled
+          ? "Token 刷新失败自动禁用已开启"
+          : "Token 刷新失败自动禁用已关闭",
+      );
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setRefreshPolicySaving(false);
     }
   }
 
@@ -913,22 +996,70 @@ function SettingsSection({
         <CardHeader>
           <CardTitle>全局设置</CardTitle>
           <CardDescription>
-            配置 OAuth 登录专用 SOCKS5 代理。该全局代理只用于 OAuth callback
-            换取 token；token 刷新和额度刷新只使用凭据代理，凭据未配置则直连。
+            配置 Codex 上游 User-Agent、日志策略和 OAuth 登录专用 SOCKS5
+            代理。凭据也可以单独覆盖 User-Agent。
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
-          <Alert className="items-start">
+        <CardContent className="grid gap-4 xl:grid-cols-2">
+          <Alert className="items-start xl:col-span-2">
             <SettingsIcon className="size-4" />
             <AlertTitle>生效范围</AlertTitle>
             <AlertDescription>
-              全局代理只用于 OAuth 登录 callback 换 token。后续 refresh_token
-              和额度查询不会使用全局代理。
+              User-Agent 按“凭据覆盖 → 数据库全局设置 →
+              环境变量/默认值”生效。全局代理用于 OAuth 登录 callback 换
+              token；后续 refresh_token
+              和额度查询需在单个凭据中开启全局代理回退。
             </AlertDescription>
           </Alert>
 
-          <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
-            <div className="flex items-center justify-between gap-3">
+          <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm xl:col-span-2">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="grid gap-1">
+                <div className="font-medium">Codex User-Agent</div>
+                <div className="text-xs text-muted-foreground">
+                  当前来源：{userAgentSourceLabel(settings.userAgentSource)}
+                  。用于 Codex
+                  请求和额度刷新；留空保存会回退到环境变量或默认值。
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={
+                    userAgentSaving || settings.userAgentSource !== "database"
+                  }
+                  onClick={clearUserAgent}
+                >
+                  {userAgentSaving && <Spinner data-icon="inline-start" />}
+                  清除数据库配置
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={userAgentSaving}
+                  onClick={saveUserAgent}
+                >
+                  {userAgentSaving && <Spinner data-icon="inline-start" />}
+                  保存 User-Agent
+                </Button>
+              </div>
+            </div>
+            <Textarea
+              className="min-h-20 font-mono text-xs"
+              disabled={userAgentSaving}
+              value={userAgent}
+              placeholder={settings.userAgent}
+              onChange={(event) => setUserAgent(event.target.value)}
+            />
+            <div className="text-xs text-muted-foreground">
+              当前生效：{settings.userAgent || "未配置"}
+            </div>
+          </div>
+
+          <div className="grid h-full gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-medium">记录完整日志</div>
                 <div className="text-xs text-muted-foreground">
@@ -947,9 +1078,30 @@ function SettingsSection({
             </div>
           </div>
 
-          <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+          <div className="grid h-full gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-medium">自动停用错误凭据</div>
+                <div className="text-xs text-muted-foreground">
+                  Token 定时刷新始终会在凭据过期前 4
+                  天尝试执行；失败后每天再试，最多总共尝试 3
+                  次。开启此开关后，达到次数上限的错误凭据会自动停用；关闭时仅标记错误，不影响自动刷新。
+                </div>
+              </div>
+              <Switch
+                checked={settings.codexAutoDisableRefreshExhausted}
+                disabled={refreshPolicySaving}
+                size="sm"
+                onCheckedChange={(checked) =>
+                  void updateCodexAutoDisableRefreshExhausted(Boolean(checked))
+                }
+              />
+            </div>
+          </div>
+
+          <div className="grid h-full gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-1">
+              <div className="grid gap-1">
                 <div className="font-medium">日志保留与清理</div>
                 <div className="text-xs text-muted-foreground">
                   概要日志会影响总览统计；详细日志包含请求/响应体，建议保留更短时间。
@@ -1037,8 +1189,8 @@ function SettingsSection({
             </div>
           </div>
 
-          <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
-            <div className="flex items-center justify-between gap-3">
+          <div className="grid h-full gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-medium">OAuth 登录代理</div>
                 <div className="text-xs text-muted-foreground">
@@ -1057,7 +1209,7 @@ function SettingsSection({
               />
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-[0.8fr_1fr_0.7fr]">
+            <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-[0.8fr_1fr_0.7fr]">
               <label className="grid gap-1 text-xs text-muted-foreground">
                 协议
                 <select
@@ -2229,15 +2381,350 @@ function ApiKeyDeleteDialog({
   );
 }
 
+function ProxyPoolSection({
+  proxyPool,
+  onChanged,
+}: {
+  proxyPool: ProxyPoolRecord[];
+  onChanged: (proxyPool: ProxyPoolRecord[]) => void;
+}) {
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<ProxyPoolRecord | null>(null);
+  const [form, setForm] = React.useState<ProxyPoolFormState>(() =>
+    emptyProxyPoolForm(),
+  );
+  const [pendingId, setPendingId] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+
+  function patchForm(patch: Partial<ProxyPoolFormState>) {
+    setForm((current) => ({ ...current, ...patch }));
+  }
+
+  function openCreate() {
+    setEditing(null);
+    setForm(emptyProxyPoolForm());
+    setDialogOpen(true);
+  }
+
+  function openEdit(proxy: ProxyPoolRecord) {
+    setEditing(proxy);
+    setForm(proxyPoolForm(proxy));
+    setDialogOpen(true);
+  }
+
+  async function refreshProxyPool() {
+    onChanged(await listProxyPoolItems());
+  }
+
+  async function saveProxy() {
+    const payload = proxyPoolPayload(form, editing);
+    if (!payload) {
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editing) {
+        const updated = await updateProxyPoolItem(editing.id, payload);
+        onChanged([
+          updated,
+          ...proxyPool.filter((proxy) => proxy.id !== updated.id),
+        ]);
+        toast.success("代理已更新");
+      } else {
+        const created = await createProxyPoolItem(payload);
+        onChanged([created, ...proxyPool]);
+        toast.success("代理已添加");
+      }
+      setDialogOpen(false);
+      setEditing(null);
+      setForm(emptyProxyPoolForm());
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeProxy(proxy: ProxyPoolRecord) {
+    setPendingId(proxy.id);
+    try {
+      await deleteProxyPoolItem(proxy.id);
+      onChanged(proxyPool.filter((item) => item.id !== proxy.id));
+      toast.success("代理已删除");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setPendingId(null);
+    }
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>代理池</CardTitle>
+          <CardDescription>
+            集中保存 SOCKS5 / SOCKS5H 代理账密，之后可在 Codex
+            凭据设置中直接选择使用。
+          </CardDescription>
+          <CardAction>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={refreshProxyPool}
+              >
+                <RefreshCwIcon data-icon="inline-start" />
+                刷新
+              </Button>
+              <Button type="button" onClick={openCreate}>
+                <PlusIcon data-icon="inline-start" />
+                添加代理
+              </Button>
+            </div>
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          {proxyPool.length === 0 ? (
+            <Empty className="min-h-64">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <DatabaseIcon />
+                </EmptyMedia>
+                <EmptyTitle>还没有代理</EmptyTitle>
+                <EmptyDescription>
+                  添加代理后，可以在凭据设置里下拉选择，不用重复输入账密。
+                </EmptyDescription>
+              </EmptyHeader>
+              <Button type="button" onClick={openCreate}>
+                <PlusIcon data-icon="inline-start" />
+                添加代理
+              </Button>
+            </Empty>
+          ) : (
+            <div className="overflow-hidden rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>名称</TableHead>
+                    <TableHead>地址</TableHead>
+                    <TableHead>认证</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>最近使用</TableHead>
+                    <TableHead className="text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {proxyPool.map((proxy) => (
+                    <TableRow key={proxy.id}>
+                      <TableCell>
+                        <div className="grid gap-1">
+                          <span className="font-medium">{proxy.name}</span>
+                          {proxy.notes && (
+                            <span className="text-xs text-muted-foreground">
+                              {proxy.notes}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {proxy.type}://{proxy.host}:{proxy.port}
+                      </TableCell>
+                      <TableCell>
+                        {proxy.username ? (
+                          <Badge variant="outline">
+                            {proxy.username}
+                            {proxy.passwordSet ? ":******" : ""}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">无用户名</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={proxy.enabled ? "secondary" : "outline"}
+                        >
+                          {proxy.enabled ? "已启用" : "已停用"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {formatNullableDate(proxy.lastUsedAt)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={pendingId === proxy.id}
+                            onClick={() => openEdit(proxy)}
+                          >
+                            <PencilIcon data-icon="inline-start" />
+                            编辑
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={pendingId === proxy.id}
+                            onClick={() => removeProxy(proxy)}
+                          >
+                            {pendingId === proxy.id ? (
+                              <Spinner data-icon="inline-start" />
+                            ) : (
+                              <Trash2Icon data-icon="inline-start" />
+                            )}
+                            删除
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editing ? "编辑代理" : "添加代理"}</DialogTitle>
+            <DialogDescription>
+              密码会在服务端加密保存，前端列表不会返回明文。
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field>
+              <FieldLabel>名称</FieldLabel>
+              <Input
+                disabled={saving}
+                value={form.name}
+                placeholder="香港 GOST 01"
+                onChange={(event) => patchForm({ name: event.target.value })}
+              />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-[0.8fr_1fr_0.7fr]">
+              <Field>
+                <FieldLabel>协议</FieldLabel>
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={saving}
+                  value={form.type}
+                  onChange={(event) =>
+                    patchForm({
+                      type: event.target.value as CredentialProxyType,
+                    })
+                  }
+                >
+                  <option value="socks5h">socks5h</option>
+                  <option value="socks5">socks5</option>
+                </select>
+              </Field>
+              <Field>
+                <FieldLabel>主机</FieldLabel>
+                <Input
+                  disabled={saving}
+                  value={form.host}
+                  placeholder="127.0.0.1"
+                  onChange={(event) => patchForm({ host: event.target.value })}
+                />
+              </Field>
+              <Field>
+                <FieldLabel>端口</FieldLabel>
+                <Input
+                  disabled={saving}
+                  inputMode="numeric"
+                  value={form.port}
+                  placeholder="1080"
+                  onChange={(event) => patchForm({ port: event.target.value })}
+                />
+              </Field>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field>
+                <FieldLabel>用户名（可选）</FieldLabel>
+                <Input
+                  disabled={saving}
+                  value={form.username}
+                  placeholder="username"
+                  onChange={(event) =>
+                    patchForm({ username: event.target.value })
+                  }
+                />
+              </Field>
+              <Field>
+                <FieldLabel>密码（留空保持原密码）</FieldLabel>
+                <Input
+                  disabled={saving}
+                  type="password"
+                  value={form.password}
+                  placeholder={
+                    editing?.passwordSet ? "已设置，留空保持不变" : "password"
+                  }
+                  onChange={(event) =>
+                    patchForm({ password: event.target.value })
+                  }
+                />
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel>备注</FieldLabel>
+              <Textarea
+                disabled={saving}
+                value={form.notes}
+                placeholder="可选备注"
+                onChange={(event) => patchForm({ notes: event.target.value })}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel>启用代理</FieldLabel>
+                <FieldDescription>
+                  停用后引用它的凭据会继续回退到全局代理或直连。
+                </FieldDescription>
+              </FieldContent>
+              <Switch
+                checked={form.enabled}
+                disabled={saving}
+                onCheckedChange={(checked) =>
+                  patchForm({ enabled: Boolean(checked) })
+                }
+              />
+            </Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              onClick={() => setDialogOpen(false)}
+            >
+              取消
+            </Button>
+            <Button type="button" disabled={saving} onClick={saveProxy}>
+              {saving && <Spinner data-icon="inline-start" />}
+              保存代理
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function CredentialsSection({
   credentials,
   globalSettings,
+  proxyPool,
   onDeleted,
   onRefreshData,
   onUpdated,
 }: {
   credentials: CodexCredentialRecord[];
   globalSettings: GlobalSettingsRecord;
+  proxyPool: ProxyPoolRecord[];
   onDeleted: (id: string) => void;
   onRefreshData: () => Promise<{
     credentials: CodexCredentialRecord[];
@@ -2581,6 +3068,7 @@ function CredentialsSection({
                 const quotaLoading = quotaLoadingIds.has(credential.id);
                 const name =
                   credential.email || credential.accountId || "未知账号";
+                const refreshStatus = codexTokenRefreshStatus(credential);
 
                 return (
                   <Card
@@ -2610,9 +3098,34 @@ function CredentialsSection({
                             onDeleted={() => remove(credential)}
                             onRefreshToken={() => refreshToken(credential)}
                             onSaved={onUpdated}
+                            proxyPool={proxyPool}
                           />
                         </div>
                       </div>
+
+                      {(refreshStatus.exhausted ||
+                        refreshStatus.attemptCount > 0 ||
+                        refreshStatus.autoDisabled ||
+                        !credential.enabled) && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {!credential.enabled && (
+                            <Badge variant="outline">
+                              {refreshStatus.autoDisabled
+                                ? "自动停用"
+                                : "已停用"}
+                            </Badge>
+                          )}
+                          {refreshStatus.exhausted ? (
+                            <Badge variant="destructive">Token 刷新错误</Badge>
+                          ) : refreshStatus.attemptCount > 0 ? (
+                            <Badge variant="outline">
+                              Token 刷新{" "}
+                              {formatNumber(refreshStatus.attemptCount)}
+                              /3
+                            </Badge>
+                          ) : null}
+                        </div>
+                      )}
 
                       <div className="grid gap-2 text-sm">
                         <div className="flex items-center gap-2">
@@ -2648,6 +3161,44 @@ function CredentialsSection({
                             {formatNullableDate(credential.cooldownUntil)}
                           </div>
                         )}
+                        {refreshStatus.hasNotice && (
+                          <div
+                            className={
+                              refreshStatus.exhausted
+                                ? "text-xs text-destructive"
+                                : "text-xs text-amber-600 dark:text-amber-300"
+                            }
+                          >
+                            {refreshStatus.exhausted ? (
+                              <>
+                                {refreshStatus.autoDisabled
+                                  ? "Token 自动刷新已连续失败 3 次，凭据已自动停用。"
+                                  : "Token 自动刷新已连续失败 3 次。"}
+                              </>
+                            ) : (
+                              <>
+                                Token 自动刷新失败{" "}
+                                {formatNumber(refreshStatus.attemptCount)}/3
+                                {refreshStatus.nextAttemptAt && (
+                                  <>
+                                    ，下次尝试：
+                                    <LocalDateTime
+                                      value={refreshStatus.nextAttemptAt}
+                                    />
+                                  </>
+                                )}
+                              </>
+                            )}
+                            {refreshStatus.lastError && (
+                              <>。原因：{refreshStatus.lastError}</>
+                            )}
+                          </div>
+                        )}
+                        {credential.lastError && !refreshStatus.hasNotice && (
+                          <div className="text-xs text-destructive">
+                            {credential.lastError}
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2 text-sm">
@@ -2657,6 +3208,7 @@ function CredentialsSection({
                         <CredentialProxyBadge
                           credential={credential}
                           globalSettings={globalSettings}
+                          proxyPool={proxyPool}
                         />
                       </div>
 
@@ -2833,7 +3385,7 @@ function CredentialRoutingControls({
   );
 }
 
-function CredentialProxyControls({
+function CredentialUserAgentControls({
   credential,
   disabled,
   onSaved,
@@ -2841,6 +3393,92 @@ function CredentialProxyControls({
   credential: CodexCredentialRecord;
   disabled: boolean;
   onSaved: (credential: CodexCredentialRecord) => void;
+}) {
+  const [value, setValue] = React.useState(credential.userAgent ?? "");
+  const [saving, setSaving] = React.useState(false);
+
+  async function saveUserAgent(userAgent: string | null) {
+    setSaving(true);
+    try {
+      const updated = await updateCredentialRouting(credential.id, {
+        userAgent,
+      });
+      onSaved(updated);
+      setValue(updated.userAgent ?? "");
+      toast.success(
+        updated.userAgent
+          ? "凭据 User-Agent 已保存"
+          : "凭据 User-Agent 已清除，将使用全局设置",
+      );
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const pending = disabled || saving;
+
+  return (
+    <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5 text-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="grid gap-1">
+          <div className="font-medium">User-Agent 覆盖</div>
+          <div className="text-xs text-muted-foreground">
+            留空则使用全局设置。该值会用于此凭据的 Codex 请求和额度刷新。
+          </div>
+        </div>
+        <Badge variant={credential.userAgent ? "secondary" : "outline"}>
+          {credential.userAgent ? "凭据自定义" : "使用全局"}
+        </Badge>
+      </div>
+      <Textarea
+        className="min-h-20 font-mono text-xs"
+        disabled={pending}
+        value={value}
+        placeholder="使用全局 User-Agent"
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs text-muted-foreground">
+          当前：{credential.userAgent || "使用全局 User-Agent"}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={pending || !credential.userAgent}
+            onClick={() => saveUserAgent(null)}
+          >
+            {saving && <Spinner data-icon="inline-start" />}
+            清除覆盖
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={pending}
+            onClick={() => saveUserAgent(value.trim() || null)}
+          >
+            {saving && <Spinner data-icon="inline-start" />}
+            保存 User-Agent
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CredentialProxyControls({
+  credential,
+  disabled,
+  onSaved,
+  proxyPool,
+}: {
+  credential: CodexCredentialRecord;
+  disabled: boolean;
+  onSaved: (credential: CodexCredentialRecord) => void;
+  proxyPool: ProxyPoolRecord[];
 }) {
   const [form, setForm] = React.useState(() => credentialProxyForm(credential));
   const [saving, setSaving] = React.useState(false);
@@ -2911,6 +3549,21 @@ function CredentialProxyControls({
     }
   }
 
+  async function saveProxyPoolId(proxyPoolId: string | null) {
+    setSaving(true);
+    try {
+      const updated = await updateCredentialRouting(credential.id, {
+        proxyPoolId,
+      });
+      onSaved(updated);
+      toast.success(proxyPoolId ? "已选择代理池代理" : "代理池选择已清除");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveUseGlobalProxy(useGlobalProxy: boolean) {
     setSaving(true);
     try {
@@ -2972,17 +3625,40 @@ function CredentialProxyControls({
         />
       </div>
 
-      <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/50 p-2">
-        <div>
-          <div className="font-medium">使用全局代理</div>
-          <div className="text-xs text-muted-foreground">无本地代理时回退</div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/50 p-2">
+          <div>
+            <div className="font-medium">使用全局代理</div>
+            <div className="text-xs text-muted-foreground">
+              无本地/代理池代理时回退
+            </div>
+          </div>
+          <Switch
+            checked={credential.useGlobalProxy}
+            disabled={pending}
+            size="sm"
+            onCheckedChange={(checked) => saveUseGlobalProxy(Boolean(checked))}
+          />
         </div>
-        <Switch
-          checked={credential.useGlobalProxy}
-          disabled={pending}
-          size="sm"
-          onCheckedChange={(checked) => saveUseGlobalProxy(Boolean(checked))}
-        />
+        <label className="grid gap-1 rounded-md border border-border/50 bg-background/50 p-2 text-xs text-muted-foreground">
+          代理池
+          <select
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={pending}
+            value={credential.proxyPoolId ?? ""}
+            onChange={(event) =>
+              saveProxyPoolId(event.target.value ? event.target.value : null)
+            }
+          >
+            <option value="">不使用代理池</option>
+            {proxyPool.map((proxy) => (
+              <option key={proxy.id} value={proxy.id}>
+                {proxy.name} · {proxy.type}://{proxy.host}:{proxy.port}
+                {proxy.enabled ? "" : "（已停用）"}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div className="grid gap-2 sm:grid-cols-[0.8fr_1fr_0.7fr]">
@@ -3047,7 +3723,8 @@ function CredentialProxyControls({
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs text-muted-foreground">
-          当前：{credentialProxyText(credential)} · 全局：
+          当前：{credentialProxyText(credential)} · 代理池：
+          {proxyPoolSelectionText(credential, proxyPool)} · 全局：
           {credential.useGlobalProxy ? "开启" : "关闭"}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -3343,12 +4020,14 @@ function CredentialSettingsDialog({
   onDeleted,
   onRefreshToken,
   onSaved,
+  proxyPool,
 }: {
   credential: CodexCredentialRecord;
   disabled: boolean;
   onDeleted: () => Promise<void>;
   onRefreshToken: () => Promise<void>;
   onSaved: (credential: CodexCredentialRecord) => void;
+  proxyPool: ProxyPoolRecord[];
 }) {
   const [open, setOpen] = React.useState(false);
   const [refreshingToken, setRefreshingToken] = React.useState(false);
@@ -3488,11 +4167,19 @@ function CredentialSettingsDialog({
               onSaved={onSaved}
             />
 
-            <CredentialProxyControls
-              key={`${credential.id}:${credential.proxy?.enabled}:${credential.proxy?.type}:${credential.proxy?.host}:${credential.proxy?.port}:${credential.proxy?.username}:${credential.proxy?.passwordSet}`}
+            <CredentialUserAgentControls
+              key={`${credential.id}:${credential.userAgent ?? "global"}`}
               credential={credential}
               disabled={disabled}
               onSaved={onSaved}
+            />
+
+            <CredentialProxyControls
+              key={`${credential.id}:${credential.proxyPoolId}:${credential.proxy?.enabled}:${credential.proxy?.type}:${credential.proxy?.host}:${credential.proxy?.port}:${credential.proxy?.username}:${credential.proxy?.passwordSet}`}
+              credential={credential}
+              disabled={disabled}
+              onSaved={onSaved}
+              proxyPool={proxyPool}
             />
           </section>
         </div>
@@ -3501,12 +4188,36 @@ function CredentialSettingsDialog({
   );
 }
 
+function codexTokenRefreshStatus(credential: CodexCredentialRecord) {
+  const attemptCount = metadataInteger(
+    credential.metadata.token_refresh_attempt_count,
+  );
+  const exhausted = credential.metadata.token_refresh_exhausted === true;
+  const autoDisabled = credential.metadata.token_refresh_auto_disabled === true;
+  const nextAttemptAt = metadataString(
+    credential.metadata.token_refresh_next_attempt_at,
+  );
+  const lastError =
+    metadataString(credential.metadata.token_refresh_last_error) ||
+    (exhausted ? credential.lastError || "" : "");
+  return {
+    attemptCount,
+    exhausted,
+    autoDisabled,
+    nextAttemptAt,
+    lastError,
+    hasNotice: exhausted || attemptCount > 0,
+  };
+}
+
 function CredentialProxyBadge({
   credential,
   globalSettings,
+  proxyPool,
 }: {
   credential: CodexCredentialRecord;
   globalSettings: GlobalSettingsRecord;
+  proxyPool: ProxyPoolRecord[];
 }) {
   const proxy = credential.proxy;
   if (proxy?.enabled) {
@@ -3517,6 +4228,25 @@ function CredentialProxyBadge({
         title={credentialProxyText(credential)}
       >
         已启用 · {proxy.type}
+      </Badge>
+    );
+  }
+
+  if (credential.proxyPoolId) {
+    const pooledProxy = proxyPool.find(
+      (proxy) => proxy.id === credential.proxyPoolId,
+    );
+    if (!pooledProxy) {
+      return (
+        <Badge variant="outline" title="已选择代理池代理，但该代理不存在">
+          代理池 · 缺失
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="outline" title={proxyPoolRecordText(pooledProxy)}>
+        代理池 · {pooledProxy.enabled ? "已启用" : "已停用"} ·{" "}
+        {pooledProxy.type}
       </Badge>
     );
   }
@@ -5473,6 +6203,90 @@ function globalProxySourceLabel(source: GlobalSettingsRecord["proxySource"]) {
   return labels[source] || source;
 }
 
+function userAgentSourceLabel(source: GlobalSettingsRecord["userAgentSource"]) {
+  const labels: Record<GlobalSettingsRecord["userAgentSource"], string> = {
+    database: "数据库",
+    environment: "环境变量",
+    default: "默认值",
+  };
+  return labels[source] || source;
+}
+
+function emptyProxyPoolForm(): ProxyPoolFormState {
+  return {
+    name: "",
+    enabled: true,
+    type: "socks5h",
+    host: "",
+    port: "1080",
+    username: "",
+    password: "",
+    notes: "",
+  };
+}
+
+function proxyPoolForm(proxy: ProxyPoolRecord): ProxyPoolFormState {
+  return {
+    name: proxy.name,
+    enabled: proxy.enabled,
+    type: proxy.type,
+    host: proxy.host,
+    port: String(proxy.port),
+    username: proxy.username,
+    password: "",
+    notes: proxy.notes,
+  };
+}
+
+function proxyPoolPayload(
+  form: ProxyPoolFormState,
+  existing: ProxyPoolRecord | null,
+): ProxyPoolPayload | null {
+  const name = form.name.trim();
+  const host = form.host.trim();
+  const port = integerValue(form.port, 0);
+  if (!name) {
+    toast.error("请输入代理名称");
+    return null;
+  }
+  if (!host) {
+    toast.error("请输入 SOCKS5 代理主机");
+    return null;
+  }
+  if (port < 1 || port > 65535) {
+    toast.error("代理端口必须在 1 到 65535 之间");
+    return null;
+  }
+  return {
+    name,
+    enabled: form.enabled,
+    type: form.type,
+    host,
+    port,
+    username: form.username.trim(),
+    ...(form.password.trim() || !existing ? { password: form.password } : {}),
+    notes: form.notes.trim(),
+  };
+}
+
+function proxyPoolRecordText(proxy: ProxyPoolRecord) {
+  const auth = proxy.username
+    ? `${proxy.username}${proxy.passwordSet ? ":******" : ""}@`
+    : "";
+  return `${proxy.enabled ? "已启用" : "已停用"} · ${proxy.type}://${auth}${proxy.host}:${proxy.port}`;
+}
+
+function proxyPoolSelectionText(
+  credential: CodexCredentialRecord,
+  proxyPool: ProxyPoolRecord[],
+) {
+  if (!credential.proxyPoolId) {
+    return "未选择";
+  }
+  const proxy = proxyPool.find((item) => item.id === credential.proxyPoolId);
+  return proxy ? proxyPoolRecordText(proxy) : "代理不存在";
+}
+
 function credentialProxyForm(
   credential: CodexCredentialRecord,
 ): CredentialProxyFormState {
@@ -5613,6 +6427,15 @@ function formatDateTime(value: string) {
     parts.find((item) => item.type === type)?.value || "";
 
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
+}
+
+function metadataString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function metadataInteger(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
 }
 
 function parseUtcDate(value: string | null | undefined) {

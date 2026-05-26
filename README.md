@@ -18,13 +18,13 @@ RelayAPI 是一个基于 Next.js App Router 的分层中继服务，用于管理
 
 项目特性：
 
-- 支持 OpenAI-compatible Relay 接口。
+- 支持 OpenAI-compatible  接口。
 - 支持 Codex OAuth 凭据接入与配额刷新。
 - 支持 API Key 管理与 Web 管理后台。
 - 支持自动渠道路由，无需前端选择“当前凭据”。
 - 使用双 SQLite 数据库存储配置、运行状态、日志、审计与用量数据。
 - 使用 Node.js 24 内置 `node:sqlite`，避免额外 native SQLite 依赖。
-- 暂不支持 imge
+- 支持 imge
 
 ## 环境要求
 
@@ -84,3 +84,25 @@ WEB_ACCESS_KEY=relay_web_...
 
 设置后不会自动生成密钥文件。
 
+## Codex User-Agent
+
+发往 Codex 上游接口和额度刷新接口的 `User-Agent` 可在 Web 管理台的“全局设置”中配置，也可在单个 Codex 凭据的设置弹窗中单独覆盖。
+
+生效优先级：凭据覆盖值 → 管理台全局设置 → `CODEX_USER_AGENT` 环境变量 → 内置默认值。
+
+```env
+CODEX_USER_AGENT="codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
+```
+
+清除管理台全局设置后，会回退到环境变量或内置默认值；清除凭据覆盖后，会使用当前全局 User-Agent。
+
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=SIPC%2FRelayAPI&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&legend=top-left" />
+ </picture>
+</a>

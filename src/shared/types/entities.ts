@@ -83,6 +83,28 @@ export interface PublicCredentialProxyConfig {
   passwordSet?: boolean;
 }
 
+export interface ProxyPoolRecord {
+  id: string;
+  name: string;
+  enabled: boolean;
+  type: CredentialProxyType;
+  host: string;
+  port: number;
+  username: string;
+  passwordSet: boolean;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface ProxyPoolRecordWithSecret extends Omit<
+  ProxyPoolRecord,
+  "passwordSet"
+> {
+  password: string;
+}
+
 export type CodexUpstreamTransport = "http" | "websocket";
 
 export interface CodexTokenBundle {
@@ -104,7 +126,9 @@ export interface CodexCredentialRecord {
   weight: number;
   fastEnabled: boolean;
   upstreamTransport: CodexUpstreamTransport;
+  userAgent: string | null;
   useGlobalProxy: boolean;
+  proxyPoolId: string | null;
   proxy: PublicCredentialProxyConfig | null;
   usageHealth?: CodexAccountUsageHealth;
   expiresAt: string | null;
@@ -125,7 +149,10 @@ export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
 export interface GlobalSettingsRecord {
   proxy: PublicCredentialProxyConfig | null;
   proxySource: "database" | "environment" | "none";
+  userAgent: string;
+  userAgentSource: "database" | "environment" | "default";
   fullRequestLoggingEnabled: boolean;
+  codexAutoDisableRefreshExhausted: boolean;
   requestLogRetentionDays: number | null;
   requestLogDetailRetentionDays: number | null;
   updatedAt: string | null;

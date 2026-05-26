@@ -5,8 +5,11 @@ import { serverConfig } from "@/src/server/config/env";
 import { parseCodexSseFrames } from "@/src/server/codex/sse";
 import { codexWebSocketResponse } from "@/src/server/codex/websocket";
 import { proxiedFetch } from "@/src/server/net/proxy";
-import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
-import { getGlobalProxySetting } from "@/src/server/services/settings";
+import {
+  ensureFreshCredential,
+  resolveCredentialProxy,
+} from "@/src/server/services/codexCredentials";
+import { getEffectiveCodexUserAgent } from "@/src/server/services/settings";
 import type { StageTimer } from "@/src/server/http/stageTimer";
 import type {
   ChannelRecord,
@@ -122,11 +125,11 @@ export async function codexFetch(
       planType: credential.planType,
       transport: useWebSocket ? "websocket" : "http",
     });
-  const proxy = credential.proxy?.enabled
-    ? credential.proxy
-    : credential.useGlobalProxy
-      ? getGlobalProxySetting()
-      : null;
+  const proxy = resolveCredentialProxy({
+    proxy: credential.proxy,
+    proxyPoolId: credential.proxyPoolId,
+    useGlobalProxy: credential.useGlobalProxy,
+  });
   const url = toCodexUrl(input.channel.baseUrl, upstreamPath);
   const headers = buildCodexHeaders(credential, {
     stream: input.stream,
@@ -228,11 +231,12 @@ function buildCodexHeaders(
     promptCacheKey?: string | null;
   },
 ) {
+  const userAgent = getEffectiveCodexUserAgent(credential);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${credential.tokens.access_token}`,
     Accept: input.stream ? "text/event-stream" : "application/json",
-    "User-Agent": input.sourceHeaders.get("user-agent") || serverConfig.userAgent,
+    "User-Agent": input.sourceHeaders.get("user-agent") || userAgent,
     Originator:
       input.sourceHeaders.get("originator") || serverConfig.codexOriginator,
   };
@@ -1178,7 +1182,9 @@ function normalizeReasoningForCodex(payload: Record<string, unknown>) {
 
 function normalizeCodexBuiltinTools(payload: Record<string, unknown>) {
   if (Array.isArray(payload.tools)) {
-    payload.tools = payload.tools.map((tool) => normalizeCodexBuiltinTool(tool));
+    payload.tools = payload.tools.map((tool) =>
+      normalizeCodexBuiltinTool(tool),
+    );
   }
   if (isRecord(payload.tool_choice)) {
     payload.tool_choice = normalizeCodexBuiltinToolChoice(payload.tool_choice);

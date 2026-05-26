@@ -8,6 +8,7 @@ import type {
   CredentialProxyType,
   GlobalSettingsRecord,
   JsonValue,
+  ProxyPoolRecord,
 } from "@/src/shared/types/entities";
 
 export type AdminListResponse<T> = {
@@ -149,6 +150,17 @@ export type CredentialProxyPayload =
       password?: string;
     };
 
+export type ProxyPoolPayload = {
+  name?: string;
+  enabled?: boolean;
+  type?: CredentialProxyType;
+  host?: string;
+  port?: number;
+  username?: string;
+  password?: string;
+  notes?: string;
+};
+
 export type ChannelPayload = {
   name?: string;
   baseUrl?: string;
@@ -220,6 +232,7 @@ export type AdminDashboardSnapshot = {
   apiKeys: PublicApiKey[];
   channels: ChannelRecord[];
   credentials: CodexCredentialRecord[];
+  proxyPool: ProxyPoolRecord[];
   globalSettings: GlobalSettingsRecord;
   requestLogs: AdminDashboardRequestLogRow[];
   overviewStats: AdminOverviewStats;
@@ -338,7 +351,9 @@ export function updateCredentialRouting(
     weight?: number;
     fastEnabled?: boolean;
     upstreamTransport?: CodexUpstreamTransport;
+    userAgent?: string | null;
     useGlobalProxy?: boolean;
+    proxyPoolId?: string | null;
     proxy?: CredentialProxyPayload;
   },
 ) {
@@ -403,6 +418,36 @@ export function finishCodexOAuth(callbackUrl: string) {
   );
 }
 
+export function listProxyPoolItems() {
+  return adminRequest<AdminListResponse<ProxyPoolRecord>>(
+    "/api/admin/proxy-pool",
+  ).then((result) => result.data);
+}
+
+export function createProxyPoolItem(payload: ProxyPoolPayload) {
+  return adminRequest<ProxyPoolRecord>("/api/admin/proxy-pool", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateProxyPoolItem(id: string, payload: ProxyPoolPayload) {
+  return adminRequest<ProxyPoolRecord>(
+    `/api/admin/proxy-pool/${encodePath(id)}`,
+    {
+      method: "PATCH",
+      body: payload,
+    },
+  );
+}
+
+export function deleteProxyPoolItem(id: string) {
+  return adminRequest<AdminDeleteResponse>(
+    `/api/admin/proxy-pool/${encodePath(id)}`,
+    { method: "DELETE" },
+  );
+}
+
 export function logoutWebSession() {
   return adminRequest<{ authenticated: false }>("/api/auth/web-logout", {
     method: "POST",
@@ -419,7 +464,9 @@ export function getGlobalSettings() {
 
 export function updateGlobalSettings(payload: {
   proxy?: CredentialProxyPayload;
+  userAgent?: string | null;
   fullRequestLoggingEnabled?: boolean;
+  codexAutoDisableRefreshExhausted?: boolean;
   requestLogRetentionDays?: number;
   requestLogDetailRetentionDays?: number;
 }) {
@@ -485,6 +532,7 @@ export async function getDashboardSnapshot(
     apiKeys,
     channels,
     credentials,
+    proxyPool,
     globalSettings,
     requestLogs,
     overviewStats,
@@ -492,6 +540,7 @@ export async function getDashboardSnapshot(
     listApiKeys(),
     listChannels(),
     listCredentials(),
+    listProxyPoolItems(),
     getGlobalSettings(),
     getRequestLogs(requestLogLimit),
     getOverview(),
@@ -501,6 +550,7 @@ export async function getDashboardSnapshot(
     apiKeys,
     channels,
     credentials,
+    proxyPool,
     globalSettings,
     requestLogs,
     overviewStats,

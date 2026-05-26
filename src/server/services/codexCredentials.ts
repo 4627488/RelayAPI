@@ -16,12 +16,18 @@ import {
 } from "@/src/server/repositories/codexCredentials";
 import { credentialUsageHealth } from "@/src/server/repositories/logs";
 import { detachCredentialFromChannels } from "@/src/server/repositories/channels";
+import { getProxyPoolItemById } from "@/src/server/repositories/proxyPool";
 import {
   saveOAuthPendingState,
   takeOAuthPendingState,
 } from "@/src/server/repositories/oauthPendingStates";
 import { randomId, sha256 } from "@/src/server/services/crypto";
-import { getGlobalProxySetting } from "@/src/server/services/settings";
+import {
+  getEffectiveCodexUserAgent,
+  getGlobalProxySetting,
+  normalizeCodexUserAgentInput,
+} from "@/src/server/services/settings";
+import { getProxyPoolCredentialProxy } from "@/src/server/services/proxyPool";
 import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
@@ -45,6 +51,17 @@ interface PendingOAuthState {
 }
 
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
+const TOKEN_REFRESH_ERROR_PREFIX = "Codex token 自动刷新失败";
+const TOKEN_REFRESH_METADATA_KEYS = [
+  "token_refresh_attempt_count",
+  "token_refresh_next_attempt_at",
+  "token_refresh_last_attempt_at",
+  "token_refresh_last_failed_at",
+  "token_refresh_last_error",
+  "token_refresh_exhausted",
+  "token_refresh_exhausted_at",
+  "token_refresh_auto_disabled",
+] as const;
 const pendingStates = new Map<string, PendingOAuthState>();
 let legacyImportAttempted = false;
 
@@ -221,7 +238,9 @@ export function patchCodexCredentialRouting(
     weight?: number;
     fastEnabled?: boolean;
     upstreamTransport?: CodexUpstreamTransport;
+    userAgent?: string | null;
     useGlobalProxy?: boolean;
+    proxyPoolId?: string | null;
     proxy?: unknown;
   },
 ) {
@@ -248,6 +267,12 @@ export function patchCodexCredentialRouting(
   const proxyPatch = Object.hasOwn(input, "proxy")
     ? { proxy: normalizeCredentialProxyPatch(input.proxy, existing.proxy) }
     : {};
+  const userAgentPatch = Object.hasOwn(input, "userAgent")
+    ? { userAgent: normalizeCodexUserAgentInput(input.userAgent) }
+    : {};
+  const proxyPoolPatch = Object.hasOwn(input, "proxyPoolId")
+    ? { proxyPoolId: normalizeProxyPoolId(input.proxyPoolId) }
+    : {};
   const updated = updateCodexCredential(id, {
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
     ...(input.priority !== undefined
@@ -258,9 +283,11 @@ export function patchCodexCredentialRouting(
       : {}),
     ...(fastEnabled !== undefined ? { fastEnabled } : {}),
     ...(upstreamTransport !== undefined ? { upstreamTransport } : {}),
+    ...userAgentPatch,
     ...(input.useGlobalProxy !== undefined
       ? { useGlobalProxy: Boolean(input.useGlobalProxy) }
       : {}),
+    ...proxyPoolPatch,
     ...proxyPatch,
   });
   if (!updated) {
@@ -271,6 +298,21 @@ export function patchCodexCredentialRouting(
     );
   }
   return publicCredential(updated);
+}
+
+export function resolveCredentialProxy(input: {
+  proxy: CredentialProxyConfig | null;
+  proxyPoolId: string | null;
+  useGlobalProxy: boolean;
+}) {
+  if (input.proxy?.enabled) {
+    return input.proxy;
+  }
+  const pooledProxy = getProxyPoolCredentialProxy(input.proxyPoolId);
+  if (pooledProxy?.enabled) {
+    return pooledProxy;
+  }
+  return input.useGlobalProxy ? getGlobalProxySetting() : null;
 }
 
 export async function removeCodexCredential(id: string) {
@@ -287,6 +329,10 @@ export async function removeCodexCredential(id: string) {
 export async function refreshCodexCredential(id: string) {
   // Admin callers receive only public credential metadata; token plaintext stays server-side.
   return publicCredential(await refreshCodexCredentialWithTokens(id));
+}
+
+export async function refreshCodexCredentialForScheduler(id: string) {
+  return refreshCodexCredentialWithTokens(id);
 }
 
 export async function exportCodexCredentials() {
@@ -380,6 +426,11 @@ export function importCodexCredentialFromJson(
   const useGlobalProxy = booleanValue(
     parsed.use_global_proxy ?? parsed.useGlobalProxy,
   );
+  const userAgent = Object.hasOwn(parsed, "user_agent")
+    ? normalizeCodexUserAgentInput(parsed.user_agent)
+    : Object.hasOwn(parsed, "userAgent")
+      ? normalizeCodexUserAgentInput(parsed.userAgent)
+      : undefined;
   const metadata = objectValue(parsed.metadata);
 
   const saved = upsertCodexCredential({
@@ -417,6 +468,7 @@ export function importCodexCredentialFromJson(
       ...(useGlobalProxy !== undefined
         ? { use_global_proxy: useGlobalProxy }
         : {}),
+      ...(userAgent !== undefined ? { user_agent: userAgent } : {}),
     },
   });
   if (!saved) {
@@ -451,9 +503,13 @@ async function refreshCodexCredentialWithTokens(id: string) {
     const tokenResponse = await tokenRequest(
       body,
       credential.proxy,
+      credential.proxyPoolId,
       credential.useGlobalProxy,
+      getEffectiveCodexUserAgent(credential),
     );
-    return await saveTokenResponse(tokenResponse, credential);
+    return clearCodexTokenRefreshState(
+      await saveTokenResponse(tokenResponse, credential),
+    );
   } catch (error) {
     logServerError(error, {
       operation: "codex.refresh_token",
@@ -482,14 +538,18 @@ export async function ensureFreshCredential(id: string) {
   const expiresAt = Date.parse(
     credential.expiresAt || credential.tokens.expired || "",
   );
-  if (!Number.isFinite(expiresAt)) {
+  if (!Number.isFinite(expiresAt) || expiresAt > Date.now()) {
     return credential;
   }
-  const refreshLeadMs = 5 * 60 * 1000;
-  if (expiresAt - Date.now() > refreshLeadMs) {
-    return credential;
-  }
-  return refreshCodexCredentialWithTokens(id);
+  throw new HttpError(
+    503,
+    credential.metadata.token_refresh_exhausted === true
+      ? "codex_token_refresh_exhausted"
+      : "codex_token_expired",
+    credential.metadata.token_refresh_exhausted === true
+      ? "Codex credential token refresh has exhausted its retry budget"
+      : "Codex credential token is expired and waiting for scheduled refresh",
+  );
 }
 
 async function exchangeCodeForTokens(input: {
@@ -507,7 +567,7 @@ async function exchangeCodeForTokens(input: {
   try {
     // OAuth route responses also get public metadata only.
     return publicCredential(
-      await saveTokenResponse(await tokenRequest(body, null, true), null),
+      await saveTokenResponse(await tokenRequest(body, null, null, true), null),
     );
   } catch (error) {
     logServerError(error, {
@@ -524,7 +584,9 @@ async function exchangeCodeForTokens(input: {
 async function tokenRequest(
   body: URLSearchParams,
   proxy: CredentialProxyConfig | null,
+  proxyPoolId: string | null,
   useGlobalProxyFallback: boolean,
+  userAgent = getEffectiveCodexUserAgent(),
 ) {
   const response = await proxiedFetch(
     TOKEN_URL,
@@ -533,15 +595,16 @@ async function tokenRequest(
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
+        "User-Agent": userAgent,
       },
       body,
       signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
     },
-    proxy?.enabled
-      ? proxy
-      : useGlobalProxyFallback
-        ? getGlobalProxySetting()
-        : null,
+    resolveCredentialProxy({
+      proxy,
+      proxyPoolId,
+      useGlobalProxy: useGlobalProxyFallback,
+    }),
   );
   const text = await response.text();
   const parsed = parseMaybeJson<Record<string, unknown>>(text) || { raw: text };
@@ -686,6 +749,8 @@ function exportCodexCredentialJson(credential: CodexCredentialWithTokens) {
     upstreamTransport: credential.upstreamTransport,
     use_global_proxy: credential.useGlobalProxy,
     useGlobalProxy: credential.useGlobalProxy,
+    user_agent: credential.userAgent,
+    userAgent: credential.userAgent,
     proxy: credential.proxy,
     metadata: credential.metadata,
     created_at: credential.createdAt,
@@ -707,7 +772,9 @@ function publicCredential(
     weight: credential.weight,
     fastEnabled: credential.fastEnabled,
     upstreamTransport: credential.upstreamTransport,
+    userAgent: credential.userAgent,
     useGlobalProxy: credential.useGlobalProxy,
+    proxyPoolId: credential.proxyPoolId,
     proxy: credential.proxy
       ? {
           enabled: credential.proxy.enabled,
@@ -728,6 +795,45 @@ function publicCredential(
     updatedAt: credential.updatedAt,
     metadata: credential.metadata,
   };
+}
+
+function clearCodexTokenRefreshState(
+  credential: CodexCredentialWithTokens,
+): CodexCredentialWithTokens {
+  if (
+    !hasCodexTokenRefreshState(credential.metadata) &&
+    !isCodexTokenRefreshError(credential)
+  ) {
+    return credential;
+  }
+  const metadata = { ...credential.metadata };
+  for (const key of TOKEN_REFRESH_METADATA_KEYS) {
+    metadata[key] = undefined;
+  }
+  const updated = updateCodexCredential(credential.id, {
+    enabled:
+      credential.metadata.token_refresh_auto_disabled === true
+        ? true
+        : credential.enabled,
+    lastError: stringValue(credential.lastError).startsWith(
+      TOKEN_REFRESH_ERROR_PREFIX,
+    )
+      ? null
+      : credential.lastError,
+    metadata,
+  });
+  return updated || credential;
+}
+
+function hasCodexTokenRefreshState(metadata: Record<string, unknown>) {
+  return TOKEN_REFRESH_METADATA_KEYS.some((key) => metadata[key] !== undefined);
+}
+
+function isCodexTokenRefreshError(credential: CodexCredentialRecord) {
+  return (
+    credential.metadata.token_refresh_exhausted === true ||
+    stringValue(credential.lastError).startsWith(TOKEN_REFRESH_ERROR_PREFIX)
+  );
 }
 
 function codexCredentialLogMetadata(credential: CodexCredentialWithTokens) {
@@ -955,6 +1061,21 @@ function normalizeCodexUpstreamTransport(
     "unsupported_codex_upstream_transport",
     "Codex upstream transport must be http or websocket",
   );
+}
+
+function normalizeProxyPoolId(input: unknown) {
+  const id = stringValue(input).trim();
+  if (!id) {
+    return null;
+  }
+  if (!getProxyPoolItemById(id)) {
+    throw new HttpError(
+      400,
+      "proxy_pool_not_found",
+      "Selected proxy pool item does not exist",
+    );
+  }
+  return id;
 }
 
 function normalizeCredentialProxyPatch(

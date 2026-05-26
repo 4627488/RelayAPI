@@ -9,7 +9,10 @@ import {
   upsertCodexQuotaCache,
 } from "@/src/server/repositories/quota";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
-import { getGlobalProxySetting } from "@/src/server/services/settings";
+import {
+  getEffectiveCodexUserAgent,
+  getGlobalProxySetting,
+} from "@/src/server/services/settings";
 import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
@@ -132,6 +135,7 @@ export async function getCodexQuota({
         headers: buildQuotaHeaders({
           accessToken: credential.tokens.access_token,
           accountId: credential.accountId,
+          userAgent: getEffectiveCodexUserAgent(credential),
         }),
         signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
       },
@@ -218,11 +222,15 @@ function missingQuotaResponse(
   };
 }
 
-function buildQuotaHeaders(input: { accessToken: string; accountId: string }) {
+function buildQuotaHeaders(input: {
+  accessToken: string;
+  accountId: string;
+  userAgent: string;
+}) {
   return {
     Authorization: `Bearer ${input.accessToken}`,
     "Content-Type": "application/json",
-    "User-Agent": serverConfig.userAgent,
+    "User-Agent": input.userAgent,
     "Chatgpt-Account-Id": input.accountId,
   };
 }

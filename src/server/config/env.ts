@@ -90,6 +90,13 @@ function resolveGlobalProxy(): CredentialProxyConfig | null {
   };
 }
 
+const DEFAULT_CODEX_USER_AGENT =
+  "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9";
+const codexUserAgentFromEnv = process.env.CODEX_USER_AGENT?.trim() || "";
+const codexUserAgentSource: "environment" | "default" = codexUserAgentFromEnv
+  ? "environment"
+  : "default";
+
 const port = intEnv("PORT", 3000);
 const dataDir = resolveFromProject(process.env.DATA_DIR, projectPath("data"));
 
@@ -125,9 +132,8 @@ export const serverConfig = {
   requestTimeoutMs: intEnv("REQUEST_TIMEOUT_MS", 300_000),
   streamRequestTimeoutMs: intEnv("STREAM_REQUEST_TIMEOUT_MS", 1_800_000),
   globalProxy: resolveGlobalProxy(),
-  userAgent:
-    process.env.CODEX_USER_AGENT ||
-    "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9",
+  userAgent: codexUserAgentFromEnv || DEFAULT_CODEX_USER_AGENT,
+  userAgentSource: codexUserAgentSource,
   codexOriginator: process.env.CODEX_ORIGINATOR || "codex_cli_rs",
   autoImportLegacyCredentials:
     process.env.RELAY_IMPORT_LEGACY_CREDENTIALS === "1",
