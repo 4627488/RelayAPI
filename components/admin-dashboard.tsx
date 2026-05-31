@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import {
   ActivityIcon,
   AlertTriangleIcon,
+  CalendarDaysIcon,
   CheckCircle2Icon,
   CopyIcon,
   Clock3Icon,
@@ -13,6 +14,7 @@ import {
   DownloadIcon,
   FileTextIcon,
   GaugeIcon,
+  ImageIcon,
   KeyRoundIcon,
   PencilIcon,
   PlusIcon,
@@ -1527,6 +1529,8 @@ function OverviewSection({
         <DailyUsageCard rows={recentDays} />
       </div>
 
+      <ActivityHeatmapEmbedCard rows={overviewStats.byApiKey} />
+
       <div className="grid gap-4 xl:grid-cols-2">
         <ApiKeyUsageCard rows={overviewStats.byApiKey} />
         <UsageStatsTableCard
@@ -1549,6 +1553,103 @@ function OverviewSection({
         />
       </div>
     </div>
+  );
+}
+
+function ActivityHeatmapEmbedCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
+  const keyRows = rows.filter((row) => row.apiKeyId).slice(0, 6);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CalendarDaysIcon className="size-4 text-muted-foreground" />
+          活动热力图
+        </CardTitle>
+        <CardDescription>
+          公开 SVG 可放入 GitHub Profile，默认展示全站最近 53 周请求活动并自动适配深浅模式。
+        </CardDescription>
+        <CardAction>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              void copyText(
+                activityHeatmapMarkdown({
+                  label: "RelayAPI activity",
+                  absolute: true,
+                }),
+              )
+            }
+          >
+            <CopyIcon data-icon="inline-start" />
+            复制全站 Markdown
+          </Button>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="overflow-x-auto rounded-lg border bg-background p-3">
+          {/* eslint-disable-next-line @next/next/no-img-element -- This previews the public SVG endpoint exactly as GitHub will embed it. */}
+          <img
+            src={activityHeatmapPath()}
+            alt="RelayAPI 全站活动热力图"
+            className="h-auto min-w-[780px] max-w-none"
+            loading="lazy"
+          />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]">
+          <div className="grid gap-2">
+            <div className="text-sm font-medium">全站嵌入地址</div>
+            <code className="break-all rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
+              {activityHeatmapPath()}
+            </code>
+          </div>
+          <div className="grid gap-2">
+            <div className="text-sm font-medium">API key 嵌入</div>
+            {keyRows.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                创建 API key 后可以复制单个 key 的热力图。
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                {keyRows.map((row) => (
+                  <div
+                    key={row.apiKeyId || row.key}
+                    className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">
+                        {row.apiKeyName}
+                      </div>
+                      <div className="truncate font-mono text-xs text-muted-foreground">
+                        {row.apiKeyPrefix || row.apiKeyId}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void copyText(
+                          activityHeatmapMarkdown({
+                            apiKeyId: row.apiKeyId,
+                            label: row.apiKeyName,
+                            absolute: true,
+                          }),
+                        )
+                      }
+                    >
+                      <CopyIcon data-icon="inline-start" />
+                      复制
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1904,6 +2005,26 @@ function ApiKeysSection({
                           type="button"
                           size="sm"
                           variant="outline"
+                          aria-label="复制热力图 Markdown"
+                          title="复制热力图 Markdown"
+                          onClick={() =>
+                            void copyText(
+                              activityHeatmapMarkdown({
+                                apiKeyId: apiKey.id,
+                                label: apiKey.name,
+                                absolute: true,
+                              }),
+                            )
+                          }
+                        >
+                          <ImageIcon data-icon="inline-start" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          aria-label="编辑 API 密钥"
+                          title="编辑 API 密钥"
                           onClick={() => setEditingApiKey(apiKey)}
                         >
                           <PencilIcon data-icon="inline-start" />
@@ -6463,6 +6584,37 @@ function isoToLocalDateTime(value: string | null) {
   }
   const offsetMs = date.getTimezoneOffset() * 60 * 1000;
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function activityHeatmapPath(input: { apiKeyId?: string | null } = {}) {
+  const params = new URLSearchParams();
+  if (input.apiKeyId) {
+    params.set("key", input.apiKeyId);
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return `/api/activity.svg${suffix}`;
+}
+
+function activityHeatmapUrl(
+  input: { apiKeyId?: string | null; absolute?: boolean } = {},
+) {
+  const path = activityHeatmapPath({ apiKeyId: input.apiKeyId });
+  return input.absolute ? `${clientOrigin()}${path}` : path;
+}
+
+function activityHeatmapMarkdown(
+  input: { apiKeyId?: string | null; label?: string; absolute?: boolean } = {},
+) {
+  const label = markdownAlt(input.label || "RelayAPI activity");
+  return `![${label}](${activityHeatmapUrl(input)})`;
+}
+
+function clientOrigin() {
+  return typeof window === "undefined" ? "" : window.location.origin;
+}
+
+function markdownAlt(value: string) {
+  return value.replace(/[\[\]\r\n]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 async function copyText(value: string) {

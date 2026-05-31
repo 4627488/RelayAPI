@@ -4,6 +4,7 @@ import { getLogDb, getMainDb } from "@/src/server/db/sqlite";
 import { jsonStringify, randomId } from "@/src/server/services/crypto";
 import type { StageTimingEntry } from "@/src/server/http/stageTimer";
 import type {
+  ActivityHeatmapStats,
   AdminOverviewStats,
   AdminOverviewTotals,
   ApiKeyModelUsageStatsRow,
@@ -19,6 +20,8 @@ const OVERVIEW_GROUP_LIMIT = 100;
 const OVERVIEW_DAILY_WINDOW_DAYS = 30;
 const LATENCY_SAMPLE_LIMIT = 1_000;
 const FIRST_TOKEN_SAMPLE_LIMIT = 500;
+const DEFAULT_HEATMAP_WEEKS = 53;
+const MAX_HEATMAP_WEEKS = 53;
 
 let adminOverviewCache: {
   expiresAt: number;
@@ -447,6 +450,94 @@ export function getApiKeyRequestCountSince(apiKeyId: string, since: Date) {
     | { request_count: number }
     | undefined;
   return Number(row?.request_count || 0);
+}
+
+export interface ActivityHeatmapQueryInput {
+  apiKeyId?: string | null;
+  apiKeyName?: string | null;
+  apiKeyPrefix?: string | null;
+  endDate?: Date;
+  weeks?: number;
+}
+
+export function getActivityHeatmapStats(
+  input: ActivityHeatmapQueryInput = {},
+): ActivityHeatmapStats {
+  const weeks = normalizeHeatmapWeeks(input.weeks);
+  const endDateKey = utcDateKey(input.endDate || new Date());
+  const weekStart = addUtcDays(endDateKey, -utcWeekday(endDateKey));
+  const startDateKey = addUtcDays(weekStart, -(weeks - 1) * 7);
+  const endExclusive = addUtcDays(endDateKey, 1);
+  const apiKeyId = cleanNullableString(input.apiKeyId);
+  const conditions = ["started_at >= ?", "started_at < ?"];
+  const params: string[] = [startDateKey, endExclusive];
+  if (apiKeyId) {
+    conditions.push("api_key_id = ?");
+    params.push(apiKeyId);
+  }
+
+  const rows = getLogDb()
+    .prepare(
+      `SELECT
+        substr(started_at, 1, 10) AS date,
+        COUNT(*) AS request_count,
+        SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
+        SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
+        SUM(stream) AS stream_count,
+        COALESCE(SUM(total_tokens), 0) AS total_tokens
+       FROM request_logs
+       WHERE ${conditions.join(" AND ")}
+       GROUP BY substr(started_at, 1, 10)`,
+    )
+    .all(...params) as Array<Record<string, unknown>>;
+
+  const rowsByDate = new Map(rows.map((row) => [String(row.date || ""), row]));
+  const rawDays = Array.from({ length: weeks * 7 }, (_, index) => {
+    const date = addUtcDays(startDateKey, index);
+    if (date > endDateKey) {
+      return null;
+    }
+    const row = rowsByDate.get(date);
+    return {
+      date,
+      requestCount: numberValue(row?.request_count),
+      successCount: numberValue(row?.success_count),
+      errorCount: numberValue(row?.error_count),
+      streamCount: numberValue(row?.stream_count),
+      totalTokens: numberValue(row?.total_tokens),
+      level: 0,
+    };
+  }).filter((day): day is ActivityHeatmapStats["days"][number] =>
+    Boolean(day),
+  );
+
+  const maxRequests = Math.max(
+    0,
+    ...rawDays.map((day) => day.requestCount),
+  );
+  const days = rawDays.map((day) => ({
+    ...day,
+    level: activityHeatmapLevel(day.requestCount, maxRequests),
+  }));
+  const streaks = activityHeatmapStreaks(days);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    scope: apiKeyId ? "api_key" : "site",
+    apiKeyId: apiKeyId || null,
+    apiKeyName: cleanNullableString(input.apiKeyName),
+    apiKeyPrefix: cleanNullableString(input.apiKeyPrefix),
+    from: startDateKey,
+    to: endDateKey,
+    weeks,
+    days,
+    totalRequests: days.reduce((total, day) => total + day.requestCount, 0),
+    totalTokens: days.reduce((total, day) => total + day.totalTokens, 0),
+    activeDays: days.filter((day) => day.requestCount > 0).length,
+    maxRequests,
+    currentStreakDays: streaks.current,
+    longestStreakDays: streaks.longest,
+  };
 }
 
 export interface PublicRequestLogRow {
@@ -1374,6 +1465,53 @@ function todayTokensByApiKey() {
   return new Map(
     rows.map((row) => [String(row.api_key_id), numberValue(row.total_tokens)]),
   );
+}
+
+function normalizeHeatmapWeeks(value: unknown) {
+  const weeks = Number(value || DEFAULT_HEATMAP_WEEKS);
+  if (!Number.isFinite(weeks)) {
+    return DEFAULT_HEATMAP_WEEKS;
+  }
+  return Math.max(1, Math.min(MAX_HEATMAP_WEEKS, Math.floor(weeks)));
+}
+
+function activityHeatmapLevel(count: number, max: number) {
+  if (count <= 0 || max <= 0) {
+    return 0;
+  }
+  return Math.max(1, Math.min(4, Math.ceil(Math.sqrt(count / max) * 4)));
+}
+
+function activityHeatmapStreaks(days: ActivityHeatmapStats["days"]) {
+  let current = 0;
+  let longest = 0;
+  for (const day of days) {
+    if (day.requestCount > 0) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return { current, longest };
+}
+
+function utcDateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addUtcDays(dateKey: string, deltaDays: number) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + deltaDays);
+  return utcDateKey(date);
+}
+
+function utcWeekday(dateKey: string) {
+  return new Date(`${dateKey}T00:00:00.000Z`).getUTCDay();
+}
+
+function cleanNullableString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function changedRows(result: { changes: number | bigint }) {

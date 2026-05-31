@@ -270,6 +270,34 @@ export interface DailyUsageStatsRow {
   tokensPerSecond: number;
 }
 
+export interface ActivityHeatmapDay {
+  date: string;
+  requestCount: number;
+  successCount: number;
+  errorCount: number;
+  streamCount: number;
+  totalTokens: number;
+  level: number;
+}
+
+export interface ActivityHeatmapStats {
+  generatedAt: string;
+  scope: "site" | "api_key";
+  apiKeyId: string | null;
+  apiKeyName: string | null;
+  apiKeyPrefix: string | null;
+  from: string;
+  to: string;
+  weeks: number;
+  days: ActivityHeatmapDay[];
+  totalRequests: number;
+  totalTokens: number;
+  activeDays: number;
+  maxRequests: number;
+  currentStreakDays: number;
+  longestStreakDays: number;
+}
+
 export interface AdminOverviewTotals {
   requestCount: number;
   successCount: number;
