@@ -1558,6 +1558,10 @@ function OverviewSection({
 
 function ActivityHeatmapEmbedCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
   const keyRows = rows.filter((row) => row.apiKeyId).slice(0, 6);
+  const sitePath = activityHeatmapPath();
+  const siteMarkdown = activityHeatmapMarkdown({
+    label: "RelayAPI activity",
+  });
 
   return (
     <Card>
@@ -1569,7 +1573,8 @@ function ActivityHeatmapEmbedCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
         <CardDescription>
           公开 SVG 可放入 GitHub Profile，默认展示全站最近 53 周请求活动并自动适配深浅模式。
         </CardDescription>
-        <CardAction>
+        <CardAction className="flex items-center gap-2">
+          <Badge variant="outline">SVG</Badge>
           <Button
             type="button"
             variant="outline"
@@ -1583,41 +1588,88 @@ function ActivityHeatmapEmbedCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
             }
           >
             <CopyIcon data-icon="inline-start" />
-            复制全站 Markdown
+            复制 Markdown
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="grid gap-4">
-        <div className="overflow-x-auto rounded-lg border bg-background p-3">
-          {/* eslint-disable-next-line @next/next/no-img-element -- This previews the public SVG endpoint exactly as GitHub will embed it. */}
-          <img
-            src={activityHeatmapPath()}
-            alt="RelayAPI 全站活动热力图"
-            className="h-auto min-w-[780px] max-w-none"
-            loading="lazy"
-          />
-        </div>
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]">
-          <div className="grid gap-2">
-            <div className="text-sm font-medium">全站嵌入地址</div>
-            <code className="break-all rounded-md bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
-              {activityHeatmapPath()}
-            </code>
+      <CardContent className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="grid min-w-0 gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="font-medium">全站预览</div>
+              <div className="text-xs text-muted-foreground">
+                53 周窗口 · 天蓝配色 · 深浅色自适应
+              </div>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                void copyText(activityHeatmapUrl({ absolute: true }))
+              }
+            >
+              <CopyIcon data-icon="inline-start" />
+              复制地址
+            </Button>
           </div>
-          <div className="grid gap-2">
-            <div className="text-sm font-medium">API key 嵌入</div>
+          <div className="overflow-x-auto rounded-lg bg-muted/30 p-2">
+            <div className="inline-block rounded-md border bg-background p-3 align-top">
+              {/* eslint-disable-next-line @next/next/no-img-element -- This previews the public SVG endpoint exactly as GitHub will embed it. */}
+              <img
+                src={sitePath}
+                alt="RelayAPI 全站活动热力图"
+                className="block h-auto w-[807px] max-w-none"
+                loading="lazy"
+              />
+            </div>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            <ActivityEmbedValue
+              label="SVG 地址"
+              value={sitePath}
+              onCopy={() =>
+                void copyText(activityHeatmapUrl({ absolute: true }))
+              }
+            />
+            <ActivityEmbedValue
+              label="Markdown"
+              value={siteMarkdown}
+              onCopy={() =>
+                void copyText(
+                  activityHeatmapMarkdown({
+                    label: "RelayAPI activity",
+                    absolute: true,
+                  }),
+                )
+              }
+            />
+          </div>
+        </div>
+
+        <div className="grid content-start gap-3 rounded-lg border bg-muted/20 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-medium">API key 嵌入</div>
+              <div className="text-xs text-muted-foreground">
+                {formatNumber(keyRows.length)} 个可嵌入 key
+              </div>
+            </div>
+            <Badge variant="secondary">Markdown</Badge>
+          </div>
+          <div>
             {keyRows.length === 0 ? (
-              <div className="text-sm text-muted-foreground">
+              <div className="rounded-md border bg-background/60 px-3 py-6 text-center text-sm text-muted-foreground">
                 创建 API key 后可以复制单个 key 的热力图。
               </div>
             ) : (
-              <div className="grid gap-2">
+              <div className="grid max-h-80 gap-2 overflow-y-auto pr-1">
                 {keyRows.map((row) => (
                   <div
                     key={row.apiKeyId || row.key}
-                    className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                    className="flex items-center gap-3 rounded-md border bg-background/70 px-3 py-2"
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">
                         {row.apiKeyName}
                       </div>
@@ -1627,8 +1679,10 @@ function ActivityHeatmapEmbedCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
                     </div>
                     <Button
                       type="button"
-                      size="sm"
+                      size="icon-sm"
                       variant="outline"
+                      aria-label={`复制 ${row.apiKeyName} 的热力图 Markdown`}
+                      title="复制 Markdown"
                       onClick={() =>
                         void copyText(
                           activityHeatmapMarkdown({
@@ -1639,8 +1693,7 @@ function ActivityHeatmapEmbedCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
                         )
                       }
                     >
-                      <CopyIcon data-icon="inline-start" />
-                      复制
+                      <CopyIcon />
                     </Button>
                   </div>
                 ))}
@@ -1650,6 +1703,35 @@ function ActivityHeatmapEmbedCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function ActivityEmbedValue({
+  label,
+  onCopy,
+  value,
+}: {
+  label: string;
+  onCopy: () => void;
+  value: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border bg-background/70 px-3 py-2">
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-medium text-muted-foreground">{label}</div>
+        <code className="block truncate font-mono text-xs">{value}</code>
+      </div>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="outline"
+        aria-label={`复制${label}`}
+        title={`复制${label}`}
+        onClick={onCopy}
+      >
+        <CopyIcon />
+      </Button>
+    </div>
   );
 }
 
