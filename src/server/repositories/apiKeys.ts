@@ -6,6 +6,7 @@ import { jsonStringify, safeJsonParse } from "@/src/server/services/crypto";
 
 type ApiKeyRow = {
   id: string;
+  tenant_id: string | null;
   name: string;
   key_hash: string;
   prefix: string;
@@ -23,6 +24,7 @@ type ApiKeyRow = {
 
 export interface UpsertApiKeyInput {
   id: string;
+  tenantId?: string | null;
   name: string;
   keyHash: string;
   prefix: string;
@@ -35,15 +37,27 @@ export interface UpsertApiKeyInput {
   expiresAt: string | null;
 }
 
-export function listApiKeys(): ApiKeyRecord[] {
-  const rows = getMainDb()
-    .prepare("SELECT * FROM api_keys ORDER BY created_at DESC")
-    .all() as ApiKeyRow[];
+export function listApiKeys(input: { tenantId?: string | null } = {}): ApiKeyRecord[] {
+  const where =
+    input.tenantId === undefined
+      ? ""
+      : input.tenantId === null
+        ? "WHERE tenant_id IS NULL"
+        : "WHERE tenant_id = ?";
+  const statement = getMainDb().prepare(
+    `SELECT * FROM api_keys ${where} ORDER BY created_at DESC`,
+  );
+  const rows =
+    input.tenantId === undefined || input.tenantId === null
+      ? (statement.all() as ApiKeyRow[])
+      : (statement.all(input.tenantId) as ApiKeyRow[]);
   return rows.map((row: ApiKeyRow) => toApiKeyRecord(row));
 }
 
-export function listPublicApiKeys(): PublicApiKey[] {
-  return listApiKeys().map(toPublicApiKey);
+export function listPublicApiKeys(
+  input: { tenantId?: string | null } = {},
+): PublicApiKey[] {
+  return listApiKeys(input).map(toPublicApiKey);
 }
 
 export function getApiKeyById(id: string): ApiKeyRecord | null {
@@ -65,13 +79,14 @@ export function insertApiKey(input: UpsertApiKeyInput) {
   getMainDb()
     .prepare(
       `INSERT INTO api_keys (
-        id, name, key_hash, prefix, scopes_json, model_allowlist_json,
+        id, tenant_id, name, key_hash, prefix, scopes_json, model_allowlist_json,
         channel_allowlist_json, enabled, token_limit_daily,
         rate_limit_per_minute, expires_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.id,
+      input.tenantId ?? null,
       input.name,
       input.keyHash,
       input.prefix,
@@ -132,6 +147,22 @@ export function updateApiKey(
   return getApiKeyById(id);
 }
 
+export function countApiKeysByTenant(tenantId: string) {
+  const row = getMainDb()
+    .prepare(
+      `SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS enabled
+       FROM api_keys
+       WHERE tenant_id = ?`,
+    )
+    .get(tenantId) as { total: number; enabled: number | null } | undefined;
+  return {
+    total: Number(row?.total || 0),
+    enabled: Number(row?.enabled || 0),
+  };
+}
+
 export function markApiKeyUsed(id: string) {
   getMainDb()
     .prepare(
@@ -150,6 +181,7 @@ export function deleteApiKey(id: string) {
 export function toPublicApiKey(record: ApiKeyRecord): PublicApiKey {
   return {
     id: record.id,
+    tenantId: record.tenantId,
     name: record.name,
     prefix: record.prefix,
     scopes: record.scopes,
@@ -168,6 +200,7 @@ export function toPublicApiKey(record: ApiKeyRecord): PublicApiKey {
 function toApiKeyRecord(row: ApiKeyRow): ApiKeyRecord {
   return {
     id: row.id,
+    tenantId: row.tenant_id,
     name: row.name,
     prefix: row.prefix,
     keyHash: row.key_hash,

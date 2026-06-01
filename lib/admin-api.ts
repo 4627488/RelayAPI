@@ -9,6 +9,8 @@ import type {
   GlobalSettingsRecord,
   JsonValue,
   ProxyPoolRecord,
+  PublicTenant,
+  CreatedTenantInvite,
 } from "@/src/shared/types/entities";
 
 export type AdminListResponse<T> = {
@@ -230,6 +232,7 @@ export type PruneRequestLogsResponse = {
 
 export type AdminDashboardSnapshot = {
   apiKeys: PublicApiKey[];
+  tenants: PublicTenant[];
   channels: ChannelRecord[];
   credentials: CodexCredentialRecord[];
   proxyPool: ProxyPoolRecord[];
@@ -298,6 +301,57 @@ export function deleteApiKey(id: string) {
   return adminRequest<AdminDeleteResponse>(
     `/api/admin/api-keys/${encodePath(id)}`,
     { method: "DELETE" },
+  );
+}
+
+export type TenantPayload = {
+  name?: string;
+  ownerEmail?: string;
+  enabled?: boolean;
+  maxApiKeys?: number | null;
+  tokenLimitDaily?: number | null;
+  rateLimitPerMinute?: number | null;
+  modelAllowlist?: string[];
+  channelAllowlist?: string[];
+  allowCustomProxy?: boolean;
+  allowCustomUserAgent?: boolean;
+  proxy?: CredentialProxyPayload;
+  userAgent?: string | null;
+  expiresAt?: string | null;
+};
+
+export async function listTenants() {
+  const result = await adminRequest<AdminListResponse<PublicTenant>>(
+    "/api/admin/tenants",
+  );
+  return result.data;
+}
+
+export function createTenant(payload: TenantPayload) {
+  return adminRequest<PublicTenant>("/api/admin/tenants", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateTenant(id: string, payload: TenantPayload) {
+  return adminRequest<PublicTenant>(`/api/admin/tenants/${encodePath(id)}`, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteTenant(id: string) {
+  return adminRequest<AdminDeleteResponse>(
+    `/api/admin/tenants/${encodePath(id)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function createTenantInvite(id: string) {
+  return adminRequest<CreatedTenantInvite>(
+    `/api/admin/tenants/${encodePath(id)}/invite`,
+    { method: "POST" },
   );
 }
 
@@ -530,6 +584,7 @@ export async function getDashboardSnapshot(
   const requestLogLimit = options.requestLogLimit ?? 100;
   const [
     apiKeys,
+    tenants,
     channels,
     credentials,
     proxyPool,
@@ -538,6 +593,7 @@ export async function getDashboardSnapshot(
     overviewStats,
   ] = await Promise.all([
     listApiKeys(),
+    listTenants(),
     listChannels(),
     listCredentials(),
     listProxyPoolItems(),
@@ -548,6 +604,7 @@ export async function getDashboardSnapshot(
 
   return {
     apiKeys,
+    tenants,
     channels,
     credentials,
     proxyPool,

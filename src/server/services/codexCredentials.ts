@@ -304,6 +304,7 @@ export function resolveCredentialProxy(input: {
   proxy: CredentialProxyConfig | null;
   proxyPoolId: string | null;
   useGlobalProxy: boolean;
+  tenantProxy?: CredentialProxyConfig | null;
 }) {
   if (input.proxy?.enabled) {
     return input.proxy;
@@ -311,6 +312,9 @@ export function resolveCredentialProxy(input: {
   const pooledProxy = getProxyPoolCredentialProxy(input.proxyPoolId);
   if (pooledProxy?.enabled) {
     return pooledProxy;
+  }
+  if (input.tenantProxy?.enabled) {
+    return input.tenantProxy;
   }
   return input.useGlobalProxy ? getGlobalProxySetting() : null;
 }

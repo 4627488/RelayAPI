@@ -280,6 +280,79 @@ function migrateMainDb(db: DatabaseSync) {
         ON proxy_pool(enabled, updated_at);
     `,
   );
+
+  applyMigration(db, "007_tenants", (database) => {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS tenants (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_email TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        max_api_keys INTEGER,
+        token_limit_daily INTEGER,
+        rate_limit_per_minute INTEGER,
+        model_allowlist_json TEXT NOT NULL DEFAULT '[]',
+        channel_allowlist_json TEXT NOT NULL DEFAULT '[]',
+        allow_custom_proxy INTEGER NOT NULL DEFAULT 0 CHECK (allow_custom_proxy IN (0, 1)),
+        allow_custom_user_agent INTEGER NOT NULL DEFAULT 0 CHECK (allow_custom_user_agent IN (0, 1)),
+        proxy_envelope TEXT,
+        user_agent TEXT,
+        expires_at TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+      ) STRICT;
+
+      CREATE INDEX IF NOT EXISTS idx_tenants_enabled
+        ON tenants(enabled, created_at);
+      CREATE INDEX IF NOT EXISTS idx_tenants_owner_email
+        ON tenants(owner_email);
+
+      CREATE TABLE IF NOT EXISTS tenant_users (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL DEFAULT '',
+        role TEXT NOT NULL DEFAULT 'owner',
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        password_hash TEXT,
+        last_login_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX IF NOT EXISTS idx_tenant_users_tenant
+        ON tenant_users(tenant_id);
+
+      CREATE TABLE IF NOT EXISTS tenant_invites (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        accepted_at TEXT,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES tenant_users(id) ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX IF NOT EXISTS idx_tenant_invites_tenant
+        ON tenant_invites(tenant_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_tenant_invites_token
+        ON tenant_invites(token_hash);
+    `);
+
+    addColumnIfMissing(database, "api_keys", "tenant_id", "TEXT");
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_api_keys_tenant
+        ON api_keys(tenant_id, created_at);
+    `);
+  });
 }
 
 function migrateLogDb(db: DatabaseSync) {
@@ -481,6 +554,22 @@ function migrateLogDb(db: DatabaseSync) {
       "cached_tokens",
       "INTEGER NOT NULL DEFAULT 0",
     );
+  });
+
+  applyMigration(db, "008_tenant_log_scope", (database) => {
+    addColumnIfMissing(database, "request_logs", "tenant_id", "TEXT");
+    addColumnIfMissing(database, "request_logs", "tenant_name", "TEXT");
+    addColumnIfMissing(database, "usage_records", "tenant_id", "TEXT");
+    addColumnIfMissing(database, "usage_records", "tenant_name", "TEXT");
+    addColumnIfMissing(database, "usage_daily_buckets", "tenant_id", "TEXT");
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_request_logs_tenant
+        ON request_logs(tenant_id, started_at);
+      CREATE INDEX IF NOT EXISTS idx_usage_records_tenant
+        ON usage_records(tenant_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_usage_daily_buckets_tenant
+        ON usage_daily_buckets(tenant_id, bucket_date);
+    `);
   });
 }
 

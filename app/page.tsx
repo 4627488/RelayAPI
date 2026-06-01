@@ -8,6 +8,7 @@ import { listChannelRecords } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
 import { getPublicGlobalSettings } from "@/src/server/services/settings";
 import { listPublicProxyPoolItems } from "@/src/server/services/proxyPool";
+import { listPublicTenants } from "@/src/server/services/tenants";
 import type { AdminOverviewStats } from "@/src/shared/types/entities";
 import {
   initializeWebAccessKey,
@@ -52,6 +53,7 @@ export default async function Home() {
   // Keep the initial admin payload lean for low-bandwidth deployments. The
   // larger lists are loaded by the client only when their tab is opened.
   const apiKeysForCounts = listApiKeyPublicRecords();
+  const tenantsForCounts = listPublicTenants();
   const channelsForCounts = listChannelRecords();
   const codexCredentialsForCounts = await listPublicCodexCredentials();
   const proxyPoolForCounts = listPublicProxyPoolItems();
@@ -62,6 +64,7 @@ export default async function Home() {
   return (
     <AdminDashboard
       initialApiKeys={[]}
+      initialTenants={[]}
       initialChannels={[]}
       initialCredentials={[]}
       initialProxyPool={[]}
@@ -94,6 +97,7 @@ export default async function Home() {
         ).length,
         credentials: codexCredentialsForCounts.length,
         proxyPool: proxyPoolForCounts.length,
+        tenants: tenantsForCounts.length,
       }}
       initialNow={initialNow}
     />

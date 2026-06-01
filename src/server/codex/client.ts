@@ -13,6 +13,7 @@ import { getEffectiveCodexUserAgent } from "@/src/server/services/settings";
 import type { StageTimer } from "@/src/server/http/stageTimer";
 import type {
   ChannelRecord,
+  TenantRuntimeContext,
   RelayApiKeyContext,
   UsageSnapshot,
 } from "@/src/shared/types/entities";
@@ -88,6 +89,7 @@ export async function codexFetch(
     stream: boolean;
     sourceHeaders: Headers;
     channel: ChannelRecord;
+    tenant?: TenantRuntimeContext | null;
     promptCacheKey?: string | null;
     transport?: "http" | "websocket";
     timing?: StageTimer;
@@ -128,13 +130,15 @@ export async function codexFetch(
   const proxy = resolveCredentialProxy({
     proxy: credential.proxy,
     proxyPoolId: credential.proxyPoolId,
-    useGlobalProxy: credential.useGlobalProxy,
+    useGlobalProxy: input.tenant ? true : credential.useGlobalProxy,
+    tenantProxy: input.tenant?.proxy || null,
   });
   const url = toCodexUrl(input.channel.baseUrl, upstreamPath);
   const headers = buildCodexHeaders(credential, {
     stream: input.stream,
     sourceHeaders: input.sourceHeaders,
     promptCacheKey,
+    tenant: input.tenant || null,
   });
   const fetchHttp = () =>
     proxiedFetch(
@@ -191,6 +195,7 @@ export async function codexJson(
     stream: boolean;
     sourceHeaders: Headers;
     channel: ChannelRecord;
+    tenant?: TenantRuntimeContext | null;
     promptCacheKey?: string | null;
     transport?: "http" | "websocket";
     timing?: StageTimer;
@@ -229,14 +234,20 @@ function buildCodexHeaders(
     stream: boolean;
     sourceHeaders: Headers;
     promptCacheKey?: string | null;
+    tenant?: TenantRuntimeContext | null;
   },
 ) {
-  const userAgent = getEffectiveCodexUserAgent(credential);
+  const userAgent = getEffectiveCodexUserAgent({
+    userAgent: credential.userAgent,
+    tenantUserAgent: input.tenant?.userAgent || null,
+  });
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${credential.tokens.access_token}`,
     Accept: input.stream ? "text/event-stream" : "application/json",
-    "User-Agent": input.sourceHeaders.get("user-agent") || userAgent,
+    "User-Agent": input.tenant
+      ? userAgent
+      : input.sourceHeaders.get("user-agent") || userAgent,
     Originator:
       input.sourceHeaders.get("originator") || serverConfig.codexOriginator,
   };

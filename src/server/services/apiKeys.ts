@@ -1,11 +1,14 @@
 import "server-only";
 
 import type {
+  ApiKeyRecord,
   CreatedApiKey,
   PublicApiKey,
   RelayApiKeyContext,
+  TenantWithSecrets,
 } from "@/src/shared/types/entities";
 import {
+  countApiKeysByTenant,
   deleteApiKey,
   getApiKeyByHash,
   getApiKeyById,
@@ -15,9 +18,12 @@ import {
   toPublicApiKey,
   updateApiKey,
 } from "@/src/server/repositories/apiKeys";
+import { getTenantById } from "@/src/server/repositories/tenants";
 import {
   getApiKeyDailyUsage,
   getApiKeyRequestCountSince,
+  getTenantDailyUsage,
+  getTenantRequestCountSince,
 } from "@/src/server/repositories/logs";
 import { base64Url, randomId, sha256 } from "@/src/server/services/crypto";
 import { HttpError } from "@/src/server/http/errors";
@@ -37,9 +43,25 @@ export interface CreateApiKeyInput {
 }
 
 export function createApiKey(input: CreateApiKeyInput = {}): CreatedApiKey {
+  return createApiKeyRecord(input, null);
+}
+
+export function createTenantApiKey(
+  tenant: TenantWithSecrets,
+  input: CreateApiKeyInput = {},
+): CreatedApiKey {
+  assertTenantCanCreateApiKey(tenant, input);
+  return createApiKeyRecord(input, tenant.id);
+}
+
+function createApiKeyRecord(
+  input: CreateApiKeyInput,
+  tenantId: string | null,
+): CreatedApiKey {
   const key = `relay_sk_${base64Url(32)}`;
   const record = insertApiKey({
     id: randomId("key"),
+    tenantId,
     name: cleanString(input.name) || "Relay API Key",
     keyHash: hashApiKey(key),
     prefix: key.slice(0, 18),
@@ -60,10 +82,66 @@ export function createApiKey(input: CreateApiKeyInput = {}): CreatedApiKey {
 }
 
 export function listApiKeyPublicRecords(): PublicApiKey[] {
-  return listPublicApiKeys();
+  return listPublicApiKeys({ tenantId: null });
+}
+
+export function listTenantApiKeyPublicRecords(
+  tenantId: string,
+): PublicApiKey[] {
+  return listPublicApiKeys({ tenantId });
 }
 
 export function patchApiKey(id: string, input: Partial<CreateApiKeyInput>) {
+  const existing = getApiKeyById(id);
+  if (!existing || existing.tenantId !== null) {
+    throw new HttpError(404, "api_key_not_found", "API key not found");
+  }
+  const record = updateApiKey(id, {
+    ...(input.name !== undefined ? { name: cleanString(input.name) } : {}),
+    ...(input.scopes !== undefined
+      ? { scopes: cleanStringArray(input.scopes, []) }
+      : {}),
+    ...(input.modelAllowlist !== undefined
+      ? { modelAllowlist: cleanStringArray(input.modelAllowlist, []) }
+      : {}),
+    ...(input.channelAllowlist !== undefined
+      ? { channelAllowlist: cleanStringArray(input.channelAllowlist, []) }
+      : {}),
+    ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
+    ...(input.tokenLimitDaily !== undefined
+      ? {
+          tokenLimitDaily: normalizeNullablePositiveInteger(
+            input.tokenLimitDaily,
+          ),
+        }
+      : {}),
+    ...(input.rateLimitPerMinute !== undefined
+      ? {
+          rateLimitPerMinute: normalizeNullablePositiveInteger(
+            input.rateLimitPerMinute,
+          ),
+        }
+      : {}),
+    ...(input.expiresAt !== undefined
+      ? { expiresAt: cleanString(input.expiresAt) || null }
+      : {}),
+  });
+  if (!record) {
+    throw new HttpError(404, "api_key_not_found", "API key not found");
+  }
+  return toPublicApiKey(record);
+}
+
+export function patchTenantApiKey(
+  tenant: TenantWithSecrets,
+  id: string,
+  input: Partial<CreateApiKeyInput>,
+) {
+  const existing = getApiKeyById(id);
+  if (!existing || existing.tenantId !== tenant.id) {
+    throw new HttpError(404, "api_key_not_found", "API key not found");
+  }
+  assertTenantCanPatchApiKey(tenant, existing, input);
   const record = updateApiKey(id, {
     ...(input.name !== undefined ? { name: cleanString(input.name) } : {}),
     ...(input.scopes !== undefined
@@ -101,6 +179,20 @@ export function patchApiKey(id: string, input: Partial<CreateApiKeyInput>) {
 }
 
 export function removeApiKey(id: string) {
+  const existing = getApiKeyById(id);
+  if (!existing || existing.tenantId !== null) {
+    throw new HttpError(404, "api_key_not_found", "API key not found");
+  }
+  if (!deleteApiKey(id)) {
+    throw new HttpError(404, "api_key_not_found", "API key not found");
+  }
+}
+
+export function removeTenantApiKey(tenantId: string, id: string) {
+  const existing = getApiKeyById(id);
+  if (!existing || existing.tenantId !== tenantId) {
+    throw new HttpError(404, "api_key_not_found", "API key not found");
+  }
   if (!deleteApiKey(id)) {
     throw new HttpError(404, "api_key_not_found", "API key not found");
   }
@@ -121,6 +213,11 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
   if (record.expiresAt && Date.parse(record.expiresAt) <= Date.now()) {
     throw new HttpError(403, "api_key_expired", "API key is expired");
   }
+  let tenant: TenantWithSecrets | null = null;
+  if (record.tenantId) {
+    tenant = getTenantById(record.tenantId);
+    assertTenantUsable(tenant);
+  }
   if (
     record.tokenLimitDaily !== null &&
     getApiKeyDailyUsage(record.id) >= record.tokenLimitDaily
@@ -131,15 +228,50 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
       "API key daily token limit has been reached",
     );
   }
-  enforceRateLimit(record.id, record.rateLimitPerMinute);
+  if (
+    tenant?.tokenLimitDaily !== null &&
+    tenant?.tokenLimitDaily !== undefined &&
+    getTenantDailyUsage(tenant.id) >= tenant.tokenLimitDaily
+  ) {
+    throw new HttpError(
+      429,
+      "tenant_daily_token_limit_exceeded",
+      "Tenant daily token limit has been reached",
+    );
+  }
+  enforceRateLimit(`key:${record.id}`, record.rateLimitPerMinute, (since) =>
+    getApiKeyRequestCountSince(record.id, since),
+  );
+  if (tenant) {
+    enforceRateLimit(
+      `tenant:${tenant.id}`,
+      tenant.rateLimitPerMinute,
+      (since) => getTenantRequestCountSince(tenant.id, since),
+    );
+  }
   markApiKeyUsed(record.id);
   return {
     id: record.id,
+    tenantId: record.tenantId,
+    tenant: tenant
+      ? {
+          id: tenant.id,
+          name: tenant.name,
+          proxy: tenant.allowCustomProxy ? tenant.proxy : null,
+          userAgent: tenant.allowCustomUserAgent ? tenant.userAgent : null,
+        }
+      : null,
     name: record.name,
     prefix: record.prefix,
     scopes: record.scopes,
-    modelAllowlist: record.modelAllowlist,
-    channelAllowlist: record.channelAllowlist,
+    modelAllowlist: effectiveAllowlist(
+      tenant?.modelAllowlist || [],
+      record.modelAllowlist,
+    ),
+    channelAllowlist: effectiveAllowlist(
+      tenant?.channelAllowlist || [],
+      record.channelAllowlist,
+    ),
     tokenLimitDaily: record.tokenLimitDaily,
     rateLimitPerMinute: record.rateLimitPerMinute,
   };
@@ -163,29 +295,156 @@ function hashApiKey(key: string) {
   return sha256(key.trim());
 }
 
-function enforceRateLimit(apiKeyId: string, limit: number | null) {
+function enforceRateLimit(
+  bucketId: string,
+  limit: number | null,
+  persistedCounter: (since: Date) => number,
+) {
   if (!limit) {
     return;
   }
   const now = Date.now();
   const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recentInFlight = (inFlightRateLimitBuckets.get(apiKeyId) || []).filter(
+  const recentInFlight = (inFlightRateLimitBuckets.get(bucketId) || []).filter(
     (timestamp) => timestamp >= windowStart,
   );
-  const persistedCount = getApiKeyRequestCountSince(
-    apiKeyId,
-    new Date(windowStart),
-  );
+  const persistedCount = persistedCounter(new Date(windowStart));
   if (persistedCount + recentInFlight.length >= limit) {
-    inFlightRateLimitBuckets.set(apiKeyId, recentInFlight);
+    inFlightRateLimitBuckets.set(bucketId, recentInFlight);
     throw new HttpError(
       429,
       "rate_limit_exceeded",
-      "API key rate limit has been reached",
+      "Rate limit has been reached",
     );
   }
   recentInFlight.push(now);
-  inFlightRateLimitBuckets.set(apiKeyId, recentInFlight);
+  inFlightRateLimitBuckets.set(bucketId, recentInFlight);
+}
+
+function assertTenantUsable(tenant: TenantWithSecrets | null): asserts tenant {
+  if (!tenant) {
+    throw new HttpError(403, "tenant_not_found", "Tenant is not available");
+  }
+  if (!tenant.enabled) {
+    throw new HttpError(403, "tenant_disabled", "Tenant is disabled");
+  }
+  if (tenant.expiresAt && Date.parse(tenant.expiresAt) <= Date.now()) {
+    throw new HttpError(403, "tenant_expired", "Tenant is expired");
+  }
+}
+
+function assertTenantCanCreateApiKey(
+  tenant: TenantWithSecrets,
+  input: CreateApiKeyInput,
+) {
+  assertTenantUsable(tenant);
+  const counts = countApiKeysByTenant(tenant.id);
+  if (tenant.maxApiKeys !== null && counts.total >= tenant.maxApiKeys) {
+    throw new HttpError(
+      403,
+      "tenant_key_limit_exceeded",
+      "Tenant API key limit has been reached",
+    );
+  }
+  assertTenantKeyPatchWithinLimits(tenant, input);
+}
+
+function assertTenantCanPatchApiKey(
+  tenant: TenantWithSecrets,
+  existing: ApiKeyRecord,
+  input: Partial<CreateApiKeyInput>,
+) {
+  assertTenantUsable(tenant);
+  assertTenantKeyPatchWithinLimits(tenant, {
+    name: input.name ?? existing.name,
+    scopes: input.scopes ?? existing.scopes,
+    modelAllowlist: input.modelAllowlist ?? existing.modelAllowlist,
+    channelAllowlist: input.channelAllowlist ?? existing.channelAllowlist,
+    enabled: input.enabled ?? existing.enabled,
+    tokenLimitDaily:
+      input.tokenLimitDaily !== undefined
+        ? input.tokenLimitDaily
+        : existing.tokenLimitDaily,
+    rateLimitPerMinute:
+      input.rateLimitPerMinute !== undefined
+        ? input.rateLimitPerMinute
+        : existing.rateLimitPerMinute,
+    expiresAt: input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt,
+  });
+}
+
+function assertTenantKeyPatchWithinLimits(
+  tenant: TenantWithSecrets,
+  input: Partial<CreateApiKeyInput>,
+) {
+  const modelAllowlist = cleanStringArray(input.modelAllowlist, []);
+  const channelAllowlist = cleanStringArray(input.channelAllowlist, []);
+  assertSubsetAllowlist(
+    modelAllowlist,
+    tenant.modelAllowlist,
+    "tenant_model_not_allowed",
+    "API key model allowlist must be within the tenant model allowlist",
+  );
+  assertSubsetAllowlist(
+    channelAllowlist,
+    tenant.channelAllowlist,
+    "tenant_channel_not_allowed",
+    "API key channel allowlist must be within the tenant channel allowlist",
+  );
+  const tokenLimitDaily = normalizeNullablePositiveInteger(
+    input.tokenLimitDaily,
+  );
+  if (
+    tokenLimitDaily !== null &&
+    tenant.tokenLimitDaily !== null &&
+    tokenLimitDaily > tenant.tokenLimitDaily
+  ) {
+    throw new HttpError(
+      400,
+      "tenant_token_limit_exceeded",
+      "API key daily token limit cannot exceed tenant limit",
+    );
+  }
+  const rateLimitPerMinute = normalizeNullablePositiveInteger(
+    input.rateLimitPerMinute,
+  );
+  if (
+    rateLimitPerMinute !== null &&
+    tenant.rateLimitPerMinute !== null &&
+    rateLimitPerMinute > tenant.rateLimitPerMinute
+  ) {
+    throw new HttpError(
+      400,
+      "tenant_rate_limit_exceeded",
+      "API key rate limit cannot exceed tenant limit",
+    );
+  }
+}
+
+function assertSubsetAllowlist(
+  requested: string[],
+  allowed: string[],
+  code: string,
+  message: string,
+) {
+  if (requested.length === 0 || allowed.length === 0) {
+    return;
+  }
+  const allowedSet = new Set(allowed);
+  if (requested.some((item) => !allowedSet.has(item))) {
+    throw new HttpError(400, code, message);
+  }
+}
+
+function effectiveAllowlist(tenantAllowlist: string[], keyAllowlist: string[]) {
+  if (tenantAllowlist.length === 0) {
+    return keyAllowlist;
+  }
+  if (keyAllowlist.length === 0) {
+    return tenantAllowlist;
+  }
+  const tenantSet = new Set(tenantAllowlist);
+  return keyAllowlist.filter((item) => tenantSet.has(item));
 }
 
 function cleanString(value: unknown) {

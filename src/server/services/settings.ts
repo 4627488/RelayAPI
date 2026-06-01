@@ -42,9 +42,12 @@ export function getGlobalUserAgentSetting() {
 
 export function getEffectiveCodexUserAgent(input?: {
   userAgent?: string | null;
+  tenantUserAgent?: string | null;
 }) {
   return (
-    normalizeStoredUserAgent(input?.userAgent) || getGlobalUserAgentSetting()
+    normalizeStoredUserAgent(input?.userAgent) ||
+    normalizeStoredUserAgent(input?.tenantUserAgent) ||
+    getGlobalUserAgentSetting()
   );
 }
 

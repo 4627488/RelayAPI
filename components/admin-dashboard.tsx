@@ -112,6 +112,7 @@ import {
   listChannels,
   listCredentials,
   listProxyPoolItems,
+  listTenants,
   logoutWebSession,
   pruneRequestLogs,
   refreshCredential,
@@ -131,6 +132,7 @@ import {
   type RequestLogDetail,
   type RequestLogsPage,
 } from "@/lib/admin-api";
+import { AdminTenantsSection } from "@/components/admin-tenants-section";
 import type {
   AdminOverviewStats,
   ApiKeyUsageStatsRow,
@@ -143,11 +145,13 @@ import type {
   GlobalSettingsRecord,
   ProxyPoolRecord,
   PublicApiKey,
+  PublicTenant,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
 
 type AdminDashboardProps = {
   initialApiKeys: PublicApiKey[];
+  initialTenants: PublicTenant[];
   initialChannels: ChannelRecord[];
   initialCredentials: CodexCredentialRecord[];
   initialProxyPool: ProxyPoolRecord[];
@@ -160,6 +164,7 @@ type AdminDashboardProps = {
 
 type SectionId =
   | "overview"
+  | "tenants"
   | "apiKeys"
   | "credentials"
   | "proxyPool"
@@ -176,6 +181,7 @@ type AdminResourceCounts = {
   healthyChannels: number;
   credentials: number;
   proxyPool: number;
+  tenants: number;
 };
 
 type LoadedDataState = Record<
@@ -292,6 +298,7 @@ const EMPTY_CHANNEL_FORM: ChannelFormState = {
 
 export function AdminDashboard({
   initialApiKeys,
+  initialTenants,
   initialChannels,
   initialCredentials,
   initialProxyPool,
@@ -304,6 +311,7 @@ export function AdminDashboard({
   const [activeSection, setActiveSection] =
     React.useState<SectionId>("overview");
   const [apiKeys, setApiKeys] = React.useState(initialApiKeys);
+  const [tenants, setTenants] = React.useState(initialTenants);
   const [channels, setChannels] = React.useState(initialChannels);
   const [credentials, setCredentials] = React.useState(initialCredentials);
   const [proxyPool, setProxyPool] = React.useState(initialProxyPool);
@@ -315,6 +323,7 @@ export function AdminDashboard({
   );
   const [loadedData, setLoadedData] = React.useState<LoadedDataState>({
     apiKeys: initialApiKeys.length > 0,
+    tenants: initialTenants.length > 0,
     credentials: initialCredentials.length > 0,
     proxyPool: initialProxyPool.length > 0,
     channels: initialChannels.length > 0,
@@ -384,6 +393,8 @@ export function AdminDashboard({
           await refreshOverviewStats();
         } else if (section === "apiKeys") {
           setApiKeys(await listApiKeys());
+        } else if (section === "tenants") {
+          setTenants(await listTenants());
         } else if (section === "credentials") {
           const [nextCredentials, nextChannels, nextProxyPool] =
             await Promise.all([
@@ -550,6 +561,9 @@ export function AdminDashboard({
   const proxyPoolCount = loadedData.proxyPool
     ? proxyPool.length
     : initialResourceCounts.proxyPool;
+  const tenantCount = loadedData.tenants
+    ? tenants.length
+    : initialResourceCounts.tenants;
   const successRate = ratio(totals.successCount, totals.requestCount);
   const hasOperationalData = totals.requestCount > 0;
 
@@ -580,6 +594,13 @@ export function AdminDashboard({
       description: "路由通道",
       icon: RouteIcon,
       count: channelCount,
+    },
+    {
+      id: "tenants",
+      label: "租户",
+      description: "多租户",
+      icon: ShieldCheckIcon,
+      count: tenantCount,
     },
     {
       id: "apiKeys",
@@ -778,6 +799,9 @@ export function AdminDashboard({
                 onDeleted={handleApiKeyDeleted}
                 onUpdated={handleApiKeyUpdated}
               />
+            )}
+            {activeSection === "tenants" && (
+              <AdminTenantsSection tenants={tenants} onChanged={setTenants} />
             )}
             {activeSection === "credentials" && (
               <CredentialsSection

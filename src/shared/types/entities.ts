@@ -28,6 +28,7 @@ export interface CodexAccountUsageHealth {
 
 export interface ApiKeyRecord {
   id: string;
+  tenantId: string | null;
   name: string;
   prefix: string;
   keyHash: string;
@@ -45,6 +46,7 @@ export interface ApiKeyRecord {
 
 export interface PublicApiKey {
   id: string;
+  tenantId: string | null;
   name: string;
   prefix: string;
   scopes: string[];
@@ -61,6 +63,96 @@ export interface PublicApiKey {
 
 export interface CreatedApiKey extends PublicApiKey {
   key: string;
+}
+
+export interface TenantLimits {
+  maxApiKeys: number | null;
+  tokenLimitDaily: number | null;
+  rateLimitPerMinute: number | null;
+  modelAllowlist: string[];
+  channelAllowlist: string[];
+  expiresAt: string | null;
+}
+
+export interface TenantRecord extends TenantLimits {
+  id: string;
+  name: string;
+  ownerEmail: string;
+  enabled: boolean;
+  allowCustomProxy: boolean;
+  allowCustomUserAgent: boolean;
+  proxy: PublicCredentialProxyConfig | null;
+  userAgent: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface TenantWithSecrets
+  extends Omit<TenantRecord, "proxy"> {
+  proxy: CredentialProxyConfig | null;
+}
+
+export interface PublicTenant extends TenantRecord {
+  apiKeyCount: number;
+  enabledApiKeyCount: number;
+  todayTokens: number;
+}
+
+export interface TenantUserRecord {
+  id: string;
+  tenantId: string;
+  email: string;
+  displayName: string;
+  role: "owner";
+  enabled: boolean;
+  passwordHash: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TenantInviteRecord {
+  id: string;
+  tenantId: string;
+  userId: string;
+  email: string;
+  tokenHash: string;
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreatedTenantInvite {
+  id: string;
+  tenantId: string;
+  email: string;
+  expiresAt: string;
+  activateUrl: string;
+  token: string;
+}
+
+export interface TenantResourceChannel {
+  id: string;
+  name: string;
+  enabled: boolean;
+  status: ChannelStatus;
+  modelAllowlist: string[];
+}
+
+export interface TenantResources {
+  models: string[];
+  channels: TenantResourceChannel[];
+}
+
+export interface TenantRuntimeContext {
+  id: string;
+  name: string;
+  proxy: CredentialProxyConfig | null;
+  userAgent: string | null;
 }
 
 export type CredentialProxyType = "socks5" | "socks5h";
@@ -181,6 +273,8 @@ export interface ChannelRecord {
 
 export interface RelayApiKeyContext {
   id: string;
+  tenantId: string | null;
+  tenant: TenantRuntimeContext | null;
   name: string;
   prefix: string;
   scopes: string[];
