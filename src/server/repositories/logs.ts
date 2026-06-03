@@ -21,8 +21,6 @@ import type {
 const ADMIN_OVERVIEW_CACHE_TTL_MS = 15_000;
 const OVERVIEW_GROUP_LIMIT = 100;
 const OVERVIEW_DAILY_WINDOW_DAYS = 30;
-const LATENCY_SAMPLE_LIMIT = 1_000;
-const FIRST_TOKEN_SAMPLE_LIMIT = 500;
 const DEFAULT_HEATMAP_WEEKS = 53;
 const MAX_HEATMAP_WEEKS = 53;
 
@@ -1174,27 +1172,34 @@ function overviewWhere(
   };
 }
 
+function bucketWhere(
+  scope: LogScope,
+  conditions: string[] = [],
+  params: string[] = [],
+) {
+  return overviewWhere(scope, conditions, params);
+}
+
 function getOverviewTotals(scope: LogScope = {}): AdminOverviewTotals {
-  const { where, params } = overviewWhere(scope);
+  const { where, params } = bucketWhere(scope);
   const row = getLogDb()
     .prepare(
       `SELECT
-        COUNT(*) AS request_count,
-        SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
-        SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
-        SUM(stream) AS stream_count,
+        COALESCE(SUM(request_count), 0) AS request_count,
+        COALESCE(SUM(success_count), 0) AS success_count,
+        COALESCE(SUM(error_count), 0) AS error_count,
+        COALESCE(SUM(stream_count), 0) AS stream_count,
         COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
         COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
         COALESCE(SUM(total_tokens), 0) AS total_tokens,
         COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
-        COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-        COALESCE(SUM(latency_ms), 0) AS total_latency_ms,
+        COALESCE(SUM(total_latency_ms), 0) AS total_latency_ms,
         COUNT(DISTINCT NULLIF(api_key_id, '')) AS distinct_api_key_count,
         COUNT(DISTINCT NULLIF(model, '')) AS distinct_model_count,
         COUNT(DISTINCT NULLIF(channel_id, '')) AS distinct_channel_count,
-        MIN(started_at) AS first_request_at,
-        MAX(started_at) AS last_request_at
-      FROM request_logs
+        MIN(first_request_at) AS first_request_at,
+        MAX(last_request_at) AS last_request_at
+      FROM request_daily_buckets
       ${where}`,
     )
     .get(...params) as Record<string, unknown> | undefined;
@@ -1202,7 +1207,6 @@ function getOverviewTotals(scope: LogScope = {}): AdminOverviewTotals {
   const promptTokens = numberValue(row?.prompt_tokens);
   const totalTokens = numberValue(row?.total_tokens);
   const cachedTokens = numberValue(row?.cached_tokens);
-  const firstTokenLatency = firstTokenLatencyStats({ scope });
   return {
     requestCount,
     successCount: numberValue(row?.success_count),
@@ -1213,9 +1217,10 @@ function getOverviewTotals(scope: LogScope = {}): AdminOverviewTotals {
     totalTokens,
     cachedTokens,
     cacheHitRate: cacheHitRate(cachedTokens, promptTokens),
-    avgLatencyMs: Math.round(numberValue(row?.avg_latency_ms)),
-    p95LatencyMs: percentileLatency({ scope }),
-    ...firstTokenLatency,
+    avgLatencyMs: Math.round(average(numberValue(row?.total_latency_ms), requestCount)),
+    p95LatencyMs: 0,
+    avgFirstTokenLatencyMs: 0,
+    p95FirstTokenLatencyMs: 0,
     avgTokensPerRequest: average(totalTokens, requestCount),
     tokensPerSecond: throughput(totalTokens, row?.total_latency_ms),
     distinctApiKeyCount: numberValue(row?.distinct_api_key_count),
@@ -1227,15 +1232,15 @@ function getOverviewTotals(scope: LogScope = {}): AdminOverviewTotals {
 }
 
 function getApiKeyUsageStats(scope: LogScope = {}): ApiKeyUsageStatsRow[] {
-  const overviewWindowStart = overviewRecentStartedAt();
-  const { where, params } = overviewWhere(scope, ["started_at >= ?"], [
+  const overviewWindowStart = overviewRecentStartedAt().slice(0, 10);
+  const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     overviewWindowStart,
   ]);
   const rows = getLogDb()
     .prepare(
-      `${aggregateSelect("api_key_id", "api_key_prefix")}
+      `${bucketAggregateSelect("api_key_id")}
        ${where}
-       GROUP BY COALESCE(api_key_id, ''), COALESCE(api_key_prefix, '')
+       GROUP BY COALESCE(api_key_id, '')
        ORDER BY total_tokens DESC, request_count DESC
        LIMIT ?`,
     )
@@ -1250,7 +1255,6 @@ function getApiKeyUsageStats(scope: LogScope = {}): ApiKeyUsageStatsRow[] {
     const base = toUsageStatsRow(row, {
       label:
         keyRecord?.name ||
-        nullableString(row.api_key_name) ||
         nullableString(row.group_label) ||
         "未知 Key",
       subLabel: keyRecord?.prefix || nullableString(row.group_label),
@@ -1263,9 +1267,8 @@ function getApiKeyUsageStats(scope: LogScope = {}): ApiKeyUsageStatsRow[] {
     return {
       ...base,
       apiKeyId,
-      apiKeyPrefix: keyRecord?.prefix || nullableString(row.group_label),
-      apiKeyName:
-        keyRecord?.name || nullableString(row.api_key_name) || base.label,
+      apiKeyPrefix: keyRecord?.prefix || null,
+      apiKeyName: keyRecord?.name || base.label,
       enabled:
         typeof keyRecord?.enabled === "number" ? keyRecord.enabled === 1 : null,
       tokenLimitDaily,
@@ -1310,15 +1313,15 @@ function getTenantUsageStats(scope: LogScope = {}): TenantUsageStatsRow[] {
   if (scope.tenantId !== undefined) {
     return [];
   }
-  const overviewWindowStart = overviewRecentStartedAt();
-  const { where, params } = overviewWhere(scope, ["started_at >= ?"], [
+  const overviewWindowStart = overviewRecentStartedAt().slice(0, 10);
+  const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     overviewWindowStart,
   ]);
   const rows = getLogDb()
     .prepare(
-      `${aggregateSelect("tenant_id", "tenant_name")}
+      `${bucketAggregateSelect("tenant_id")}
        ${where}
-       GROUP BY COALESCE(tenant_id, ''), COALESCE(tenant_name, '')
+       GROUP BY COALESCE(tenant_id, '')
        ORDER BY total_tokens DESC, request_count DESC
        LIMIT ?`,
     )
@@ -1367,32 +1370,29 @@ function getTenantUsageStats(scope: LogScope = {}): TenantUsageStatsRow[] {
 function getApiKeyModelUsageStats(
   scope: LogScope = {},
 ): ApiKeyModelUsageStatsRow[] {
-  const recentStartedAt = overviewRecentStartedAt();
-  const { where, params } = overviewWhere(scope, ["started_at >= ?"], [
+  const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
+  const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
   const rows = getLogDb()
     .prepare(
       `SELECT
         COALESCE(api_key_id, '') AS api_key_id,
-        COALESCE(api_key_prefix, '') AS api_key_prefix,
-        MAX(NULLIF(api_key_name, '')) AS api_key_name,
         COALESCE(model, '') AS model,
-        COUNT(*) AS request_count,
-        SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
-        SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
-        SUM(stream) AS stream_count,
+        COALESCE(SUM(request_count), 0) AS request_count,
+        COALESCE(SUM(success_count), 0) AS success_count,
+        COALESCE(SUM(error_count), 0) AS error_count,
+        COALESCE(SUM(stream_count), 0) AS stream_count,
         COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
         COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
         COALESCE(SUM(total_tokens), 0) AS total_tokens,
         COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
-        COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-        COALESCE(SUM(latency_ms), 0) AS total_latency_ms,
-        MIN(started_at) AS first_request_at,
-        MAX(started_at) AS last_request_at
-      FROM request_logs
+        COALESCE(SUM(total_latency_ms), 0) AS total_latency_ms,
+        MIN(first_request_at) AS first_request_at,
+        MAX(last_request_at) AS last_request_at
+      FROM request_daily_buckets
       ${where}
-      GROUP BY COALESCE(api_key_id, ''), COALESCE(api_key_prefix, ''), COALESCE(model, '')
+      GROUP BY COALESCE(api_key_id, ''), COALESCE(model, '')
       ORDER BY total_tokens DESC, request_count DESC
       LIMIT ?`,
     )
@@ -1414,8 +1414,7 @@ function getApiKeyModelUsageStats(
         label: model,
         subLabel:
           keyRecord?.name ||
-          nullableString(row.api_key_name) ||
-          nullableString(row.api_key_prefix),
+          nullableString(row.api_key_id),
         emptyLabel: "未知模型",
         filters: [
           { column: "api_key_id", value: apiKeyId || "" },
@@ -1427,12 +1426,8 @@ function getApiKeyModelUsageStats(
     return {
       ...base,
       apiKeyId,
-      apiKeyPrefix: keyRecord?.prefix || nullableString(row.api_key_prefix),
-      apiKeyName:
-        keyRecord?.name ||
-        nullableString(row.api_key_name) ||
-        nullableString(row.api_key_prefix) ||
-        "未知 Key",
+      apiKeyPrefix: keyRecord?.prefix || null,
+      apiKeyName: keyRecord?.name || nullableString(row.api_key_id) || "未知 Key",
       model,
     };
   });
@@ -1442,7 +1437,7 @@ function getApiKeyDailyUsageStats(
   scope: LogScope = {},
 ): ApiKeyDailyUsageStatsRow[] {
   const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
-  const { where, params } = overviewWhere(scope, ["bucket_date >= ?"], [
+  const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
   const rows = getLogDb()
@@ -1498,18 +1493,18 @@ function getApiKeyDailyUsageStats(
 
 function getGroupedUsageStats(
   keyColumn: string,
-  labelColumn: string,
+  _labelColumn: string,
   scope: LogScope = {},
 ): UsageStatsRow[] {
-  const recentStartedAt = overviewRecentStartedAt();
-  const { where, params } = overviewWhere(scope, ["started_at >= ?"], [
+  const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
+  const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
   const rows = getLogDb()
     .prepare(
-      `${aggregateSelect(keyColumn, labelColumn)}
+      `${bucketAggregateSelect(keyColumn)}
        ${where}
-       GROUP BY COALESCE(${keyColumn}, ''), COALESCE(${labelColumn}, '')
+       GROUP BY COALESCE(${keyColumn}, '')
        ORDER BY total_tokens DESC, request_count DESC
        LIMIT ?`,
     )
@@ -1526,29 +1521,26 @@ function getGroupedUsageStats(
 }
 
 function getDailyUsageStats(scope: LogScope = {}): DailyUsageStatsRow[] {
-  const recentStartedAt = overviewRecentStartedAt();
-  const { where, params } = overviewWhere(scope, ["started_at >= ?"], [
+  const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
+  const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
   const rows = getLogDb()
     .prepare(
       `SELECT
-        substr(started_at, 1, 10) AS date,
-        COUNT(*) AS request_count,
-        SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
-        SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
-        SUM(stream) AS stream_count,
+        bucket_date AS date,
+        COALESCE(SUM(request_count), 0) AS request_count,
+        COALESCE(SUM(success_count), 0) AS success_count,
+        COALESCE(SUM(error_count), 0) AS error_count,
+        COALESCE(SUM(stream_count), 0) AS stream_count,
         COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
         COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
         COALESCE(SUM(total_tokens), 0) AS total_tokens,
         COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
-        COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-        COALESCE(SUM(latency_ms), 0) AS total_latency_ms,
-        MIN(started_at) AS first_request_at,
-        MAX(started_at) AS last_request_at
-      FROM request_logs
+        COALESCE(SUM(total_latency_ms), 0) AS total_latency_ms
+      FROM request_daily_buckets
       ${where}
-      GROUP BY substr(started_at, 1, 10)
+      GROUP BY bucket_date
       ORDER BY date DESC
       LIMIT ?`,
     )
@@ -1560,7 +1552,6 @@ function getDailyUsageStats(scope: LogScope = {}): DailyUsageStatsRow[] {
     const totalTokens = numberValue(row.total_tokens);
     const cachedTokens = numberValue(row.cached_tokens);
     const date = String(row.date || "");
-    const firstTokenLatency = firstTokenLatencyStats({ day: date, scope });
     return {
       date,
       requestCount,
@@ -1572,33 +1563,33 @@ function getDailyUsageStats(scope: LogScope = {}): DailyUsageStatsRow[] {
       totalTokens,
       cachedTokens,
       cacheHitRate: cacheHitRate(cachedTokens, numberValue(row.prompt_tokens)),
-      avgLatencyMs: Math.round(numberValue(row.avg_latency_ms)),
-      p95LatencyMs: percentileLatency({ day: date, scope }),
-      ...firstTokenLatency,
+      avgLatencyMs: Math.round(average(numberValue(row.total_latency_ms), requestCount)),
+      p95LatencyMs: 0,
+      avgFirstTokenLatencyMs: 0,
+      p95FirstTokenLatencyMs: 0,
       avgTokensPerRequest: average(totalTokens, requestCount),
       tokensPerSecond: throughput(totalTokens, row.total_latency_ms),
     };
   });
 }
 
-function aggregateSelect(keyColumn: string, labelColumn: string) {
+function bucketAggregateSelect(keyColumn: string) {
+  const safeKeyColumn = safeLatencyColumnName(keyColumn);
   return `SELECT
-    COALESCE(${keyColumn}, '') AS group_key,
-    COALESCE(${labelColumn}, '') AS group_label,
-    MAX(NULLIF(api_key_name, '')) AS api_key_name,
-    COUNT(*) AS request_count,
-    SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
-    SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
-    SUM(stream) AS stream_count,
+    COALESCE(${safeKeyColumn}, '') AS group_key,
+    COALESCE(${safeKeyColumn}, '') AS group_label,
+    COALESCE(SUM(request_count), 0) AS request_count,
+    COALESCE(SUM(success_count), 0) AS success_count,
+    COALESCE(SUM(error_count), 0) AS error_count,
+    COALESCE(SUM(stream_count), 0) AS stream_count,
     COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
     COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
     COALESCE(SUM(total_tokens), 0) AS total_tokens,
     COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
-    COALESCE(AVG(latency_ms), 0) AS avg_latency_ms,
-    COALESCE(SUM(latency_ms), 0) AS total_latency_ms,
-    MIN(started_at) AS first_request_at,
-    MAX(started_at) AS last_request_at
-  FROM request_logs`;
+    COALESCE(SUM(total_latency_ms), 0) AS total_latency_ms,
+    MIN(first_request_at) AS first_request_at,
+    MAX(last_request_at) AS last_request_at
+  FROM request_daily_buckets`;
 }
 
 function emptyUsageStatsRow(input: {
@@ -1647,6 +1638,10 @@ function toUsageStatsRow(
   const cachedTokens = numberValue(row.cached_tokens);
   const firstRequestAt = nullableString(row.first_request_at);
   const lastRequestAt = nullableString(row.last_request_at);
+  const avgLatencyMs =
+    row.avg_latency_ms === undefined
+      ? average(numberValue(row.total_latency_ms), requestCount)
+      : Math.round(numberValue(row.avg_latency_ms));
   return {
     key: nullableString(row.group_key) || options.emptyLabel,
     label:
@@ -1664,156 +1659,14 @@ function toUsageStatsRow(
     totalTokens,
     cachedTokens,
     cacheHitRate: cacheHitRate(cachedTokens, promptTokens),
-    avgLatencyMs: Math.round(numberValue(row.avg_latency_ms)),
-    p95LatencyMs: percentileLatency({
-      groupKey: nullableString(row.group_key),
-      groupColumn: options.groupColumn,
-      filters: options.filters,
-      scope: options.scope,
-    }),
-    ...firstTokenLatencyStats({
-      groupKey: nullableString(row.group_key),
-      groupColumn: options.groupColumn,
-      filters: options.filters,
-      scope: options.scope,
-    }),
+    avgLatencyMs,
+    p95LatencyMs: numberValue(row.p95_latency_ms),
+    avgFirstTokenLatencyMs: numberValue(row.avg_first_token_latency_ms),
+    p95FirstTokenLatencyMs: numberValue(row.p95_first_token_latency_ms),
     avgTokensPerRequest: average(totalTokens, requestCount),
     tokensPerSecond: throughput(totalTokens, row.total_latency_ms),
     firstRequestAt,
     lastRequestAt,
-  };
-}
-
-function percentileLatency(
-  input: {
-    day?: string;
-    groupColumn?: string;
-    groupKey?: string | null;
-    filters?: Array<{ column: string; value: string }>;
-    scope?: LogScope;
-  } = {},
-) {
-  const { where, params } = latencyWhereClause(input);
-  const rows = getLogDb()
-    .prepare(
-      `SELECT latency_ms
-       FROM (
-         SELECT latency_ms
-         FROM request_logs
-         ${where}
-         ORDER BY started_at DESC
-         LIMIT ?
-       )
-       ORDER BY latency_ms ASC`,
-    )
-    .all(...params, LATENCY_SAMPLE_LIMIT) as Array<{ latency_ms: number }>;
-  if (rows.length === 0) {
-    return 0;
-  }
-  const index = Math.min(rows.length - 1, Math.ceil(rows.length * 0.95) - 1);
-  return numberValue(rows[index]?.latency_ms);
-}
-
-function firstTokenLatencyStats(
-  input: {
-    day?: string;
-    groupColumn?: string;
-    groupKey?: string | null;
-    filters?: Array<{ column: string; value: string }>;
-    scope?: LogScope;
-  } = {},
-) {
-  const { where, params } = latencyWhereClause(input);
-  const rows = getLogDb()
-    .prepare(
-      `WITH recent_requests AS (
-         SELECT
-           id, started_at, api_key_id, model, channel_id, credential_id,
-           request_type
-         FROM request_logs
-         ${where}
-         ORDER BY started_at DESC
-         LIMIT ?
-       )
-       SELECT COALESCE(
-         MAX(CASE WHEN json_extract(value, '$.name') = 'stream_first_token' THEN json_extract(value, '$.startedAtMs') END),
-         MAX(CASE WHEN json_extract(value, '$.name') = 'stream_first_chunk' THEN json_extract(value, '$.startedAtMs') END)
-       ) AS latency_ms
-       FROM recent_requests
-       INNER JOIN request_log_details ON request_log_details.request_log_id = recent_requests.id,
-       json_each(request_log_details.stage_timings_json)
-       GROUP BY recent_requests.id
-       HAVING latency_ms IS NOT NULL`,
-    )
-    .all(...params, FIRST_TOKEN_SAMPLE_LIMIT) as Array<{ latency_ms: number }>;
-  if (rows.length === 0) {
-    return {
-      avgFirstTokenLatencyMs: 0,
-      p95FirstTokenLatencyMs: 0,
-    };
-  }
-  const values = rows
-    .map((row) => numberValue(row.latency_ms))
-    .sort((left, right) => left - right);
-  const index = Math.min(
-    values.length - 1,
-    Math.ceil(values.length * 0.95) - 1,
-  );
-  return {
-    avgFirstTokenLatencyMs: Math.round(
-      values.reduce((total, value) => total + value, 0) / values.length,
-    ),
-    p95FirstTokenLatencyMs: values[index] || 0,
-  };
-}
-
-function latencyWhereClause(
-  input: {
-    day?: string;
-    groupColumn?: string;
-    groupKey?: string | null;
-    filters?: Array<{ column: string; value: string }>;
-    timingName?: string;
-    scope?: LogScope;
-  } = {},
-  tableAlias?: string,
-) {
-  const column = (name: string) => {
-    const safeName = safeLatencyColumnName(name);
-    return tableAlias ? `${tableAlias}.${safeName}` : safeName;
-  };
-  const conditions: string[] = [];
-  const params: string[] = [];
-  if (input.day) {
-    conditions.push(`substr(${column("started_at")}, 1, 10) = ?`);
-    params.push(input.day);
-  } else {
-    conditions.push(`${column("started_at")} >= ?`);
-    params.push(overviewRecentStartedAt());
-  }
-  if (input.groupColumn) {
-    conditions.push(`COALESCE(${column(input.groupColumn)}, '') = ?`);
-    params.push(input.groupKey || "");
-  }
-  for (const filter of input.filters || []) {
-    conditions.push(`COALESCE(${column(filter.column)}, '') = ?`);
-    params.push(filter.value);
-  }
-  if (input.scope?.tenantId !== undefined) {
-    if (input.scope.tenantId === null) {
-      conditions.push(`${column("tenant_id")} IS NULL`);
-    } else {
-      conditions.push(`${column("tenant_id")} = ?`);
-      params.push(input.scope.tenantId);
-    }
-  }
-  if (input.timingName) {
-    conditions.push("json_extract(value, '$.name') = ?");
-    params.push(input.timingName);
-  }
-  return {
-    where: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
-    params,
   };
 }
 

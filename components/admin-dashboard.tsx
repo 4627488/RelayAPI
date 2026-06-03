@@ -1662,10 +1662,7 @@ function buildOverviewTrendMetrics(
     yesterday.requestCount,
   );
   const tokenChange = percentChange(today.totalTokens, yesterday.totalTokens);
-  const latencyChange = percentChange(
-    today.avgFirstTokenLatencyMs,
-    yesterday.avgFirstTokenLatencyMs,
-  );
+  const latencyChange = percentChange(today.avgLatencyMs, yesterday.avgLatencyMs);
   const todaySuccessRate = dailySuccessRate(today);
   const yesterdaySuccessRate = dailySuccessRate(yesterday);
   const successPointChange = todaySuccessRate - yesterdaySuccessRate;
@@ -1706,15 +1703,15 @@ function buildOverviewTrendMetrics(
       icon: DatabaseIcon,
     },
     {
-      title: "今日平均首字延迟",
-      value: formatDuration(today.avgFirstTokenLatencyMs),
-      description: `p95 ${formatDuration(today.p95FirstTokenLatencyMs)} · ${formatTokenNumber(Math.round(today.tokensPerSecond))} token/秒`,
+      title: "今日平均延迟",
+      value: formatDuration(today.avgLatencyMs),
+      description: `请求平均耗时 · ${formatTokenNumber(Math.round(today.tokensPerSecond))} token/秒`,
       changeLabel: formatChangePercent(latencyChange.value),
       direction: latencyChange.direction,
       tone: directionTone(latencyChange.direction, { lowerIsBetter: true }),
       data: days.map((row) => ({
         date: row.date,
-        value: row.avgFirstTokenLatencyMs,
+        value: row.avgLatencyMs,
       })),
       icon: Clock3Icon,
     },
