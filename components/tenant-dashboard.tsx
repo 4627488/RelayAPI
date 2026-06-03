@@ -97,6 +97,20 @@ export function TenantDashboard({
       );
   }, []);
 
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      getTenantOverview()
+        .then((stats) => {
+          setOverviewStats(stats);
+          setSnapshotTime(Date.now());
+        })
+        .catch((error) => {
+          toast.error(tenantErrorMessage(error));
+        });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   async function refreshCurrentSection() {
     setRefreshing(true);
     try {

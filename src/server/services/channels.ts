@@ -153,14 +153,15 @@ export function selectChannel(input: {
     );
   }
 
-  const channels = listChannelRecords();
-  const credentialIds = channels.flatMap((channel) => channel.credentialIds);
-  const credentialsById = credentialRoutingMap(credentialIds);
   const now = Date.now();
-  const candidates = channels.flatMap((channel) => {
-    if (!isChannelAvailable(channel, input.apiKey, model, baseModel, now)) {
-      return [];
-    }
+  const availableChannels = listChannels().filter((channel) =>
+    isChannelAvailable(channel, input.apiKey, model, baseModel, now),
+  );
+  const credentialIds = availableChannels.flatMap(
+    (channel) => channel.credentialIds,
+  );
+  const credentialsById = credentialRoutingMap(credentialIds);
+  const candidates = availableChannels.flatMap((channel) => {
     const credential = selectCredentialForChannel(
       channel,
       credentialsById,
@@ -185,7 +186,7 @@ export function selectChannel(input: {
     candidates,
     (candidate) => candidate.channel.priority,
     (candidate) => candidate.channel.weight,
-    (candidate) => usageHealthScore(candidate.channel.usageHealth),
+    (candidate) => candidate.channel.healthScore,
   );
   const credential = getCodexCredentialWithTokens(selected.credential.id);
   if (!credential) {
@@ -269,13 +270,33 @@ function recordCredentialFailure(
   input: { statusCode?: number | null; message?: string | null },
 ) {
   const statusCode = input.statusCode ?? null;
-  const cooldownMs = statusCode === 429 ? 5 * 60 * 1000 : 15 * 60 * 1000;
+  const cooldownMs = credentialCooldownMs(statusCode);
+  if (cooldownMs <= 0) {
+    updateCodexCredential(credentialId, {
+      cooldownUntil: null,
+      lastError: input.message || null,
+    });
+    return null;
+  }
   const cooldownUntil = new Date(Date.now() + cooldownMs).toISOString();
   updateCodexCredential(credentialId, {
     cooldownUntil,
     lastError: input.message || null,
   });
   return cooldownUntil;
+}
+
+function credentialCooldownMs(statusCode: number | null) {
+  switch (statusCode) {
+    case 401:
+      return serverConfig.credentialCooldown401Ms;
+    case 403:
+      return serverConfig.credentialCooldown403Ms;
+    case 429:
+      return serverConfig.credentialCooldown429Ms;
+    default:
+      return 0;
+  }
 }
 
 function clearCredentialCooldown(credentialId: string) {

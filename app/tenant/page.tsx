@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 
 import { TenantDashboard } from "@/components/tenant-dashboard";
 import { TenantLogin } from "@/components/auth/tenant-login";
-import { getAdminOverviewStats, queryRequestLogs } from "@/src/server/repositories/logs";
+import { emptyAdminOverviewStats } from "@/src/server/repositories/logs";
 import { listTenantApiKeyPublicRecords } from "@/src/server/services/apiKeys";
 import {
   getTenantResources,
@@ -24,12 +24,6 @@ export default async function TenantPage() {
   }
 
   const tenant = toPublicTenant(session.tenant);
-  const requestLogsPage = queryRequestLogs({
-    tenantId: session.tenant.id,
-    limit: 25,
-    offset: 0,
-    skipTotal: true,
-  });
   const initialNow = new Date().getTime();
 
   return (
@@ -37,23 +31,21 @@ export default async function TenantPage() {
       initialTenant={tenant}
       initialApiKeys={listTenantApiKeyPublicRecords(session.tenant.id)}
       initialResources={getTenantResources(session.tenant)}
-      initialOverviewStats={getAdminOverviewStats({
-        tenantId: session.tenant.id,
-      })}
+      initialOverviewStats={emptyAdminOverviewStats()}
       initialRequestLogsPage={{
         object: "list",
-        data: requestLogsPage.data,
-        limit: requestLogsPage.limit,
+        data: [],
+        limit: 25,
         page: 1,
-        offset: requestLogsPage.offset,
-        total: requestLogsPage.total,
+        offset: 0,
+        total: 0,
         totalPages: 1,
         summary: {
-          errorCount: requestLogsPage.errorCount,
-          totalTokens: requestLogsPage.totalTokens,
-          cachedTokens: requestLogsPage.cachedTokens,
-          cacheHitRate: requestLogsPage.cacheHitRate,
-          avgLatencyMs: requestLogsPage.avgLatencyMs,
+          errorCount: 0,
+          totalTokens: 0,
+          cachedTokens: 0,
+          cacheHitRate: 0,
+          avgLatencyMs: 0,
         },
       }}
       initialNow={initialNow}

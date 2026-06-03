@@ -106,6 +106,7 @@ type AdminDashboardProps = {
   initialRequestLogsPage: RequestLogsPage;
   initialOverviewStats: AdminOverviewStats;
   initialGlobalSettings: GlobalSettingsRecord;
+  initialLoadedData?: Partial<LoadedDataState>;
   initialResourceCounts: AdminResourceCounts;
   initialNow: number;
 };
@@ -175,6 +176,7 @@ export function AdminDashboard({
   initialRequestLogsPage,
   initialOverviewStats,
   initialGlobalSettings,
+  initialLoadedData,
   initialResourceCounts,
   initialNow,
 }: AdminDashboardProps) {
@@ -193,13 +195,13 @@ export function AdminDashboard({
   );
   const requestLogs = requestLogsPage.data;
   const [loadedData, setLoadedData] = React.useState<LoadedDataState>({
-    apiKeys: true,
-    tenants: true,
-    credentials: true,
-    proxyPool: true,
-    channels: true,
-    settings: true,
-    logs: true,
+    apiKeys: initialLoadedData?.apiKeys ?? true,
+    tenants: initialLoadedData?.tenants ?? true,
+    credentials: initialLoadedData?.credentials ?? true,
+    proxyPool: initialLoadedData?.proxyPool ?? true,
+    channels: initialLoadedData?.channels ?? true,
+    settings: initialLoadedData?.settings ?? true,
+    logs: initialLoadedData?.logs ?? true,
   });
   const [overviewStats, setOverviewStats] =
     React.useState(initialOverviewStats);
@@ -252,6 +254,15 @@ export function AdminDashboard({
     return stats;
   }, []);
 
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      refreshOverviewStats().catch((error) => {
+        toast.error(adminErrorMessage(error));
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshOverviewStats]);
+
   const loadSectionData = React.useCallback(
     async (section: SectionId, force = false) => {
       if (section !== "overview" && !force && loadedData[section]) {
@@ -263,7 +274,13 @@ export function AdminDashboard({
         if (section === "overview") {
           await refreshOverviewStats();
         } else if (section === "apiKeys") {
-          setApiKeys(await listApiKeys());
+          const [nextApiKeys, nextChannels] = await Promise.all([
+            listApiKeys(),
+            listChannels(),
+          ]);
+          setApiKeys(nextApiKeys);
+          setChannels(nextChannels);
+          setLoadedData((current) => ({ ...current, channels: true }));
         } else if (section === "tenants") {
           setTenants(await listTenants());
         } else if (section === "credentials") {

@@ -27,6 +27,11 @@ function intEnv(name: string, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function nonNegativeIntEnv(name: string, fallback: number) {
+  const value = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
 function ensureLocalSecret(dataDir: string) {
   const secretPath = path.join(dataDir, ".relay-encryption-key");
   fs.mkdirSync(dataDir, { recursive: true });
@@ -131,6 +136,22 @@ export const serverConfig = {
   codexDefaultModel: process.env.CODEX_DEFAULT_MODEL || "gpt-5.3-codex",
   requestTimeoutMs: intEnv("REQUEST_TIMEOUT_MS", 300_000),
   streamRequestTimeoutMs: intEnv("STREAM_REQUEST_TIMEOUT_MS", 1_800_000),
+  credentialCooldown401Ms: nonNegativeIntEnv(
+    "RELAY_CODEX_CREDENTIAL_COOLDOWN_401_MS",
+    0,
+  ),
+  credentialCooldown403Ms: nonNegativeIntEnv(
+    "RELAY_CODEX_CREDENTIAL_COOLDOWN_403_MS",
+    0,
+  ),
+  credentialCooldown429Ms: nonNegativeIntEnv(
+    "RELAY_CODEX_CREDENTIAL_COOLDOWN_429_MS",
+    5 * 60 * 1000,
+  ),
+  usageHealthCacheTtlMs: nonNegativeIntEnv(
+    "RELAY_USAGE_HEALTH_CACHE_TTL_MS",
+    5_000,
+  ),
   globalProxy: resolveGlobalProxy(),
   userAgent: codexUserAgentFromEnv || DEFAULT_CODEX_USER_AGENT,
   userAgentSource: codexUserAgentSource,

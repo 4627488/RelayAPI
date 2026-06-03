@@ -2,16 +2,13 @@ import { cookies } from "next/headers";
 
 import { AdminDashboard } from "@/components/admin-dashboard";
 import { WebAccessLogin } from "@/components/auth/web-access-login";
-import {
-  getAdminOverviewStats,
-  queryRequestLogs,
-} from "@/src/server/repositories/logs";
+import { emptyAdminOverviewStats } from "@/src/server/repositories/logs";
+import { listChannels } from "@/src/server/repositories/channels";
+import { listCodexCredentials } from "@/src/server/repositories/codexCredentials";
 import { listApiKeyPublicRecords } from "@/src/server/services/apiKeys";
-import { listChannelRecords } from "@/src/server/services/channels";
-import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
 import { getPublicGlobalSettings } from "@/src/server/services/settings";
 import { listPublicProxyPoolItems } from "@/src/server/services/proxyPool";
-import { listPublicTenants } from "@/src/server/services/tenants";
+import { listTenants } from "@/src/server/repositories/tenants";
 import type { AdminOverviewStats } from "@/src/shared/types/entities";
 import {
   initializeWebAccessKey,
@@ -54,46 +51,48 @@ export default async function Home() {
   }
 
   const apiKeys = listApiKeyPublicRecords();
-  const tenants = listPublicTenants();
-  const channels = listChannelRecords();
-  const codexCredentials = await listPublicCodexCredentials();
+  const tenantCount = listTenants().length;
+  const channels = listChannels();
+  const codexCredentialCount = listCodexCredentials().length;
   const proxyPool = listPublicProxyPoolItems();
-  const overviewStats = getAdminOverviewStats() as AdminOverviewStats;
+  const overviewStats = emptyAdminOverviewStats() as AdminOverviewStats;
   const globalSettings = getPublicGlobalSettings();
-  const requestLogsPage = queryRequestLogs({
-    limit: 25,
-    offset: 0,
-  });
   const initialNow = new Date().getTime();
 
   return (
     <AdminDashboard
       initialApiKeys={apiKeys}
-      initialTenants={tenants}
-      initialChannels={channels}
-      initialCredentials={codexCredentials}
+      initialTenants={[]}
+      initialChannels={[]}
+      initialCredentials={[]}
       initialProxyPool={proxyPool}
       initialRequestLogsPage={{
         object: "list",
-        data: requestLogsPage.data as RequestLogRow[],
-        limit: requestLogsPage.limit,
+        data: [] as RequestLogRow[],
+        limit: 25,
         page: 1,
-        offset: requestLogsPage.offset,
-        total: requestLogsPage.total,
-        totalPages: Math.max(
-          1,
-          Math.ceil(requestLogsPage.total / requestLogsPage.limit),
-        ),
+        offset: 0,
+        total: 0,
+        totalPages: 1,
         summary: {
-          errorCount: requestLogsPage.errorCount,
-          totalTokens: requestLogsPage.totalTokens,
-          cachedTokens: requestLogsPage.cachedTokens,
-          cacheHitRate: requestLogsPage.cacheHitRate,
-          avgLatencyMs: requestLogsPage.avgLatencyMs,
+          errorCount: 0,
+          totalTokens: 0,
+          cachedTokens: 0,
+          cacheHitRate: 0,
+          avgLatencyMs: 0,
         },
       }}
       initialOverviewStats={overviewStats}
       initialGlobalSettings={globalSettings}
+      initialLoadedData={{
+        apiKeys: false,
+        tenants: false,
+        credentials: false,
+        proxyPool: true,
+        channels: false,
+        settings: true,
+        logs: false,
+      }}
       initialResourceCounts={{
         apiKeys: apiKeys.length,
         enabledApiKeys: apiKeys.filter((key) => key.enabled).length,
@@ -102,9 +101,9 @@ export default async function Home() {
         healthyChannels: channels.filter(
           (channel) => channel.status === "healthy",
         ).length,
-        credentials: codexCredentials.length,
+        credentials: codexCredentialCount,
         proxyPool: proxyPool.length,
-        tenants: tenants.length,
+        tenants: tenantCount,
       }}
       initialNow={initialNow}
     />

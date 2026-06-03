@@ -96,6 +96,17 @@ CODEX_USER_AGENT="codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
 
 清除管理台全局设置后，会回退到环境变量或内置默认值；清除凭据覆盖后，会使用当前全局 User-Agent。
 
+## 路由与冷却
+
+凭据级冷却时间可通过环境变量配置，单位为毫秒。默认只对 `429` 做 5 分钟冷却，`401` / `403` 不再固定长时间摘除凭据，避免上游或代理短暂波动导致长期无可用通道。
+
+```env
+RELAY_CODEX_CREDENTIAL_COOLDOWN_401_MS=0
+RELAY_CODEX_CREDENTIAL_COOLDOWN_403_MS=0
+RELAY_CODEX_CREDENTIAL_COOLDOWN_429_MS=300000
+RELAY_USAGE_HEALTH_CACHE_TTL_MS=5000
+```
+
 
 ## Star History
 

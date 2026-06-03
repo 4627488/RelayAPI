@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getLogDb, getMainDb } from "@/src/server/db/sqlite";
+import { serverConfig } from "@/src/server/config/env";
 import { jsonStringify, randomId } from "@/src/server/services/crypto";
 import type { StageTimingEntry } from "@/src/server/http/stageTimer";
 import type {
@@ -27,6 +28,13 @@ let adminOverviewCache: {
   expiresAt: number;
   value: AdminOverviewStats;
 } | null = null;
+let usageHealthCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: Record<string, CodexAccountUsageHealth>;
+  }
+>();
 
 type LogScope = {
   tenantId?: string | null;
@@ -892,6 +900,41 @@ export function getAdminOverviewStats(scope: LogScope = {}): AdminOverviewStats 
   return value;
 }
 
+export function emptyAdminOverviewStats(): AdminOverviewStats {
+  return {
+    generatedAt: new Date().toISOString(),
+    totals: {
+      requestCount: 0,
+      successCount: 0,
+      errorCount: 0,
+      streamCount: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cachedTokens: 0,
+      cacheHitRate: 0,
+      avgLatencyMs: 0,
+      p95LatencyMs: 0,
+      avgFirstTokenLatencyMs: 0,
+      p95FirstTokenLatencyMs: 0,
+      avgTokensPerRequest: 0,
+      tokensPerSecond: 0,
+      distinctApiKeyCount: 0,
+      distinctModelCount: 0,
+      distinctChannelCount: 0,
+      firstRequestAt: null,
+      lastRequestAt: null,
+    },
+    byApiKey: [],
+    byApiKeyModel: [],
+    byModel: [],
+    byChannel: [],
+    byCredential: [],
+    byRequestType: [],
+    byDay: [],
+  };
+}
+
 const DEFAULT_CREDENTIAL_USAGE_WINDOW_SIZE = 50;
 const DEFAULT_CHANNEL_USAGE_WINDOW_SIZE = 100;
 const CREDENTIAL_USAGE_NORMAL_THRESHOLD = 80;
@@ -934,22 +977,71 @@ function requestWindowUsageHealth(
     return healthById;
   }
 
-  const statement = getLogDb().prepare(
-    `SELECT ${columnName} AS target_id, started_at, status_code, error_code
-     FROM request_logs INDEXED BY ${requestLogWindowIndex(columnName)}
-     WHERE ${columnName} = ?
-     ORDER BY started_at DESC
-     LIMIT ?`,
-  );
-
-  for (const id of uniqueIds) {
-    const rows = statement.all(id, windowSize) as Array<
-      Record<string, unknown>
-    >;
-    healthById[id] = calculateUsageHealth(rows, windowSize);
+  const cacheKey = usageHealthCacheKey(columnName, windowSize, uniqueIds);
+  const now = Date.now();
+  const cached = usageHealthCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return { ...healthById, ...cached.value };
   }
 
+  const placeholders = uniqueIds.map(() => "?").join(", ");
+  const rows = getLogDb()
+    .prepare(
+      `WITH ranked AS (
+         SELECT ${columnName} AS target_id, started_at, status_code, error_code,
+           ROW_NUMBER() OVER (
+             PARTITION BY ${columnName}
+             ORDER BY started_at DESC
+           ) AS row_number
+         FROM request_logs INDEXED BY ${requestLogWindowIndex(columnName)}
+         WHERE ${columnName} IN (${placeholders})
+       )
+       SELECT target_id, started_at, status_code, error_code
+       FROM ranked
+       WHERE row_number <= ?
+       ORDER BY target_id ASC, started_at DESC`,
+    )
+    .all(...uniqueIds, windowSize) as Array<Record<string, unknown>>;
+
+  const rowsById = new Map<string, Array<Record<string, unknown>>>();
+  for (const row of rows) {
+    const id = String(row.target_id || "");
+    if (!id) {
+      continue;
+    }
+    const targetRows = rowsById.get(id) || [];
+    targetRows.push(row);
+    rowsById.set(id, targetRows);
+  }
+  for (const id of uniqueIds) {
+    healthById[id] = calculateUsageHealth(rowsById.get(id) || [], windowSize);
+  }
+
+  if (serverConfig.usageHealthCacheTtlMs > 0) {
+    usageHealthCache.set(cacheKey, {
+      expiresAt: now + serverConfig.usageHealthCacheTtlMs,
+      value: healthById,
+    });
+    pruneUsageHealthCache(now);
+  }
   return healthById;
+}
+
+function usageHealthCacheKey(
+  columnName: "credential_id" | "channel_id",
+  windowSize: number,
+  ids: string[],
+) {
+  return `${columnName}:${windowSize}:${ids.toSorted().join(",")}`;
+}
+
+function pruneUsageHealthCache(now: number) {
+  if (usageHealthCache.size <= 100) {
+    return;
+  }
+  usageHealthCache = new Map(
+    [...usageHealthCache.entries()].filter(([, item]) => item.expiresAt > now),
+  );
 }
 
 function requestLogWindowIndex(columnName: "credential_id" | "channel_id") {
