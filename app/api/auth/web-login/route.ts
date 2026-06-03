@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { errorToResponse, HttpError } from "@/src/server/http/errors";
 import {
   createWebSessionToken,
-  verifyWebAccessKey,
+  verifyAdminCredentials,
   WEB_SESSION_COOKIE,
   webSessionCookieOptions,
 } from "@/src/server/services/webAccess";
@@ -14,12 +14,17 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
-    const accessKey = getAccessKey(body);
-    if (!verifyWebAccessKey(accessKey)) {
+    const input = objectValue(body);
+    if (
+      !verifyAdminCredentials({
+        username: input?.username,
+        password: input?.password,
+      })
+    ) {
       throw new HttpError(
         401,
-        "invalid_web_access_key",
-        "管理台访问密钥不正确",
+        "invalid_admin_credentials",
+        "管理员账号或密码不正确",
       );
     }
 
@@ -36,10 +41,8 @@ export async function POST(request: Request) {
   }
 }
 
-function getAccessKey(body: unknown) {
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return "";
-  }
-  const input = body as { accessKey?: unknown; key?: unknown };
-  return input.accessKey ?? input.key;
+function objectValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }

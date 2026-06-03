@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 import { TenantDashboard } from "@/components/tenant-dashboard";
-import { TenantLogin } from "@/components/auth/tenant-login";
 import { emptyAdminOverviewStats } from "@/src/server/repositories/logs";
 import { listTenantApiKeyPublicRecords } from "@/src/server/services/apiKeys";
 import {
@@ -20,7 +20,7 @@ export default async function TenantPage() {
     cookieStore.get(TENANT_SESSION_COOKIE)?.value,
   );
   if (!session) {
-    return <TenantLogin />;
+    redirect("/");
   }
 
   const tenant = toPublicTenant(session.tenant);

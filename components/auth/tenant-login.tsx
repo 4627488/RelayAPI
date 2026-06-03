@@ -16,8 +16,13 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { loginTenant } from "@/lib/tenant-api";
+import { WebAccessLogin } from "@/components/auth/web-access-login";
 
 export function TenantLogin() {
+  return <WebAccessLogin />;
+}
+
+export function LegacyTenantLogin() {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [pending, setPending] = React.useState(false);

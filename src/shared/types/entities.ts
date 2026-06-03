@@ -338,11 +338,26 @@ export interface ApiKeyUsageStatsRow extends UsageStatsRow {
   tokenLimitUtilization: number | null;
 }
 
+export interface TenantUsageStatsRow extends UsageStatsRow {
+  tenantId: string | null;
+  tenantName: string;
+  enabled: boolean | null;
+  tokenLimitDaily: number | null;
+  todayTokens: number;
+  tokenLimitUtilization: number | null;
+}
+
 export interface ApiKeyModelUsageStatsRow extends UsageStatsRow {
   apiKeyId: string | null;
   apiKeyPrefix: string | null;
   apiKeyName: string;
   model: string;
+}
+
+export interface ApiKeyDailyUsageStatsRow extends DailyUsageStatsRow {
+  apiKeyId: string | null;
+  apiKeyPrefix: string | null;
+  apiKeyName: string;
 }
 
 export interface DailyUsageStatsRow {
@@ -418,7 +433,9 @@ export interface AdminOverviewTotals {
 export interface AdminOverviewStats {
   generatedAt: string;
   totals: AdminOverviewTotals;
+  byTenant: TenantUsageStatsRow[];
   byApiKey: ApiKeyUsageStatsRow[];
+  byApiKeyDay: ApiKeyDailyUsageStatsRow[];
   byApiKeyModel: ApiKeyModelUsageStatsRow[];
   byModel: UsageStatsRow[];
   byChannel: UsageStatsRow[];

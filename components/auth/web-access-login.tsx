@@ -12,40 +12,41 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 
 export function WebAccessLogin() {
-  const [accessKey, setAccessKey] = React.useState("");
+  const [username, setUsername] = React.useState("");
+  const [password, setPassword] = React.useState("");
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState("");
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmed = accessKey.trim();
-    if (!trimmed) {
-      setError("请输入管理台访问密钥");
+    const trimmedUsername = username.trim();
+    if (!trimmedUsername || !password.trim()) {
+      setError("请输入账号和密码");
       return;
     }
 
     setPending(true);
     setError("");
     try {
-      const response = await fetch("/api/auth/web-login", {
+      const response = await fetch("/api/auth/login", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessKey: trimmed }),
+        body: JSON.stringify({ username: trimmedUsername, password }),
       });
       const text = await response.text();
       const parsed = text ? JSON.parse(text) : null;
       if (!response.ok) {
         throw new Error(
-          parsed?.error?.message || parsed?.message || "管理台访问密钥验证失败",
+          parsed?.error?.message || parsed?.message || "登录失败",
         );
       }
-      window.location.reload();
+      window.location.assign(parsed?.role === "tenant" ? "/tenant" : "/");
     } catch (loginError) {
       setError(
         loginError instanceof Error ? loginError.message : String(loginError),
@@ -60,12 +61,10 @@ export function WebAccessLogin() {
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="text-center">
           <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <KeyRoundIcon className="size-6" />
+            <KeyRoundIcon />
           </div>
-          <CardTitle className="text-xl">RelayAPI 管理台访问验证</CardTitle>
-          <CardDescription>
-            请输入服务首次启动时输出在控制台中的管理台访问密钥。
-          </CardDescription>
+          <CardTitle className="text-xl">RelayAPI 登录</CardTitle>
+          <CardDescription>管理员账号为 admin，租户使用邮箱登录。</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="flex flex-col gap-4" onSubmit={submit}>
@@ -76,21 +75,32 @@ export function WebAccessLogin() {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
-            <div className="grid gap-2">
-              <Label htmlFor="web-access-key">管理台访问密钥</Label>
-              <Input
-                id="web-access-key"
-                type="password"
-                autoFocus
-                autoComplete="current-password"
-                value={accessKey}
-                onChange={(event) => setAccessKey(event.target.value)}
-                placeholder="relay_web_..."
-              />
-            </div>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="login-username">账号</FieldLabel>
+                <Input
+                  id="login-username"
+                  autoFocus
+                  autoComplete="username"
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="admin 或租户邮箱"
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="login-password">密码</FieldLabel>
+                <Input
+                  id="login-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </Field>
+            </FieldGroup>
             <Button type="submit" size="lg" disabled={pending}>
               {pending && <Spinner data-icon="inline-start" />}
-              进入管理台
+              登录
             </Button>
           </form>
         </CardContent>

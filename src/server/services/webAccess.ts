@@ -6,22 +6,29 @@ import path from "node:path";
 
 import { serverConfig } from "@/src/server/config/env";
 import { HttpError } from "@/src/server/http/errors";
+import { base64Url } from "@/src/server/services/crypto";
+import {
+  hashPassword,
+  verifyPassword,
+} from "@/src/server/services/passwords";
 
 export const WEB_SESSION_COOKIE = "relay_web_session";
 
-const WEB_ACCESS_KEY_FILE = ".relay-web-access-key";
-const WEB_ACCESS_KEY_PREFIX = "relay_web_";
+const ADMIN_USERNAME = "admin";
+const ADMIN_ACCOUNT_FILE = ".relay-admin-account";
 const WEB_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
-const WEB_ACCESS_KEY_ENV_NAMES = ["RELAY_WEB_ACCESS_KEY", "WEB_ACCESS_KEY"];
+const ADMIN_PASSWORD_ENV_NAMES = ["RELAY_ADMIN_PASSWORD", "ADMIN_PASSWORD"];
 
-type StoredWebAccessKey = {
+type StoredAdminAccount = {
   v: 1;
-  hash: string;
+  username: "admin";
+  passwordHash: string;
   createdAt: string;
 };
 
-type WebAccessKeyRecord = {
-  hash: string;
+type AdminAccountRecord = {
+  username: "admin";
+  passwordHash: string;
   source: "env" | "file";
 };
 
@@ -32,21 +39,22 @@ type WebSessionPayload = {
   nonce: string;
 };
 
-let cachedWebAccessKey: WebAccessKeyRecord | null = null;
+let cachedAdminAccount: AdminAccountRecord | null = null;
 
 export function initializeWebAccessKey() {
-  getWebAccessKeyRecord();
+  getAdminAccountRecord();
 }
 
-export function verifyWebAccessKey(value: unknown) {
-  const accessKey = typeof value === "string" ? value.trim() : "";
-  if (!accessKey) {
+export function verifyAdminCredentials(input: {
+  username: unknown;
+  password: unknown;
+}) {
+  const username = typeof input.username === "string" ? input.username.trim() : "";
+  const password = typeof input.password === "string" ? input.password : "";
+  if (username !== ADMIN_USERNAME || !password) {
     return false;
   }
-  return timingSafeHexEqual(
-    hashSecret(accessKey),
-    getWebAccessKeyRecord().hash,
-  );
+  return verifyPassword(password, getAdminAccountRecord().passwordHash);
 }
 
 export function createWebSessionToken(now = Date.now()) {
@@ -141,69 +149,71 @@ export function expiredWebSessionCookieOptions(request: Request | string) {
   };
 }
 
-function getWebAccessKeyRecord(): WebAccessKeyRecord {
-  if (cachedWebAccessKey) {
-    return cachedWebAccessKey;
+function getAdminAccountRecord(): AdminAccountRecord {
+  if (cachedAdminAccount) {
+    return cachedAdminAccount;
   }
 
-  const configuredKey = configuredWebAccessKey();
-  if (configuredKey) {
-    cachedWebAccessKey = {
-      hash: hashSecret(configuredKey),
+  const configuredPassword = configuredAdminPassword();
+  if (configuredPassword) {
+    cachedAdminAccount = {
+      username: ADMIN_USERNAME,
+      passwordHash: hashPassword(configuredPassword),
       source: "env",
     };
-    return cachedWebAccessKey;
+    return cachedAdminAccount;
   }
 
-  const keyPath = path.join(serverConfig.dataDir, WEB_ACCESS_KEY_FILE);
-  const existing = readStoredWebAccessKey(keyPath);
+  const accountPath = path.join(serverConfig.dataDir, ADMIN_ACCOUNT_FILE);
+  const existing = readStoredAdminAccount(accountPath);
   if (existing) {
-    cachedWebAccessKey = {
-      hash: existing.hash,
+    cachedAdminAccount = {
+      username: ADMIN_USERNAME,
+      passwordHash: existing.passwordHash,
       source: "file",
     };
-    return cachedWebAccessKey;
+    return cachedAdminAccount;
   }
 
-  const generatedKey = `${WEB_ACCESS_KEY_PREFIX}${crypto
-    .randomBytes(32)
-    .toString("base64url")}`;
-  const generatedHash = hashSecret(generatedKey);
-  const stored: StoredWebAccessKey = {
+  const generatedPassword = generateAdminPassword();
+  const stored: StoredAdminAccount = {
     v: 1,
-    hash: generatedHash,
+    username: ADMIN_USERNAME,
+    passwordHash: hashPassword(generatedPassword),
     createdAt: new Date().toISOString(),
   };
 
-  fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+  fs.mkdirSync(path.dirname(accountPath), { recursive: true });
   try {
-    fs.writeFileSync(keyPath, `${JSON.stringify(stored, null, 2)}\n`, {
+    fs.writeFileSync(accountPath, `${JSON.stringify(stored, null, 2)}\n`, {
       mode: 0o600,
       flag: "wx",
     });
-    cachedWebAccessKey = {
-      hash: generatedHash,
+    cachedAdminAccount = {
+      username: ADMIN_USERNAME,
+      passwordHash: stored.passwordHash,
       source: "file",
     };
-    logGeneratedWebAccessKey(generatedKey, keyPath);
-    return cachedWebAccessKey;
+    logGeneratedAdminAccount(generatedPassword, accountPath);
+    return cachedAdminAccount;
   } catch (error) {
     if (isFileAlreadyExistsError(error)) {
-      const racedExisting = readStoredWebAccessKey(keyPath);
+      const racedExisting = readStoredAdminAccount(accountPath);
       if (racedExisting) {
-        cachedWebAccessKey = {
-          hash: racedExisting.hash,
+        cachedAdminAccount = {
+          username: ADMIN_USERNAME,
+          passwordHash: racedExisting.passwordHash,
           source: "file",
         };
-        return cachedWebAccessKey;
+        return cachedAdminAccount;
       }
     }
     throw error;
   }
 }
 
-function configuredWebAccessKey() {
-  for (const name of WEB_ACCESS_KEY_ENV_NAMES) {
+function configuredAdminPassword() {
+  for (const name of ADMIN_PASSWORD_ENV_NAMES) {
     const value = process.env[name]?.trim();
     if (value) {
       return value;
@@ -212,7 +222,7 @@ function configuredWebAccessKey() {
   return "";
 }
 
-function readStoredWebAccessKey(filePath: string) {
+function readStoredAdminAccount(filePath: string) {
   if (!fs.existsSync(filePath)) {
     return null;
   }
@@ -221,57 +231,62 @@ function readStoredWebAccessKey(filePath: string) {
     return null;
   }
   try {
-    const parsed = JSON.parse(text) as Partial<StoredWebAccessKey>;
+    const parsed = JSON.parse(text) as Partial<StoredAdminAccount>;
     if (
       parsed.v === 1 &&
-      typeof parsed.hash === "string" &&
-      isSha256Hex(parsed.hash)
+      parsed.username === ADMIN_USERNAME &&
+      typeof parsed.passwordHash === "string" &&
+      parsed.passwordHash.startsWith("scrypt$")
     ) {
-      return parsed as StoredWebAccessKey;
+      return parsed as StoredAdminAccount;
     }
   } catch {
-    // Fall through to the clear error below.
+    regenerateStoredAdminAccount(filePath);
+    return readStoredAdminAccount(filePath);
   }
-  throw new Error(
-    `Invalid RelayAPI web access key file: ${filePath}. Delete it to regenerate a new web access key.`,
-  );
+  regenerateStoredAdminAccount(filePath);
+  return readStoredAdminAccount(filePath);
 }
 
-function logGeneratedWebAccessKey(accessKey: string, filePath: string) {
+function regenerateStoredAdminAccount(filePath: string) {
+  const generatedPassword = generateAdminPassword();
+  const stored: StoredAdminAccount = {
+    v: 1,
+    username: ADMIN_USERNAME,
+    passwordHash: hashPassword(generatedPassword),
+    createdAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(filePath, `${JSON.stringify(stored, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  logGeneratedAdminAccount(generatedPassword, filePath);
+}
+
+function generateAdminPassword() {
+  return `RelayAPI-${base64Url(24)}`;
+}
+
+function logGeneratedAdminAccount(password: string, filePath: string) {
   console.info("");
   console.info("============================================================");
-  console.info("RelayAPI Web 访问密钥已生成（只显示这一次）:");
-  console.info(accessKey);
-  console.info(`密钥哈希已保存到: ${filePath}`);
-  console.info("进入 Web 管理页面时请输入这个密钥。");
-  console.info("如果丢失，请删除上面的密钥文件后重启服务重新生成。");
+  console.info("RelayAPI 管理员账号已初始化（密码只显示这一次）:");
+  console.info(`账号: ${ADMIN_USERNAME}`);
+  console.info(`密码: ${password}`);
+  console.info(`密码哈希已保存到: ${filePath}`);
+  console.info("如果丢失，请删除上面的账号文件后重启服务重新生成。");
   console.info("============================================================");
   console.info("");
 }
 
 function signSessionPayload(payload: string) {
   return crypto
-    .createHmac("sha256", getWebAccessKeyRecord().hash)
+    .createHmac("sha256", getAdminAccountRecord().passwordHash)
     .update(payload, "utf8")
     .digest("base64url");
 }
 
 function encodeBase64UrlJson(value: unknown) {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
-function hashSecret(value: string) {
-  return crypto.createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function timingSafeHexEqual(left: string, right: string) {
-  if (!isSha256Hex(left) || !isSha256Hex(right)) {
-    return false;
-  }
-  return crypto.timingSafeEqual(
-    Buffer.from(left, "hex"),
-    Buffer.from(right, "hex"),
-  );
 }
 
 function timingSafeAsciiEqual(left: string, right: string) {
@@ -281,10 +296,6 @@ function timingSafeAsciiEqual(left: string, right: string) {
     return false;
   }
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function isSha256Hex(value: string) {
-  return /^[a-f0-9]{64}$/i.test(value);
 }
 
 function readCookie(cookieHeader: string | null, name: string) {

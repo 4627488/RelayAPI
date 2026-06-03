@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 import { AdminDashboard } from "@/components/admin-dashboard";
 import { WebAccessLogin } from "@/components/auth/web-access-login";
@@ -10,6 +11,10 @@ import { getPublicGlobalSettings } from "@/src/server/services/settings";
 import { listPublicProxyPoolItems } from "@/src/server/services/proxyPool";
 import { listTenants } from "@/src/server/repositories/tenants";
 import type { AdminOverviewStats } from "@/src/shared/types/entities";
+import {
+  getTenantSessionFromCookieValue,
+  TENANT_SESSION_COOKIE,
+} from "@/src/server/services/tenants";
 import {
   initializeWebAccessKey,
   isValidWebSessionValue,
@@ -46,6 +51,12 @@ export default async function Home() {
   initializeWebAccessKey();
   const cookieStore = await cookies();
   const webSession = cookieStore.get(WEB_SESSION_COOKIE)?.value;
+  const tenantSession = getTenantSessionFromCookieValue(
+    cookieStore.get(TENANT_SESSION_COOKIE)?.value,
+  );
+  if (!isValidWebSessionValue(webSession) && tenantSession) {
+    redirect("/tenant");
+  }
   if (!isValidWebSessionValue(webSession)) {
     return <WebAccessLogin />;
   }

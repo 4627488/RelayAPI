@@ -8,10 +8,12 @@ import type {
   ActivityHeatmapStats,
   AdminOverviewStats,
   AdminOverviewTotals,
+  ApiKeyDailyUsageStatsRow,
   ApiKeyModelUsageStatsRow,
   ApiKeyUsageStatsRow,
   CodexAccountUsageHealth,
   DailyUsageStatsRow,
+  TenantUsageStatsRow,
   UsageSnapshot,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
@@ -917,7 +919,9 @@ export function getAdminOverviewStats(scope: LogScope = {}): AdminOverviewStats 
   const value = {
     generatedAt: new Date().toISOString(),
     totals,
+    byTenant: getTenantUsageStats(scope),
     byApiKey: getApiKeyUsageStats(scope),
+    byApiKeyDay: getApiKeyDailyUsageStats(scope),
     byApiKeyModel: getApiKeyModelUsageStats(scope),
     byModel: getGroupedUsageStats("model", "model", scope),
     byChannel: getGroupedUsageStats("channel_id", "channel_name", scope),
@@ -967,7 +971,9 @@ export function emptyAdminOverviewStats(): AdminOverviewStats {
       firstRequestAt: null,
       lastRequestAt: null,
     },
+    byTenant: [],
     byApiKey: [],
+    byApiKeyDay: [],
     byApiKeyModel: [],
     byModel: [],
     byChannel: [],
@@ -1300,6 +1306,64 @@ function getApiKeyUsageStats(scope: LogScope = {}): ApiKeyUsageStatsRow[] {
   return stats;
 }
 
+function getTenantUsageStats(scope: LogScope = {}): TenantUsageStatsRow[] {
+  if (scope.tenantId !== undefined) {
+    return [];
+  }
+  const overviewWindowStart = overviewRecentStartedAt();
+  const { where, params } = overviewWhere(scope, ["started_at >= ?"], [
+    overviewWindowStart,
+  ]);
+  const rows = getLogDb()
+    .prepare(
+      `${aggregateSelect("tenant_id", "tenant_name")}
+       ${where}
+       GROUP BY COALESCE(tenant_id, ''), COALESCE(tenant_name, '')
+       ORDER BY total_tokens DESC, request_count DESC
+       LIMIT ?`,
+    )
+    .all(...params, OVERVIEW_GROUP_LIMIT) as Array<Record<string, unknown>>;
+  const tenantsById = tenantRecordsById();
+  const todayTokensByTenant = todayTokensByTenantId();
+
+  return rows.map((row) => {
+    const tenantId = nullableString(row.group_key);
+    const tenantRecord = tenantId ? tenantsById.get(tenantId) : undefined;
+    const tenantName =
+      tenantRecord?.name ||
+      nullableString(row.group_label) ||
+      (tenantId ? "未知租户" : "未归属");
+    const base = toUsageStatsRow(row, {
+      label: tenantName,
+      subLabel: tenantRecord?.owner_email || tenantId,
+      emptyLabel: "未归属",
+      groupColumn: "tenant_id",
+      scope,
+    });
+    const tokenLimitDaily = tenantRecord?.token_limit_daily ?? null;
+    const todayTokens = tenantId
+      ? todayTokensByTenant.get(tenantId) || 0
+      : todayTokensByTenant.get("") || 0;
+    return {
+      ...base,
+      tenantId,
+      tenantName,
+      enabled:
+        typeof tenantRecord?.enabled === "number"
+          ? tenantRecord.enabled === 1
+          : tenantId
+            ? null
+            : true,
+      tokenLimitDaily,
+      todayTokens,
+      tokenLimitUtilization:
+        tokenLimitDaily && tokenLimitDaily > 0
+          ? Math.round((todayTokens / tokenLimitDaily) * 100)
+          : null,
+    };
+  });
+}
+
 function getApiKeyModelUsageStats(
   scope: LogScope = {},
 ): ApiKeyModelUsageStatsRow[] {
@@ -1370,6 +1434,64 @@ function getApiKeyModelUsageStats(
         nullableString(row.api_key_prefix) ||
         "未知 Key",
       model,
+    };
+  });
+}
+
+function getApiKeyDailyUsageStats(
+  scope: LogScope = {},
+): ApiKeyDailyUsageStatsRow[] {
+  const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
+  const { where, params } = overviewWhere(scope, ["bucket_date >= ?"], [
+    recentStartedAt,
+  ]);
+  const rows = getLogDb()
+    .prepare(
+      `SELECT
+        bucket_date,
+        COALESCE(api_key_id, '') AS api_key_id,
+        COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+        COALESCE(SUM(request_count), 0) AS request_count
+       FROM usage_daily_buckets
+       ${where}
+       GROUP BY bucket_date, COALESCE(api_key_id, '')
+       ORDER BY bucket_date DESC
+       LIMIT ?`,
+    )
+    .all(...params, OVERVIEW_GROUP_LIMIT * OVERVIEW_DAILY_WINDOW_DAYS) as Array<
+    Record<string, unknown>
+  >;
+  const keysById = apiKeysById(scope);
+  return rows.map((row) => {
+    const apiKeyId = nullableString(row.api_key_id);
+    const keyRecord = apiKeyId ? keysById.get(apiKeyId) : undefined;
+    const requestCount = numberValue(row.request_count);
+    const promptTokens = numberValue(row.prompt_tokens);
+    const totalTokens = numberValue(row.total_tokens);
+    const cachedTokens = numberValue(row.cached_tokens);
+    return {
+      date: String(row.bucket_date || ""),
+      apiKeyId,
+      apiKeyPrefix: keyRecord?.prefix || null,
+      apiKeyName: keyRecord?.name || "未知 Key",
+      requestCount,
+      successCount: requestCount,
+      errorCount: 0,
+      streamCount: 0,
+      promptTokens,
+      completionTokens: numberValue(row.completion_tokens),
+      totalTokens,
+      cachedTokens,
+      cacheHitRate: cacheHitRate(cachedTokens, promptTokens),
+      avgLatencyMs: 0,
+      p95LatencyMs: 0,
+      avgFirstTokenLatencyMs: 0,
+      p95FirstTokenLatencyMs: 0,
+      avgTokensPerRequest: average(totalTokens, requestCount),
+      tokensPerSecond: 0,
     };
   });
 }
@@ -1736,6 +1858,38 @@ function todayTokensByApiKey(scope: LogScope = {}) {
     .all(...params) as Array<{ api_key_id: string; total_tokens: number }>;
   return new Map(
     rows.map((row) => [String(row.api_key_id), numberValue(row.total_tokens)]),
+  );
+}
+
+function tenantRecordsById() {
+  const rows = getMainDb()
+    .prepare(
+      `SELECT id, name, owner_email, enabled, token_limit_daily
+       FROM tenants
+       WHERE deleted_at IS NULL`,
+    )
+    .all() as Array<{
+    id: string;
+    name: string;
+    owner_email: string;
+    enabled: number;
+    token_limit_daily: number | null;
+  }>;
+  return new Map(rows.map((row) => [String(row.id), row]));
+}
+
+function todayTokensByTenantId() {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = getLogDb()
+    .prepare(
+      `SELECT tenant_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
+       FROM usage_daily_buckets
+       WHERE bucket_date = ?
+       GROUP BY tenant_id`,
+    )
+    .all(today) as Array<{ tenant_id: string; total_tokens: number }>;
+  return new Map(
+    rows.map((row) => [String(row.tenant_id), numberValue(row.total_tokens)]),
   );
 }
 

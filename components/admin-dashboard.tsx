@@ -6,8 +6,6 @@ import { toast } from "sonner";
 import {
   ActivityIcon,
   AlertTriangleIcon,
-  CalendarDaysIcon,
-  CopyIcon,
   Clock3Icon,
   DatabaseIcon,
   FileTextIcon,
@@ -86,7 +84,6 @@ import {
 import { AdminTenantsSection } from "@/components/admin-tenants-section";
 import type {
   AdminOverviewStats,
-  ApiKeyUsageStatsRow,
   ChannelRecord,
   CodexCredentialRecord,
   CredentialProxyType,
@@ -95,6 +92,7 @@ import type {
   ProxyPoolRecord,
   PublicApiKey,
   PublicTenant,
+  TenantUsageStatsRow,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
 
@@ -449,9 +447,6 @@ export function AdminDashboard({
   const apiKeyCount = loadedData.apiKeys
     ? apiKeys.length
     : initialResourceCounts.apiKeys;
-  const enabledApiKeyCount = loadedData.apiKeys
-    ? apiKeys.filter((key) => key.enabled).length
-    : initialResourceCounts.enabledApiKeys;
   const channelCount = loadedData.channels
     ? channels.length
     : initialResourceCounts.channels;
@@ -583,21 +578,13 @@ export function AdminDashboard({
       }
       summary={
         <>
-          <DashboardSummaryLine
-            label="API 密钥"
-            value={
-              <>
-                已启用 {formatNumber(enabledApiKeyCount)}/
-                {formatNumber(apiKeys.length)}
-              </>
-            }
-          />
+          <DashboardSummaryLine label="租户" value={formatNumber(tenantCount)} />
           <DashboardSummaryLine
             label="通道"
             value={
               <>
                 健康 {formatNumber(healthyChannelCount)}/
-                {formatNumber(channels.length)}
+                {formatNumber(channelCount)}
               </>
             }
           />
@@ -642,6 +629,7 @@ export function AdminDashboard({
                 enabledChannelCount={enabledChannelCount}
                 hasOperationalData={hasOperationalData}
                 overviewStats={overviewStats}
+                tenantCount={tenantCount}
                 onRefresh={refreshOverviewStats}
               />
             )}
@@ -1297,6 +1285,7 @@ function OverviewSection({
   enabledChannelCount,
   hasOperationalData,
   overviewStats,
+  tenantCount,
   onRefresh,
 }: {
   apiKeyCount: number;
@@ -1305,12 +1294,13 @@ function OverviewSection({
   enabledChannelCount: number;
   hasOperationalData: boolean;
   overviewStats: AdminOverviewStats;
+  tenantCount: number;
   onRefresh: () => Promise<AdminOverviewStats>;
 }) {
   const [refreshing, setRefreshing] = React.useState(false);
   const trendMetrics = buildOverviewTrendMetrics(overviewStats.byDay);
+  const topTenants = overviewStats.byTenant.slice(0, 5);
   const topModels = overviewStats.byModel.slice(0, 5);
-  const topApiKeys = overviewStats.byApiKey.slice(0, 5);
   const recentDays = overviewStats.byDay.slice(0, 7);
 
   async function refresh() {
@@ -1356,10 +1346,10 @@ function OverviewSection({
 
       <div className="grid gap-4 md:grid-cols-3">
         <ResourceSummaryCard
-          title="API 密钥"
-          value={apiKeyCount}
-          description="Relay 调用方认证密钥"
-          icon={KeyRoundIcon}
+          title="租户"
+          value={tenantCount}
+          description={`${formatNumber(apiKeyCount)} 个 API 密钥归属在租户或全局`}
+          icon={ShieldCheckIcon}
         />
         <ResourceSummaryCard
           title="Codex 凭据"
@@ -1389,24 +1379,22 @@ function OverviewSection({
 
       <div className="grid gap-4 xl:grid-cols-3">
         <UsageListCard
-          title="模型排行"
-          description="按 token 消耗排序"
-          emptyTitle="暂无模型使用数据"
-          rows={topModels}
+          title="租户消耗排行"
+          description="最近 30 天按 token 消耗排序"
+          emptyTitle="暂无租户使用数据"
+          rows={topTenants}
         />
         <UsageListCard
-          title="API 密钥排行"
-          description="按 token 消耗排序"
-          emptyTitle="暂无 API 密钥使用数据"
-          rows={topApiKeys}
+          title="模型排行"
+          description="最近 30 天按 token 消耗排序"
+          emptyTitle="暂无模型使用数据"
+          rows={topModels}
         />
         <DailyUsageCard rows={recentDays} />
       </div>
 
-      <ActivityHeatmapEmbedCard rows={overviewStats.byApiKey} />
-
       <div className="grid gap-4 xl:grid-cols-2">
-        <ApiKeyUsageCard rows={overviewStats.byApiKey} />
+        <TenantUsageCard rows={overviewStats.byTenant} />
         <UsageStatsTableCard
           title="通道用量"
           description="按通道聚合的请求、错误和 token 消耗。"
@@ -1430,210 +1418,31 @@ function OverviewSection({
   );
 }
 
-function ActivityHeatmapEmbedCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
-  const keyRows = rows.filter((row) => row.apiKeyId).slice(0, 6);
-  const sitePath = activityHeatmapPath();
-  const siteMarkdown = activityHeatmapMarkdown({
-    label: "RelayAPI activity",
-  });
-
+function TenantUsageCard({ rows }: { rows: TenantUsageStatsRow[] }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <CalendarDaysIcon className="size-4 text-muted-foreground" />
-          活动热力图
-        </CardTitle>
+        <CardTitle>租户消耗</CardTitle>
         <CardDescription>
-          公开 SVG 可放入 GitHub Profile，默认展示全站最近 53 周请求活动并自动适配深浅模式。
-        </CardDescription>
-        <CardAction className="flex items-center gap-2">
-          <Badge variant="outline">SVG</Badge>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() =>
-              void copyText(
-                activityHeatmapMarkdown({
-                  label: "RelayAPI activity",
-                  absolute: true,
-                }),
-              )
-            }
-          >
-            <CopyIcon data-icon="inline-start" />
-            复制 Markdown
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="grid min-w-0 gap-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="font-medium">全站预览</div>
-              <div className="text-xs text-muted-foreground">
-                53 周窗口 · 天蓝配色 · 深浅色自适应
-              </div>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void copyText(activityHeatmapUrl({ absolute: true }))
-              }
-            >
-              <CopyIcon data-icon="inline-start" />
-              复制地址
-            </Button>
-          </div>
-          <div className="overflow-x-auto rounded-lg bg-muted/30 p-2">
-            <div className="inline-block rounded-md border bg-background p-3 align-top">
-              {/* eslint-disable-next-line @next/next/no-img-element -- This previews the public SVG endpoint exactly as GitHub will embed it. */}
-              <img
-                src={sitePath}
-                alt="RelayAPI 全站活动热力图"
-                className="block h-auto w-[807px] max-w-none"
-                loading="lazy"
-              />
-            </div>
-          </div>
-          <div className="grid gap-2 md:grid-cols-2">
-            <ActivityEmbedValue
-              label="SVG 地址"
-              value={sitePath}
-              onCopy={() =>
-                void copyText(activityHeatmapUrl({ absolute: true }))
-              }
-            />
-            <ActivityEmbedValue
-              label="Markdown"
-              value={siteMarkdown}
-              onCopy={() =>
-                void copyText(
-                  activityHeatmapMarkdown({
-                    label: "RelayAPI activity",
-                    absolute: true,
-                  }),
-                )
-              }
-            />
-          </div>
-        </div>
-
-        <div className="grid content-start gap-3 rounded-lg border bg-muted/20 p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="font-medium">API key 嵌入</div>
-              <div className="text-xs text-muted-foreground">
-                {formatNumber(keyRows.length)} 个可嵌入 key
-              </div>
-            </div>
-            <Badge variant="secondary">Markdown</Badge>
-          </div>
-          <div>
-            {keyRows.length === 0 ? (
-              <div className="rounded-md border bg-background/60 px-3 py-6 text-center text-sm text-muted-foreground">
-                创建 API key 后可以复制单个 key 的热力图。
-              </div>
-            ) : (
-              <div className="grid max-h-80 gap-2 overflow-y-auto pr-1">
-                {keyRows.map((row) => (
-                  <div
-                    key={row.apiKeyId || row.key}
-                    className="flex items-center gap-3 rounded-md border bg-background/70 px-3 py-2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">
-                        {row.apiKeyName}
-                      </div>
-                      <div className="truncate font-mono text-xs text-muted-foreground">
-                        {row.apiKeyPrefix || row.apiKeyId}
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="outline"
-                      aria-label={`复制 ${row.apiKeyName} 的热力图 Markdown`}
-                      title="复制 Markdown"
-                      onClick={() =>
-                        void copyText(
-                          activityHeatmapMarkdown({
-                            apiKeyId: row.apiKeyId,
-                            label: row.apiKeyName,
-                            absolute: true,
-                          }),
-                        )
-                      }
-                    >
-                      <CopyIcon />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ActivityEmbedValue({
-  label,
-  onCopy,
-  value,
-}: {
-  label: string;
-  onCopy: () => void;
-  value: string;
-}) {
-  return (
-    <div className="flex min-w-0 items-center gap-2 rounded-md border bg-background/70 px-3 py-2">
-      <div className="min-w-0 flex-1">
-        <div className="text-xs font-medium text-muted-foreground">{label}</div>
-        <code className="block truncate font-mono text-xs">{value}</code>
-      </div>
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="outline"
-        aria-label={`复制${label}`}
-        title={`复制${label}`}
-        onClick={onCopy}
-      >
-        <CopyIcon />
-      </Button>
-    </div>
-  );
-}
-
-function ApiKeyUsageCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>API 密钥用量</CardTitle>
-        <CardDescription>
-          按 API 密钥聚合请求、成功率、token 消耗和今日额度利用率。
+          按租户聚合最近 30 天请求、成功率、token 消耗和今日额度利用率。
         </CardDescription>
         <CardAction>
-          <Badge variant="outline">{formatNumber(rows.length)} 个密钥</Badge>
+          <Badge variant="outline">{formatNumber(rows.length)} 个租户</Badge>
         </CardAction>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
           <EmptyState
-            icon={KeyRoundIcon}
-            title="暂无 API 密钥使用统计"
-            description="使用 Relay API 密钥调用后，这里会展示每个密钥的消耗。"
+            icon={ShieldCheckIcon}
+            title="暂无租户使用统计"
+            description="租户调用 Relay API 后，这里会展示其整体消耗。"
             compact
           />
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>API 密钥</TableHead>
+                <TableHead>租户</TableHead>
                 <TableHead>请求数</TableHead>
                 <TableHead>成功率</TableHead>
                 <TableHead>Token</TableHead>
@@ -1645,9 +1454,9 @@ function ApiKeyUsageCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
               {rows.slice(0, 10).map((row, index) => (
                 <TableRow key={`${row.key}:${index}`}>
                   <TableCell>
-                    <div className="font-medium">{row.apiKeyName}</div>
-                    <div className="font-mono text-xs text-muted-foreground">
-                      {row.apiKeyPrefix || row.apiKeyId || "-"}
+                    <div className="font-medium">{row.tenantName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {row.subLabel || row.tenantId || "未归属流量"}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -1660,7 +1469,7 @@ function ApiKeyUsageCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
                     <TokenCell row={row} />
                   </TableCell>
                   <TableCell>
-                    <LimitCell row={row} />
+                    <TenantLimitCell row={row} />
                   </TableCell>
                   <TableCell>
                     <LatencyCell row={row} />
@@ -1792,13 +1601,24 @@ function TokenCell({
   );
 }
 
-function LimitCell({ row }: { row: ApiKeyUsageStatsRow }) {
+function TenantLimitCell({ row }: { row: TenantUsageStatsRow }) {
+  return <DailyLimitCell row={row} />;
+}
+
+function DailyLimitCell({
+  row,
+}: {
+  row: Pick<
+    TenantUsageStatsRow,
+    "tokenLimitDaily" | "todayTokens" | "tokenLimitUtilization"
+  >;
+}) {
   if (!row.tokenLimitDaily) {
     return <span className="text-muted-foreground">不限制</span>;
   }
 
   return (
-    <div className="min-w-32 space-y-1">
+    <div className="grid min-w-32 gap-1">
       <div className="flex items-center justify-between gap-3 text-xs">
         <span>{formatTokenNumber(row.todayTokens)}</span>
         <span className="text-muted-foreground">
@@ -2286,46 +2106,6 @@ function integerValue(value: string, fallback: number) {
 
 function isValidRetentionDays(value: number) {
   return Number.isFinite(value) && value >= 1 && value <= 3650;
-}
-
-function activityHeatmapPath(input: { apiKeyId?: string | null } = {}) {
-  const params = new URLSearchParams();
-  if (input.apiKeyId) {
-    params.set("key", input.apiKeyId);
-  }
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  return `/api/activity.svg${suffix}`;
-}
-
-function activityHeatmapUrl(
-  input: { apiKeyId?: string | null; absolute?: boolean } = {},
-) {
-  const path = activityHeatmapPath({ apiKeyId: input.apiKeyId });
-  return input.absolute ? `${clientOrigin()}${path}` : path;
-}
-
-function activityHeatmapMarkdown(
-  input: { apiKeyId?: string | null; label?: string; absolute?: boolean } = {},
-) {
-  const label = markdownAlt(input.label || "RelayAPI activity");
-  return `![${label}](${activityHeatmapUrl(input)})`;
-}
-
-function clientOrigin() {
-  return typeof window === "undefined" ? "" : window.location.origin;
-}
-
-function markdownAlt(value: string) {
-  return value.replace(/[\[\]\r\n]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-async function copyText(value: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-    toast.success("已复制到剪贴板");
-  } catch {
-    toast.error("复制失败，请手动复制");
-  }
 }
 
 function formatNullableDate(value: string | null) {
