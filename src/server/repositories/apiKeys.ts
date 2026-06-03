@@ -147,6 +147,19 @@ export function updateApiKey(
   return getApiKeyById(id);
 }
 
+export function transferApiKeyTenant(id: string, tenantId: string) {
+  const existing = getApiKeyById(id);
+  if (!existing) {
+    return null;
+  }
+  getMainDb()
+    .prepare(
+      "UPDATE api_keys SET tenant_id = ?, updated_at = ? WHERE id = ?",
+    )
+    .run(tenantId, new Date().toISOString(), id);
+  return getApiKeyById(id);
+}
+
 export function countApiKeysByTenant(tenantId: string) {
   const row = getMainDb()
     .prepare(

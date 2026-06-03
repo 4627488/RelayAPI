@@ -450,6 +450,48 @@ export function appendAuditLog(input: {
     );
 }
 
+export function transferApiKeyLogScope(input: {
+  apiKeyId: string;
+  tenantId: string;
+  tenantName: string;
+}) {
+  const db = getLogDb();
+  const requestLogs = changedRows(
+    db
+      .prepare(
+        `UPDATE request_logs
+         SET tenant_id = ?, tenant_name = ?
+         WHERE api_key_id = ?`,
+      )
+      .run(input.tenantId, input.tenantName, input.apiKeyId),
+  );
+  const usageRecords = changedRows(
+    db
+      .prepare(
+        `UPDATE usage_records
+         SET tenant_id = ?, tenant_name = ?
+         WHERE api_key_id = ?`,
+      )
+      .run(input.tenantId, input.tenantName, input.apiKeyId),
+  );
+  const usageDailyBuckets = changedRows(
+    db
+      .prepare(
+        `UPDATE usage_daily_buckets
+         SET tenant_id = ?
+         WHERE api_key_id = ?`,
+      )
+      .run(input.tenantId, input.apiKeyId),
+  );
+
+  adminOverviewCache = null;
+  return {
+    requestLogs,
+    usageRecords,
+    usageDailyBuckets,
+  };
+}
+
 export function getApiKeyDailyUsage(apiKeyId: string, day = new Date()) {
   const bucketDate = day.toISOString().slice(0, 10);
   const row = getLogDb()

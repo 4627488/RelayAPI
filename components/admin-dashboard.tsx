@@ -80,6 +80,7 @@ import {
   pruneRequestLogs,
   updateGlobalSettings,
   WEB_AUTH_EXPIRED_EVENT,
+  type ApiKeyTransferResponse,
   type RequestLogsPage,
 } from "@/lib/admin-api";
 import { AdminTenantsSection } from "@/components/admin-tenants-section";
@@ -274,13 +275,19 @@ export function AdminDashboard({
         if (section === "overview") {
           await refreshOverviewStats();
         } else if (section === "apiKeys") {
-          const [nextApiKeys, nextChannels] = await Promise.all([
+          const [nextApiKeys, nextChannels, nextTenants] = await Promise.all([
             listApiKeys(),
             listChannels(),
+            listTenants(),
           ]);
           setApiKeys(nextApiKeys);
           setChannels(nextChannels);
-          setLoadedData((current) => ({ ...current, channels: true }));
+          setTenants(nextTenants);
+          setLoadedData((current) => ({
+            ...current,
+            channels: true,
+            tenants: true,
+          }));
         } else if (section === "tenants") {
           setTenants(await listTenants());
         } else if (section === "credentials") {
@@ -370,6 +377,17 @@ export function AdminDashboard({
 
   function handleApiKeyDeleted(id: string) {
     setApiKeys((current) => current.filter((apiKey) => apiKey.id !== id));
+  }
+
+  function handleApiKeyTransferred(result: ApiKeyTransferResponse) {
+    setApiKeys((current) =>
+      current.filter((apiKey) => apiKey.id !== result.apiKey.id),
+    );
+    setTenants((current) =>
+      current.map((tenant) =>
+        tenant.id === result.tenant.id ? result.tenant : tenant,
+      ),
+    );
   }
 
   async function refreshCredentialAndChannelData() {
@@ -633,7 +651,9 @@ export function AdminDashboard({
                 channels={channels}
                 onCreated={handleApiKeyCreated}
                 onDeleted={handleApiKeyDeleted}
+                onTransferred={handleApiKeyTransferred}
                 onUpdated={handleApiKeyUpdated}
+                tenants={tenants}
               />
             )}
             {activeSection === "tenants" && (

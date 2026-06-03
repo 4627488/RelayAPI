@@ -4,9 +4,11 @@ import type {
   ApiKeyRecord,
   CreatedApiKey,
   PublicApiKey,
+  PublicTenant,
   RelayApiKeyContext,
   TenantWithSecrets,
 } from "@/src/shared/types/entities";
+import { getLogDb, getMainDb } from "@/src/server/db/sqlite";
 import {
   countApiKeysByTenant,
   deleteApiKey,
@@ -16,15 +18,19 @@ import {
   listPublicApiKeys,
   markApiKeyUsed,
   toPublicApiKey,
+  transferApiKeyTenant,
   updateApiKey,
 } from "@/src/server/repositories/apiKeys";
 import { getTenantById } from "@/src/server/repositories/tenants";
 import {
+  appendAuditLog,
   getApiKeyDailyUsage,
   getApiKeyRequestCountSince,
   getTenantDailyUsage,
   getTenantRequestCountSince,
+  transferApiKeyLogScope,
 } from "@/src/server/repositories/logs";
+import { toPublicTenant } from "@/src/server/services/tenants";
 import { base64Url, randomId, sha256 } from "@/src/server/services/crypto";
 import { HttpError } from "@/src/server/http/errors";
 
@@ -40,6 +46,16 @@ export interface CreateApiKeyInput {
   tokenLimitDaily?: number | null;
   rateLimitPerMinute?: number | null;
   expiresAt?: string | null;
+}
+
+export interface ApiKeyTransferResult {
+  apiKey: PublicApiKey;
+  tenant: PublicTenant;
+  migrated: {
+    requestLogs: number;
+    usageRecords: number;
+    usageDailyBuckets: number;
+  };
 }
 
 export function createApiKey(input: CreateApiKeyInput = {}): CreatedApiKey {
@@ -130,6 +146,69 @@ export function patchApiKey(id: string, input: Partial<CreateApiKeyInput>) {
     throw new HttpError(404, "api_key_not_found", "API key not found");
   }
   return toPublicApiKey(record);
+}
+
+export function transferAdminApiKeyToTenant(
+  id: string,
+  input: { tenantId?: unknown },
+): ApiKeyTransferResult {
+  const tenantId = cleanString(input.tenantId);
+  if (!tenantId) {
+    throw new HttpError(
+      400,
+      "invalid_target_tenant",
+      "Target tenant is required",
+    );
+  }
+  const existing = getApiKeyById(id);
+  if (!existing || existing.tenantId !== null) {
+    throw new HttpError(404, "api_key_not_found", "API key not found");
+  }
+  const tenant = getTenantById(tenantId);
+  if (!tenant) {
+    throw new HttpError(404, "tenant_not_found", "Tenant not found");
+  }
+
+  const mainDb = getMainDb();
+  const logDb = getLogDb();
+  mainDb.exec("BEGIN");
+  logDb.exec("BEGIN");
+  try {
+    const record = transferApiKeyTenant(id, tenant.id);
+    if (!record) {
+      throw new HttpError(404, "api_key_not_found", "API key not found");
+    }
+    const migrated = transferApiKeyLogScope({
+      apiKeyId: id,
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+    });
+    appendAuditLog({
+      action: "api_key.transfer_to_tenant",
+      actorType: "web_admin",
+      targetType: "api_key",
+      targetId: id,
+      detail: {
+        apiKeyName: existing.name,
+        apiKeyPrefix: existing.prefix,
+        fromTenantId: existing.tenantId,
+        toTenantId: tenant.id,
+        toTenantName: tenant.name,
+        migrated,
+      },
+    });
+    logDb.exec("COMMIT");
+    mainDb.exec("COMMIT");
+    return {
+      apiKey: toPublicApiKey(record),
+      tenant: toPublicTenant(tenant),
+      migrated,
+    };
+  } catch (error) {
+    rollbackQuietly(logDb);
+    rollbackQuietly(mainDb);
+    throw error;
+  }
 }
 
 export function patchTenantApiKey(
@@ -466,4 +545,12 @@ function normalizeNullablePositiveInteger(value: unknown) {
   return Number.isFinite(numberValue) && numberValue > 0
     ? Math.floor(numberValue)
     : null;
+}
+
+function rollbackQuietly(db: { exec(sql: string): unknown }) {
+  try {
+    db.exec("ROLLBACK");
+  } catch {
+    // The transaction may already be closed after a failed COMMIT.
+  }
 }

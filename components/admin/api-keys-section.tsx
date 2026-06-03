@@ -10,6 +10,7 @@ import {
   PencilIcon,
   PlusIcon,
   RouteIcon,
+  SendIcon,
   Trash2Icon,
 } from "lucide-react";
 
@@ -59,8 +60,23 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -75,13 +91,16 @@ import {
   adminErrorMessage,
   createApiKey,
   deleteApiKey,
+  transferApiKeyToTenant,
   updateApiKey,
+  type ApiKeyTransferResponse,
 } from "@/lib/admin-api";
 import type {
   ChannelRecord,
   ChannelStatus,
   CreatedApiKey,
   PublicApiKey,
+  PublicTenant,
 } from "@/src/shared/types/entities";
 
 const STATUS_LABELS: Record<ChannelStatus, string> = {
@@ -96,13 +115,17 @@ export function ApiKeysSection({
   channels,
   onCreated,
   onDeleted,
+  onTransferred,
   onUpdated,
+  tenants,
 }: {
   apiKeys: PublicApiKey[];
   channels: ChannelRecord[];
   onCreated: (apiKey: CreatedApiKey) => void;
   onDeleted: (id: string) => void;
+  onTransferred: (result: ApiKeyTransferResponse) => void;
   onUpdated: (apiKey: PublicApiKey) => void;
+  tenants: PublicTenant[];
 }) {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createdKey, setCreatedKey] = React.useState<CreatedApiKey | null>(
@@ -111,6 +134,8 @@ export function ApiKeysSection({
   const [editingApiKey, setEditingApiKey] = React.useState<PublicApiKey | null>(
     null,
   );
+  const [transferringApiKey, setTransferringApiKey] =
+    React.useState<PublicApiKey | null>(null);
   const [pendingId, setPendingId] = React.useState<string | null>(null);
 
   async function toggleEnabled(apiKey: PublicApiKey, enabled: boolean) {
@@ -244,6 +269,21 @@ export function ApiKeysSection({
                           type="button"
                           size="sm"
                           variant="outline"
+                          disabled={pendingId === apiKey.id || tenants.length === 0}
+                          aria-label="转让 API 密钥"
+                          title={
+                            tenants.length === 0
+                              ? "暂无可转让的租户"
+                              : "转让给租户"
+                          }
+                          onClick={() => setTransferringApiKey(apiKey)}
+                        >
+                          <SendIcon data-icon="inline-start" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
                           aria-label="编辑 API 密钥"
                           title="编辑 API 密钥"
                           onClick={() => setEditingApiKey(apiKey)}
@@ -288,6 +328,20 @@ export function ApiKeysSection({
         onSaved={(updated) => {
           onUpdated(updated);
           setEditingApiKey(null);
+        }}
+      />
+      <ApiKeyTransferDialog
+        key={`transfer:${transferringApiKey?.id || "none"}`}
+        apiKey={transferringApiKey}
+        tenants={tenants}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTransferringApiKey(null);
+          }
+        }}
+        onTransferred={(result) => {
+          onTransferred(result);
+          setTransferringApiKey(null);
         }}
       />
       <CreatedApiKeyDialog
@@ -426,6 +480,119 @@ function ApiKeyFormDialogBody({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+function ApiKeyTransferDialog({
+  apiKey,
+  onOpenChange,
+  onTransferred,
+  tenants,
+}: {
+  apiKey: PublicApiKey | null;
+  tenants: PublicTenant[];
+  onOpenChange: (open: boolean) => void;
+  onTransferred: (result: ApiKeyTransferResponse) => void;
+}) {
+  const [tenantId, setTenantId] = React.useState("");
+  const [pending, setPending] = React.useState(false);
+  const effectiveTenantId = tenantId || tenants[0]?.id || "";
+  const selectedTenant =
+    tenants.find((tenant) => tenant.id === effectiveTenantId) || null;
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!apiKey || !selectedTenant) {
+      return;
+    }
+    setPending(true);
+    try {
+      const result = await transferApiKeyToTenant(apiKey.id, selectedTenant.id);
+      onTransferred(result);
+      toast.success(
+        `API 密钥已转让给 ${result.tenant.name}，历史请求 ${formatNumber(
+          result.migrated.requestLogs,
+        )} 条已迁移`,
+      );
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Dialog open={Boolean(apiKey)} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <form className="grid gap-4" onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>转让 API 密钥</DialogTitle>
+            <DialogDescription>
+              转让后这个 Key 会归入目标租户，历史请求和用量也会进入该租户统计。
+            </DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field>
+              <FieldLabel>当前密钥</FieldLabel>
+              <div className="rounded-md border bg-muted/50 px-3 py-2 text-sm">
+                <div className="font-medium">{apiKey?.name || "-"}</div>
+                <div className="font-mono text-xs text-muted-foreground">
+                  {apiKey?.prefix || "-"}
+                </div>
+              </div>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="api-key-transfer-tenant">
+                目标租户
+              </FieldLabel>
+              <Select
+                value={effectiveTenantId}
+                onValueChange={(value) => setTenantId(value || "")}
+              >
+                <SelectTrigger
+                  id="api-key-transfer-tenant"
+                  className="w-full"
+                >
+                  <SelectValue placeholder="选择租户" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {tenants.map((tenant) => (
+                      <SelectItem key={tenant.id} value={tenant.id}>
+                        {tenant.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              {selectedTenant && (
+                <FieldDescription>
+                  Owner：{selectedTenant.ownerEmail} · 当前 Key{" "}
+                  {formatNumber(selectedTenant.apiKeyCount)}
+                  {selectedTenant.maxApiKeys === null
+                    ? " / 不限制"
+                    : ` / ${formatNumber(selectedTenant.maxApiKeys)}`}
+                </FieldDescription>
+              )}
+            </Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => onOpenChange(false)}
+            >
+              取消
+            </Button>
+            <Button type="submit" disabled={pending || !selectedTenant}>
+              {pending && <Spinner data-icon="inline-start" />}
+              确认转让
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

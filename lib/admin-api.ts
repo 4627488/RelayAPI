@@ -139,6 +139,16 @@ export type ApiKeyPayload = {
   expiresAt?: string | null;
 };
 
+export type ApiKeyTransferResponse = {
+  apiKey: PublicApiKey;
+  tenant: PublicTenant;
+  migrated: {
+    requestLogs: number;
+    usageRecords: number;
+    usageDailyBuckets: number;
+  };
+};
+
 export type CredentialProxyPayload =
   | null
   | string
@@ -301,6 +311,16 @@ export function deleteApiKey(id: string) {
   return adminRequest<AdminDeleteResponse>(
     `/api/admin/api-keys/${encodePath(id)}`,
     { method: "DELETE" },
+  );
+}
+
+export function transferApiKeyToTenant(id: string, tenantId: string) {
+  return adminRequest<ApiKeyTransferResponse>(
+    `/api/admin/api-keys/${encodePath(id)}/transfer`,
+    {
+      method: "POST",
+      body: { tenantId },
+    },
   );
 }
 
