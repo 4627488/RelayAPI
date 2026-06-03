@@ -2,7 +2,10 @@ import { cookies } from "next/headers";
 
 import { AdminDashboard } from "@/components/admin-dashboard";
 import { WebAccessLogin } from "@/components/auth/web-access-login";
-import { getAdminOverviewStats } from "@/src/server/repositories/logs";
+import {
+  getAdminOverviewStats,
+  queryRequestLogs,
+} from "@/src/server/repositories/logs";
 import { listApiKeyPublicRecords } from "@/src/server/services/apiKeys";
 import { listChannelRecords } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
@@ -50,54 +53,58 @@ export default async function Home() {
     return <WebAccessLogin />;
   }
 
-  // Keep the initial admin payload lean for low-bandwidth deployments. The
-  // larger lists are loaded by the client only when their tab is opened.
-  const apiKeysForCounts = listApiKeyPublicRecords();
-  const tenantsForCounts = listPublicTenants();
-  const channelsForCounts = listChannelRecords();
-  const codexCredentialsForCounts = await listPublicCodexCredentials();
-  const proxyPoolForCounts = listPublicProxyPoolItems();
+  const apiKeys = listApiKeyPublicRecords();
+  const tenants = listPublicTenants();
+  const channels = listChannelRecords();
+  const codexCredentials = await listPublicCodexCredentials();
+  const proxyPool = listPublicProxyPoolItems();
   const overviewStats = getAdminOverviewStats() as AdminOverviewStats;
   const globalSettings = getPublicGlobalSettings();
+  const requestLogsPage = queryRequestLogs({
+    limit: 25,
+    offset: 0,
+  });
   const initialNow = new Date().getTime();
 
   return (
     <AdminDashboard
-      initialApiKeys={[]}
-      initialTenants={[]}
-      initialChannels={[]}
-      initialCredentials={[]}
-      initialProxyPool={[]}
+      initialApiKeys={apiKeys}
+      initialTenants={tenants}
+      initialChannels={channels}
+      initialCredentials={codexCredentials}
+      initialProxyPool={proxyPool}
       initialRequestLogsPage={{
         object: "list",
-        data: [] as RequestLogRow[],
-        limit: 25,
+        data: requestLogsPage.data as RequestLogRow[],
+        limit: requestLogsPage.limit,
         page: 1,
-        offset: 0,
-        total: 0,
-        totalPages: 1,
+        offset: requestLogsPage.offset,
+        total: requestLogsPage.total,
+        totalPages: Math.max(
+          1,
+          Math.ceil(requestLogsPage.total / requestLogsPage.limit),
+        ),
         summary: {
-          errorCount: 0,
-          totalTokens: 0,
-          cachedTokens: 0,
-          cacheHitRate: 0,
-          avgLatencyMs: 0,
+          errorCount: requestLogsPage.errorCount,
+          totalTokens: requestLogsPage.totalTokens,
+          cachedTokens: requestLogsPage.cachedTokens,
+          cacheHitRate: requestLogsPage.cacheHitRate,
+          avgLatencyMs: requestLogsPage.avgLatencyMs,
         },
       }}
       initialOverviewStats={overviewStats}
       initialGlobalSettings={globalSettings}
       initialResourceCounts={{
-        apiKeys: apiKeysForCounts.length,
-        enabledApiKeys: apiKeysForCounts.filter((key) => key.enabled).length,
-        channels: channelsForCounts.length,
-        enabledChannels: channelsForCounts.filter((channel) => channel.enabled)
-          .length,
-        healthyChannels: channelsForCounts.filter(
+        apiKeys: apiKeys.length,
+        enabledApiKeys: apiKeys.filter((key) => key.enabled).length,
+        channels: channels.length,
+        enabledChannels: channels.filter((channel) => channel.enabled).length,
+        healthyChannels: channels.filter(
           (channel) => channel.status === "healthy",
         ).length,
-        credentials: codexCredentialsForCounts.length,
-        proxyPool: proxyPoolForCounts.length,
-        tenants: tenantsForCounts.length,
+        credentials: codexCredentials.length,
+        proxyPool: proxyPool.length,
+        tenants: tenants.length,
       }}
       initialNow={initialNow}
     />
