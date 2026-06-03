@@ -72,9 +72,10 @@ export function TenantDashboard({
   const [resources, setResources] = React.useState(initialResources);
   const [overviewStats, setOverviewStats] =
     React.useState(initialOverviewStats);
-  const [requestLogs, setRequestLogs] = React.useState(
-    initialRequestLogsPage.data,
+  const [requestLogsPage, setRequestLogsPage] = React.useState(
+    initialRequestLogsPage,
   );
+  const [requestLogsRefreshKey, setRequestLogsRefreshKey] = React.useState(0);
   const [snapshotTime, setSnapshotTime] = React.useState(initialNow);
   const [refreshing, setRefreshing] = React.useState(false);
   const [loggingOut, setLoggingOut] = React.useState(false);
@@ -120,10 +121,11 @@ export function TenantDashboard({
         setApiKeys(await listTenantApiKeys());
       } else if (activeSection === "logs") {
         const page = await getTenantRequestLogsPage({
-          limit: initialRequestLogsPage.limit,
-          page: 1,
+          limit: requestLogsPage.limit,
+          page: requestLogsPage.page,
         });
-        setRequestLogs(page.data);
+        setRequestLogsPage(page);
+        setRequestLogsRefreshKey((current) => current + 1);
       } else if (activeSection === "resources") {
         setResources(await getTenantResources());
       } else if (activeSection === "settings") {
@@ -179,7 +181,7 @@ export function TenantDashboard({
       label: "日志",
       description: "请求记录",
       icon: FileTextIcon,
-      count: requestLogs.length,
+      count: requestLogsPage.total,
     },
     {
       id: "resources",
@@ -282,9 +284,9 @@ export function TenantDashboard({
         )}
         {activeSection === "logs" && (
           <TenantLogsSection
-            initialPage={initialRequestLogsPage}
-            logs={requestLogs}
-            onLoaded={setRequestLogs}
+            key={requestLogsRefreshKey}
+            initialPage={requestLogsPage}
+            onLoaded={setRequestLogsPage}
           />
         )}
         {activeSection === "resources" && (
