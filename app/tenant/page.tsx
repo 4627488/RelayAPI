@@ -24,13 +24,14 @@ export default async function TenantPage() {
   }
 
   const tenant = toPublicTenant(session.tenant);
+  const resources = await getTenantResources(session.tenant);
   const initialNow = new Date().getTime();
 
   return (
     <TenantDashboard
       initialTenant={tenant}
       initialApiKeys={listTenantApiKeyPublicRecords(session.tenant.id)}
-      initialResources={getTenantResources(session.tenant)}
+      initialResources={resources}
       initialOverviewStats={emptyAdminOverviewStats()}
       initialRequestLogsPage={{
         object: "list",

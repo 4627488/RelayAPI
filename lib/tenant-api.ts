@@ -10,6 +10,7 @@ import type {
   AdminDashboardRequestLogRow,
   AdminDeleteResponse,
   ApiKeyPayload,
+  CodexQuotaReport,
   CredentialProxyPayload,
   RequestLogDetail,
   RequestLogsPage,
@@ -151,6 +152,20 @@ export function getTenantRequestLogsPage(
 export function getTenantRequestLogDetail(id: string) {
   return tenantRequest<RequestLogDetail>(
     `/api/tenant/request-logs/${encodeURIComponent(id)}`,
+  );
+}
+
+export function getTenantCredentialQuota(
+  id: string,
+  options: { refresh?: boolean } = {},
+) {
+  const params = new URLSearchParams();
+  if (options.refresh) {
+    params.set("refresh", "1");
+  }
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return tenantRequest<CodexQuotaReport>(
+    `/api/tenant/codex/credentials/${encodeURIComponent(id)}/quota${suffix}`,
   );
 }
 

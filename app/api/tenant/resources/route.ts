@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const context = requireTenantRequest(request);
-    return Response.json(getTenantResources(context.tenant));
+    return Response.json(await getTenantResources(context.tenant));
   } catch (error) {
     return errorToResponse(error);
   }

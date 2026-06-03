@@ -141,11 +141,34 @@ export interface TenantResourceChannel {
   enabled: boolean;
   status: ChannelStatus;
   modelAllowlist: string[];
+  credentialIds: string[];
+}
+
+export interface TenantResourceCredential {
+  id: string;
+  provider: "codex";
+  email: string;
+  accountId: string;
+  planType: string;
+  enabled: boolean;
+  priority: number;
+  weight: number;
+  fastEnabled: boolean;
+  upstreamTransport: CodexUpstreamTransport;
+  useGlobalProxy: boolean;
+  proxy: PublicCredentialProxyConfig | null;
+  usageHealth?: CodexAccountUsageHealth;
+  expiresAt: string | null;
+  lastRefreshAt: string | null;
+  lastUsedAt: string | null;
+  cooldownUntil: string | null;
+  lastError: string | null;
 }
 
 export interface TenantResources {
   models: string[];
   channels: TenantResourceChannel[];
+  credentials: TenantResourceCredential[];
 }
 
 export interface TenantRuntimeContext {

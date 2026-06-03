@@ -24,6 +24,7 @@ import {
   updateTenant,
   updateTenantUser,
 } from "@/src/server/repositories/tenants";
+import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
 import { listChannelRecords } from "@/src/server/services/channels";
 import { normalizeCodexUserAgentInput } from "@/src/server/services/settings";
 import { base64Url, randomId, sha256 } from "@/src/server/services/crypto";
@@ -33,10 +34,12 @@ import {
 } from "@/src/server/services/passwords";
 import type {
   CreatedTenantInvite,
+  CodexCredentialRecord,
   CredentialProxyConfig,
   CredentialProxyType,
   PublicTenant,
   TenantRecord,
+  TenantResourceCredential,
   TenantResources,
   TenantUserRecord,
   TenantWithSecrets,
@@ -363,7 +366,9 @@ export function requireTenantRequest(request: Request): TenantSessionContext {
   return context;
 }
 
-export function getTenantResources(tenant: TenantWithSecrets): TenantResources {
+export async function getTenantResources(
+  tenant: TenantWithSecrets,
+): Promise<TenantResources> {
   const allowedChannelIds = new Set(tenant.channelAllowlist);
   const channels = listChannelRecords()
     .filter((channel) =>
@@ -375,13 +380,66 @@ export function getTenantResources(tenant: TenantWithSecrets): TenantResources {
       enabled: channel.enabled,
       status: channel.status,
       modelAllowlist: channel.modelAllowlist,
+      credentialIds: channel.credentialIds,
     }));
   const channelModels = [
     ...new Set(channels.flatMap((channel) => channel.modelAllowlist)),
   ];
+  const credentialIds = new Set(
+    channels.flatMap((channel) => channel.credentialIds),
+  );
+  const credentials = (await listPublicCodexCredentials())
+    .filter((credential) => credentialIds.has(credential.id))
+    .map(toTenantResourceCredential)
+    .sort(
+      (left, right) =>
+        Number(right.enabled) - Number(left.enabled) ||
+        right.priority - left.priority ||
+        right.weight - left.weight,
+    );
   return {
     models: tenant.modelAllowlist.length > 0 ? tenant.modelAllowlist : channelModels,
     channels,
+    credentials,
+  };
+}
+
+export async function assertTenantCredentialAccess(
+  tenant: TenantWithSecrets,
+  credentialId: string,
+) {
+  const resources = await getTenantResources(tenant);
+  if (!resources.credentials.some((credential) => credential.id === credentialId)) {
+    throw new HttpError(
+      404,
+      "tenant_credential_not_found",
+      "Credential is not available to this tenant",
+    );
+  }
+}
+
+function toTenantResourceCredential(
+  credential: CodexCredentialRecord,
+): TenantResourceCredential {
+  return {
+    id: credential.id,
+    provider: credential.provider,
+    email: credential.email,
+    accountId: credential.accountId,
+    planType: credential.planType,
+    enabled: credential.enabled,
+    priority: credential.priority,
+    weight: credential.weight,
+    fastEnabled: credential.fastEnabled,
+    upstreamTransport: credential.upstreamTransport,
+    useGlobalProxy: credential.useGlobalProxy,
+    proxy: credential.proxy,
+    usageHealth: credential.usageHealth,
+    expiresAt: credential.expiresAt,
+    lastRefreshAt: credential.lastRefreshAt,
+    lastUsedAt: credential.lastUsedAt,
+    cooldownUntil: credential.cooldownUntil,
+    lastError: credential.lastError,
   };
 }
 
