@@ -1,6 +1,9 @@
 import "server-only";
 
-import { getMainDb } from "@/src/server/db/sqlite";
+import { asc, desc, eq } from "drizzle-orm";
+
+import { getMainOrm } from "@/src/server/db/sqlite";
+import { codexCredentials } from "@/src/server/db/schema";
 import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
@@ -16,24 +19,7 @@ import {
   safeJsonParse,
 } from "@/src/server/services/crypto";
 
-type CodexCredentialRow = {
-  id: string;
-  provider: string;
-  email: string;
-  account_id: string;
-  plan_type: string;
-  token_envelope: string;
-  proxy_envelope: string | null;
-  enabled: number;
-  priority: number;
-  weight: number;
-  expires_at: string | null;
-  last_refresh_at: string | null;
-  last_used_at: string | null;
-  metadata_json: string;
-  created_at: string;
-  updated_at: string;
-};
+type CodexCredentialRow = typeof codexCredentials.$inferSelect;
 
 export interface SaveCodexCredentialInput {
   id: string;
@@ -49,16 +35,20 @@ export interface SaveCodexCredentialInput {
 }
 
 export function listCodexCredentials(): CodexCredentialRecord[] {
-  const rows = getMainDb()
-    .prepare("SELECT * FROM codex_credentials ORDER BY created_at DESC")
-    .all() as CodexCredentialRow[];
+  const rows = getMainOrm()
+    .select()
+    .from(codexCredentials)
+    .orderBy(desc(codexCredentials.createdAt))
+    .all();
   return rows.map((row: CodexCredentialRow) => toCodexCredentialRecord(row));
 }
 
 export function listCodexCredentialsWithTokens(): CodexCredentialWithTokens[] {
-  const rows = getMainDb()
-    .prepare("SELECT * FROM codex_credentials ORDER BY created_at DESC")
-    .all() as CodexCredentialRow[];
+  const rows = getMainOrm()
+    .select()
+    .from(codexCredentials)
+    .orderBy(desc(codexCredentials.createdAt))
+    .all();
   return rows.map((row: CodexCredentialRow) =>
     toCodexCredentialWithTokens(row),
   );
@@ -67,23 +57,30 @@ export function listCodexCredentialsWithTokens(): CodexCredentialWithTokens[] {
 export function getCodexCredentialById(
   id: string,
 ): CodexCredentialRecord | null {
-  const row = getMainDb()
-    .prepare("SELECT * FROM codex_credentials WHERE id = ?")
-    .get(id) as CodexCredentialRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(codexCredentials)
+    .where(eq(codexCredentials.id, id))
+    .get();
   return row ? toCodexCredentialRecord(row) : null;
 }
 
 export function getCodexCredentialWithTokens(id: string) {
-  const row = getMainDb()
-    .prepare("SELECT * FROM codex_credentials WHERE id = ?")
-    .get(id) as CodexCredentialRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(codexCredentials)
+    .where(eq(codexCredentials.id, id))
+    .get();
   return row ? toCodexCredentialWithTokens(row) : null;
 }
 
 export function getFirstCodexCredential() {
-  const row = getMainDb()
-    .prepare("SELECT * FROM codex_credentials ORDER BY created_at ASC LIMIT 1")
-    .get() as CodexCredentialRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(codexCredentials)
+    .orderBy(asc(codexCredentials.createdAt))
+    .limit(1)
+    .get();
   return row ? toCodexCredentialRecord(row) : null;
 }
 
@@ -91,47 +88,48 @@ export function upsertCodexCredential(input: SaveCodexCredentialInput) {
   const existing = getCodexCredentialWithTokens(input.id);
   const now = new Date().toISOString();
   const createdAt = existing?.createdAt || now;
-  getMainDb()
-    .prepare(
-      `INSERT INTO codex_credentials (
-        id, provider, email, account_id, plan_type, token_envelope,
-        proxy_envelope, enabled, priority, weight, expires_at, last_refresh_at,
-        last_used_at, metadata_json, created_at, updated_at
-      ) VALUES (?, 'codex', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        email = excluded.email,
-        account_id = excluded.account_id,
-        plan_type = excluded.plan_type,
-        token_envelope = excluded.token_envelope,
-        proxy_envelope = excluded.proxy_envelope,
-        enabled = excluded.enabled,
-        priority = excluded.priority,
-        weight = excluded.weight,
-        expires_at = excluded.expires_at,
-        last_refresh_at = excluded.last_refresh_at,
-        metadata_json = excluded.metadata_json,
-        updated_at = excluded.updated_at`,
-    )
-    .run(
-      input.id,
-      input.email,
-      input.accountId,
-      input.planType,
-      encryptJson(input.tokens),
-      encryptedProxyEnvelope(input.proxy, existing?.proxy),
-      (input.enabled ?? existing?.enabled ?? true) ? 1 : 0,
-      input.priority ?? existing?.priority ?? 100,
-      Math.max(1, input.weight ?? existing?.weight ?? 1),
-      input.tokens.expired || null,
-      input.tokens.last_refresh || null,
-      existing?.lastUsedAt || null,
-      jsonStringify({
+  const values = {
+    id: input.id,
+    provider: "codex",
+    email: input.email,
+    accountId: input.accountId,
+    planType: input.planType,
+    tokenEnvelope: encryptJson(input.tokens),
+    proxyEnvelope: encryptedProxyEnvelope(input.proxy, existing?.proxy),
+    enabled: (input.enabled ?? existing?.enabled ?? true) ? 1 : 0,
+    priority: input.priority ?? existing?.priority ?? 100,
+    weight: Math.max(1, input.weight ?? existing?.weight ?? 1),
+    expiresAt: input.tokens.expired || null,
+    lastRefreshAt: input.tokens.last_refresh || null,
+    lastUsedAt: existing?.lastUsedAt || null,
+    metadataJson: jsonStringify({
         ...(existing?.metadata || {}),
         ...(input.metadata || {}),
-      }),
-      createdAt,
-      now,
-    );
+    }),
+    createdAt,
+    updatedAt: now,
+  };
+  getMainOrm()
+    .insert(codexCredentials)
+    .values(values)
+    .onConflictDoUpdate({
+      target: codexCredentials.id,
+      set: {
+        email: values.email,
+        accountId: values.accountId,
+        planType: values.planType,
+        tokenEnvelope: values.tokenEnvelope,
+        proxyEnvelope: values.proxyEnvelope,
+        enabled: values.enabled,
+        priority: values.priority,
+        weight: values.weight,
+        expiresAt: values.expiresAt,
+        lastRefreshAt: values.lastRefreshAt,
+        metadataJson: values.metadataJson,
+        updatedAt: values.updatedAt,
+      },
+    })
+    .run();
   return getCodexCredentialWithTokens(input.id);
 }
 
@@ -172,55 +170,56 @@ export function updateCodexCredential(
     cooldown_until: next.cooldownUntil,
     last_error: next.lastError,
   };
-  getMainDb()
-    .prepare(
-      `UPDATE codex_credentials SET
-        enabled = ?, priority = ?, weight = ?, proxy_envelope = ?,
-        last_used_at = ?, metadata_json = ?, updated_at = ?
-      WHERE id = ?`,
-    )
-    .run(
-      next.enabled ? 1 : 0,
-      next.priority,
-      Math.max(1, next.weight),
-      next.proxy ? encryptJson(next.proxy) : null,
-      next.lastUsedAt,
-      jsonStringify(metadata),
-      new Date().toISOString(),
-      id,
-    );
+  getMainOrm()
+    .update(codexCredentials)
+    .set({
+      enabled: next.enabled ? 1 : 0,
+      priority: next.priority,
+      weight: Math.max(1, next.weight),
+      proxyEnvelope: next.proxy ? encryptJson(next.proxy) : null,
+      lastUsedAt: next.lastUsedAt,
+      metadataJson: jsonStringify(metadata),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(codexCredentials.id, id))
+    .run();
   return getCodexCredentialWithTokens(id);
 }
 
 export function markCodexCredentialUsed(id: string) {
   const now = new Date().toISOString();
-  getMainDb()
-    .prepare(
-      "UPDATE codex_credentials SET last_used_at = ?, updated_at = ? WHERE id = ?",
-    )
-    .run(now, now, id);
+  getMainOrm()
+    .update(codexCredentials)
+    .set({ lastUsedAt: now, updatedAt: now })
+    .where(eq(codexCredentials.id, id))
+    .run();
 }
 
 export function deleteCodexCredential(id: string) {
-  const result = getMainDb()
-    .prepare("DELETE FROM codex_credentials WHERE id = ?")
-    .run(id);
-  return result.changes > 0;
+  const existing = getCodexCredentialById(id);
+  if (!existing) {
+    return false;
+  }
+  getMainOrm()
+    .delete(codexCredentials)
+    .where(eq(codexCredentials.id, id))
+    .run();
+  return true;
 }
 
 function toCodexCredentialRecord(
   row: CodexCredentialRow,
 ): CodexCredentialRecord {
   const metadata = safeJsonParse<Record<string, unknown>>(
-    row.metadata_json,
+    row.metadataJson,
     {},
   );
   return {
     id: row.id,
     provider: "codex",
     email: row.email,
-    accountId: row.account_id,
-    planType: row.plan_type,
+    accountId: row.accountId,
+    planType: row.planType,
     enabled: row.enabled === 1,
     priority: row.priority,
     weight: row.weight,
@@ -233,14 +232,14 @@ function toCodexCredentialRecord(
     ),
     useGlobalProxy: metadata.use_global_proxy === true,
     proxyPoolId: stringOrNull(metadata.proxy_pool_id),
-    proxy: publicProxyFromEnvelope(row.proxy_envelope),
-    expiresAt: row.expires_at,
-    lastRefreshAt: row.last_refresh_at,
-    lastUsedAt: row.last_used_at,
+    proxy: publicProxyFromEnvelope(row.proxyEnvelope),
+    expiresAt: row.expiresAt,
+    lastRefreshAt: row.lastRefreshAt,
+    lastUsedAt: row.lastUsedAt,
     cooldownUntil: stringOrNull(metadata.cooldown_until),
     lastError: stringOrNull(metadata.last_error),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
     metadata,
   };
 }
@@ -264,8 +263,8 @@ function toCodexCredentialWithTokens(
 ): CodexCredentialWithTokens {
   return {
     ...toCodexCredentialRecord(row),
-    proxy: credentialProxyFromEnvelope(row.proxy_envelope),
-    tokens: decryptJson<CodexTokenBundle>(row.token_envelope),
+    proxy: credentialProxyFromEnvelope(row.proxyEnvelope),
+    tokens: decryptJson<CodexTokenBundle>(row.tokenEnvelope),
   };
 }
 

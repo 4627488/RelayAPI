@@ -1,26 +1,20 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-alpine AS base
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+FROM oven/bun:1-alpine AS base
 WORKDIR /app
 
 FROM base AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-  pnpm fetch --frozen-lockfile
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-  pnpm install --offline --frozen-lockfile
+COPY package.json ./
+RUN --mount=type=cache,id=bun-cache,target=/root/.bun/install/cache \
+  bun install
 
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm build
+RUN bun run build
 
-FROM node:24-alpine AS runner
+FROM base AS runner
 ARG OCI_CREATED
 ARG OCI_REVISION
 ARG OCI_SOURCE="https://github.com/4627488/RelayAPI"
@@ -40,20 +34,21 @@ ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV DATA_DIR=/app/data
 
-RUN addgroup --system --gid 1001 nodejs \
-  && adduser --system --uid 1001 nextjs \
+RUN addgroup -S nodejs -g 1001 \
+  && adduser -S nextjs -u 1001 -G nodejs \
   && mkdir -p /app/data \
   && chown -R nextjs:nodejs /app/data
 
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
 
 USER nextjs
 EXPOSE 3000
 VOLUME ["/app/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/api/health').then((r) => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
+  CMD bun -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/api/health').then((r) => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
 
-CMD ["node", "server.js"]
+CMD ["bun", "run", "start"]

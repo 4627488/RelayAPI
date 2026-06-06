@@ -1,6 +1,9 @@
 import "server-only";
 
-import { getMainDb } from "@/src/server/db/sqlite";
+import { desc, eq } from "drizzle-orm";
+
+import { getMainOrm } from "@/src/server/db/sqlite";
+import { proxyPool } from "@/src/server/db/schema";
 import {
   decryptJson,
   encryptJson,
@@ -13,20 +16,7 @@ import type {
   ProxyPoolRecordWithSecret,
 } from "@/src/shared/types/entities";
 
-type ProxyPoolRow = {
-  id: string;
-  name: string;
-  type: string;
-  host: string;
-  port: number;
-  username: string;
-  password_envelope: string | null;
-  enabled: number;
-  notes: string;
-  created_at: string;
-  updated_at: string;
-  last_used_at: string | null;
-};
+type ProxyPoolRow = typeof proxyPool.$inferSelect;
 
 export interface SaveProxyPoolItemInput {
   name: string;
@@ -40,9 +30,11 @@ export interface SaveProxyPoolItemInput {
 }
 
 export function listProxyPoolItems(): ProxyPoolRecord[] {
-  const rows = getMainDb()
-    .prepare("SELECT * FROM proxy_pool ORDER BY enabled DESC, updated_at DESC")
-    .all() as ProxyPoolRow[];
+  const rows = getMainOrm()
+    .select()
+    .from(proxyPool)
+    .orderBy(desc(proxyPool.enabled), desc(proxyPool.updatedAt))
+    .all();
   return rows.map(toPublicProxyPoolRecord);
 }
 
@@ -61,26 +53,23 @@ export function getProxyPoolItemWithSecret(
 export function createProxyPoolItem(input: SaveProxyPoolItemInput) {
   const now = new Date().toISOString();
   const id = randomId("proxy");
-  getMainDb()
-    .prepare(
-      `INSERT INTO proxy_pool (
-        id, name, type, host, port, username, password_envelope,
-        enabled, notes, created_at, updated_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-    )
-    .run(
+  getMainOrm()
+    .insert(proxyPool)
+    .values({
       id,
-      input.name,
-      input.type,
-      input.host,
-      input.port,
-      input.username,
-      input.password ? encryptJson(input.password) : null,
-      input.enabled ? 1 : 0,
-      input.notes,
-      now,
-      now,
-    );
+      name: input.name,
+      type: input.type,
+      host: input.host,
+      port: input.port,
+      username: input.username,
+      passwordEnvelope: input.password ? encryptJson(input.password) : null,
+      enabled: input.enabled ? 1 : 0,
+      notes: input.notes,
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: null,
+    })
+    .run();
   return getProxyPoolItemById(id);
 }
 
@@ -97,42 +86,46 @@ export function updateProxyPoolItem(
     ? input.password
       ? encryptJson(input.password)
       : null
-    : existing.password_envelope;
+    : existing.passwordEnvelope;
 
-  getMainDb()
-    .prepare(
-      `UPDATE proxy_pool SET
-        name = ?, type = ?, host = ?, port = ?, username = ?,
-        password_envelope = ?, enabled = ?, notes = ?, updated_at = ?
-      WHERE id = ?`,
-    )
-    .run(
-      input.name ?? existing.name,
-      input.type ?? normalizeProxyType(existing.type),
-      input.host ?? existing.host,
-      input.port ?? existing.port,
-      input.username ?? existing.username,
+  getMainOrm()
+    .update(proxyPool)
+    .set({
+      name: input.name ?? existing.name,
+      type: input.type ?? normalizeProxyType(existing.type),
+      host: input.host ?? existing.host,
+      port: input.port ?? existing.port,
+      username: input.username ?? existing.username,
       passwordEnvelope,
-      input.enabled === undefined ? existing.enabled : input.enabled ? 1 : 0,
-      input.notes ?? existing.notes,
-      now,
-      id,
-    );
+      enabled:
+        input.enabled === undefined ? existing.enabled : input.enabled ? 1 : 0,
+      notes: input.notes ?? existing.notes,
+      updatedAt: now,
+    })
+    .where(eq(proxyPool.id, id))
+    .run();
   return getProxyPoolItemById(id);
 }
 
 export function deleteProxyPoolItem(id: string) {
-  const result = getMainDb()
-    .prepare("DELETE FROM proxy_pool WHERE id = ?")
-    .run(id);
-  return result.changes > 0;
+  const existing = getProxyPoolRow(id);
+  if (!existing) {
+    return false;
+  }
+  getMainOrm()
+    .delete(proxyPool)
+    .where(eq(proxyPool.id, id))
+    .run();
+  return true;
 }
 
 export function markProxyPoolItemUsed(id: string) {
   const now = new Date().toISOString();
-  getMainDb()
-    .prepare("UPDATE proxy_pool SET last_used_at = ?, updated_at = ? WHERE id = ?")
-    .run(now, now, id);
+  getMainOrm()
+    .update(proxyPool)
+    .set({ lastUsedAt: now, updatedAt: now })
+    .where(eq(proxyPool.id, id))
+    .run();
 }
 
 export function proxyPoolItemToCredentialProxy(
@@ -149,9 +142,11 @@ export function proxyPoolItemToCredentialProxy(
 }
 
 function getProxyPoolRow(id: string) {
-  return getMainDb()
-    .prepare("SELECT * FROM proxy_pool WHERE id = ?")
-    .get(id) as ProxyPoolRow | undefined;
+  return getMainOrm()
+    .select()
+    .from(proxyPool)
+    .where(eq(proxyPool.id, id))
+    .get();
 }
 
 function toPublicProxyPoolRecord(row: ProxyPoolRow): ProxyPoolRecord {
@@ -163,19 +158,19 @@ function toPublicProxyPoolRecord(row: ProxyPoolRow): ProxyPoolRecord {
     host: row.host,
     port: row.port,
     username: row.username,
-    passwordSet: Boolean(row.password_envelope),
+    passwordSet: Boolean(row.passwordEnvelope),
     notes: row.notes,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    lastUsedAt: row.last_used_at,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lastUsedAt: row.lastUsedAt,
   };
 }
 
 function toProxyPoolRecordWithSecret(row: ProxyPoolRow): ProxyPoolRecordWithSecret {
   return {
     ...toPublicProxyPoolRecord(row),
-    password: row.password_envelope
-      ? decryptJson<string>(row.password_envelope)
+    password: row.passwordEnvelope
+      ? decryptJson<string>(row.passwordEnvelope)
       : "",
   };
 }

@@ -1,15 +1,10 @@
 import "server-only";
 
-import { getMainDb } from "@/src/server/db/sqlite";
-import { jsonStringify, safeJsonParse } from "@/src/server/services/crypto";
+import { eq } from "drizzle-orm";
 
-type CodexQuotaCacheRow = {
-  credential_id: string;
-  status: string;
-  cache_json: string;
-  retrieved_at: string;
-  updated_at: string;
-};
+import { getMainOrm } from "@/src/server/db/sqlite";
+import { codexQuotaCache } from "@/src/server/db/schema";
+import { jsonStringify, safeJsonParse } from "@/src/server/services/crypto";
 
 export interface CodexQuotaCacheRecord {
   credentialId: string;
@@ -27,9 +22,11 @@ export interface UpsertCodexQuotaCacheInput {
 }
 
 export function getCodexQuotaCacheByCredentialId(credentialId: string) {
-  const row = getMainDb()
-    .prepare("SELECT * FROM codex_quota_cache WHERE credential_id = ?")
-    .get(credentialId) as CodexQuotaCacheRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(codexQuotaCache)
+    .where(eq(codexQuotaCache.credentialId, credentialId))
+    .get();
   return row ? toCodexQuotaCacheRecord(row) : null;
 }
 
@@ -37,35 +34,36 @@ export function upsertCodexQuotaCache(input: UpsertCodexQuotaCacheInput) {
   const now = new Date().toISOString();
   // Quota cache lives in the main DB because routing may later use current
   // quota state when automatically selecting channels.
-  getMainDb()
-    .prepare(
-      `INSERT INTO codex_quota_cache (
-        credential_id, status, cache_json, retrieved_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(credential_id) DO UPDATE SET
-        status = excluded.status,
-        cache_json = excluded.cache_json,
-        retrieved_at = excluded.retrieved_at,
-        updated_at = excluded.updated_at`,
-    )
-    .run(
-      input.credentialId,
-      input.status,
-      jsonStringify(input.cache),
-      input.retrievedAt,
-      now,
-    );
+  getMainOrm()
+    .insert(codexQuotaCache)
+    .values({
+      credentialId: input.credentialId,
+      status: input.status,
+      cacheJson: jsonStringify(input.cache),
+      retrievedAt: input.retrievedAt,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: codexQuotaCache.credentialId,
+      set: {
+        status: input.status,
+        cacheJson: jsonStringify(input.cache),
+        retrievedAt: input.retrievedAt,
+        updatedAt: now,
+      },
+    })
+    .run();
   return getCodexQuotaCacheByCredentialId(input.credentialId);
 }
 
 function toCodexQuotaCacheRecord(
-  row: CodexQuotaCacheRow,
+  row: typeof codexQuotaCache.$inferSelect,
 ): CodexQuotaCacheRecord {
   return {
-    credentialId: row.credential_id,
+    credentialId: row.credentialId,
     status: row.status,
-    cache: safeJsonParse<Record<string, unknown>>(row.cache_json, {}),
-    retrievedAt: row.retrieved_at,
-    updatedAt: row.updated_at,
+    cache: safeJsonParse<Record<string, unknown>>(row.cacheJson, {}),
+    retrievedAt: row.retrievedAt,
+    updatedAt: row.updatedAt,
   };
 }

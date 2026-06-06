@@ -1,27 +1,16 @@
 import "server-only";
 
-import { getMainDb } from "@/src/server/db/sqlite";
+import { asc, desc, eq, inArray, or } from "drizzle-orm";
+
+import { getMainOrm } from "@/src/server/db/sqlite";
+import {
+  channelCredentials,
+  channels as channelsTable,
+} from "@/src/server/db/schema";
 import type { ChannelRecord, ChannelStatus } from "@/src/shared/types/entities";
 import { jsonStringify, safeJsonParse } from "@/src/server/services/crypto";
 
-type ChannelRow = {
-  id: string;
-  name: string;
-  provider: string;
-  base_url: string;
-  credential_id: string;
-  enabled: number;
-  priority: number;
-  weight: number;
-  model_allowlist_json: string;
-  status: string;
-  health_score: number;
-  cooldown_until: string | null;
-  last_error: string | null;
-  last_used_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
+type ChannelRow = typeof channelsTable.$inferSelect;
 
 export interface SaveChannelInput {
   id: string;
@@ -37,9 +26,11 @@ export interface SaveChannelInput {
 }
 
 export function listChannels(): ChannelRecord[] {
-  const rows = getMainDb()
-    .prepare("SELECT * FROM channels ORDER BY priority DESC, created_at ASC")
-    .all() as ChannelRow[];
+  const rows = getMainOrm()
+    .select()
+    .from(channelsTable)
+    .orderBy(desc(channelsTable.priority), asc(channelsTable.createdAt))
+    .all();
   const credentialIdsByChannelId = channelCredentialIdsByChannelId(
     rows.map((row) => row.id),
   );
@@ -49,24 +40,31 @@ export function listChannels(): ChannelRecord[] {
 }
 
 export function getChannelById(id: string): ChannelRecord | null {
-  const row = getMainDb()
-    .prepare("SELECT * FROM channels WHERE id = ?")
-    .get(id) as ChannelRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(channelsTable)
+    .where(eq(channelsTable.id, id))
+    .get();
   return row ? toChannelRecord(row) : null;
 }
 
 export function getChannelByCredentialId(credentialId: string) {
-  const row = getMainDb()
-    .prepare(
-      `SELECT channels.*
-       FROM channels
-       LEFT JOIN channel_credentials
-         ON channel_credentials.channel_id = channels.id
-       WHERE channels.credential_id = ? OR channel_credentials.credential_id = ?
-       ORDER BY channels.created_at ASC
-       LIMIT 1`,
+  const row = getMainOrm()
+    .select({ channel: channelsTable })
+    .from(channelsTable)
+    .leftJoin(
+      channelCredentials,
+      eq(channelCredentials.channelId, channelsTable.id),
     )
-    .get(credentialId, credentialId) as ChannelRow | undefined;
+    .where(
+      or(
+        eq(channelsTable.credentialId, credentialId),
+        eq(channelCredentials.credentialId, credentialId),
+      ),
+    )
+    .orderBy(asc(channelsTable.createdAt))
+    .limit(1)
+    .get()?.channel;
   return row ? toChannelRecord(row) : null;
 }
 
@@ -74,26 +72,24 @@ export function insertChannel(input: SaveChannelInput) {
   const now = new Date().toISOString();
   const credentialIds = normalizeCredentialIds(input);
   const primaryCredentialId = credentialIds[0] || "";
-  getMainDb()
-    .prepare(
-      `INSERT INTO channels (
-        id, name, provider, base_url, credential_id, enabled, priority,
-        weight, model_allowlist_json, status, health_score, created_at, updated_at
-      ) VALUES (?, ?, 'codex', ?, ?, ?, ?, ?, ?, ?, 100, ?, ?)`,
-    )
-    .run(
-      input.id,
-      input.name,
-      input.baseUrl,
-      primaryCredentialId,
-      input.enabled ? 1 : 0,
-      input.priority,
-      input.weight,
-      jsonStringify(input.modelAllowlist),
-      input.status || "healthy",
-      now,
-      now,
-    );
+  getMainOrm()
+    .insert(channelsTable)
+    .values({
+      id: input.id,
+      name: input.name,
+      provider: "codex",
+      baseUrl: input.baseUrl,
+      credentialId: primaryCredentialId,
+      enabled: input.enabled ? 1 : 0,
+      priority: input.priority,
+      weight: input.weight,
+      modelAllowlistJson: jsonStringify(input.modelAllowlist),
+      status: input.status || "healthy",
+      healthScore: 100,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
   setChannelCredentialIds(input.id, credentialIds);
   return getChannelById(input.id);
 }
@@ -136,40 +132,36 @@ export function updateChannel(
     credentialId: primaryCredentialId,
     credentialIds: nextCredentialIds,
   };
-  getMainDb()
-    .prepare(
-      `UPDATE channels SET
-        name = ?, base_url = ?, credential_id = ?, enabled = ?,
-        priority = ?, weight = ?, model_allowlist_json = ?, status = ?,
-        health_score = ?, cooldown_until = ?, last_error = ?,
-        last_used_at = ?, updated_at = ?
-      WHERE id = ?`,
-    )
-    .run(
-      next.name,
-      next.baseUrl,
-      next.credentialId,
-      next.enabled ? 1 : 0,
-      next.priority,
-      next.weight,
-      jsonStringify(next.modelAllowlist),
-      next.status,
-      next.healthScore,
-      next.cooldownUntil,
-      next.lastError,
-      next.lastUsedAt,
-      new Date().toISOString(),
-      id,
-    );
+  getMainOrm()
+    .update(channelsTable)
+    .set({
+      name: next.name,
+      baseUrl: next.baseUrl,
+      credentialId: next.credentialId,
+      enabled: next.enabled ? 1 : 0,
+      priority: next.priority,
+      weight: next.weight,
+      modelAllowlistJson: jsonStringify(next.modelAllowlist),
+      status: next.status,
+      healthScore: next.healthScore,
+      cooldownUntil: next.cooldownUntil,
+      lastError: next.lastError,
+      lastUsedAt: next.lastUsedAt,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(channelsTable.id, id))
+    .run();
   setChannelCredentialIds(id, nextCredentialIds);
   return getChannelById(id);
 }
 
 export function deleteChannel(id: string) {
-  const result = getMainDb()
-    .prepare("DELETE FROM channels WHERE id = ?")
-    .run(id);
-  return result.changes > 0;
+  const existing = getChannelById(id);
+  if (!existing) {
+    return false;
+  }
+  getMainOrm().delete(channelsTable).where(eq(channelsTable.id, id)).run();
+  return true;
 }
 
 export function detachCredentialFromChannels(credentialId: string) {
@@ -208,22 +200,26 @@ function channelCredentialIdsByChannelId(channelIds: string[]) {
     return result;
   }
 
-  const placeholders = uniqueIds.map(() => "?").join(", ");
-  const rows = getMainDb()
-    .prepare(
-      `SELECT channel_id, credential_id
-       FROM channel_credentials
-       WHERE channel_id IN (${placeholders})
-       ORDER BY channel_id ASC, created_at ASC, credential_id ASC`,
+  const rows = getMainOrm()
+    .select({
+      channelId: channelCredentials.channelId,
+      credentialId: channelCredentials.credentialId,
+    })
+    .from(channelCredentials)
+    .where(inArray(channelCredentials.channelId, uniqueIds))
+    .orderBy(
+      asc(channelCredentials.channelId),
+      asc(channelCredentials.createdAt),
+      asc(channelCredentials.credentialId),
     )
-    .all(...uniqueIds) as Array<{ channel_id: string; credential_id: string }>;
+    .all();
   for (const row of rows) {
-    if (!row.credential_id) {
+    if (!row.credentialId) {
       continue;
     }
-    const ids = result.get(row.channel_id) || [];
-    ids.push(row.credential_id);
-    result.set(row.channel_id, ids);
+    const ids = result.get(row.channelId) || [];
+    ids.push(row.credentialId);
+    result.set(row.channelId, ids);
   }
   return result;
 }
@@ -232,47 +228,51 @@ export function setChannelCredentialIds(
   channelId: string,
   credentialIds: string[],
 ) {
-  const db = getMainDb();
   const now = new Date().toISOString();
   const uniqueIds = cleanUniqueStrings(credentialIds);
-  db.prepare("DELETE FROM channel_credentials WHERE channel_id = ?").run(
-    channelId,
-  );
-  const statement = db.prepare(
-    `INSERT OR IGNORE INTO channel_credentials
-      (channel_id, credential_id, created_at)
-     VALUES (?, ?, ?)`,
-  );
-  for (const credentialId of uniqueIds) {
-    statement.run(channelId, credentialId, now);
+  const db = getMainOrm();
+  db.delete(channelCredentials)
+    .where(eq(channelCredentials.channelId, channelId))
+    .run();
+  if (uniqueIds.length > 0) {
+    db.insert(channelCredentials)
+      .values(
+        uniqueIds.map((credentialId) => ({
+          channelId,
+          credentialId,
+          createdAt: now,
+        })),
+      )
+      .onConflictDoNothing()
+      .run();
   }
 }
 
 function toChannelRecord(
   row: ChannelRow,
-  credentialIds = getChannelCredentialIds(row.id, row.credential_id),
+  credentialIds = getChannelCredentialIds(row.id, row.credentialId),
 ): ChannelRecord {
   return {
     id: row.id,
     name: row.name,
     provider: "codex",
-    baseUrl: row.base_url,
-    credentialId: row.credential_id,
+    baseUrl: row.baseUrl,
+    credentialId: row.credentialId,
     credentialIds:
       credentialIds.length > 0
         ? credentialIds
-        : [row.credential_id].filter(Boolean),
+        : [row.credentialId].filter(Boolean),
     enabled: row.enabled === 1,
     priority: row.priority,
     weight: row.weight,
-    modelAllowlist: safeJsonParse<string[]>(row.model_allowlist_json, []),
+    modelAllowlist: safeJsonParse<string[]>(row.modelAllowlistJson, []),
     status: normalizeStatus(row.status),
-    healthScore: row.health_score,
-    cooldownUntil: row.cooldown_until,
-    lastError: row.last_error,
-    lastUsedAt: row.last_used_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    healthScore: row.healthScore,
+    cooldownUntil: row.cooldownUntil,
+    lastError: row.lastError,
+    lastUsedAt: row.lastUsedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 

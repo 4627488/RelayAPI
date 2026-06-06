@@ -1,6 +1,13 @@
 import "server-only";
 
-import { getMainDb } from "@/src/server/db/sqlite";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+
+import { getMainOrm } from "@/src/server/db/sqlite";
+import {
+  tenantInvites,
+  tenants,
+  tenantUsers,
+} from "@/src/server/db/schema";
 import type {
   CredentialProxyConfig,
   PublicCredentialProxyConfig,
@@ -15,52 +22,9 @@ import {
   safeJsonParse,
 } from "@/src/server/services/crypto";
 
-type TenantRow = {
-  id: string;
-  name: string;
-  owner_email: string;
-  enabled: number;
-  max_api_keys: number | null;
-  token_limit_daily: number | null;
-  rate_limit_per_minute: number | null;
-  model_allowlist_json: string;
-  channel_allowlist_json: string;
-  allow_custom_proxy: number;
-  allow_custom_user_agent: number;
-  proxy_envelope: string | null;
-  user_agent: string | null;
-  expires_at: string | null;
-  metadata_json: string;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-};
-
-type TenantUserRow = {
-  id: string;
-  tenant_id: string;
-  email: string;
-  display_name: string;
-  role: string;
-  enabled: number;
-  password_hash: string | null;
-  last_login_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type TenantInviteRow = {
-  id: string;
-  tenant_id: string;
-  user_id: string;
-  email: string;
-  token_hash: string;
-  expires_at: string;
-  accepted_at: string | null;
-  revoked_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
+type TenantRow = typeof tenants.$inferSelect;
+type TenantUserRow = typeof tenantUsers.$inferSelect;
+type TenantInviteRow = typeof tenantInvites.$inferSelect;
 
 export interface SaveTenantInput {
   id: string;
@@ -87,51 +51,48 @@ export interface UpdateTenantInput
 }
 
 export function listTenants(): TenantWithSecrets[] {
-  const rows = getMainDb()
-    .prepare(
-      "SELECT * FROM tenants WHERE deleted_at IS NULL ORDER BY created_at DESC",
-    )
-    .all() as TenantRow[];
+  const rows = getMainOrm()
+    .select()
+    .from(tenants)
+    .where(isNull(tenants.deletedAt))
+    .orderBy(desc(tenants.createdAt))
+    .all();
   return rows.map(toTenantRecord);
 }
 
 export function getTenantById(id: string): TenantWithSecrets | null {
-  const row = getMainDb()
-    .prepare("SELECT * FROM tenants WHERE id = ? AND deleted_at IS NULL")
-    .get(id) as TenantRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(tenants)
+    .where(and(eq(tenants.id, id), isNull(tenants.deletedAt)))
+    .get();
   return row ? toTenantRecord(row) : null;
 }
 
 export function insertTenant(input: SaveTenantInput) {
   const now = new Date().toISOString();
-  getMainDb()
-    .prepare(
-      `INSERT INTO tenants (
-        id, name, owner_email, enabled, max_api_keys, token_limit_daily,
-        rate_limit_per_minute, model_allowlist_json, channel_allowlist_json,
-        allow_custom_proxy, allow_custom_user_agent, proxy_envelope,
-        user_agent, expires_at, metadata_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      input.id,
-      input.name,
-      input.ownerEmail,
-      input.enabled ? 1 : 0,
-      input.maxApiKeys,
-      input.tokenLimitDaily,
-      input.rateLimitPerMinute,
-      jsonStringify(input.modelAllowlist),
-      jsonStringify(input.channelAllowlist),
-      input.allowCustomProxy ? 1 : 0,
-      input.allowCustomUserAgent ? 1 : 0,
-      input.proxy ? encryptJson(input.proxy) : null,
-      input.userAgent,
-      input.expiresAt,
-      jsonStringify(input.metadata || {}),
-      now,
-      now,
-    );
+  getMainOrm()
+    .insert(tenants)
+    .values({
+      id: input.id,
+      name: input.name,
+      ownerEmail: input.ownerEmail,
+      enabled: input.enabled ? 1 : 0,
+      maxApiKeys: input.maxApiKeys,
+      tokenLimitDaily: input.tokenLimitDaily,
+      rateLimitPerMinute: input.rateLimitPerMinute,
+      modelAllowlistJson: jsonStringify(input.modelAllowlist),
+      channelAllowlistJson: jsonStringify(input.channelAllowlist),
+      allowCustomProxy: input.allowCustomProxy ? 1 : 0,
+      allowCustomUserAgent: input.allowCustomUserAgent ? 1 : 0,
+      proxyEnvelope: input.proxy ? encryptJson(input.proxy) : null,
+      userAgent: input.userAgent,
+      expiresAt: input.expiresAt,
+      metadataJson: jsonStringify(input.metadata || {}),
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
   return getTenantById(input.id);
 }
 
@@ -149,36 +110,28 @@ export function updateTenant(id: string, patch: UpdateTenantInput) {
       ...(patch.metadata || {}),
     },
   };
-  getMainDb()
-    .prepare(
-      `UPDATE tenants SET
-        name = ?, owner_email = ?, enabled = ?, max_api_keys = ?,
-        token_limit_daily = ?, rate_limit_per_minute = ?,
-        model_allowlist_json = ?, channel_allowlist_json = ?,
-        allow_custom_proxy = ?, allow_custom_user_agent = ?,
-        proxy_envelope = ?, user_agent = ?, expires_at = ?,
-        metadata_json = ?, deleted_at = ?, updated_at = ?
-      WHERE id = ?`,
-    )
-    .run(
-      next.name,
-      next.ownerEmail,
-      next.enabled ? 1 : 0,
-      next.maxApiKeys,
-      next.tokenLimitDaily,
-      next.rateLimitPerMinute,
-      jsonStringify(next.modelAllowlist),
-      jsonStringify(next.channelAllowlist),
-      next.allowCustomProxy ? 1 : 0,
-      next.allowCustomUserAgent ? 1 : 0,
-      next.proxy ? encryptJson(next.proxy) : null,
-      next.userAgent,
-      next.expiresAt,
-      jsonStringify(next.metadata),
-      patch.deletedAt === undefined ? existing.deletedAt : patch.deletedAt,
-      new Date().toISOString(),
-      id,
-    );
+  getMainOrm()
+    .update(tenants)
+    .set({
+      name: next.name,
+      ownerEmail: next.ownerEmail,
+      enabled: next.enabled ? 1 : 0,
+      maxApiKeys: next.maxApiKeys,
+      tokenLimitDaily: next.tokenLimitDaily,
+      rateLimitPerMinute: next.rateLimitPerMinute,
+      modelAllowlistJson: jsonStringify(next.modelAllowlist),
+      channelAllowlistJson: jsonStringify(next.channelAllowlist),
+      allowCustomProxy: next.allowCustomProxy ? 1 : 0,
+      allowCustomUserAgent: next.allowCustomUserAgent ? 1 : 0,
+      proxyEnvelope: next.proxy ? encryptJson(next.proxy) : null,
+      userAgent: next.userAgent,
+      expiresAt: next.expiresAt,
+      metadataJson: jsonStringify(next.metadata),
+      deletedAt: patch.deletedAt === undefined ? existing.deletedAt : patch.deletedAt,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(tenants.id, id))
+    .run();
   return getTenantById(id);
 }
 
@@ -191,49 +144,49 @@ export function insertTenantUser(input: {
   passwordHash?: string | null;
 }) {
   const now = new Date().toISOString();
-  getMainDb()
-    .prepare(
-      `INSERT INTO tenant_users (
-        id, tenant_id, email, display_name, role, enabled, password_hash,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'owner', ?, ?, ?, ?)`,
-    )
-    .run(
-      input.id,
-      input.tenantId,
-      input.email,
-      input.displayName,
-      input.enabled === false ? 0 : 1,
-      input.passwordHash || null,
-      now,
-      now,
-    );
+  getMainOrm()
+    .insert(tenantUsers)
+    .values({
+      id: input.id,
+      tenantId: input.tenantId,
+      email: input.email,
+      displayName: input.displayName,
+      role: "owner",
+      enabled: input.enabled === false ? 0 : 1,
+      passwordHash: input.passwordHash || null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
   return getTenantUserById(input.id);
 }
 
 export function getTenantUserById(id: string): TenantUserRecord | null {
-  const row = getMainDb()
-    .prepare("SELECT * FROM tenant_users WHERE id = ?")
-    .get(id) as TenantUserRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(tenantUsers)
+    .where(eq(tenantUsers.id, id))
+    .get();
   return row ? toTenantUserRecord(row) : null;
 }
 
 export function getTenantUserByEmail(email: string): TenantUserRecord | null {
-  const row = getMainDb()
-    .prepare("SELECT * FROM tenant_users WHERE lower(email) = lower(?)")
-    .get(email) as TenantUserRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(tenantUsers)
+    .where(sql`lower(${tenantUsers.email}) = lower(${email})`)
+    .get();
   return row ? toTenantUserRecord(row) : null;
 }
 
 export function getTenantOwnerUser(tenantId: string): TenantUserRecord | null {
-  const row = getMainDb()
-    .prepare(
-      `SELECT * FROM tenant_users
-       WHERE tenant_id = ? AND role = 'owner'
-       ORDER BY created_at ASC
-       LIMIT 1`,
-    )
-    .get(tenantId) as TenantUserRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(tenantUsers)
+    .where(and(eq(tenantUsers.tenantId, tenantId), eq(tenantUsers.role, "owner")))
+    .orderBy(asc(tenantUsers.createdAt))
+    .limit(1)
+    .get();
   return row ? toTenantUserRecord(row) : null;
 }
 
@@ -251,21 +204,17 @@ export function updateTenantUser(
     return null;
   }
   const next = { ...existing, ...patch };
-  getMainDb()
-    .prepare(
-      `UPDATE tenant_users SET
-        display_name = ?, enabled = ?, password_hash = ?,
-        last_login_at = ?, updated_at = ?
-      WHERE id = ?`,
-    )
-    .run(
-      next.displayName,
-      next.enabled ? 1 : 0,
-      next.passwordHash,
-      next.lastLoginAt,
-      new Date().toISOString(),
-      id,
-    );
+  getMainOrm()
+    .update(tenantUsers)
+    .set({
+      displayName: next.displayName,
+      enabled: next.enabled ? 1 : 0,
+      passwordHash: next.passwordHash,
+      lastLoginAt: next.lastLoginAt,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(tenantUsers.id, id))
+    .run();
   return getTenantUserById(id);
 }
 
@@ -278,62 +227,64 @@ export function insertTenantInvite(input: {
   expiresAt: string;
 }) {
   const now = new Date().toISOString();
-  getMainDb()
-    .prepare(
-      `INSERT INTO tenant_invites (
-        id, tenant_id, user_id, email, token_hash, expires_at,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      input.id,
-      input.tenantId,
-      input.userId,
-      input.email,
-      input.tokenHash,
-      input.expiresAt,
-      now,
-      now,
-    );
+  getMainOrm()
+    .insert(tenantInvites)
+    .values({
+      id: input.id,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      email: input.email,
+      tokenHash: input.tokenHash,
+      expiresAt: input.expiresAt,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
   return getTenantInviteById(input.id);
 }
 
 export function getTenantInviteById(id: string): TenantInviteRecord | null {
-  const row = getMainDb()
-    .prepare("SELECT * FROM tenant_invites WHERE id = ?")
-    .get(id) as TenantInviteRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(tenantInvites)
+    .where(eq(tenantInvites.id, id))
+    .get();
   return row ? toTenantInviteRecord(row) : null;
 }
 
 export function getTenantInviteByTokenHash(
   tokenHash: string,
 ): TenantInviteRecord | null {
-  const row = getMainDb()
-    .prepare("SELECT * FROM tenant_invites WHERE token_hash = ?")
-    .get(tokenHash) as TenantInviteRow | undefined;
+  const row = getMainOrm()
+    .select()
+    .from(tenantInvites)
+    .where(eq(tenantInvites.tokenHash, tokenHash))
+    .get();
   return row ? toTenantInviteRecord(row) : null;
 }
 
 export function revokeOpenTenantInvites(tenantId: string) {
   const now = new Date().toISOString();
-  getMainDb()
-    .prepare(
-      `UPDATE tenant_invites
-       SET revoked_at = ?, updated_at = ?
-       WHERE tenant_id = ? AND accepted_at IS NULL AND revoked_at IS NULL`,
+  getMainOrm()
+    .update(tenantInvites)
+    .set({ revokedAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(tenantInvites.tenantId, tenantId),
+        isNull(tenantInvites.acceptedAt),
+        isNull(tenantInvites.revokedAt),
+      ),
     )
-    .run(now, now, tenantId);
+    .run();
 }
 
 export function markTenantInviteAccepted(id: string) {
   const now = new Date().toISOString();
-  getMainDb()
-    .prepare(
-      `UPDATE tenant_invites
-       SET accepted_at = ?, updated_at = ?
-       WHERE id = ?`,
-    )
-    .run(now, now, id);
+  getMainOrm()
+    .update(tenantInvites)
+    .set({ acceptedAt: now, updatedAt: now })
+    .where(eq(tenantInvites.id, id))
+    .run();
   return getTenantInviteById(id);
 }
 
@@ -357,52 +308,52 @@ function toTenantRecord(row: TenantRow): TenantWithSecrets {
   return {
     id: row.id,
     name: row.name,
-    ownerEmail: row.owner_email,
+    ownerEmail: row.ownerEmail,
     enabled: row.enabled === 1,
-    maxApiKeys: row.max_api_keys,
-    tokenLimitDaily: row.token_limit_daily,
-    rateLimitPerMinute: row.rate_limit_per_minute,
-    modelAllowlist: safeJsonParse<string[]>(row.model_allowlist_json, []),
-    channelAllowlist: safeJsonParse<string[]>(row.channel_allowlist_json, []),
-    allowCustomProxy: row.allow_custom_proxy === 1,
-    allowCustomUserAgent: row.allow_custom_user_agent === 1,
-    proxy: proxyFromEnvelope(row.proxy_envelope),
-    userAgent: row.user_agent,
-    expiresAt: row.expires_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    deletedAt: row.deleted_at,
-    metadata: safeJsonParse<Record<string, unknown>>(row.metadata_json, {}),
+    maxApiKeys: row.maxApiKeys,
+    tokenLimitDaily: row.tokenLimitDaily,
+    rateLimitPerMinute: row.rateLimitPerMinute,
+    modelAllowlist: safeJsonParse<string[]>(row.modelAllowlistJson, []),
+    channelAllowlist: safeJsonParse<string[]>(row.channelAllowlistJson, []),
+    allowCustomProxy: row.allowCustomProxy === 1,
+    allowCustomUserAgent: row.allowCustomUserAgent === 1,
+    proxy: proxyFromEnvelope(row.proxyEnvelope),
+    userAgent: row.userAgent,
+    expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt,
+    metadata: safeJsonParse<Record<string, unknown>>(row.metadataJson, {}),
   };
 }
 
 function toTenantUserRecord(row: TenantUserRow): TenantUserRecord {
   return {
     id: row.id,
-    tenantId: row.tenant_id,
+    tenantId: row.tenantId,
     email: row.email,
-    displayName: row.display_name,
+    displayName: row.displayName,
     role: "owner",
     enabled: row.enabled === 1,
-    passwordHash: row.password_hash,
-    lastLoginAt: row.last_login_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    passwordHash: row.passwordHash,
+    lastLoginAt: row.lastLoginAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
 function toTenantInviteRecord(row: TenantInviteRow): TenantInviteRecord {
   return {
     id: row.id,
-    tenantId: row.tenant_id,
-    userId: row.user_id,
+    tenantId: row.tenantId,
+    userId: row.userId,
     email: row.email,
-    tokenHash: row.token_hash,
-    expiresAt: row.expires_at,
-    acceptedAt: row.accepted_at,
-    revokedAt: row.revoked_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    tokenHash: row.tokenHash,
+    expiresAt: row.expiresAt,
+    acceptedAt: row.acceptedAt,
+    revokedAt: row.revokedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 

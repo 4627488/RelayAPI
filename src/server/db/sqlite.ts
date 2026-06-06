@@ -1,12 +1,33 @@
 import "server-only";
 
+import { Database } from "bun:sqlite";
+import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { serverConfig } from "@/src/server/config/env";
+import { logSchema, mainSchema } from "@/src/server/db/schema";
 
-let mainDb: DatabaseSync | null = null;
-let logDb: DatabaseSync | null = null;
+type SqliteRunResult = {
+  changes: number | bigint;
+  lastInsertRowid?: number | bigint;
+};
+
+type SqliteStatement = {
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+  run(...params: unknown[]): SqliteRunResult;
+};
+
+export type SqliteDatabase = {
+  client: Database;
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+};
+
+let mainDb: SqliteDatabase | null = null;
+let logDb: SqliteDatabase | null = null;
+let mainOrm: BunSQLiteDatabase<typeof mainSchema> | null = null;
+let logOrm: BunSQLiteDatabase<typeof logSchema> | null = null;
 let initialized = false;
 
 export function getMainDb() {
@@ -25,6 +46,22 @@ export function getLogDb() {
   return logDb;
 }
 
+export function getMainOrm() {
+  ensureInitialized();
+  if (!mainOrm) {
+    throw new Error("Main ORM is not initialized");
+  }
+  return mainOrm;
+}
+
+export function getLogOrm() {
+  ensureInitialized();
+  if (!logOrm) {
+    throw new Error("Log ORM is not initialized");
+  }
+  return logOrm;
+}
+
 export function ensureInitialized() {
   if (initialized) {
     return;
@@ -37,13 +74,13 @@ export function ensureInitialized() {
   logDb = openDatabase(serverConfig.logDbPath, true);
   migrateMainDb(mainDb);
   migrateLogDb(logDb);
+  mainOrm = drizzle(mainDb.client, { schema: mainSchema });
+  logOrm = drizzle(logDb.client, { schema: logSchema });
   initialized = true;
 }
 
 function openDatabase(filePath: string, foreignKeys: boolean) {
-  const db = new DatabaseSync(filePath, {
-    timeout: serverConfig.sqliteBusyTimeoutMs,
-  });
+  const db = openBunDatabase(filePath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec(`PRAGMA busy_timeout = ${serverConfig.sqliteBusyTimeoutMs}`);
@@ -51,10 +88,22 @@ function openDatabase(filePath: string, foreignKeys: boolean) {
   return db;
 }
 
+function openBunDatabase(filePath: string): SqliteDatabase {
+  const database = new Database(filePath, {
+    create: true,
+    readwrite: true,
+  });
+  return {
+    client: database,
+    exec: (sql) => database.exec(sql),
+    prepare: (sql) => database.query(sql),
+  };
+}
+
 function applyMigration(
-  db: DatabaseSync,
+  db: SqliteDatabase,
   name: string,
-  migration: string | ((db: DatabaseSync) => void),
+  migration: string | ((db: SqliteDatabase) => void),
 ) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -85,7 +134,7 @@ function applyMigration(
   }
 }
 
-function migrateMainDb(db: DatabaseSync) {
+function migrateMainDb(db: SqliteDatabase) {
   applyMigration(
     db,
     "001_main_foundation",
@@ -426,7 +475,7 @@ function migrateMainDb(db: DatabaseSync) {
   });
 }
 
-function migrateLogDb(db: DatabaseSync) {
+function migrateLogDb(db: SqliteDatabase) {
   applyMigration(
     db,
     "001_log_foundation",
@@ -735,7 +784,7 @@ function migrateLogDb(db: DatabaseSync) {
   });
 }
 
-function recreateRequestLogDetailsForeignKey(db: DatabaseSync) {
+function recreateRequestLogDetailsForeignKey(db: SqliteDatabase) {
   const foreignKeys = db
     .prepare("PRAGMA foreign_key_list(request_log_details)")
     .all() as Array<{ table: string; from: string; on_delete: string }>;
@@ -820,7 +869,7 @@ function recreateRequestLogDetailsForeignKey(db: DatabaseSync) {
   `);
 }
 
-function recreateRequestMetricTriggers(db: DatabaseSync) {
+function recreateRequestMetricTriggers(db: SqliteDatabase) {
   db.exec(`
     DROP TRIGGER IF EXISTS trg_request_logs_metric_ai;
     DROP TRIGGER IF EXISTS trg_request_logs_metric_ad;
@@ -1011,7 +1060,7 @@ function recreateRequestMetricTriggers(db: DatabaseSync) {
 }
 
 function addColumnIfMissing(
-  db: DatabaseSync,
+  db: SqliteDatabase,
   tableName: string,
   columnName: string,
   definition: string,

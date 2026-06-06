@@ -23,15 +23,19 @@ RelayAPI 是一个基于 Next.js App Router 的分层中继服务，用于管理
 - 支持 API Key 管理与 Web 管理后台。
 - 支持自动渠道路由，无需前端选择“当前凭据”。
 - 使用双 SQLite 数据库存储配置、运行状态、日志、审计与用量数据。
-- 使用 Node.js 24 内置 `node:sqlite`，避免额外 native SQLite 依赖。
+- 使用 Bun 原生 `bun:sqlite` 作为 SQLite 后端，避免额外 native SQLite 依赖。
 - 支持 imge
 
 ## 环境要求
 
-- Node.js `>=24.0.0`
-- pnpm
+- Bun `>=1.3.0`
 
-> `node:sqlite` 在 Node.js 中仍标记为 experimental，因此构建或启动时可能会看到实验性功能提示，这是预期行为。
+本地运行：
+
+```bash
+bun install
+bun run dev
+```
 
 ## 快速开始
 

@@ -1,43 +1,48 @@
 import "server-only";
 
-import { getMainDb } from "@/src/server/db/sqlite";
+import { eq } from "drizzle-orm";
 
-type SettingRow = {
-  key: string;
-  value: string;
-  updated_at: string;
-};
+import { getMainOrm } from "@/src/server/db/sqlite";
+import { settings } from "@/src/server/db/schema";
 
 export function getSettingValue(key: string) {
-  const row = getMainDb()
-    .prepare("SELECT value FROM settings WHERE key = ?")
-    .get(key) as Pick<SettingRow, "value"> | undefined;
+  const row = getMainOrm()
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, key))
+    .get();
   return row?.value;
 }
 
 export function upsertSettingValue(key: string, value: string) {
   const now = new Date().toISOString();
-  getMainDb()
-    .prepare(
-      `INSERT INTO settings (key, value, updated_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(key) DO UPDATE SET
-         value = excluded.value,
-         updated_at = excluded.updated_at`,
-    )
-    .run(key, value, now);
+  getMainOrm()
+    .insert(settings)
+    .values({ key, value, updatedAt: now })
+    .onConflictDoUpdate({
+      target: settings.key,
+      set: { value, updatedAt: now },
+    })
+    .run();
 }
 
 export function deleteSettingValue(key: string) {
-  const result = getMainDb()
-    .prepare("DELETE FROM settings WHERE key = ?")
-    .run(key);
-  return result.changes > 0;
+  const existing = getSettingValue(key);
+  if (existing === undefined) {
+    return false;
+  }
+  getMainOrm()
+    .delete(settings)
+    .where(eq(settings.key, key))
+    .run();
+  return true;
 }
 
 export function getSettingUpdatedAt(key: string) {
-  const row = getMainDb()
-    .prepare("SELECT updated_at FROM settings WHERE key = ?")
-    .get(key) as Pick<SettingRow, "updated_at"> | undefined;
-  return row?.updated_at || null;
+  const row = getMainOrm()
+    .select({ updatedAt: settings.updatedAt })
+    .from(settings)
+    .where(eq(settings.key, key))
+    .get();
+  return row?.updatedAt || null;
 }

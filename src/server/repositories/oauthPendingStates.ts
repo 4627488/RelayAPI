@@ -1,16 +1,11 @@
 import "server-only";
 
-import { getMainDb } from "@/src/server/db/sqlite";
+import { and, eq, lte, sql } from "drizzle-orm";
 
-type OAuthPendingStateRow = {
-  state: string;
-  provider: string;
-  code_verifier: string;
-  code_challenge: string;
-  redirect_uri: string;
-  created_at: string;
-  expires_at: string;
-};
+import { getMainOrm } from "@/src/server/db/sqlite";
+import { oauthPendingStates } from "@/src/server/db/schema";
+
+type OAuthPendingStateRow = typeof oauthPendingStates.$inferSelect;
 
 export interface OAuthPendingStateRecord {
   state: string;
@@ -24,29 +19,21 @@ export interface OAuthPendingStateRecord {
 
 export function saveOAuthPendingState(input: OAuthPendingStateRecord) {
   pruneExpiredOAuthPendingStates();
-  getMainDb()
-    .prepare(
-      `INSERT INTO oauth_pending_states (
-        state, provider, code_verifier, code_challenge, redirect_uri,
-        created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(state) DO UPDATE SET
-        provider = excluded.provider,
-        code_verifier = excluded.code_verifier,
-        code_challenge = excluded.code_challenge,
-        redirect_uri = excluded.redirect_uri,
-        created_at = excluded.created_at,
-        expires_at = excluded.expires_at`,
-    )
-    .run(
-      input.state,
-      input.provider,
-      input.codeVerifier,
-      input.codeChallenge,
-      input.redirectUri,
-      input.createdAt,
-      input.expiresAt,
-    );
+  getMainOrm()
+    .insert(oauthPendingStates)
+    .values(input)
+    .onConflictDoUpdate({
+      target: oauthPendingStates.state,
+      set: {
+        provider: input.provider,
+        codeVerifier: input.codeVerifier,
+        codeChallenge: input.codeChallenge,
+        redirectUri: input.redirectUri,
+        createdAt: input.createdAt,
+        expiresAt: input.expiresAt,
+      },
+    })
+    .run();
 }
 
 export function takeOAuthPendingState(
@@ -54,25 +41,31 @@ export function takeOAuthPendingState(
   provider = "codex",
 ): OAuthPendingStateRecord | null {
   pruneExpiredOAuthPendingStates();
-  const row = getMainDb()
-    .prepare(
-      `SELECT * FROM oauth_pending_states
-       WHERE state = ? AND lower(provider) = lower(?)`,
+  const row = getMainOrm()
+    .select()
+    .from(oauthPendingStates)
+    .where(
+      and(
+        eq(oauthPendingStates.state, state),
+        sql`lower(${oauthPendingStates.provider}) = lower(${provider})`,
+      ),
     )
-    .get(state, provider) as OAuthPendingStateRow | undefined;
+    .get();
   if (!row) {
     return null;
   }
-  getMainDb()
-    .prepare("DELETE FROM oauth_pending_states WHERE state = ?")
-    .run(state);
+  getMainOrm()
+    .delete(oauthPendingStates)
+    .where(eq(oauthPendingStates.state, state))
+    .run();
   return toOAuthPendingStateRecord(row);
 }
 
 export function pruneExpiredOAuthPendingStates(now = new Date()) {
-  getMainDb()
-    .prepare("DELETE FROM oauth_pending_states WHERE expires_at <= ?")
-    .run(now.toISOString());
+  getMainOrm()
+    .delete(oauthPendingStates)
+    .where(lte(oauthPendingStates.expiresAt, now.toISOString()))
+    .run();
 }
 
 function toOAuthPendingStateRecord(
@@ -81,10 +74,10 @@ function toOAuthPendingStateRecord(
   return {
     state: row.state,
     provider: row.provider,
-    codeVerifier: row.code_verifier,
-    codeChallenge: row.code_challenge,
-    redirectUri: row.redirect_uri,
-    createdAt: row.created_at,
-    expiresAt: row.expires_at,
+    codeVerifier: row.codeVerifier,
+    codeChallenge: row.codeChallenge,
+    redirectUri: row.redirectUri,
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
   };
 }
