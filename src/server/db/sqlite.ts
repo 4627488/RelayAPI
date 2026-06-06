@@ -18,7 +18,7 @@ type SqliteStatement = {
   run(...params: unknown[]): SqliteRunResult;
 };
 
-export type SqliteDatabase = {
+type SqliteDatabase = {
   client: Database;
   exec(sql: string): void;
   prepare(sql: string): SqliteStatement;
@@ -29,22 +29,6 @@ let logDb: SqliteDatabase | null = null;
 let mainOrm: BunSQLiteDatabase<typeof mainSchema> | null = null;
 let logOrm: BunSQLiteDatabase<typeof logSchema> | null = null;
 let initialized = false;
-
-export function getMainDb() {
-  ensureInitialized();
-  if (!mainDb) {
-    throw new Error("Main database is not initialized");
-  }
-  return mainDb;
-}
-
-export function getLogDb() {
-  ensureInitialized();
-  if (!logDb) {
-    throw new Error("Log database is not initialized");
-  }
-  return logDb;
-}
 
 export function getMainOrm() {
   ensureInitialized();

@@ -1,7 +1,24 @@
 import "server-only";
 
-import { getLogDb, getMainDb } from "@/src/server/db/sqlite";
+import {
+  and,
+  eq,
+  lt,
+  sql,
+  type SQL,
+  type SQLChunk,
+} from "drizzle-orm";
+
+import { getLogOrm, getMainOrm } from "@/src/server/db/sqlite";
 import { serverConfig } from "@/src/server/config/env";
+import {
+  auditLogs,
+  channelHealthEvents,
+  requestLogDetails,
+  requestLogs as requestLogsTable,
+  usageDailyBuckets,
+  usageRecords,
+} from "@/src/server/db/schema";
 import { jsonStringify, randomId } from "@/src/server/services/crypto";
 import type { StageTimingEntry } from "@/src/server/http/stageTimer";
 import type {
@@ -44,6 +61,47 @@ type LogScope = {
   tenantId?: string | null;
   days?: number;
 };
+
+function boundSql(query: string, params: unknown[] = []): SQL {
+  const parts = query.split("?");
+  if (parts.length - 1 !== params.length) {
+    throw new Error("SQL parameter count mismatch");
+  }
+  const chunks: SQLChunk[] = [];
+  for (const [index, part] of parts.entries()) {
+    if (part) {
+      chunks.push(sql.raw(part));
+    }
+    if (index < params.length) {
+      chunks.push(sql`${params[index]}`);
+    }
+  }
+  return sql.join(chunks);
+}
+
+function logAll(query: string, params: unknown[] = []) {
+  return getLogOrm().all(boundSql(query, params)) as Array<
+    Record<string, unknown>
+  >;
+}
+
+function logGet(query: string, params: unknown[] = []) {
+  return getLogOrm().get(boundSql(query, params)) as
+    | Record<string, unknown>
+    | undefined;
+}
+
+function logRun(query: string, params: unknown[] = []) {
+  return getLogOrm().run(boundSql(query, params)) as unknown as {
+    changes: number | bigint;
+  };
+}
+
+function mainAll(query: string, params: unknown[] = []) {
+  return getMainOrm().all(boundSql(query, params)) as Array<
+    Record<string, unknown>
+  >;
+}
 
 export interface RequestLogInput {
   startedAt: string;
@@ -113,43 +171,36 @@ export function appendRequestLog(input: RequestLogInput) {
   const usage = normalizeUsageSnapshot(input.usage);
   const completedAt = input.completedAt || new Date().toISOString();
   const id = randomId("reqlog");
-  getLogDb()
-    .prepare(
-      `INSERT INTO request_logs (
-        id, started_at, completed_at, method, path, request_type, stream,
-        model, status_code, latency_ms, tenant_id, tenant_name, api_key_id, api_key_prefix,
-        api_key_name, channel_id, channel_name, credential_id, credential_email,
-        prompt_tokens, completion_tokens, total_tokens, cached_tokens,
-        error_code, error_message
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+  getLogOrm()
+    .insert(requestLogsTable)
+    .values({
       id,
-      input.startedAt,
+      startedAt: input.startedAt,
       completedAt,
-      input.method,
-      input.path,
-      input.requestType,
-      input.stream ? 1 : 0,
-      input.model || "",
-      input.statusCode,
-      input.latencyMs,
-      input.tenantId || null,
-      input.tenantName || null,
-      input.apiKeyId || null,
-      input.apiKeyPrefix || null,
-      input.apiKeyName || null,
-      input.channelId || null,
-      input.channelName || null,
-      input.credentialId || null,
-      input.credentialEmail || null,
-      usage.promptTokens,
-      usage.completionTokens,
-      usage.totalTokens,
-      usage.cachedTokens,
-      input.errorCode || null,
-      input.errorMessage || null,
-    );
+      method: input.method,
+      path: input.path,
+      requestType: input.requestType,
+      stream: input.stream ? 1 : 0,
+      model: input.model || "",
+      statusCode: input.statusCode,
+      latencyMs: input.latencyMs,
+      tenantId: input.tenantId || null,
+      tenantName: input.tenantName || null,
+      apiKeyId: input.apiKeyId || null,
+      apiKeyPrefix: input.apiKeyPrefix || null,
+      apiKeyName: input.apiKeyName || null,
+      channelId: input.channelId || null,
+      channelName: input.channelName || null,
+      credentialId: input.credentialId || null,
+      credentialEmail: input.credentialEmail || null,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      totalTokens: usage.totalTokens,
+      cachedTokens: usage.cachedTokens,
+      errorCode: input.errorCode || null,
+      errorMessage: input.errorMessage || null,
+    })
+    .run();
 
   if (usage.totalTokens > 0) {
     appendUsageRecord({
@@ -176,61 +227,64 @@ export function appendRequestLogDetail(
   input: RequestLogDetailInput,
 ) {
   const now = new Date().toISOString();
-  getLogDb()
-    .prepare(
-      `INSERT INTO request_log_details (
-        request_log_id, created_at, updated_at, request_headers_json,
-        request_body_text, request_body_truncated, request_body_bytes,
-        forwarded_body_text, forwarded_body_truncated, forwarded_body_bytes,
-        upstream_status_code, upstream_headers_json, upstream_body_text,
-        upstream_body_truncated, upstream_body_bytes, error_name,
-        error_message, error_stack, error_cause_json, detail_json,
-        stage_timings_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(request_log_id) DO UPDATE SET
-        updated_at = excluded.updated_at,
-        request_headers_json = COALESCE(excluded.request_headers_json, request_log_details.request_headers_json),
-        request_body_text = COALESCE(excluded.request_body_text, request_log_details.request_body_text),
-        request_body_truncated = CASE WHEN excluded.request_body_text IS NULL THEN request_log_details.request_body_truncated ELSE excluded.request_body_truncated END,
-        request_body_bytes = CASE WHEN excluded.request_body_text IS NULL THEN request_log_details.request_body_bytes ELSE excluded.request_body_bytes END,
-        forwarded_body_text = COALESCE(excluded.forwarded_body_text, request_log_details.forwarded_body_text),
-        forwarded_body_truncated = CASE WHEN excluded.forwarded_body_text IS NULL THEN request_log_details.forwarded_body_truncated ELSE excluded.forwarded_body_truncated END,
-        forwarded_body_bytes = CASE WHEN excluded.forwarded_body_text IS NULL THEN request_log_details.forwarded_body_bytes ELSE excluded.forwarded_body_bytes END,
-        upstream_status_code = COALESCE(excluded.upstream_status_code, request_log_details.upstream_status_code),
-        upstream_headers_json = COALESCE(excluded.upstream_headers_json, request_log_details.upstream_headers_json),
-        upstream_body_text = COALESCE(excluded.upstream_body_text, request_log_details.upstream_body_text),
-        upstream_body_truncated = CASE WHEN excluded.upstream_body_text IS NULL THEN request_log_details.upstream_body_truncated ELSE excluded.upstream_body_truncated END,
-        upstream_body_bytes = CASE WHEN excluded.upstream_body_text IS NULL THEN request_log_details.upstream_body_bytes ELSE excluded.upstream_body_bytes END,
-        error_name = COALESCE(excluded.error_name, request_log_details.error_name),
-        error_message = COALESCE(excluded.error_message, request_log_details.error_message),
-        error_stack = COALESCE(excluded.error_stack, request_log_details.error_stack),
-        error_cause_json = COALESCE(excluded.error_cause_json, request_log_details.error_cause_json),
-        detail_json = COALESCE(excluded.detail_json, request_log_details.detail_json),
-        stage_timings_json = COALESCE(excluded.stage_timings_json, request_log_details.stage_timings_json)`,
-    )
-    .run(
-      requestLogId,
-      now,
-      now,
-      input.requestHeaders ? jsonStringify(input.requestHeaders) : null,
-      input.requestBodyText ?? null,
-      input.requestBodyTruncated ? 1 : 0,
-      Math.max(0, Math.floor(input.requestBodyBytes || 0)),
-      input.forwardedBodyText ?? null,
-      input.forwardedBodyTruncated ? 1 : 0,
-      Math.max(0, Math.floor(input.forwardedBodyBytes || 0)),
-      input.upstreamStatusCode ?? null,
-      input.upstreamHeaders ? jsonStringify(input.upstreamHeaders) : null,
-      input.upstreamBodyText ?? null,
-      input.upstreamBodyTruncated ? 1 : 0,
-      Math.max(0, Math.floor(input.upstreamBodyBytes || 0)),
-      input.errorName || null,
-      input.errorMessage || null,
-      input.errorStack || null,
+  const values = {
+    requestLogId,
+    createdAt: now,
+    updatedAt: now,
+    requestHeadersJson: input.requestHeaders
+      ? jsonStringify(input.requestHeaders)
+      : null,
+    requestBodyText: input.requestBodyText ?? null,
+    requestBodyTruncated: input.requestBodyTruncated ? 1 : 0,
+    requestBodyBytes: Math.max(0, Math.floor(input.requestBodyBytes || 0)),
+    forwardedBodyText: input.forwardedBodyText ?? null,
+    forwardedBodyTruncated: input.forwardedBodyTruncated ? 1 : 0,
+    forwardedBodyBytes: Math.max(0, Math.floor(input.forwardedBodyBytes || 0)),
+    upstreamStatusCode: input.upstreamStatusCode ?? null,
+    upstreamHeadersJson: input.upstreamHeaders
+      ? jsonStringify(input.upstreamHeaders)
+      : null,
+    upstreamBodyText: input.upstreamBodyText ?? null,
+    upstreamBodyTruncated: input.upstreamBodyTruncated ? 1 : 0,
+    upstreamBodyBytes: Math.max(0, Math.floor(input.upstreamBodyBytes || 0)),
+    errorName: input.errorName || null,
+    errorMessage: input.errorMessage || null,
+    errorStack: input.errorStack || null,
+    errorCauseJson:
       input.errorCause === undefined ? null : safeDetailJson(input.errorCause),
-      input.detail === undefined ? null : safeDetailJson(input.detail),
-      input.stageTimings ? jsonStringify(input.stageTimings) : null,
-    );
+    detailJson: input.detail === undefined ? null : safeDetailJson(input.detail),
+    stageTimingsJson: input.stageTimings
+      ? jsonStringify(input.stageTimings)
+      : null,
+  };
+  getLogOrm()
+    .insert(requestLogDetails)
+    .values(values)
+    .onConflictDoUpdate({
+      target: requestLogDetails.requestLogId,
+      set: {
+        updatedAt: values.updatedAt,
+        requestHeadersJson: sql`COALESCE(excluded.request_headers_json, ${requestLogDetails.requestHeadersJson})`,
+        requestBodyText: sql`COALESCE(excluded.request_body_text, ${requestLogDetails.requestBodyText})`,
+        requestBodyTruncated: sql`CASE WHEN excluded.request_body_text IS NULL THEN ${requestLogDetails.requestBodyTruncated} ELSE excluded.request_body_truncated END`,
+        requestBodyBytes: sql`CASE WHEN excluded.request_body_text IS NULL THEN ${requestLogDetails.requestBodyBytes} ELSE excluded.request_body_bytes END`,
+        forwardedBodyText: sql`COALESCE(excluded.forwarded_body_text, ${requestLogDetails.forwardedBodyText})`,
+        forwardedBodyTruncated: sql`CASE WHEN excluded.forwarded_body_text IS NULL THEN ${requestLogDetails.forwardedBodyTruncated} ELSE excluded.forwarded_body_truncated END`,
+        forwardedBodyBytes: sql`CASE WHEN excluded.forwarded_body_text IS NULL THEN ${requestLogDetails.forwardedBodyBytes} ELSE excluded.forwarded_body_bytes END`,
+        upstreamStatusCode: sql`COALESCE(excluded.upstream_status_code, ${requestLogDetails.upstreamStatusCode})`,
+        upstreamHeadersJson: sql`COALESCE(excluded.upstream_headers_json, ${requestLogDetails.upstreamHeadersJson})`,
+        upstreamBodyText: sql`COALESCE(excluded.upstream_body_text, ${requestLogDetails.upstreamBodyText})`,
+        upstreamBodyTruncated: sql`CASE WHEN excluded.upstream_body_text IS NULL THEN ${requestLogDetails.upstreamBodyTruncated} ELSE excluded.upstream_body_truncated END`,
+        upstreamBodyBytes: sql`CASE WHEN excluded.upstream_body_text IS NULL THEN ${requestLogDetails.upstreamBodyBytes} ELSE excluded.upstream_body_bytes END`,
+        errorName: sql`COALESCE(excluded.error_name, ${requestLogDetails.errorName})`,
+        errorMessage: sql`COALESCE(excluded.error_message, ${requestLogDetails.errorMessage})`,
+        errorStack: sql`COALESCE(excluded.error_stack, ${requestLogDetails.errorStack})`,
+        errorCauseJson: sql`COALESCE(excluded.error_cause_json, ${requestLogDetails.errorCauseJson})`,
+        detailJson: sql`COALESCE(excluded.detail_json, ${requestLogDetails.detailJson})`,
+        stageTimingsJson: sql`COALESCE(excluded.stage_timings_json, ${requestLogDetails.stageTimingsJson})`,
+      },
+    })
+    .run();
 }
 
 export function appendUsageRecord(input: {
@@ -247,63 +301,63 @@ export function appendUsageRecord(input: {
   model: string;
   usage: UsageSnapshot;
 }) {
-  getLogDb()
-    .prepare(
-      `INSERT INTO usage_records (
-        id, created_at, tenant_id, tenant_name, api_key_id, api_key_prefix, api_key_name,
-        channel_id, channel_name, credential_id, credential_email, model,
-        prompt_tokens, completion_tokens, total_tokens, cached_tokens
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      randomId("usage"),
-      input.createdAt,
-      input.tenantId || null,
-      input.tenantName || null,
-      input.apiKeyId || null,
-      input.apiKeyPrefix || null,
-      input.apiKeyName || null,
-      input.channelId || null,
-      input.channelName || null,
-      input.credentialId || null,
-      input.credentialEmail || null,
-      input.model,
-      input.usage.promptTokens,
-      input.usage.completionTokens,
-      input.usage.totalTokens,
-      input.usage.cachedTokens,
-    );
+  getLogOrm()
+    .insert(usageRecords)
+    .values({
+      id: randomId("usage"),
+      createdAt: input.createdAt,
+      tenantId: input.tenantId || null,
+      tenantName: input.tenantName || null,
+      apiKeyId: input.apiKeyId || null,
+      apiKeyPrefix: input.apiKeyPrefix || null,
+      apiKeyName: input.apiKeyName || null,
+      channelId: input.channelId || null,
+      channelName: input.channelName || null,
+      credentialId: input.credentialId || null,
+      credentialEmail: input.credentialEmail || null,
+      model: input.model,
+      promptTokens: input.usage.promptTokens,
+      completionTokens: input.usage.completionTokens,
+      totalTokens: input.usage.totalTokens,
+      cachedTokens: input.usage.cachedTokens,
+    })
+    .run();
 
   const day = input.createdAt.slice(0, 10);
-  getLogDb()
-    .prepare(
-      `INSERT INTO usage_daily_buckets (
-        bucket_date, tenant_id, api_key_id, channel_id, credential_id, model,
-        prompt_tokens, completion_tokens, total_tokens, cached_tokens,
-        request_count, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-      ON CONFLICT(bucket_date, api_key_id, channel_id, credential_id, model)
-      DO UPDATE SET
-        prompt_tokens = prompt_tokens + excluded.prompt_tokens,
-        completion_tokens = completion_tokens + excluded.completion_tokens,
-        total_tokens = total_tokens + excluded.total_tokens,
-        cached_tokens = cached_tokens + excluded.cached_tokens,
-        request_count = request_count + 1,
-        updated_at = excluded.updated_at`,
-    )
-    .run(
-      day,
-      input.tenantId || "",
-      input.apiKeyId || "",
-      input.channelId || "",
-      input.credentialId || "",
-      input.model,
-      input.usage.promptTokens,
-      input.usage.completionTokens,
-      input.usage.totalTokens,
-      input.usage.cachedTokens,
-      input.createdAt,
-    );
+  getLogOrm()
+    .insert(usageDailyBuckets)
+    .values({
+      bucketDate: day,
+      tenantId: input.tenantId || "",
+      apiKeyId: input.apiKeyId || "",
+      channelId: input.channelId || "",
+      credentialId: input.credentialId || "",
+      model: input.model,
+      promptTokens: input.usage.promptTokens,
+      completionTokens: input.usage.completionTokens,
+      totalTokens: input.usage.totalTokens,
+      cachedTokens: input.usage.cachedTokens,
+      requestCount: 1,
+      updatedAt: input.createdAt,
+    })
+    .onConflictDoUpdate({
+      target: [
+        usageDailyBuckets.bucketDate,
+        usageDailyBuckets.apiKeyId,
+        usageDailyBuckets.channelId,
+        usageDailyBuckets.credentialId,
+        usageDailyBuckets.model,
+      ],
+      set: {
+        promptTokens: sql`${usageDailyBuckets.promptTokens} + excluded.prompt_tokens`,
+        completionTokens: sql`${usageDailyBuckets.completionTokens} + excluded.completion_tokens`,
+        totalTokens: sql`${usageDailyBuckets.totalTokens} + excluded.total_tokens`,
+        cachedTokens: sql`${usageDailyBuckets.cachedTokens} + excluded.cached_tokens`,
+        requestCount: sql`${usageDailyBuckets.requestCount} + 1`,
+        updatedAt: input.createdAt,
+      },
+    })
+    .run();
 }
 
 export function pruneRequestLogs(
@@ -315,7 +369,6 @@ export function pruneRequestLogs(
   const detailRetentionDays = normalizeRetentionDays(input.detailRetentionDays);
   const summaryCutoff = retentionCutoff(summaryRetentionDays);
   const detailCutoff = retentionCutoff(detailRetentionDays);
-  const db = getLogDb();
   const deleted = {
     requestLogDetails: 0,
     requestLogs: 0,
@@ -324,62 +377,59 @@ export function pruneRequestLogs(
     channelHealthEvents: 0,
   };
 
-  db.exec("BEGIN");
-  try {
+  getLogOrm().transaction(() => {
     deleted.requestLogDetails += changedRows(
-      db
-        .prepare("DELETE FROM request_log_details WHERE created_at < ?")
-        .run(detailCutoff),
+      runResult(getLogOrm()
+        .delete(requestLogDetails)
+        .where(lt(requestLogDetails.createdAt, detailCutoff))
+        .run()),
     );
     deleted.requestLogDetails += changedRows(
-      db
-        .prepare(
-          `DELETE FROM request_log_details
-           WHERE request_log_id IN (
-             SELECT id FROM request_logs WHERE started_at < ?
-           )`,
-        )
-        .run(summaryCutoff),
+      logRun(
+        `DELETE FROM request_log_details
+         WHERE request_log_id IN (
+           SELECT id FROM request_logs WHERE started_at < ?
+         )`,
+        [summaryCutoff],
+      ),
     );
     deleted.requestLogs = changedRows(
-      db
-        .prepare("DELETE FROM request_logs WHERE started_at < ?")
-        .run(summaryCutoff),
+      runResult(getLogOrm()
+        .delete(requestLogsTable)
+        .where(lt(requestLogsTable.startedAt, summaryCutoff))
+        .run()),
     );
     deleted.usageRecords = changedRows(
-      db
-        .prepare("DELETE FROM usage_records WHERE created_at < ?")
-        .run(summaryCutoff),
+      runResult(getLogOrm()
+        .delete(usageRecords)
+        .where(lt(usageRecords.createdAt, summaryCutoff))
+        .run()),
     );
     deleted.usageDailyBuckets = changedRows(
-      db
-        .prepare("DELETE FROM usage_daily_buckets WHERE bucket_date < ?")
-        .run(summaryCutoff.slice(0, 10)),
+      runResult(getLogOrm()
+        .delete(usageDailyBuckets)
+        .where(lt(usageDailyBuckets.bucketDate, summaryCutoff.slice(0, 10)))
+        .run()),
     );
     deleted.requestLogDetails += changedRows(
-      db
-        .prepare(
-          `DELETE FROM request_log_details
-           WHERE NOT EXISTS (
-             SELECT 1 FROM request_logs
-             WHERE request_logs.id = request_log_details.request_log_id
-           )`,
-        )
-        .run(),
+      logRun(
+        `DELETE FROM request_log_details
+         WHERE NOT EXISTS (
+           SELECT 1 FROM request_logs
+           WHERE request_logs.id = request_log_details.request_log_id
+         )`,
+      ),
     );
     deleted.channelHealthEvents = changedRows(
-      db
-        .prepare("DELETE FROM channel_health_events WHERE created_at < ?")
-        .run(summaryCutoff),
+      runResult(getLogOrm()
+        .delete(channelHealthEvents)
+        .where(lt(channelHealthEvents.createdAt, summaryCutoff))
+        .run()),
     );
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+  });
 
   if (input.vacuum) {
-    db.exec("VACUUM");
+    getLogOrm().run(sql.raw("VACUUM"));
   }
 
   adminOverviewCache = null;
@@ -407,25 +457,21 @@ export function appendChannelHealthEvent(input: {
   cooldownUntil?: string | null;
   message?: string | null;
 }) {
-  getLogDb()
-    .prepare(
-      `INSERT INTO channel_health_events (
-        id, created_at, channel_id, channel_name, credential_id, event_type,
-        status_code, health_score, cooldown_until, message
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      randomId("chevt"),
-      new Date().toISOString(),
-      input.channelId,
-      input.channelName || "",
-      input.credentialId || null,
-      input.eventType,
-      input.statusCode ?? null,
-      input.healthScore ?? null,
-      input.cooldownUntil || null,
-      input.message || null,
-    );
+  getLogOrm()
+    .insert(channelHealthEvents)
+    .values({
+      id: randomId("chevt"),
+      createdAt: new Date().toISOString(),
+      channelId: input.channelId,
+      channelName: input.channelName || "",
+      credentialId: input.credentialId || null,
+      eventType: input.eventType,
+      statusCode: input.statusCode ?? null,
+      healthScore: input.healthScore ?? null,
+      cooldownUntil: input.cooldownUntil || null,
+      message: input.message || null,
+    })
+    .run();
 }
 
 export function appendAuditLog(input: {
@@ -436,23 +482,19 @@ export function appendAuditLog(input: {
   targetId?: string | null;
   detail?: Record<string, unknown>;
 }) {
-  getLogDb()
-    .prepare(
-      `INSERT INTO audit_logs (
-        id, created_at, actor_type, actor_id, action, target_type,
-        target_id, detail_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      randomId("audit"),
-      new Date().toISOString(),
-      input.actorType || "system",
-      input.actorId || null,
-      input.action,
-      input.targetType || null,
-      input.targetId || null,
-      jsonStringify(input.detail || {}),
-    );
+  getLogOrm()
+    .insert(auditLogs)
+    .values({
+      id: randomId("audit"),
+      createdAt: new Date().toISOString(),
+      actorType: input.actorType || "system",
+      actorId: input.actorId || null,
+      action: input.action,
+      targetType: input.targetType || null,
+      targetId: input.targetId || null,
+      detailJson: jsonStringify(input.detail || {}),
+    })
+    .run();
 }
 
 export function transferApiKeyLogScope(input: {
@@ -460,90 +502,87 @@ export function transferApiKeyLogScope(input: {
   tenantId: string;
   tenantName: string;
 }) {
-  const db = getLogDb();
-  const requestLogs = changedRows(
-    db
-      .prepare(
-        `UPDATE request_logs
-         SET tenant_id = ?, tenant_name = ?
-         WHERE api_key_id = ?`,
-      )
-      .run(input.tenantId, input.tenantName, input.apiKeyId),
+  const migratedRequestLogs = changedRows(
+    runResult(getLogOrm()
+      .update(requestLogsTable)
+      .set({ tenantId: input.tenantId, tenantName: input.tenantName })
+      .where(eq(requestLogsTable.apiKeyId, input.apiKeyId))
+      .run()),
   );
-  const usageRecords = changedRows(
-    db
-      .prepare(
-        `UPDATE usage_records
-         SET tenant_id = ?, tenant_name = ?
-         WHERE api_key_id = ?`,
-      )
-      .run(input.tenantId, input.tenantName, input.apiKeyId),
+  const migratedUsageRecords = changedRows(
+    runResult(getLogOrm()
+      .update(usageRecords)
+      .set({ tenantId: input.tenantId, tenantName: input.tenantName })
+      .where(eq(usageRecords.apiKeyId, input.apiKeyId))
+      .run()),
   );
-  const usageDailyBuckets = changedRows(
-    db
-      .prepare(
-        `UPDATE usage_daily_buckets
-         SET tenant_id = ?
-         WHERE api_key_id = ?`,
-      )
-      .run(input.tenantId, input.apiKeyId),
+  const migratedUsageDailyBuckets = changedRows(
+    runResult(getLogOrm()
+      .update(usageDailyBuckets)
+      .set({ tenantId: input.tenantId })
+      .where(eq(usageDailyBuckets.apiKeyId, input.apiKeyId))
+      .run()),
   );
 
   adminOverviewCache = null;
   return {
-    requestLogs,
-    usageRecords,
-    usageDailyBuckets,
+    requestLogs: migratedRequestLogs,
+    usageRecords: migratedUsageRecords,
+    usageDailyBuckets: migratedUsageDailyBuckets,
   };
 }
 
 export function getApiKeyDailyUsage(apiKeyId: string, day = new Date()) {
   const bucketDate = day.toISOString().slice(0, 10);
-  const row = getLogDb()
-    .prepare(
-      `SELECT COALESCE(SUM(total_tokens), 0) AS total_tokens
-       FROM usage_daily_buckets
-       WHERE bucket_date = ? AND api_key_id = ?`,
+  const row = getLogOrm()
+    .select({
+      totalTokens: sql<number>`COALESCE(SUM(${usageDailyBuckets.totalTokens}), 0)`,
+    })
+    .from(usageDailyBuckets)
+    .where(
+      and(
+        eq(usageDailyBuckets.bucketDate, bucketDate),
+        eq(usageDailyBuckets.apiKeyId, apiKeyId),
+      ),
     )
-    .get(bucketDate, apiKeyId) as { total_tokens: number } | undefined;
-  return Number(row?.total_tokens || 0);
+    .get();
+  return Number(row?.totalTokens || 0);
 }
 
 export function getTenantDailyUsage(tenantId: string, day = new Date()) {
   const bucketDate = day.toISOString().slice(0, 10);
-  const row = getLogDb()
-    .prepare(
-      `SELECT COALESCE(SUM(total_tokens), 0) AS total_tokens
-       FROM usage_daily_buckets
-       WHERE bucket_date = ? AND tenant_id = ?`,
+  const row = getLogOrm()
+    .select({
+      totalTokens: sql<number>`COALESCE(SUM(${usageDailyBuckets.totalTokens}), 0)`,
+    })
+    .from(usageDailyBuckets)
+    .where(
+      and(
+        eq(usageDailyBuckets.bucketDate, bucketDate),
+        eq(usageDailyBuckets.tenantId, tenantId),
+      ),
     )
-    .get(bucketDate, tenantId) as { total_tokens: number } | undefined;
-  return Number(row?.total_tokens || 0);
+    .get();
+  return Number(row?.totalTokens || 0);
 }
 
 export function getApiKeyRequestCountSince(apiKeyId: string, since: Date) {
-  const row = getLogDb()
-    .prepare(
-      `SELECT COUNT(*) AS request_count
-       FROM request_logs
-       WHERE api_key_id = ? AND started_at >= ?`,
-    )
-    .get(apiKeyId, since.toISOString()) as
-    | { request_count: number }
-    | undefined;
+  const row = logGet(
+    `SELECT COUNT(*) AS request_count
+     FROM request_logs
+     WHERE api_key_id = ? AND started_at >= ?`,
+    [apiKeyId, since.toISOString()],
+  );
   return Number(row?.request_count || 0);
 }
 
 export function getTenantRequestCountSince(tenantId: string, since: Date) {
-  const row = getLogDb()
-    .prepare(
-      `SELECT COUNT(*) AS request_count
-       FROM request_logs
-       WHERE tenant_id = ? AND started_at >= ?`,
-    )
-    .get(tenantId, since.toISOString()) as
-    | { request_count: number }
-    | undefined;
+  const row = logGet(
+    `SELECT COUNT(*) AS request_count
+     FROM request_logs
+     WHERE tenant_id = ? AND started_at >= ?`,
+    [tenantId, since.toISOString()],
+  );
   return Number(row?.request_count || 0);
 }
 
@@ -571,9 +610,8 @@ export function getActivityHeatmapStats(
     params.push(apiKeyId);
   }
 
-  const rows = getLogDb()
-    .prepare(
-      `SELECT
+  const rows = logAll(
+    `SELECT
         substr(started_at, 1, 10) AS date,
         COUNT(*) AS request_count,
         SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
@@ -583,8 +621,8 @@ export function getActivityHeatmapStats(
        FROM request_logs
        WHERE ${conditions.join(" AND ")}
        GROUP BY substr(started_at, 1, 10)`,
-    )
-    .all(...params) as Array<Record<string, unknown>>;
+    params,
+  );
 
   const rowsByDate = new Map(rows.map((row) => [String(row.date || ""), row]));
   const rawDays = Array.from({ length: weeks * 7 }, (_, index) => {
@@ -731,9 +769,8 @@ export function getRequestLogDetail(
     input.tenantId === undefined || input.tenantId === null
       ? [id]
       : [id, input.tenantId];
-  const row = getLogDb()
-    .prepare(
-      `SELECT
+  const row = logGet(
+    `SELECT
         id, started_at, completed_at, method, path, request_type, stream,
         model, status_code, latency_ms,
         ${firstTokenLatencySelect("request_logs")},
@@ -742,15 +779,14 @@ export function getRequestLogDetail(
         cached_tokens, error_code, error_message
       FROM request_logs
       WHERE id = ? ${tenantWhere}`,
-    )
-    .get(...params) as Record<string, unknown> | undefined;
+    params,
+  );
   if (!row) {
     return null;
   }
 
-  const detailRow = getLogDb()
-    .prepare(
-      `SELECT
+  const detailRow = logGet(
+    `SELECT
         created_at, updated_at, request_headers_json, request_body_text,
         request_body_truncated, request_body_bytes, forwarded_body_text,
         forwarded_body_truncated, forwarded_body_bytes, upstream_status_code,
@@ -759,8 +795,8 @@ export function getRequestLogDetail(
         error_cause_json, detail_json, stage_timings_json
       FROM request_log_details
       WHERE request_log_id = ?`,
-    )
-    .get(id) as Record<string, unknown> | undefined;
+    [id],
+  );
 
   return {
     log: {
@@ -778,9 +814,8 @@ export function queryRequestLogs(
   const limit = Math.max(1, Math.floor(input.limit || 20));
   const offset = Math.max(0, Math.floor(input.offset || 0));
   const { where, params } = requestLogWhere(input);
-  const rows = getLogDb()
-    .prepare(
-      `SELECT
+  const rows = logAll(
+    `SELECT
         id, started_at, method, path, request_type, stream, model,
         status_code, latency_ms,
         ${firstTokenLatencySelect("request_logs")},
@@ -791,8 +826,8 @@ export function queryRequestLogs(
       ${where}
       ORDER BY started_at DESC
       LIMIT ? OFFSET ?`,
-    )
-    .all(...params, limit, offset) as Array<Record<string, unknown>>;
+    [...params, limit, offset],
+  );
 
   const publicRows = attachApiKeyNames(rows).map(toPublicRequestLogRow);
   const pageSummary = input.includeSummary
@@ -815,16 +850,13 @@ export function queryRequestLogs(
 }
 
 function countRequestLogs(where: string, params: string[]) {
-  const row = getLogDb()
-    .prepare(`SELECT COUNT(*) AS total FROM request_logs ${where}`)
-    .get(...params) as Record<string, unknown> | undefined;
+  const row = logGet(`SELECT COUNT(*) AS total FROM request_logs ${where}`, params);
   return numberValue(row?.total);
 }
 
 function summarizeRequestLogs(where: string, params: string[]) {
-  const summary = getLogDb()
-    .prepare(
-      `SELECT
+  const summary = logGet(
+    `SELECT
         SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
         COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
         COALESCE(SUM(total_tokens), 0) AS total_tokens,
@@ -832,8 +864,8 @@ function summarizeRequestLogs(where: string, params: string[]) {
         COALESCE(AVG(latency_ms), 0) AS avg_latency_ms
       FROM request_logs
       ${where}`,
-    )
-    .get(...params) as Record<string, unknown> | undefined;
+    params,
+  );
   const promptTokens = numberValue(summary?.prompt_tokens);
   const totalTokens = numberValue(summary?.total_tokens);
   const cachedTokens = numberValue(summary?.cached_tokens);
@@ -1083,9 +1115,8 @@ function requestWindowUsageHealth(
   }
 
   const placeholders = uniqueIds.map(() => "?").join(", ");
-  const rows = getLogDb()
-    .prepare(
-      `WITH ranked AS (
+  const rows = logAll(
+    `WITH ranked AS (
          SELECT ${columnName} AS target_id, started_at, status_code, error_code,
            ROW_NUMBER() OVER (
              PARTITION BY ${columnName}
@@ -1094,12 +1125,12 @@ function requestWindowUsageHealth(
          FROM request_logs INDEXED BY ${requestLogWindowIndex(columnName)}
          WHERE ${columnName} IN (${placeholders})
        )
-       SELECT target_id, started_at, status_code, error_code
-       FROM ranked
-       WHERE row_number <= ?
-       ORDER BY target_id ASC, started_at DESC`,
-    )
-    .all(...uniqueIds, windowSize) as Array<Record<string, unknown>>;
+        SELECT target_id, started_at, status_code, error_code
+        FROM ranked
+        WHERE row_number <= ?
+        ORDER BY target_id ASC, started_at DESC`,
+    [...uniqueIds, windowSize],
+  );
 
   const rowsById = new Map<string, Array<Record<string, unknown>>>();
   for (const row of rows) {
@@ -1234,9 +1265,8 @@ function bucketWhere(
 
 function getOverviewTotals(scope: LogScope = {}): AdminOverviewTotals {
   const { where, params } = bucketWhere(scope);
-  const row = getLogDb()
-    .prepare(
-      `SELECT
+  const row = logGet(
+    `SELECT
         COALESCE(SUM(request_count), 0) AS request_count,
         COALESCE(SUM(success_count), 0) AS success_count,
         COALESCE(SUM(error_count), 0) AS error_count,
@@ -1253,8 +1283,8 @@ function getOverviewTotals(scope: LogScope = {}): AdminOverviewTotals {
         MAX(last_request_at) AS last_request_at
       FROM request_daily_buckets
       ${where}`,
-    )
-    .get(...params) as Record<string, unknown> | undefined;
+    params,
+  );
   const requestCount = numberValue(row?.request_count);
   const promptTokens = numberValue(row?.prompt_tokens);
   const totalTokens = numberValue(row?.total_tokens);
@@ -1288,17 +1318,14 @@ function getApiKeyUsageStats(scope: LogScope = {}): ApiKeyUsageStatsRow[] {
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     overviewWindowStart,
   ]);
-  const rows = getLogDb()
-    .prepare(
-      `${bucketAggregateSelect("api_key_id")}
+  const rows = logAll(
+    `${bucketAggregateSelect("api_key_id")}
        ${where}
        GROUP BY COALESCE(api_key_id, '')
        ORDER BY total_tokens DESC, request_count DESC
        LIMIT ?`,
-    )
-    .all(...params, OVERVIEW_GROUP_LIMIT) as Array<
-    Record<string, unknown>
-  >;
+    [...params, OVERVIEW_GROUP_LIMIT],
+  );
   const keysById = apiKeysById(scope);
   const todayTokensByKey = todayTokensByApiKey(scope);
   const stats = rows.map((row) => {
@@ -1369,15 +1396,14 @@ function getTenantUsageStats(scope: LogScope = {}): TenantUsageStatsRow[] {
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     overviewWindowStart,
   ]);
-  const rows = getLogDb()
-    .prepare(
-      `${bucketAggregateSelect("tenant_id")}
+  const rows = logAll(
+    `${bucketAggregateSelect("tenant_id")}
        ${where}
        GROUP BY COALESCE(tenant_id, '')
        ORDER BY total_tokens DESC, request_count DESC
        LIMIT ?`,
-    )
-    .all(...params, OVERVIEW_GROUP_LIMIT) as Array<Record<string, unknown>>;
+    [...params, OVERVIEW_GROUP_LIMIT],
+  );
   const tenantsById = tenantRecordsById();
   const todayTokensByTenant = todayTokensByTenantId();
 
@@ -1426,9 +1452,8 @@ function getApiKeyModelUsageStats(
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
-  const rows = getLogDb()
-    .prepare(
-      `SELECT
+  const rows = logAll(
+    `SELECT
         COALESCE(api_key_id, '') AS api_key_id,
         COALESCE(model, '') AS model,
         COALESCE(SUM(request_count), 0) AS request_count,
@@ -1447,10 +1472,8 @@ function getApiKeyModelUsageStats(
       GROUP BY COALESCE(api_key_id, ''), COALESCE(model, '')
       ORDER BY total_tokens DESC, request_count DESC
       LIMIT ?`,
-    )
-    .all(...params, OVERVIEW_GROUP_LIMIT) as Array<
-    Record<string, unknown>
-  >;
+    [...params, OVERVIEW_GROUP_LIMIT],
+  );
   const keysById = apiKeysById(scope);
   return rows.map((row) => {
     const apiKeyId = nullableString(row.api_key_id);
@@ -1492,9 +1515,8 @@ function getApiKeyDailyUsageStats(
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
-  const rows = getLogDb()
-    .prepare(
-      `SELECT
+  const rows = logAll(
+    `SELECT
         bucket_date,
         COALESCE(api_key_id, '') AS api_key_id,
         COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
@@ -1507,10 +1529,8 @@ function getApiKeyDailyUsageStats(
        GROUP BY bucket_date, COALESCE(api_key_id, '')
        ORDER BY bucket_date DESC
        LIMIT ?`,
-    )
-    .all(...params, OVERVIEW_GROUP_LIMIT * OVERVIEW_DAILY_WINDOW_DAYS) as Array<
-    Record<string, unknown>
-  >;
+    [...params, OVERVIEW_GROUP_LIMIT * OVERVIEW_DAILY_WINDOW_DAYS],
+  );
   const keysById = apiKeysById(scope);
   return rows.map((row) => {
     const apiKeyId = nullableString(row.api_key_id);
@@ -1552,17 +1572,14 @@ function getGroupedUsageStats(
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
-  const rows = getLogDb()
-    .prepare(
-      `${bucketAggregateSelect(keyColumn)}
+  const rows = logAll(
+    `${bucketAggregateSelect(keyColumn)}
        ${where}
        GROUP BY COALESCE(${keyColumn}, '')
        ORDER BY total_tokens DESC, request_count DESC
        LIMIT ?`,
-    )
-    .all(...params, OVERVIEW_GROUP_LIMIT) as Array<
-    Record<string, unknown>
-  >;
+    [...params, OVERVIEW_GROUP_LIMIT],
+  );
   return rows.map((row) =>
     toUsageStatsRow(row, {
       emptyLabel: "未记录",
@@ -1577,9 +1594,8 @@ function getDailyUsageStats(scope: LogScope = {}): DailyUsageStatsRow[] {
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
-  const rows = getLogDb()
-    .prepare(
-      `SELECT
+  const rows = logAll(
+    `SELECT
         bucket_date AS date,
         COALESCE(SUM(request_count), 0) AS request_count,
         COALESCE(SUM(success_count), 0) AS success_count,
@@ -1595,10 +1611,8 @@ function getDailyUsageStats(scope: LogScope = {}): DailyUsageStatsRow[] {
       GROUP BY bucket_date
       ORDER BY date DESC
       LIMIT ?`,
-    )
-    .all(...params, OVERVIEW_DAILY_WINDOW_DAYS) as Array<
-    Record<string, unknown>
-  >;
+    [...params, OVERVIEW_DAILY_WINDOW_DAYS],
+  );
   return rows.map((row) => {
     const requestCount = numberValue(row.request_count);
     const totalTokens = numberValue(row.total_tokens);
@@ -1635,17 +1649,14 @@ function getDailyDimensionUsageStats(
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
-  const rows = getLogDb()
-    .prepare(
-      `${bucketAggregateSelect(safeKeyColumn, "bucket_date AS date,")}
+  const rows = logAll(
+    `${bucketAggregateSelect(safeKeyColumn, "bucket_date AS date,")}
        ${where}
        GROUP BY bucket_date, COALESCE(${safeKeyColumn}, '')
        ORDER BY bucket_date DESC, total_tokens DESC, request_count DESC
-       LIMIT ?`,
-    )
-    .all(...params, OVERVIEW_GROUP_LIMIT * normalizeOverviewDays(scope.days)) as Array<
-    Record<string, unknown>
-  >;
+        LIMIT ?`,
+    [...params, OVERVIEW_GROUP_LIMIT * normalizeOverviewDays(scope.days)],
+  );
   return rows.map((row) => {
     const dimensionId = nullableString(row.group_key);
     const label = dimensionUsageLabel(dimension, dimensionId, row);
@@ -1671,9 +1682,8 @@ function getErrorCodeDailyStats(scope: LogScope = {}): ErrorCodeDailyStatsRow[] 
     "started_at >= ?",
     "status_code >= 400",
   ], [recentStartedAt]);
-  const rows = getLogDb()
-    .prepare(
-      `SELECT
+  const rows = logAll(
+    `SELECT
         substr(started_at, 1, 10) AS date,
         COALESCE(error_code, 'unknown') AS error_code,
         COALESCE(tenant_id, '') AS tenant_id,
@@ -1684,10 +1694,8 @@ function getErrorCodeDailyStats(scope: LogScope = {}): ErrorCodeDailyStatsRow[] 
        GROUP BY date, COALESCE(error_code, 'unknown'), COALESCE(tenant_id, ''), COALESCE(tenant_name, '')
        ORDER BY date DESC, request_count DESC
        LIMIT ?`,
-    )
-    .all(...params, OVERVIEW_GROUP_LIMIT * normalizeOverviewDays(scope.days)) as Array<
-    Record<string, unknown>
-  >;
+    [...params, OVERVIEW_GROUP_LIMIT * normalizeOverviewDays(scope.days)],
+  );
   return rows.map((row) => ({
     date: String(row.date || ""),
     errorCode: String(row.error_code || "unknown"),
@@ -2001,11 +2009,10 @@ function apiKeysById(scope: LogScope = {}) {
       : scope.tenantId === null
         ? { where: "WHERE tenant_id IS NULL", params: [] as string[] }
         : { where: "WHERE tenant_id = ?", params: [scope.tenantId] };
-  const rows = getMainDb()
-    .prepare(
-      `SELECT id, name, prefix, enabled, token_limit_daily FROM api_keys ${where}`,
-    )
-    .all(...params) as Array<{
+  const rows = mainAll(
+    `SELECT id, name, prefix, enabled, token_limit_daily FROM api_keys ${where}`,
+    params,
+  ) as Array<{
     id: string;
     name: string;
     prefix: string;
@@ -2018,27 +2025,24 @@ function apiKeysById(scope: LogScope = {}) {
 function todayTokensByApiKey(scope: LogScope = {}) {
   const today = new Date().toISOString().slice(0, 10);
   const { where, params } = overviewWhere(scope, ["bucket_date = ?"], [today]);
-  const rows = getLogDb()
-    .prepare(
-      `SELECT api_key_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
+  const rows = logAll(
+    `SELECT api_key_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
        FROM usage_daily_buckets
        ${where}
        GROUP BY api_key_id`,
-    )
-    .all(...params) as Array<{ api_key_id: string; total_tokens: number }>;
+    params,
+  ) as Array<{ api_key_id: string; total_tokens: number }>;
   return new Map(
     rows.map((row) => [String(row.api_key_id), numberValue(row.total_tokens)]),
   );
 }
 
 function tenantRecordsById() {
-  const rows = getMainDb()
-    .prepare(
-      `SELECT id, name, owner_email, enabled, token_limit_daily
+  const rows = mainAll(
+    `SELECT id, name, owner_email, enabled, token_limit_daily
        FROM tenants
        WHERE deleted_at IS NULL`,
-    )
-    .all() as Array<{
+  ) as Array<{
     id: string;
     name: string;
     owner_email: string;
@@ -2050,14 +2054,13 @@ function tenantRecordsById() {
 
 function todayTokensByTenantId() {
   const today = new Date().toISOString().slice(0, 10);
-  const rows = getLogDb()
-    .prepare(
-      `SELECT tenant_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
+  const rows = logAll(
+    `SELECT tenant_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
        FROM usage_daily_buckets
        WHERE bucket_date = ?
        GROUP BY tenant_id`,
-    )
-    .all(today) as Array<{ tenant_id: string; total_tokens: number }>;
+    [today],
+  ) as Array<{ tenant_id: string; total_tokens: number }>;
   return new Map(
     rows.map((row) => [String(row.tenant_id), numberValue(row.total_tokens)]),
   );
@@ -2112,6 +2115,10 @@ function cleanNullableString(value: unknown) {
 
 function changedRows(result: { changes: number | bigint }) {
   return Number(result.changes || 0);
+}
+
+function runResult(result: unknown) {
+  return result as { changes: number | bigint };
 }
 
 function normalizeRetentionDays(days: number) {
@@ -2293,9 +2300,10 @@ function attachApiKeyNames(rows: Array<Record<string, unknown>>) {
   }
 
   const placeholders = apiKeyIds.map(() => "?").join(", ");
-  const apiKeyRows = getMainDb()
-    .prepare(`SELECT id, name FROM api_keys WHERE id IN (${placeholders})`)
-    .all(...apiKeyIds) as Array<{ id: string; name: string }>;
+  const apiKeyRows = mainAll(
+    `SELECT id, name FROM api_keys WHERE id IN (${placeholders})`,
+    apiKeyIds,
+  ) as Array<{ id: string; name: string }>;
   const namesById = new Map(
     apiKeyRows.map((row) => [String(row.id), String(row.name || "")]),
   );

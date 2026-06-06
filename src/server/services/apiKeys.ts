@@ -8,7 +8,7 @@ import type {
   RelayApiKeyContext,
   TenantWithSecrets,
 } from "@/src/shared/types/entities";
-import { getLogDb, getMainDb } from "@/src/server/db/sqlite";
+import { getLogOrm, getMainOrm } from "@/src/server/db/sqlite";
 import {
   countApiKeysByTenant,
   deleteApiKey,
@@ -169,11 +169,8 @@ export function transferAdminApiKeyToTenant(
     throw new HttpError(404, "tenant_not_found", "Tenant not found");
   }
 
-  const mainDb = getMainDb();
-  const logDb = getLogDb();
-  mainDb.exec("BEGIN");
-  logDb.exec("BEGIN");
-  try {
+  return getMainOrm().transaction(() =>
+    getLogOrm().transaction(() => {
     const record = transferApiKeyTenant(id, tenant.id);
     if (!record) {
       throw new HttpError(404, "api_key_not_found", "API key not found");
@@ -197,18 +194,13 @@ export function transferAdminApiKeyToTenant(
         migrated,
       },
     });
-    logDb.exec("COMMIT");
-    mainDb.exec("COMMIT");
     return {
       apiKey: toPublicApiKey(record),
       tenant: toPublicTenant(tenant),
       migrated,
     };
-  } catch (error) {
-    rollbackQuietly(logDb);
-    rollbackQuietly(mainDb);
-    throw error;
-  }
+    }),
+  );
 }
 
 export function patchTenantApiKey(
@@ -547,10 +539,3 @@ function normalizeNullablePositiveInteger(value: unknown) {
     : null;
 }
 
-function rollbackQuietly(db: { exec(sql: string): unknown }) {
-  try {
-    db.exec("ROLLBACK");
-  } catch {
-    // The transaction may already be closed after a failed COMMIT.
-  }
-}
