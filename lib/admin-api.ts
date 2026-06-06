@@ -62,6 +62,8 @@ export type AdminDashboardRequestLogRow = {
   status_code: number;
   latency_ms: number;
   first_token_latency_ms: number | null;
+  tenant_id: string | null;
+  tenant_name: string | null;
   api_key_prefix: string | null;
   api_key_name: string | null;
   channel_name: string | null;
@@ -528,8 +530,13 @@ export function logoutWebSession() {
   });
 }
 
-export function getOverview() {
-  return adminRequest<AdminOverviewStats>("/api/admin/overview");
+export function getOverview(options: { days?: number } = {}) {
+  const params = new URLSearchParams();
+  if (options.days) {
+    params.set("days", String(options.days));
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  return adminRequest<AdminOverviewStats>(`/api/admin/overview${suffix}`);
 }
 
 export function getGlobalSettings() {

@@ -324,7 +324,7 @@ export function LogsSection({
                     <TableHead>模型</TableHead>
                     <TableHead>状态</TableHead>
                     <TableHead>首字延迟</TableHead>
-                    <TableHead>密钥 / 通道</TableHead>
+                    <TableHead>租户 / 通道</TableHead>
                     <TableHead>Token</TableHead>
                     <TableHead>操作</TableHead>
                   </TableRow>
@@ -359,13 +359,21 @@ export function LogsSection({
                         {formatNullableDuration(log.first_token_latency_ms)}
                       </TableCell>
                       <TableCell>
-                        <div>{log.api_key_name || "未知密钥"}</div>
-                        <div className="font-mono text-xs text-muted-foreground">
-                          {log.api_key_prefix || "-"}
+                        <div className="font-medium">
+                          {formatTenantName(log)}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {log.channel_name || "-"} ·{" "}
                           {log.credential_email || "-"}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          Key {log.api_key_name || "未知密钥"}
+                          {log.api_key_prefix ? (
+                            <span className="font-mono">
+                              {" "}
+                              · {log.api_key_prefix}
+                            </span>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -527,6 +535,10 @@ function RequestLogDetailDialog({
               <div>
                 <div className="text-xs text-muted-foreground">模型</div>
                 <div>{log.model || "-"}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">租户</div>
+                <div>{formatTenantName(log)}</div>
               </div>
               <div>
                 <div className="text-xs text-muted-foreground">
@@ -784,6 +796,12 @@ function renderStatusCodeBadge(statusCode: number) {
     return <Badge variant="destructive">{statusCode}</Badge>;
   }
   return <Badge variant="outline">{statusCode || "待处理"}</Badge>;
+}
+
+function formatTenantName(
+  log: Pick<RequestLogDetail["log"], "tenant_id" | "tenant_name">,
+) {
+  return log.tenant_name || log.tenant_id || "未归属流量";
 }
 
 function formatDetailValue(value: unknown) {

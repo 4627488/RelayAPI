@@ -10,8 +10,18 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     requireWebRequest(request);
-    return Response.json(getAdminOverviewStats());
+    const searchParams = new URL(request.url).searchParams;
+    return Response.json(
+      getAdminOverviewStats({
+        days: normalizeDays(searchParams.get("days")),
+      }),
+    );
   } catch (error) {
     return errorToResponse(error);
   }
+}
+
+function normalizeDays(value: string | null) {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }

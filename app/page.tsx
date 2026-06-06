@@ -35,6 +35,8 @@ type RequestLogRow = {
   status_code: number;
   latency_ms: number;
   first_token_latency_ms: number | null;
+  tenant_id: string | null;
+  tenant_name: string | null;
   api_key_prefix: string | null;
   api_key_name: string | null;
   channel_name: string | null;

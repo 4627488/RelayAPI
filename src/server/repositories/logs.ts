@@ -6,13 +6,16 @@ import { jsonStringify, randomId } from "@/src/server/services/crypto";
 import type { StageTimingEntry } from "@/src/server/http/stageTimer";
 import type {
   ActivityHeatmapStats,
+  AdminOverviewAnomaly,
   AdminOverviewStats,
   AdminOverviewTotals,
   ApiKeyDailyUsageStatsRow,
   ApiKeyModelUsageStatsRow,
   ApiKeyUsageStatsRow,
   CodexAccountUsageHealth,
+  DailyDimensionUsageStatsRow,
   DailyUsageStatsRow,
+  ErrorCodeDailyStatsRow,
   TenantUsageStatsRow,
   UsageSnapshot,
   UsageStatsRow,
@@ -21,6 +24,7 @@ import type {
 const ADMIN_OVERVIEW_CACHE_TTL_MS = 15_000;
 const OVERVIEW_GROUP_LIMIT = 100;
 const OVERVIEW_DAILY_WINDOW_DAYS = 30;
+const OVERVIEW_MAX_DAILY_WINDOW_DAYS = 90;
 const DEFAULT_HEATMAP_WEEKS = 53;
 const MAX_HEATMAP_WEEKS = 53;
 
@@ -38,6 +42,7 @@ let usageHealthCache = new Map<
 
 type LogScope = {
   tenantId?: string | null;
+  days?: number;
 };
 
 export interface RequestLogInput {
@@ -641,6 +646,8 @@ export interface PublicRequestLogRow {
   status_code: number;
   latency_ms: number;
   first_token_latency_ms: number | null;
+  tenant_id: string | null;
+  tenant_name: string | null;
   api_key_prefix: string | null;
   api_key_name: string | null;
   channel_name: string | null;
@@ -730,7 +737,7 @@ export function getRequestLogDetail(
         id, started_at, completed_at, method, path, request_type, stream,
         model, status_code, latency_ms,
         ${firstTokenLatencySelect("request_logs")},
-        api_key_id, api_key_prefix, api_key_name, channel_name,
+        tenant_id, tenant_name, api_key_id, api_key_prefix, api_key_name, channel_name,
         credential_email, prompt_tokens, completion_tokens, total_tokens,
         cached_tokens, error_code, error_message
       FROM request_logs
@@ -777,7 +784,7 @@ export function queryRequestLogs(
         id, started_at, method, path, request_type, stream, model,
         status_code, latency_ms,
         ${firstTokenLatencySelect("request_logs")},
-        api_key_id, api_key_prefix, api_key_name, channel_name,
+        tenant_id, tenant_name, api_key_id, api_key_prefix, api_key_name, channel_name,
         credential_email, prompt_tokens, completion_tokens, total_tokens,
         cached_tokens, error_code
       FROM request_logs
@@ -889,6 +896,8 @@ function requestLogWhere(input: RequestLogQueryInput) {
         lower(path) LIKE ? OR
         lower(request_type) LIKE ? OR
         lower(model) LIKE ? OR
+        lower(tenant_id) LIKE ? OR
+        lower(tenant_name) LIKE ? OR
         lower(api_key_prefix) LIKE ? OR
         lower(api_key_name) LIKE ? OR
         lower(channel_name) LIKE ? OR
@@ -897,7 +906,20 @@ function requestLogWhere(input: RequestLogQueryInput) {
         CAST(status_code AS TEXT) LIKE ?
       )`,
     );
-    params.push(like, like, like, like, like, like, like, like, like, like);
+    params.push(
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+    );
   }
 
   return {
@@ -908,32 +930,53 @@ function requestLogWhere(input: RequestLogQueryInput) {
 
 export function getAdminOverviewStats(scope: LogScope = {}): AdminOverviewStats {
   const now = Date.now();
-  const cacheable = scope.tenantId === undefined;
+  const days = normalizeOverviewDays(scope.days);
+  const normalizedScope = { ...scope, days };
+  const range = overviewRange(days);
+  const cacheable = scope.tenantId === undefined && days === OVERVIEW_DAILY_WINDOW_DAYS;
   if (cacheable && adminOverviewCache && adminOverviewCache.expiresAt > now) {
     return adminOverviewCache.value;
   }
 
-  const totals = getOverviewTotals(scope);
+  const totals = getOverviewTotals(normalizedScope);
+  const byDay = getDailyUsageStats(normalizedScope);
+  const byTenant = getTenantUsageStats(normalizedScope);
+  const byChannel = getGroupedUsageStats("channel_id", "channel_name", normalizedScope);
+  const byCredential = getGroupedUsageStats(
+    "credential_id",
+    "credential_email",
+    normalizedScope,
+  );
   const value = {
     generatedAt: new Date().toISOString(),
+    range,
     totals,
-    byTenant: getTenantUsageStats(scope),
-    byApiKey: getApiKeyUsageStats(scope),
-    byApiKeyDay: getApiKeyDailyUsageStats(scope),
-    byApiKeyModel: getApiKeyModelUsageStats(scope),
-    byModel: getGroupedUsageStats("model", "model", scope),
-    byChannel: getGroupedUsageStats("channel_id", "channel_name", scope),
-    byCredential: getGroupedUsageStats(
-      "credential_id",
-      "credential_email",
-      scope,
-    ),
+    byTenant,
+    byApiKey: getApiKeyUsageStats(normalizedScope),
+    byApiKeyDay: getApiKeyDailyUsageStats(normalizedScope),
+    byApiKeyModel: getApiKeyModelUsageStats(normalizedScope),
+    byModel: getGroupedUsageStats("model", "model", normalizedScope),
+    byChannel,
+    byCredential,
     byRequestType: getGroupedUsageStats(
       "request_type",
       "request_type",
-      scope,
+      normalizedScope,
     ),
-    byDay: getDailyUsageStats(scope),
+    byDay,
+    byTenantDay: getDailyDimensionUsageStats("tenant", "tenant_id", normalizedScope),
+    byModelDay: getDailyDimensionUsageStats("model", "model", normalizedScope),
+    byChannelDay: getDailyDimensionUsageStats("channel", "channel_id", normalizedScope),
+    byCredentialDay: getDailyDimensionUsageStats("credential", "credential_id", normalizedScope),
+    byRequestTypeDay: getDailyDimensionUsageStats("request_type", "request_type", normalizedScope),
+    byErrorCodeDay: getErrorCodeDailyStats(normalizedScope),
+    anomalies: buildAdminOverviewAnomalies({
+      byDay,
+      byTenant,
+      byChannel,
+      byCredential,
+      totals,
+    }),
   };
   if (cacheable) {
     adminOverviewCache = {
@@ -945,8 +988,10 @@ export function getAdminOverviewStats(scope: LogScope = {}): AdminOverviewStats 
 }
 
 export function emptyAdminOverviewStats(): AdminOverviewStats {
+  const range = overviewRange(OVERVIEW_DAILY_WINDOW_DAYS);
   return {
     generatedAt: new Date().toISOString(),
+    range,
     totals: {
       requestCount: 0,
       successCount: 0,
@@ -978,6 +1023,13 @@ export function emptyAdminOverviewStats(): AdminOverviewStats {
     byCredential: [],
     byRequestType: [],
     byDay: [],
+    byTenantDay: [],
+    byModelDay: [],
+    byChannelDay: [],
+    byCredentialDay: [],
+    byRequestTypeDay: [],
+    byErrorCodeDay: [],
+    anomalies: [],
   };
 }
 
@@ -1232,7 +1284,7 @@ function getOverviewTotals(scope: LogScope = {}): AdminOverviewTotals {
 }
 
 function getApiKeyUsageStats(scope: LogScope = {}): ApiKeyUsageStatsRow[] {
-  const overviewWindowStart = overviewRecentStartedAt().slice(0, 10);
+  const overviewWindowStart = overviewRecentStartedAt(scope).slice(0, 10);
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     overviewWindowStart,
   ]);
@@ -1313,7 +1365,7 @@ function getTenantUsageStats(scope: LogScope = {}): TenantUsageStatsRow[] {
   if (scope.tenantId !== undefined) {
     return [];
   }
-  const overviewWindowStart = overviewRecentStartedAt().slice(0, 10);
+  const overviewWindowStart = overviewRecentStartedAt(scope).slice(0, 10);
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     overviewWindowStart,
   ]);
@@ -1370,7 +1422,7 @@ function getTenantUsageStats(scope: LogScope = {}): TenantUsageStatsRow[] {
 function getApiKeyModelUsageStats(
   scope: LogScope = {},
 ): ApiKeyModelUsageStatsRow[] {
-  const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
+  const recentStartedAt = overviewRecentStartedAt(scope).slice(0, 10);
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
@@ -1436,7 +1488,7 @@ function getApiKeyModelUsageStats(
 function getApiKeyDailyUsageStats(
   scope: LogScope = {},
 ): ApiKeyDailyUsageStatsRow[] {
-  const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
+  const recentStartedAt = overviewRecentStartedAt(scope).slice(0, 10);
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
@@ -1496,7 +1548,7 @@ function getGroupedUsageStats(
   _labelColumn: string,
   scope: LogScope = {},
 ): UsageStatsRow[] {
-  const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
+  const recentStartedAt = overviewRecentStartedAt(scope).slice(0, 10);
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
@@ -1521,7 +1573,7 @@ function getGroupedUsageStats(
 }
 
 function getDailyUsageStats(scope: LogScope = {}): DailyUsageStatsRow[] {
-  const recentStartedAt = overviewRecentStartedAt().slice(0, 10);
+  const recentStartedAt = overviewRecentStartedAt(scope).slice(0, 10);
   const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
     recentStartedAt,
   ]);
@@ -1573,9 +1625,274 @@ function getDailyUsageStats(scope: LogScope = {}): DailyUsageStatsRow[] {
   });
 }
 
-function bucketAggregateSelect(keyColumn: string) {
+function getDailyDimensionUsageStats(
+  dimension: DailyDimensionUsageStatsRow["dimension"],
+  keyColumn: string,
+  scope: LogScope = {},
+): DailyDimensionUsageStatsRow[] {
+  const safeKeyColumn = safeLatencyColumnName(keyColumn);
+  const recentStartedAt = overviewRecentStartedAt(scope).slice(0, 10);
+  const { where, params } = bucketWhere(scope, ["bucket_date >= ?"], [
+    recentStartedAt,
+  ]);
+  const rows = getLogDb()
+    .prepare(
+      `${bucketAggregateSelect(safeKeyColumn, "bucket_date AS date,")}
+       ${where}
+       GROUP BY bucket_date, COALESCE(${safeKeyColumn}, '')
+       ORDER BY bucket_date DESC, total_tokens DESC, request_count DESC
+       LIMIT ?`,
+    )
+    .all(...params, OVERVIEW_GROUP_LIMIT * normalizeOverviewDays(scope.days)) as Array<
+    Record<string, unknown>
+  >;
+  return rows.map((row) => {
+    const dimensionId = nullableString(row.group_key);
+    const label = dimensionUsageLabel(dimension, dimensionId, row);
+    return {
+      ...toUsageStatsRow(row, {
+        label,
+        subLabel: dimensionId,
+        emptyLabel: dimensionEmptyLabel(dimension),
+        groupColumn: keyColumn,
+        scope,
+      }),
+      date: String(row.date || ""),
+      dimension,
+      dimensionId,
+      dimensionName: label,
+    };
+  });
+}
+
+function getErrorCodeDailyStats(scope: LogScope = {}): ErrorCodeDailyStatsRow[] {
+  const recentStartedAt = overviewRecentStartedAt(scope);
+  const { where, params } = overviewWhere(scope, [
+    "started_at >= ?",
+    "status_code >= 400",
+  ], [recentStartedAt]);
+  const rows = getLogDb()
+    .prepare(
+      `SELECT
+        substr(started_at, 1, 10) AS date,
+        COALESCE(error_code, 'unknown') AS error_code,
+        COALESCE(tenant_id, '') AS tenant_id,
+        COALESCE(tenant_name, '') AS tenant_name,
+        COUNT(*) AS request_count
+       FROM request_logs
+       ${where}
+       GROUP BY date, COALESCE(error_code, 'unknown'), COALESCE(tenant_id, ''), COALESCE(tenant_name, '')
+       ORDER BY date DESC, request_count DESC
+       LIMIT ?`,
+    )
+    .all(...params, OVERVIEW_GROUP_LIMIT * normalizeOverviewDays(scope.days)) as Array<
+    Record<string, unknown>
+  >;
+  return rows.map((row) => ({
+    date: String(row.date || ""),
+    errorCode: String(row.error_code || "unknown"),
+    requestCount: numberValue(row.request_count),
+    tenantId: nullableString(row.tenant_id),
+    tenantName: nullableString(row.tenant_name),
+  }));
+}
+
+function dimensionUsageLabel(
+  dimension: DailyDimensionUsageStatsRow["dimension"],
+  dimensionId: string | null,
+  row: Record<string, unknown>,
+) {
+  if (dimension === "tenant") {
+    if (!dimensionId) {
+      return "未归属流量";
+    }
+    return tenantRecordsById().get(dimensionId)?.name || dimensionId;
+  }
+  if (dimension === "api_key") {
+    return (dimensionId && apiKeysById().get(dimensionId)?.name) || dimensionId || "未知 Key";
+  }
+  const fallback = dimensionEmptyLabel(dimension);
+  return nullableString(row.group_label) || dimensionId || fallback;
+}
+
+function dimensionEmptyLabel(
+  dimension: DailyDimensionUsageStatsRow["dimension"],
+) {
+  const labels: Record<DailyDimensionUsageStatsRow["dimension"], string> = {
+    tenant: "未归属流量",
+    api_key: "未知 Key",
+    model: "未知模型",
+    channel: "未知通道",
+    credential: "未知凭据",
+    request_type: "未知请求类型",
+  };
+  return labels[dimension];
+}
+
+function buildAdminOverviewAnomalies(input: {
+  byDay: DailyUsageStatsRow[];
+  byTenant: TenantUsageStatsRow[];
+  byChannel: UsageStatsRow[];
+  byCredential: UsageStatsRow[];
+  totals: AdminOverviewTotals;
+}): AdminOverviewAnomaly[] {
+  const anomalies: AdminOverviewAnomaly[] = [];
+  const today = input.byDay[0];
+  const yesterday = input.byDay[1];
+  if (today) {
+    const errorRate = ratio(today.errorCount, today.requestCount) || 0;
+    if (errorRate >= 15) {
+      anomalies.push(adminOverviewAnomaly({
+        severity: "critical",
+        category: "error",
+        title: "今日错误率严重偏高",
+        description: `今日错误率 ${errorRate.toFixed(1)}%，共 ${formatInteger(today.errorCount)} 个错误请求。`,
+        date: today.date,
+        metric: "error_rate",
+        value: errorRate,
+      }));
+    } else if (errorRate >= 5) {
+      anomalies.push(adminOverviewAnomaly({
+        severity: "warning",
+        category: "error",
+        title: "今日错误率偏高",
+        description: `今日错误率 ${errorRate.toFixed(1)}%，建议查看错误码和通道分布。`,
+        date: today.date,
+        metric: "error_rate",
+        value: errorRate,
+      }));
+    }
+    if (today.avgLatencyMs >= 30_000) {
+      anomalies.push(adminOverviewAnomaly({
+        severity: "critical",
+        category: "latency",
+        title: "今日平均延迟严重偏高",
+        description: `今日平均延迟 ${formatMilliseconds(today.avgLatencyMs)}，可能存在上游或代理瓶颈。`,
+        date: today.date,
+        metric: "avg_latency_ms",
+        value: today.avgLatencyMs,
+      }));
+    } else if (today.avgLatencyMs >= 10_000) {
+      anomalies.push(adminOverviewAnomaly({
+        severity: "warning",
+        category: "latency",
+        title: "今日平均延迟偏高",
+        description: `今日平均延迟 ${formatMilliseconds(today.avgLatencyMs)}。`,
+        date: today.date,
+        metric: "avg_latency_ms",
+        value: today.avgLatencyMs,
+      }));
+    }
+    if (yesterday && yesterday.totalTokens > 0) {
+      const tokenGrowth = ((today.totalTokens - yesterday.totalTokens) / yesterday.totalTokens) * 100;
+      if (tokenGrowth >= 100 && today.totalTokens >= 10_000) {
+        anomalies.push(adminOverviewAnomaly({
+          severity: "warning",
+          category: "traffic",
+          title: "今日 Token 消耗突增",
+          description: `今日 Token 较昨日增长 ${tokenGrowth.toFixed(1)}%。`,
+          date: today.date,
+          metric: "token_growth",
+          value: tokenGrowth,
+          baseline: yesterday.totalTokens,
+        }));
+      }
+    }
+  }
+
+  for (const tenant of input.byTenant.slice(0, 10)) {
+    if (tenant.tokenLimitUtilization !== null && tenant.tokenLimitUtilization >= 95) {
+      anomalies.push(adminOverviewAnomaly({
+        severity: "critical",
+        category: "quota",
+        title: `${tenant.tenantName} 接近或已达到今日额度`,
+        description: `今日已使用 ${formatInteger(tenant.todayTokens)} token，额度利用率 ${tenant.tokenLimitUtilization}%。`,
+        tenantId: tenant.tenantId,
+        tenantName: tenant.tenantName,
+        targetId: tenant.tenantId,
+        targetName: tenant.tenantName,
+        metric: "tenant_quota_utilization",
+        value: tenant.tokenLimitUtilization,
+      }));
+    } else if (tenant.tokenLimitUtilization !== null && tenant.tokenLimitUtilization >= 80) {
+      anomalies.push(adminOverviewAnomaly({
+        severity: "warning",
+        category: "quota",
+        title: `${tenant.tenantName} 今日额度使用较高`,
+        description: `额度利用率 ${tenant.tokenLimitUtilization}%。`,
+        tenantId: tenant.tenantId,
+        tenantName: tenant.tenantName,
+        targetId: tenant.tenantId,
+        targetName: tenant.tenantName,
+        metric: "tenant_quota_utilization",
+        value: tenant.tokenLimitUtilization,
+      }));
+    }
+  }
+
+  for (const row of [...input.byChannel, ...input.byCredential].slice(0, 30)) {
+    const errorRate = ratio(row.errorCount, row.requestCount) || 0;
+    if (row.requestCount >= 20 && errorRate >= 10) {
+      anomalies.push(adminOverviewAnomaly({
+        severity: errorRate >= 25 ? "critical" : "warning",
+        category: "routing",
+        title: `${row.label || row.key} 错误率偏高`,
+        description: `最近窗口内 ${formatInteger(row.requestCount)} 次请求，错误率 ${errorRate.toFixed(1)}%。`,
+        targetId: row.key,
+        targetName: row.label,
+        metric: "dimension_error_rate",
+        value: errorRate,
+      }));
+    }
+  }
+
+  const unassigned = input.byTenant.find((row) => !row.tenantId);
+  if (unassigned && input.totals.requestCount > 0) {
+    const unassignedRate = (unassigned.requestCount / input.totals.requestCount) * 100;
+    if (unassignedRate >= 5) {
+      anomalies.push(adminOverviewAnomaly({
+        severity: "warning",
+        category: "traffic",
+        title: "未归属流量占比较高",
+        description: `未归属流量占最近窗口请求的 ${unassignedRate.toFixed(1)}%。`,
+        targetName: "未归属流量",
+        metric: "unassigned_traffic_rate",
+        value: unassignedRate,
+      }));
+    }
+  }
+
+  return anomalies.slice(0, 12);
+}
+
+function adminOverviewAnomaly(
+  input: Partial<AdminOverviewAnomaly> &
+    Pick<
+      AdminOverviewAnomaly,
+      "severity" | "category" | "title" | "description" | "metric" | "value"
+    >,
+): AdminOverviewAnomaly {
+  return {
+    id: `${input.category}:${input.metric}:${input.date || input.targetId || input.targetName || input.title}`,
+    severity: input.severity,
+    category: input.category,
+    title: input.title,
+    description: input.description,
+    date: input.date ?? null,
+    tenantId: input.tenantId ?? null,
+    tenantName: input.tenantName ?? null,
+    targetId: input.targetId ?? null,
+    targetName: input.targetName ?? null,
+    metric: input.metric,
+    value: input.value,
+    baseline: input.baseline ?? null,
+  };
+}
+
+function bucketAggregateSelect(keyColumn: string, prefix = "") {
   const safeKeyColumn = safeLatencyColumnName(keyColumn);
   return `SELECT
+    ${prefix}
     COALESCE(${safeKeyColumn}, '') AS group_key,
     COALESCE(${safeKeyColumn}, '') AS group_label,
     COALESCE(SUM(request_count), 0) AS request_count,
@@ -1808,8 +2125,26 @@ function retentionCutoff(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-function overviewRecentStartedAt() {
-  return new Date(Date.now() - OVERVIEW_DAILY_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+function overviewRange(daysInput = OVERVIEW_DAILY_WINDOW_DAYS) {
+  const days = normalizeOverviewDays(daysInput);
+  const to = new Date().toISOString().slice(0, 10);
+  return {
+    from: addUtcDays(to, -days + 1),
+    to,
+    days,
+  };
+}
+
+function normalizeOverviewDays(days?: number) {
+  const parsed = Number(days || OVERVIEW_DAILY_WINDOW_DAYS);
+  if (!Number.isFinite(parsed)) {
+    return OVERVIEW_DAILY_WINDOW_DAYS;
+  }
+  return Math.max(1, Math.min(OVERVIEW_MAX_DAILY_WINDOW_DAYS, Math.floor(parsed)));
+}
+
+function overviewRecentStartedAt(scope: LogScope = {}) {
+  return new Date(Date.now() - normalizeOverviewDays(scope.days) * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
 }
@@ -1818,12 +2153,32 @@ function average(total: number, count: number) {
   return count > 0 ? Math.round((total / count) * 100) / 100 : 0;
 }
 
+function ratio(numerator: number, denominator: number) {
+  return denominator > 0 ? (numerator / denominator) * 100 : null;
+}
+
 function throughput(totalTokens: number, totalLatencyMs: unknown) {
   const latencySeconds = numberValue(totalLatencyMs) / 1000;
   if (latencySeconds <= 0) {
     return 0;
   }
   return Math.round((totalTokens / latencySeconds) * 100) / 100;
+}
+
+function formatInteger(value: number) {
+  return new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatMilliseconds(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 ms";
+  }
+  if (value < 1000) {
+    return `${Math.round(value)} ms`;
+  }
+  return `${(value / 1000).toFixed(2)} s`;
 }
 
 function cacheHitRate(cachedTokens: number, promptTokens: number) {
@@ -1909,6 +2264,8 @@ function toPublicRequestLogRow(
     status_code: Number(row.status_code || 0),
     latency_ms: Number(row.latency_ms || 0),
     first_token_latency_ms: nullableNumber(row.first_token_latency_ms),
+    tenant_id: nullableString(row.tenant_id),
+    tenant_name: nullableString(row.tenant_name),
     api_key_prefix: nullableString(row.api_key_prefix),
     api_key_name: nullableString(row.api_key_name),
     channel_name: nullableString(row.channel_name),

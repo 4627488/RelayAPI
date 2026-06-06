@@ -383,6 +383,21 @@ export interface ApiKeyDailyUsageStatsRow extends DailyUsageStatsRow {
   apiKeyName: string;
 }
 
+export interface DailyDimensionUsageStatsRow extends UsageStatsRow {
+  date: string;
+  dimension: "tenant" | "api_key" | "model" | "channel" | "credential" | "request_type";
+  dimensionId: string | null;
+  dimensionName: string;
+}
+
+export interface ErrorCodeDailyStatsRow {
+  date: string;
+  errorCode: string;
+  requestCount: number;
+  tenantId: string | null;
+  tenantName: string | null;
+}
+
 export interface DailyUsageStatsRow {
   date: string;
   requestCount: number;
@@ -453,8 +468,31 @@ export interface AdminOverviewTotals {
   lastRequestAt: string | null;
 }
 
+export interface AdminOverviewRange {
+  from: string;
+  to: string;
+  days: number;
+}
+
+export interface AdminOverviewAnomaly {
+  id: string;
+  severity: "info" | "warning" | "critical";
+  category: "error" | "latency" | "quota" | "traffic" | "routing";
+  title: string;
+  description: string;
+  date: string | null;
+  tenantId: string | null;
+  tenantName: string | null;
+  targetId: string | null;
+  targetName: string | null;
+  metric: string;
+  value: number;
+  baseline: number | null;
+}
+
 export interface AdminOverviewStats {
   generatedAt: string;
+  range: AdminOverviewRange;
   totals: AdminOverviewTotals;
   byTenant: TenantUsageStatsRow[];
   byApiKey: ApiKeyUsageStatsRow[];
@@ -465,4 +503,11 @@ export interface AdminOverviewStats {
   byCredential: UsageStatsRow[];
   byRequestType: UsageStatsRow[];
   byDay: DailyUsageStatsRow[];
+  byTenantDay: DailyDimensionUsageStatsRow[];
+  byModelDay: DailyDimensionUsageStatsRow[];
+  byChannelDay: DailyDimensionUsageStatsRow[];
+  byCredentialDay: DailyDimensionUsageStatsRow[];
+  byRequestTypeDay: DailyDimensionUsageStatsRow[];
+  byErrorCodeDay: ErrorCodeDailyStatsRow[];
+  anomalies: AdminOverviewAnomaly[];
 }

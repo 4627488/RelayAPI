@@ -1,7 +1,17 @@
 "use client";
 
 import * as React from "react";
-import { Line, LineChart } from "recharts";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { toast } from "sonner";
 import {
   ActivityIcon,
@@ -43,6 +53,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -52,6 +63,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import {
   DashboardChrome,
   DashboardSummaryLine,
@@ -84,6 +102,8 @@ import {
 import { AdminTenantsSection } from "@/components/admin-tenants-section";
 import type {
   AdminOverviewStats,
+  DailyDimensionUsageStatsRow,
+  DailyUsageStatsRow,
   ChannelRecord,
   CodexCredentialRecord,
   CredentialProxyType,
@@ -246,8 +266,8 @@ export function AdminDashboard({
     };
   }, [returnToLogin]);
 
-  const refreshOverviewStats = React.useCallback(async () => {
-    const stats = await getOverview();
+  const refreshOverviewStats = React.useCallback(async (days?: number) => {
+    const stats = await getOverview({ days });
     setOverviewStats(stats);
     setSnapshotTime(Date.now());
     return stats;
@@ -469,7 +489,7 @@ export function AdminDashboard({
   const hasOperationalData = totals.requestCount > 0;
   const requestLogsRenderKey = `${requestLogsPage.page}:${
     requestLogs[0]?.id ?? "empty"
-  }:${requestLogs.length}`;
+  }:${requestLogs.length}:${requestLogsPage.total}`;
 
   const navigationItems: DashboardNavItem<SectionId>[] = [
     {
@@ -516,9 +536,9 @@ export function AdminDashboard({
     {
       id: "logs",
       label: "日志",
-      description: "最近请求",
+      description: "请求记录",
       icon: FileTextIcon,
-      count: requestLogs.length,
+      count: requestLogsPage.total,
     },
     {
       id: "settings",
@@ -1295,19 +1315,46 @@ function OverviewSection({
   hasOperationalData: boolean;
   overviewStats: AdminOverviewStats;
   tenantCount: number;
-  onRefresh: () => Promise<AdminOverviewStats>;
+  onRefresh: (days?: number) => Promise<AdminOverviewStats>;
 }) {
   const [refreshing, setRefreshing] = React.useState(false);
+  const [overviewDays, setOverviewDays] = React.useState(
+    String(overviewStats.range?.days || 30),
+  );
+  const [selectedDate, setSelectedDate] = React.useState(
+    overviewStats.byDay[0]?.date || todayDateKey(),
+  );
   const trendMetrics = buildOverviewTrendMetrics(overviewStats.byDay);
   const topTenants = overviewStats.byTenant.slice(0, 5);
   const topModels = overviewStats.byModel.slice(0, 5);
-  const recentDays = overviewStats.byDay.slice(0, 7);
+  const recentDays = usageDateWindow(overviewStats.byDay, Number(overviewDays));
+  const effectiveSelectedDate = overviewStats.byDay.some(
+    (row) => row.date === selectedDate,
+  )
+    ? selectedDate
+    : overviewStats.byDay[0]?.date || todayDateKey();
 
   async function refresh() {
     setRefreshing(true);
     try {
-      await onRefresh();
+      await onRefresh(Number(overviewDays));
       toast.success("总览已刷新");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function changeOverviewDays(value: string) {
+    if (!value || value === overviewDays) {
+      return;
+    }
+    setOverviewDays(value);
+    setRefreshing(true);
+    try {
+      const stats = await onRefresh(Number(value));
+      setSelectedDate(stats.byDay[0]?.date || todayDateKey());
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -1338,11 +1385,58 @@ function OverviewSection({
           刷新总览
         </Button>
       </div>
+      <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="grid gap-1">
+          <div className="text-sm font-medium">观察窗口</div>
+          <div className="text-xs text-muted-foreground">
+            {overviewStats.range.from} 至 {overviewStats.range.to} ·{" "}
+            {formatNumber(overviewStats.range.days)} 天
+          </div>
+        </div>
+        <ToggleGroup
+          value={[overviewDays]}
+          variant="outline"
+          size="sm"
+          onValueChange={(value) => void changeOverviewDays(String(value[0] || ""))}
+        >
+          {["7", "14", "30", "90"].map((days) => (
+            <ToggleGroupItem key={days} value={days}>
+              {days} 天
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {trendMetrics.map((metric) => (
           <TrendMetricCard key={metric.title} {...metric} />
         ))}
       </div>
+
+      <OperationsStatusStrip stats={overviewStats} />
+
+      <DailyOperationsCard rows={recentDays} />
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_1.35fr]">
+        <AnomalyRadarCard anomalies={overviewStats.anomalies} />
+        <DailyBreakdownCard
+          rows={recentDays}
+          selectedDate={effectiveSelectedDate}
+          tenantRows={overviewStats.byTenantDay}
+          modelRows={overviewStats.byModelDay}
+          onSelectDate={setSelectedDate}
+        />
+      </div>
+
+      <DailyDimensionTabs
+        selectedDate={effectiveSelectedDate}
+        tenantRows={overviewStats.byTenantDay}
+        modelRows={overviewStats.byModelDay}
+        channelRows={overviewStats.byChannelDay}
+        credentialRows={overviewStats.byCredentialDay}
+        requestTypeRows={overviewStats.byRequestTypeDay}
+        errorRows={overviewStats.byErrorCodeDay}
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
         <ResourceSummaryCard
@@ -1416,6 +1510,573 @@ function OverviewSection({
       </div>
     </div>
   );
+}
+
+type DailyTrendMetric =
+  | "requests"
+  | "tokens"
+  | "errorRate"
+  | "latency"
+  | "cache"
+  | "stream";
+
+const DAILY_TREND_METRICS: Array<{ id: DailyTrendMetric; label: string }> = [
+  { id: "requests", label: "请求" },
+  { id: "tokens", label: "Token" },
+  { id: "errorRate", label: "错误率" },
+  { id: "latency", label: "延迟" },
+  { id: "cache", label: "缓存" },
+  { id: "stream", label: "流式" },
+];
+
+const dailyChartConfig = {
+  requestCount: { label: "请求数", color: "var(--chart-1)" },
+  errorCount: { label: "错误数", color: "var(--chart-5)" },
+  totalTokens: { label: "Token", color: "var(--chart-2)" },
+  errorRate: { label: "错误率", color: "var(--chart-5)" },
+  avgLatencyMs: { label: "平均延迟", color: "var(--chart-3)" },
+  cacheHitRate: { label: "缓存命中", color: "var(--chart-4)" },
+  streamRate: { label: "流式占比", color: "var(--chart-1)" },
+} satisfies ChartConfig;
+
+function OperationsStatusStrip({ stats }: { stats: AdminOverviewStats }) {
+  const latest = usageDateWindow(stats.byDay, 2).at(-1);
+  const errorRate = latest ? ratio(latest.errorCount, latest.requestCount) : null;
+  const streamRate = latest ? ratio(latest.streamCount, latest.requestCount) : null;
+  const status =
+    !latest || latest.requestCount === 0
+      ? "等待流量"
+      : (errorRate || 0) >= 15
+        ? "错误严重"
+        : latest.avgLatencyMs >= 10_000
+          ? "延迟偏高"
+          : (errorRate || 0) >= 5
+            ? "错误偏高"
+            : "运行稳定";
+  const statusVariant =
+    status === "运行稳定"
+      ? "secondary"
+      : status === "等待流量"
+        ? "outline"
+        : "destructive";
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <SignalCard
+        label="运行状态"
+        value={status}
+        detail={`最近请求 ${stats.totals.lastRequestAt ? formatDateTime(stats.totals.lastRequestAt) : "-"}`}
+        badge={<Badge variant={statusVariant}>{status}</Badge>}
+      />
+      <SignalCard
+        label="今日错误率"
+        value={formatPercent(errorRate)}
+        detail={`${formatNumber(latest?.errorCount || 0)} 个错误 / ${formatNumber(latest?.requestCount || 0)} 次请求`}
+      />
+      <SignalCard
+        label="今日流式占比"
+        value={formatPercent(streamRate)}
+        detail={`${formatNumber(latest?.streamCount || 0)} 个流式请求`}
+      />
+      <SignalCard
+        label="缓存命中"
+        value={formatPercent(latest?.cacheHitRate ?? null)}
+        detail={`缓存 ${formatTokenNumber(latest?.cachedTokens || 0)} token`}
+      />
+    </div>
+  );
+}
+
+function SignalCard({
+  badge,
+  detail,
+  label,
+  value,
+}: {
+  badge?: React.ReactNode;
+  detail: string;
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardDescription>{label}</CardDescription>
+        {badge && <CardAction>{badge}</CardAction>}
+        <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
+        <CardDescription>{detail}</CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
+function DailyOperationsCard({ rows }: { rows: DailyUsageStatsRow[] }) {
+  const [metric, setMetric] = React.useState<DailyTrendMetric>("requests");
+  const data = rows.map((row) => ({
+    ...row,
+    errorRate: ratio(row.errorCount, row.requestCount) || 0,
+    streamRate: ratio(row.streamCount, row.requestCount) || 0,
+  }));
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>每日运行趋势</CardTitle>
+        <CardDescription>
+          按天观察请求、消耗、错误、延迟和缓存表现。
+        </CardDescription>
+        <CardAction>
+          <ToggleGroup
+            value={[metric]}
+            variant="outline"
+            size="sm"
+            onValueChange={(value) =>
+              value[0] && setMetric(value[0] as DailyTrendMetric)
+            }
+          >
+            {DAILY_TREND_METRICS.map((item) => (
+              <ToggleGroupItem key={item.id} value={item.id}>
+                {item.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        {data.length === 0 ? (
+          <EmptyState
+            icon={ActivityIcon}
+            title="暂无趋势数据"
+            description="产生请求后会自动按天聚合。"
+            compact
+          />
+        ) : (
+          <ChartContainer
+            config={dailyChartConfig}
+            className="h-72 w-full aspect-auto"
+            initialDimension={{ width: 900, height: 288 }}
+          >
+            {renderDailyTrendChart(metric, data)}
+          </ChartContainer>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function renderDailyTrendChart(
+  metric: DailyTrendMetric,
+  data: Array<DailyUsageStatsRow & { errorRate: number; streamRate: number }>,
+) {
+  const common = (
+    <>
+      <CartesianGrid vertical={false} />
+      <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} />
+      <YAxis tickLine={false} axisLine={false} width={48} />
+      <ChartTooltip content={<ChartTooltipContent />} />
+    </>
+  );
+  if (metric === "requests") {
+    return (
+      <BarChart data={data}>
+        {common}
+        <Bar dataKey="requestCount" fill="var(--color-requestCount)" radius={4} />
+        <Bar dataKey="errorCount" fill="var(--color-errorCount)" radius={4} />
+      </BarChart>
+    );
+  }
+  if (metric === "tokens") {
+    return (
+      <AreaChart data={data}>
+        {common}
+        <Area
+          dataKey="totalTokens"
+          fill="var(--color-totalTokens)"
+          fillOpacity={0.22}
+          stroke="var(--color-totalTokens)"
+          strokeWidth={2}
+          type="monotone"
+        />
+      </AreaChart>
+    );
+  }
+  const dataKey =
+    metric === "errorRate"
+      ? "errorRate"
+      : metric === "latency"
+        ? "avgLatencyMs"
+        : metric === "cache"
+          ? "cacheHitRate"
+          : "streamRate";
+  return (
+    <LineChart data={data}>
+      {common}
+      <Line
+        dataKey={dataKey}
+        dot={false}
+        stroke={`var(--color-${dataKey})`}
+        strokeWidth={2.2}
+        type="monotone"
+      />
+    </LineChart>
+  );
+}
+
+function AnomalyRadarCard({
+  anomalies,
+}: {
+  anomalies: AdminOverviewStats["anomalies"];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>异常雷达</CardTitle>
+        <CardDescription>自动标记错误率、延迟、额度和路由异常。</CardDescription>
+        <CardAction>
+          <Badge variant={anomalies.length > 0 ? "destructive" : "secondary"}>
+            {formatNumber(anomalies.length)} 项
+          </Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        {anomalies.length === 0 ? (
+          <EmptyState
+            icon={ShieldCheckIcon}
+            title="暂无异常"
+            description="当前观察窗口内没有触发内置异常规则。"
+            compact
+          />
+        ) : (
+          <div className="grid gap-3">
+            {anomalies.map((item) => (
+              <div
+                key={item.id}
+                className="grid gap-1 rounded-lg border border-border/60 p-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-medium">{item.title}</div>
+                  <Badge variant={anomalyBadgeVariant(item.severity)}>
+                    {anomalySeverityLabel(item.severity)}
+                  </Badge>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {item.description}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {item.date || item.targetName || item.metric}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DailyBreakdownCard({
+  modelRows,
+  onSelectDate,
+  rows,
+  selectedDate,
+  tenantRows,
+}: {
+  modelRows: DailyDimensionUsageStatsRow[];
+  onSelectDate: (date: string) => void;
+  rows: DailyUsageStatsRow[];
+  selectedDate: string;
+  tenantRows: DailyDimensionUsageStatsRow[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>每日明细矩阵</CardTitle>
+        <CardDescription>
+          点击日期后，下方钻取区会展示当天各维度排行。
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {rows.length === 0 ? (
+          <EmptyState
+            icon={ActivityIcon}
+            title="暂无每日明细"
+            description="产生请求后会自动展示。"
+            compact
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>日期</TableHead>
+                <TableHead>请求 / 错误</TableHead>
+                <TableHead>Token</TableHead>
+                <TableHead>缓存</TableHead>
+                <TableHead>延迟</TableHead>
+                <TableHead>Top 租户 / 模型</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {[...rows].reverse().map((row) => {
+                const topTenant = topDimensionForDate(tenantRows, row.date);
+                const topModel = topDimensionForDate(modelRows, row.date);
+                const selected = row.date === selectedDate;
+                return (
+                  <TableRow
+                    key={row.date}
+                    data-state={selected ? "selected" : undefined}
+                    className="cursor-pointer"
+                    onClick={() => onSelectDate(row.date)}
+                  >
+                    <TableCell>
+                      <div className="font-medium">{row.date}</div>
+                      {dailyAnomalyLabels(row).map((label) => (
+                        <Badge key={label} className="mt-1 mr-1" variant="outline">
+                          {label}
+                        </Badge>
+                      ))}
+                    </TableCell>
+                    <TableCell>
+                      <CountCell row={row} />
+                    </TableCell>
+                    <TableCell>
+                      <TokenCell row={row} />
+                    </TableCell>
+                    <TableCell>{formatPercent(row.cacheHitRate)}</TableCell>
+                    <TableCell>
+                      <LatencyCell row={row} />
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">
+                        {topTenant?.dimensionName || "-"}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {topModel?.dimensionName || "-"}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DailyDimensionTabs({
+  channelRows,
+  credentialRows,
+  errorRows,
+  modelRows,
+  requestTypeRows,
+  selectedDate,
+  tenantRows,
+}: {
+  channelRows: DailyDimensionUsageStatsRow[];
+  credentialRows: DailyDimensionUsageStatsRow[];
+  errorRows: AdminOverviewStats["byErrorCodeDay"];
+  modelRows: DailyDimensionUsageStatsRow[];
+  requestTypeRows: DailyDimensionUsageStatsRow[];
+  selectedDate: string;
+  tenantRows: DailyDimensionUsageStatsRow[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{selectedDate} 维度钻取</CardTitle>
+        <CardDescription>
+          从租户、模型、通道、凭据、请求类型和错误码定位当天流量结构。
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue="tenant">
+          <TabsList className="flex w-full flex-wrap justify-start">
+            <TabsTrigger value="tenant">租户</TabsTrigger>
+            <TabsTrigger value="model">模型</TabsTrigger>
+            <TabsTrigger value="channel">通道</TabsTrigger>
+            <TabsTrigger value="credential">凭据</TabsTrigger>
+            <TabsTrigger value="request">请求类型</TabsTrigger>
+            <TabsTrigger value="error">错误码</TabsTrigger>
+          </TabsList>
+          <TabsContent value="tenant">
+            <DailyDimensionTable rows={rowsForDate(tenantRows, selectedDate)} />
+          </TabsContent>
+          <TabsContent value="model">
+            <DailyDimensionTable rows={rowsForDate(modelRows, selectedDate)} />
+          </TabsContent>
+          <TabsContent value="channel">
+            <DailyDimensionTable rows={rowsForDate(channelRows, selectedDate)} />
+          </TabsContent>
+          <TabsContent value="credential">
+            <DailyDimensionTable rows={rowsForDate(credentialRows, selectedDate)} />
+          </TabsContent>
+          <TabsContent value="request">
+            <DailyDimensionTable
+              rows={rowsForDate(requestTypeRows, selectedDate)}
+            />
+          </TabsContent>
+          <TabsContent value="error">
+            <DailyErrorCodeTable rows={errorRows.filter((row) => row.date === selectedDate)} />
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DailyDimensionTable({ rows }: { rows: DailyDimensionUsageStatsRow[] }) {
+  const maxTokens = Math.max(...rows.map((row) => row.totalTokens), 0);
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon={GaugeIcon}
+        title="暂无当天维度数据"
+        description="该日期没有对应维度的聚合数据。"
+        compact
+      />
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>名称</TableHead>
+          <TableHead>请求数</TableHead>
+          <TableHead>成功率</TableHead>
+          <TableHead>Token 占比</TableHead>
+          <TableHead>Token</TableHead>
+          <TableHead>延迟</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.slice(0, 12).map((row, index) => (
+          <TableRow key={`${row.date}:${row.dimension}:${row.key}:${index}`}>
+            <TableCell>
+              <div className="font-medium">{row.dimensionName}</div>
+              {row.dimensionId && (
+                <div className="text-xs text-muted-foreground">
+                  {row.dimensionId}
+                </div>
+              )}
+            </TableCell>
+            <TableCell>
+              <CountCell row={row} />
+            </TableCell>
+            <TableCell>
+              {formatPercent(ratio(row.successCount, row.requestCount))}
+            </TableCell>
+            <TableCell>
+              <Progress value={maxTokens > 0 ? (row.totalTokens / maxTokens) * 100 : 0} />
+            </TableCell>
+            <TableCell>
+              <TokenCell row={row} />
+            </TableCell>
+            <TableCell>
+              <LatencyCell row={row} />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function DailyErrorCodeTable({
+  rows,
+}: {
+  rows: AdminOverviewStats["byErrorCodeDay"];
+}) {
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon={ShieldCheckIcon}
+        title="当天没有错误码"
+        description="该日期没有记录到错误请求。"
+        compact
+      />
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>错误码</TableHead>
+          <TableHead>次数</TableHead>
+          <TableHead>租户</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.slice(0, 20).map((row, index) => (
+          <TableRow key={`${row.date}:${row.errorCode}:${row.tenantId}:${index}`}>
+            <TableCell>
+              <Badge variant="destructive">{row.errorCode}</Badge>
+            </TableCell>
+            <TableCell>{formatNumber(row.requestCount)}</TableCell>
+            <TableCell>{row.tenantName || row.tenantId || "未归属流量"}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function rowsForDate(
+  rows: DailyDimensionUsageStatsRow[],
+  date: string,
+): DailyDimensionUsageStatsRow[] {
+  return rows
+    .filter((row) => row.date === date)
+    .toSorted(
+      (left, right) =>
+        right.totalTokens - left.totalTokens ||
+        right.requestCount - left.requestCount,
+    );
+}
+
+function topDimensionForDate(
+  rows: DailyDimensionUsageStatsRow[],
+  date: string,
+) {
+  return rowsForDate(rows, date)[0] || null;
+}
+
+function dailyAnomalyLabels(row: DailyUsageStatsRow) {
+  const labels: string[] = [];
+  const errorRate = ratio(row.errorCount, row.requestCount) || 0;
+  if (errorRate >= 15) {
+    labels.push("错误严重");
+  } else if (errorRate >= 5) {
+    labels.push("错误偏高");
+  }
+  if (row.avgLatencyMs >= 10_000) {
+    labels.push("延迟偏高");
+  }
+  return labels;
+}
+
+function anomalyBadgeVariant(
+  severity: AdminOverviewStats["anomalies"][number]["severity"],
+) {
+  return severity === "critical"
+    ? "destructive"
+    : severity === "warning"
+      ? "outline"
+      : "secondary";
+}
+
+function anomalySeverityLabel(
+  severity: AdminOverviewStats["anomalies"][number]["severity"],
+) {
+  const labels: Record<
+    AdminOverviewStats["anomalies"][number]["severity"],
+    string
+  > = {
+    critical: "严重",
+    warning: "关注",
+    info: "提示",
+  };
+  return labels[severity];
 }
 
 function TenantUsageCard({ rows }: { rows: TenantUsageStatsRow[] }) {
