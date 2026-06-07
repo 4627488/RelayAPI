@@ -172,7 +172,7 @@ export async function codexFetch(
         )) ?? (await fetchHttp());
       return { response: fallbackResponse, credential, upstreamPayload };
     }
-    if (response.status === 426) {
+    if (response.status === 101 || response.status === 426) {
       const fallbackResponse =
         (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
           fetchHttp(),
