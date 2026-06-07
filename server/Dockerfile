@@ -7,7 +7,7 @@ RUN npm ci
 COPY web ./
 RUN npm run build
 
-FROM rust:1.83-slim-bookworm AS builder
+FROM rust:1.88-slim-bookworm AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml ./
