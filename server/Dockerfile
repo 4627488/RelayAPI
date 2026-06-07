@@ -7,9 +7,9 @@ RUN npm ci
 COPY web ./
 RUN npm run build
 
-FROM rust:1.88-slim-bookworm AS builder
+FROM rust:1.88-alpine AS builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends pkg-config ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache build-base ca-certificates pkgconfig
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 COPY server ./server
@@ -18,10 +18,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release -p relay-api-server && \
     cp target/release/relay-api-server /relay-api-server
 
-FROM debian:bookworm-slim AS runner
+FROM alpine:3.22 AS runner
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -u 1001 relay && mkdir -p /app/data /app/web && chown -R relay:relay /app/data /app/web
+RUN apk add --no-cache ca-certificates \
+    && adduser -D -H -u 1001 relay \
+    && mkdir -p /app/data /app/web \
+    && chown -R relay:relay /app/data /app/web
 COPY --from=builder /relay-api-server /usr/local/bin/relay-api-server
 COPY --from=web-builder /app/dist /app/web
 USER relay
