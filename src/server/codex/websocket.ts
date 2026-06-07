@@ -244,11 +244,6 @@ function webSocketDataToText(data: RawData) {
   if (data instanceof ArrayBuffer) {
     return Buffer.from(data).toString("utf8");
   }
-  if (ArrayBuffer.isView(data)) {
-    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString(
-      "utf8",
-    );
-  }
   return "";
 }
 

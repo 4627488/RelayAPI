@@ -8,7 +8,7 @@ RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 
 FROM base AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
   pnpm fetch --frozen-lockfile
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
