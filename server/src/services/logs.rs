@@ -1,5 +1,8 @@
 use chrono::Utc;
-use sea_orm::{EntityTrait, QueryOrder, QuerySelect, Set};
+use sea_orm::{
+    sea_query::Query, ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
+};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -22,6 +25,9 @@ pub struct RequestLogInput {
     pub api_key_prefix: Option<String>,
     pub channel_id: Option<String>,
     pub credential_id: Option<String>,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
     pub request_body_text: Option<String>,
@@ -46,9 +52,10 @@ pub struct RequestLogPublic {
     pub error_message: Option<String>,
 }
 
-pub async fn append(db: &Database, input: RequestLogInput) -> AppResult<()> {
+pub async fn append(db: &Database, input: RequestLogInput) -> AppResult<String> {
+    let id = Uuid::new_v4().to_string();
     let active = request_logs::ActiveModel {
-        id: Set(Uuid::new_v4().to_string()),
+        id: Set(id.clone()),
         started_at: Set(input.started_at),
         completed_at: Set(Utc::now().to_rfc3339()),
         method: Set(input.method),
@@ -62,9 +69,9 @@ pub async fn append(db: &Database, input: RequestLogInput) -> AppResult<()> {
         api_key_prefix: Set(input.api_key_prefix),
         channel_id: Set(input.channel_id),
         credential_id: Set(input.credential_id),
-        prompt_tokens: Set(0),
-        completion_tokens: Set(0),
-        total_tokens: Set(0),
+        prompt_tokens: Set(input.prompt_tokens),
+        completion_tokens: Set(input.completion_tokens),
+        total_tokens: Set(input.total_tokens),
         error_code: Set(input.error_code),
         error_message: Set(input.error_message),
         request_body_text: Set(input.request_body_text),
@@ -72,11 +79,66 @@ pub async fn append(db: &Database, input: RequestLogInput) -> AppResult<()> {
         timing_json: Set(None),
     };
     request_logs::Entity::insert(active).exec(&db.conn).await?;
-    Ok(())
+    Ok(id)
 }
 
 pub async fn recent(db: &Database, limit: u64) -> AppResult<Vec<RequestLogPublic>> {
     let rows = request_logs::Entity::find()
+        .order_by_desc(request_logs::Column::StartedAt)
+        .limit(limit)
+        .all(&db.conn)
+        .await?;
+    Ok(rows.into_iter().map(public).collect())
+}
+
+pub async fn finish_stream(
+    db: &Database,
+    id: &str,
+    latency_ms: i64,
+    usage: crate::services::usage::TokenUsage,
+    error_code: Option<&str>,
+    error_message: Option<&str>,
+) -> AppResult<()> {
+    let Some(row) = request_logs::Entity::find_by_id(id.to_string())
+        .one(&db.conn)
+        .await?
+    else {
+        return Ok(());
+    };
+    let mut active: request_logs::ActiveModel = row.into();
+    active.completed_at = Set(Utc::now().to_rfc3339());
+    active.latency_ms = Set(latency_ms);
+    active.prompt_tokens = Set(usage.prompt_tokens);
+    active.completion_tokens = Set(usage.completion_tokens);
+    active.total_tokens = Set(usage.total_tokens);
+    if let Some(code) = error_code {
+        active.error_code = Set(Some(code.to_string()));
+    }
+    if let Some(message) = error_message {
+        active.error_message = Set(Some(message.to_string()));
+    }
+    active.update(&db.conn).await?;
+    Ok(())
+}
+
+pub async fn recent_for_tenant(
+    db: &Database,
+    tenant_id: &str,
+    limit: u64,
+) -> AppResult<Vec<RequestLogPublic>> {
+    let rows = request_logs::Entity::find()
+        .filter(
+            request_logs::Column::ApiKeyId.in_subquery(
+                Query::select()
+                    .column(crate::db::entities::api_keys::Column::Id)
+                    .from(crate::db::entities::api_keys::Entity)
+                    .and_where(
+                        crate::db::entities::api_keys::Column::TenantId
+                            .eq(Some(tenant_id.to_string())),
+                    )
+                    .to_owned(),
+            ),
+        )
         .order_by_desc(request_logs::Column::StartedAt)
         .limit(limit)
         .all(&db.conn)

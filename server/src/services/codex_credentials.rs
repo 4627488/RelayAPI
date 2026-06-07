@@ -259,6 +259,12 @@ pub async fn runtime_by_id(state: &AppState, id: &str) -> AppResult<CodexCredent
         .ok_or_else(|| {
             AppError::bad_request("codex_credential_not_found", "Codex credential not found")
         })?;
+    if row.enabled == 0 {
+        return Err(AppError::bad_request(
+            "codex_credential_disabled",
+            "Codex credential is disabled",
+        ));
+    }
     runtime_from_row(state, row).await
 }
 

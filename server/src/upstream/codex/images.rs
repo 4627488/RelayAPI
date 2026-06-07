@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, io};
 
 use async_stream::stream;
-use axum::body::Bytes;
+use axum::{body::Bytes, extract::Multipart};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::Utc;
 use futures_util::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
@@ -65,6 +66,49 @@ pub fn edit_to_responses(input: Value) -> AppResult<Value> {
         ));
     }
     Ok(build_payload("edit", prompt, images, object))
+}
+
+pub async fn multipart_edit_input(mut multipart: Multipart) -> AppResult<Value> {
+    let mut object = Map::new();
+    let mut images = Vec::new();
+    while let Some(field) = multipart.next_field().await.map_err(anyhow::Error::from)? {
+        let name = field.name().unwrap_or_default().to_string();
+        let content_type = field
+            .content_type()
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let is_file = field.file_name().is_some();
+        match name.as_str() {
+            "image" | "image[]" | "images" if is_file => {
+                images.push(data_url(
+                    &content_type,
+                    field.bytes().await.map_err(anyhow::Error::from)?.as_ref(),
+                ));
+            }
+            "image" | "image[]" | "images" => {
+                let value = field.text().await.map_err(anyhow::Error::from)?;
+                if !value.trim().is_empty() {
+                    images.push(value);
+                }
+            }
+            "mask" if is_file => {
+                let url = data_url(
+                    &content_type,
+                    field.bytes().await.map_err(anyhow::Error::from)?.as_ref(),
+                );
+                object.insert("mask".to_string(), Value::String(url));
+            }
+            _ => {
+                let value = field.text().await.map_err(anyhow::Error::from)?;
+                object.insert(name, form_value(&value));
+            }
+        }
+    }
+    object.insert(
+        "images".to_string(),
+        Value::Array(images.into_iter().map(Value::String).collect()),
+    );
+    Ok(Value::Object(object))
 }
 
 pub fn response_text_to_images(text: &str, response_format: ResponseFormat) -> AppResult<Value> {
@@ -433,6 +477,18 @@ fn mime_type_from_output_format(output_format: &str) -> &'static str {
         "jpg" | "jpeg" | "image/jpeg" => "image/jpeg",
         "webp" | "image/webp" => "image/webp",
         _ => "image/png",
+    }
+}
+
+fn data_url(content_type: &str, bytes: &[u8]) -> String {
+    format!("data:{content_type};base64,{}", STANDARD.encode(bytes))
+}
+
+fn form_value(value: &str) -> Value {
+    match value.trim() {
+        "true" => Value::Bool(true),
+        "false" => Value::Bool(false),
+        trimmed => Value::String(trimmed.to_string()),
     }
 }
 

@@ -220,6 +220,12 @@ pub async fn activate(state: &AppState, input: ActivateRequest) -> AppResult<Hea
         .one(&state.db().conn)
         .await?
         .ok_or_else(|| AppError::bad_request("invalid_invite", "Invalid invite token"))?;
+    validate_invite(&invite)?;
+    let tenant = tenants::Entity::find_by_id(invite.tenant_id.clone())
+        .one(&state.db().conn)
+        .await?
+        .ok_or_else(|| AppError::bad_request("tenant_not_found", "Tenant not found"))?;
+    validate_tenant(&tenant)?;
     let user_id = invite.user_id.clone();
     let now = Utc::now().to_rfc3339();
     tenant_users::Entity::insert(tenant_users::ActiveModel {
@@ -255,10 +261,15 @@ pub async fn login(state: &AppState, input: LoginRequest) -> AppResult<HeaderVal
     {
         return Err(AppError::unauthorized("Invalid tenant login"));
     }
+    let tenant = tenants::Entity::find_by_id(user.tenant_id.clone())
+        .one(&state.db().conn)
+        .await?
+        .ok_or_else(|| AppError::unauthorized("Tenant is unavailable"))?;
+    validate_tenant(&tenant)?;
     session_cookie(state, &user.tenant_id, &user.id, &user.email)
 }
 
-pub fn require(state: &AppState, headers: &HeaderMap) -> AppResult<TenantSession> {
+pub async fn require(state: &AppState, headers: &HeaderMap) -> AppResult<TenantSession> {
     let raw = cookie(headers, "relay_tenant_session")
         .ok_or_else(|| AppError::unauthorized("Tenant session required"))?;
     let value = String::from_utf8(URL_SAFE_NO_PAD.decode(raw).map_err(anyhow::Error::from)?)
@@ -275,6 +286,18 @@ pub fn require(state: &AppState, headers: &HeaderMap) -> AppResult<TenantSession
     if sig != expected || tenant_id.is_empty() || user_id.is_empty() {
         return Err(AppError::unauthorized("Invalid tenant session"));
     }
+    let user = tenant_users::Entity::find_by_id(user_id.to_string())
+        .one(&state.db().conn)
+        .await?
+        .ok_or_else(|| AppError::unauthorized("Invalid tenant session"))?;
+    if user.tenant_id != tenant_id || user.email != email || user.enabled == 0 {
+        return Err(AppError::unauthorized("Invalid tenant session"));
+    }
+    let tenant = tenants::Entity::find_by_id(tenant_id.to_string())
+        .one(&state.db().conn)
+        .await?
+        .ok_or_else(|| AppError::unauthorized("Tenant is unavailable"))?;
+    validate_tenant(&tenant)?;
     Ok(TenantSession {
         tenant_id: tenant_id.to_string(),
         user_id: user_id.to_string(),
@@ -282,8 +305,14 @@ pub fn require(state: &AppState, headers: &HeaderMap) -> AppResult<TenantSession
     })
 }
 
-pub fn expired_cookie() -> HeaderValue {
-    HeaderValue::from_static("relay_tenant_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+pub fn expired_cookie(secure: bool) -> HeaderValue {
+    HeaderValue::from_str(&format!(
+        "relay_tenant_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        if secure { "; Secure" } else { "" }
+    ))
+    .unwrap_or_else(|_| {
+        HeaderValue::from_static("relay_tenant_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+    })
 }
 
 pub async fn resources(state: &AppState, session: &TenantSession) -> AppResult<Value> {
@@ -309,7 +338,12 @@ fn session_cookie(
     let raw = format!("{tenant_id}|{user_id}|{email}|{sig}");
     let encoded = URL_SAFE_NO_PAD.encode(raw);
     HeaderValue::from_str(&format!(
-        "relay_tenant_session={encoded}; Path=/; HttpOnly; SameSite=Lax"
+        "relay_tenant_session={encoded}; Path=/; HttpOnly; SameSite=Lax{}",
+        if state.config().secure_cookies {
+            "; Secure"
+        } else {
+            ""
+        }
     ))
     .map_err(anyhow::Error::from)
     .map_err(AppError::from)
@@ -333,6 +367,40 @@ fn public(row: tenants::Model) -> TenantPublic {
         created_at: row.created_at,
         deleted_at: row.deleted_at,
     }
+}
+
+fn validate_tenant(row: &tenants::Model) -> AppResult<()> {
+    if row.enabled == 0 || row.deleted_at.is_some() {
+        return Err(AppError::unauthorized("Tenant is disabled"));
+    }
+    if let Some(expires_at) = &row.expires_at {
+        if chrono::DateTime::parse_from_rfc3339(expires_at)
+            .map(|value| value.with_timezone(&Utc) <= Utc::now())
+            .unwrap_or(false)
+        {
+            return Err(AppError::unauthorized("Tenant has expired"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_invite(row: &tenant_invites::Model) -> AppResult<()> {
+    if row.accepted_at.is_some() || row.revoked_at.is_some() {
+        return Err(AppError::bad_request(
+            "invalid_invite",
+            "Invite is no longer valid",
+        ));
+    }
+    if chrono::DateTime::parse_from_rfc3339(&row.expires_at)
+        .map(|value| value.with_timezone(&Utc) <= Utc::now())
+        .unwrap_or(true)
+    {
+        return Err(AppError::bad_request(
+            "invite_expired",
+            "Invite has expired",
+        ));
+    }
+    Ok(())
 }
 
 fn password_hash(password: &str) -> String {

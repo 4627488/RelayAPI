@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    db::{entities::api_keys, Database},
+    db::{
+        entities::{api_keys, tenants},
+        Database,
+    },
     error::{AppError, AppResult},
     services::crypto,
 };
@@ -58,8 +61,13 @@ pub struct CreateApiKeyResponse {
 pub struct RelayApiKeyContext {
     pub id: String,
     pub prefix: String,
+    pub name: String,
+    pub tenant_id: Option<String>,
+    pub tenant_name: Option<String>,
     pub channel_allowlist: Vec<String>,
     pub model_allowlist: Vec<String>,
+    pub token_limit_daily: Option<i64>,
+    pub rate_limit_per_minute: Option<i64>,
 }
 
 pub async fn list(db: &Database) -> AppResult<Vec<ApiKeyPublic>> {
@@ -214,15 +222,87 @@ pub async fn authenticate(db: &Database, token: &str) -> AppResult<RelayApiKeyCo
             return Err(AppError::unauthorized("API key has expired"));
         }
     }
+    let tenant = if let Some(tenant_id) = &row.tenant_id {
+        let tenant = tenants::Entity::find_by_id(tenant_id.clone())
+            .one(&db.conn)
+            .await?
+            .ok_or_else(|| AppError::unauthorized("API key tenant no longer exists"))?;
+        validate_tenant(&tenant)?;
+        Some(tenant)
+    } else {
+        None
+    };
     let mut active: api_keys::ActiveModel = row.clone().into();
     active.last_used_at = Set(Some(Utc::now().to_rfc3339()));
     active.update(&db.conn).await?;
+    let tenant_models = tenant
+        .as_ref()
+        .map(|tenant| parse_string_list(&tenant.model_allowlist_json))
+        .unwrap_or_default();
+    let tenant_channels = tenant
+        .as_ref()
+        .map(|tenant| parse_string_list(&tenant.channel_allowlist_json))
+        .unwrap_or_default();
     Ok(RelayApiKeyContext {
-        id: row.id,
-        prefix: row.prefix,
-        channel_allowlist: parse_string_list(&row.channel_allowlist_json),
-        model_allowlist: parse_string_list(&row.model_allowlist_json),
+        id: row.id.clone(),
+        prefix: row.prefix.clone(),
+        name: row.name.clone(),
+        tenant_id: row.tenant_id.clone(),
+        tenant_name: tenant.as_ref().map(|tenant| tenant.name.clone()),
+        channel_allowlist: effective_allowlist(
+            parse_string_list(&row.channel_allowlist_json),
+            tenant_channels,
+        ),
+        model_allowlist: effective_allowlist(
+            parse_string_list(&row.model_allowlist_json),
+            tenant_models,
+        ),
+        token_limit_daily: effective_limit(
+            row.token_limit_daily,
+            tenant.as_ref().and_then(|v| v.token_limit_daily),
+        ),
+        rate_limit_per_minute: effective_limit(
+            row.rate_limit_per_minute,
+            tenant.as_ref().and_then(|v| v.rate_limit_per_minute),
+        ),
     })
+}
+
+fn validate_tenant(row: &tenants::Model) -> AppResult<()> {
+    if row.enabled == 0 || row.deleted_at.is_some() {
+        return Err(AppError::unauthorized("API key tenant is disabled"));
+    }
+    if let Some(expires_at) = &row.expires_at {
+        if chrono::DateTime::parse_from_rfc3339(expires_at)
+            .map(|value| value.with_timezone(&Utc) <= Utc::now())
+            .unwrap_or(false)
+        {
+            return Err(AppError::unauthorized("API key tenant has expired"));
+        }
+    }
+    Ok(())
+}
+
+fn effective_allowlist(key_list: Vec<String>, tenant_list: Vec<String>) -> Vec<String> {
+    if key_list.is_empty() {
+        return tenant_list;
+    }
+    if tenant_list.is_empty() {
+        return key_list;
+    }
+    key_list
+        .into_iter()
+        .filter(|item| tenant_list.iter().any(|tenant_item| tenant_item == item))
+        .collect()
+}
+
+fn effective_limit(key_limit: Option<i64>, tenant_limit: Option<i64>) -> Option<i64> {
+    match (key_limit, tenant_limit) {
+        (Some(key), Some(tenant)) => Some(key.min(tenant)),
+        (Some(key), None) => Some(key),
+        (None, Some(tenant)) => Some(tenant),
+        (None, None) => None,
+    }
 }
 
 fn public(row: api_keys::Model) -> ApiKeyPublic {
@@ -257,4 +337,32 @@ fn clean_name(name: &str) -> String {
 
 fn parse_string_list(value: &str) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(value).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_allowlist_intersects_when_both_are_set() {
+        let result = effective_allowlist(
+            vec!["a".to_string(), "b".to_string()],
+            vec!["b".to_string(), "c".to_string()],
+        );
+        assert_eq!(result, vec!["b".to_string()]);
+    }
+
+    #[test]
+    fn effective_allowlist_uses_tenant_list_when_key_is_unrestricted() {
+        let result = effective_allowlist(Vec::new(), vec!["tenant-channel".to_string()]);
+        assert_eq!(result, vec!["tenant-channel".to_string()]);
+    }
+
+    #[test]
+    fn effective_limit_uses_strictest_limit() {
+        assert_eq!(effective_limit(Some(100), Some(50)), Some(50));
+        assert_eq!(effective_limit(Some(100), None), Some(100));
+        assert_eq!(effective_limit(None, Some(50)), Some(50));
+        assert_eq!(effective_limit(None, None), None);
+    }
 }

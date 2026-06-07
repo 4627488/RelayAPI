@@ -1,5 +1,5 @@
 services:
-  server:
+  relayapi:
     build:
       context: .
       dockerfile: server/Dockerfile
@@ -12,16 +12,6 @@ services:
       - relay-api-data:/app/data
     ports:
       - "3000:3000"
-
-  web:
-    build:
-      context: .
-      dockerfile: web/Dockerfile
-    restart: unless-stopped
-    depends_on:
-      - server
-    ports:
-      - "8080:8080"
 
 volumes:
   relay-api-data:

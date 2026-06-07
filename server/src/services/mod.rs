@@ -9,3 +9,4 @@ pub mod overview;
 pub mod proxy_pool;
 pub mod settings;
 pub mod tenants;
+pub mod usage;

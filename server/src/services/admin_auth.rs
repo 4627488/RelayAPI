@@ -21,8 +21,13 @@ pub fn login(state: &AppState, input: WebLoginRequest) -> AppResult<HeaderValue>
         });
     }
     HeaderValue::from_str(&format!(
-        "relay_web_session={}; Path=/; HttpOnly; SameSite=Lax",
-        state.config().web_session_token
+        "relay_web_session={}; Path=/; HttpOnly; SameSite=Lax{}",
+        state.config().web_session_token,
+        if state.config().secure_cookies {
+            "; Secure"
+        } else {
+            ""
+        }
     ))
     .map_err(anyhow::Error::from)
     .map_err(AppError::from)

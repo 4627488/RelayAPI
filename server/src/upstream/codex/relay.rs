@@ -9,12 +9,12 @@ use chrono::Utc;
 use futures_util::StreamExt;
 use serde_json::Value;
 
-use super::{chat, images};
+use super::{chat, images, stream_audit};
 
 use crate::{
     error::{AppError, AppResult},
     http::AppState,
-    services::{api_keys, channels, logs},
+    services::{api_keys, channels, logs, usage},
 };
 
 #[derive(Clone, Copy)]
@@ -96,6 +96,7 @@ async fn forward_responses_with(
     let model = ensure_model(state, &mut body);
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let api_key = api_keys::authenticate(state.db(), relay_api_key(&source_headers)?).await?;
+    usage::enforce_preflight(state.db(), &api_key).await?;
     let selected = channels::select(state, &api_key, &model).await?;
     let url = format!(
         "{}{}",
@@ -174,6 +175,9 @@ async fn forward_responses_with(
                     api_key_prefix: Some(api_key.prefix),
                     channel_id: Some(selected.channel.id),
                     credential_id: Some(selected.credential.id),
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
                     error_code: Some("upstream_fetch_failed".to_string()),
                     error_message: Some(error.to_string()),
                     request_body_text,
@@ -196,10 +200,10 @@ async fn forward_responses_with(
     }
 
     if stream {
-        let _ = logs::append(
+        let log_id = logs::append(
             state.db(),
             logs::RequestLogInput {
-                started_at,
+                started_at: started_at.clone(),
                 method: "POST".to_string(),
                 path: path.to_string(),
                 request_type: request_type.to_string(),
@@ -207,29 +211,45 @@ async fn forward_responses_with(
                 model: model.clone(),
                 status_code: status.as_u16() as i32,
                 latency_ms: start.elapsed().as_millis() as i64,
-                api_key_id: Some(api_key.id),
-                api_key_prefix: Some(api_key.prefix),
-                channel_id: Some(selected.channel.id),
-                credential_id: Some(selected.credential.id),
+                api_key_id: Some(api_key.id.clone()),
+                api_key_prefix: Some(api_key.prefix.clone()),
+                channel_id: Some(selected.channel.id.clone()),
+                credential_id: Some(selected.credential.id.clone()),
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
                 error_code: (!status.is_success()).then_some("upstream_error".to_string()),
                 error_message: None,
                 request_body_text,
                 upstream_body_text: None,
             },
         )
-        .await;
+        .await?;
+        let audit = stream_audit::StreamAuditContext {
+            db: state.db().clone(),
+            log_id,
+            api_key: api_key.clone(),
+            channel_id: selected.channel.id.clone(),
+            credential_id: selected.credential.id.clone(),
+            model: model.clone(),
+            request_type: request_type.to_string(),
+            started: start,
+        };
         let body = match transform {
             ResponseTransform::Raw => {
                 let stream = upstream
                     .bytes_stream()
                     .map(|chunk| chunk.map_err(std::io::Error::other));
-                Body::from_stream(stream)
+                Body::from_stream(stream_audit::observe(stream, audit))
             }
             ResponseTransform::ChatCompletion => {
                 let stream = upstream
                     .bytes_stream()
                     .map(|chunk| chunk.map_err(std::io::Error::other));
-                Body::from_stream(chat::chat_sse_stream(stream, model.clone()))
+                Body::from_stream(chat::chat_sse_stream(
+                    stream_audit::observe(stream, audit),
+                    model.clone(),
+                ))
             }
             ResponseTransform::Images {
                 response_format,
@@ -239,7 +259,7 @@ async fn forward_responses_with(
                     .bytes_stream()
                     .map(|chunk| chunk.map_err(std::io::Error::other));
                 Body::from_stream(images::images_sse_stream(
-                    stream,
+                    stream_audit::observe(stream, audit),
                     response_format,
                     stream_prefix,
                 ))
@@ -274,6 +294,11 @@ async fn forward_responses_with(
 
     let headers = upstream.headers().clone();
     let text = upstream.text().await?;
+    let token_usage = if status.is_success() {
+        usage::extract_token_usage(&text)
+    } else {
+        usage::TokenUsage::default()
+    };
     let mut response_status = status;
     let mut response_text = text.clone();
     let mut content_type_override = None;
@@ -302,7 +327,7 @@ async fn forward_responses_with(
             }
         }
     }
-    let _ = logs::append(
+    let log_id = logs::append(
         state.db(),
         logs::RequestLogInput {
             started_at,
@@ -310,18 +335,35 @@ async fn forward_responses_with(
             path: path.to_string(),
             request_type: request_type.to_string(),
             stream,
-            model,
+            model: model.clone(),
             status_code: response_status.as_u16() as i32,
             latency_ms: start.elapsed().as_millis() as i64,
-            api_key_id: Some(api_key.id),
-            api_key_prefix: Some(api_key.prefix),
-            channel_id: Some(selected.channel.id),
-            credential_id: Some(selected.credential.id),
+            api_key_id: Some(api_key.id.clone()),
+            api_key_prefix: Some(api_key.prefix.clone()),
+            channel_id: Some(selected.channel.id.clone()),
+            credential_id: Some(selected.credential.id.clone()),
+            prompt_tokens: token_usage.prompt_tokens,
+            completion_tokens: token_usage.completion_tokens,
+            total_tokens: token_usage.total_tokens,
             error_code: transform_error_code
                 .or_else(|| (!status.is_success()).then_some("upstream_error".to_string())),
             error_message: transform_error_message,
             request_body_text,
             upstream_body_text: Some(limit_text(&text, 512 * 1024)),
+        },
+    )
+    .await
+    .ok();
+    let _ = usage::record(
+        state.db(),
+        usage::RecordUsageInput {
+            log_id: log_id.as_deref(),
+            api_key: &api_key,
+            channel_id: Some(&selected.channel.id),
+            credential_id: Some(&selected.credential.id),
+            model: &model,
+            request_type,
+            usage: token_usage,
         },
     )
     .await;

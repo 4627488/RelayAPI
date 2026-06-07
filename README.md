@@ -8,7 +8,7 @@ This branch intentionally removes the old Next.js/Bun implementation.
 
 - `server/`: Rust API and relay service built with Axum, Tokio, SeaORM, Reqwest, and SQLite.
 - `web/`: Vite + React + TypeScript admin console.
-- `docker-compose.yml`: two-service deployment with nginx proxying frontend API calls to the Rust server.
+- `docker-compose.yml`: single-service deployment. The Rust server serves both API traffic and the built Vite admin console.
 
 ## Current Status
 
@@ -54,8 +54,7 @@ Open `http://localhost:5173`.
 docker compose up --build
 ```
 
-- Frontend: `http://localhost:8080`
-- Backend: `http://localhost:3000`
+- App: `http://localhost:3000`
 
 ## Important Environment Variables
 
@@ -68,6 +67,9 @@ docker compose up --build
 - `CODEX_REDIRECT_URI`: default `http://localhost:1455/auth/callback`
 - `CODEX_DEFAULT_MODEL`: default `gpt-5.3-codex`
 - `CODEX_USER_AGENT`: defaults to a Codex CLI compatible user agent
+- `RELAY_COOKIE_SECURE`: controls the `Secure` flag on session cookies, default `true`. Set to `false` only for plain-HTTP local development.
+- `RELAY_CORS_ORIGINS`: comma-separated allowed browser origins. If omitted, the backend does not add permissive CORS headers.
+- `RELAY_STATIC_DIR`: optional directory for static frontend assets. The production Docker image sets this to the built Vite output.
 
 ## Upstream Alignment
 

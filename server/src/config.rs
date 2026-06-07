@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 pub struct Config {
     pub port: u16,
     pub data_dir: PathBuf,
+    pub static_dir: Option<PathBuf>,
     pub database_url: String,
     pub codex_base_url: String,
     pub codex_redirect_uri: String,
@@ -17,6 +18,8 @@ pub struct Config {
     pub codex_originator: String,
     pub request_timeout: Duration,
     pub stream_timeout: Duration,
+    pub secure_cookies: bool,
+    pub cors_allowed_origins: Vec<String>,
     pub secret: String,
     pub web_access_key_hash: String,
     pub web_session_token: String,
@@ -42,6 +45,10 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3000),
             data_dir,
+            static_dir: env::var("RELAY_STATIC_DIR")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from),
             database_url: sqlite_url(db_path),
             codex_base_url: env::var("CODEX_BASE_URL")
                 .unwrap_or_else(|_| "https://chatgpt.com/backend-api/codex".to_string())
@@ -58,12 +65,32 @@ impl Config {
                 .unwrap_or_else(|_| "codex_cli_rs".to_string()),
             request_timeout: Duration::from_millis(env_ms("REQUEST_TIMEOUT_MS", 300_000)),
             stream_timeout: Duration::from_millis(env_ms("STREAM_REQUEST_TIMEOUT_MS", 1_800_000)),
+            secure_cookies: env_bool("RELAY_COOKIE_SECURE", true),
+            cors_allowed_origins: env::var("RELAY_CORS_ORIGINS")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect(),
             secret,
             web_access_key_hash: web_key.hash,
             web_session_token,
             generated_web_access_key: web_key.generated,
         })
     }
+}
+
+fn env_bool(name: &str, fallback: bool) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(fallback)
 }
 
 struct WebAccessKey {

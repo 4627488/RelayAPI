@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     db::{
-        entities::{channels, codex_credentials},
+        entities::{channels, codex_credentials, tenants},
         Database,
     },
     error::{AppError, AppResult},
@@ -260,6 +260,27 @@ pub async fn record_failure(
     active.health_score = Set((channel.health_score - 10).max(0));
     active.update(&db.conn).await?;
     Ok(())
+}
+
+pub async fn credential_visible_to_tenant(
+    state: &AppState,
+    tenant_id: &str,
+    credential_id: &str,
+) -> AppResult<bool> {
+    let Some(tenant) = tenants::Entity::find_by_id(tenant_id.to_string())
+        .one(&state.db().conn)
+        .await?
+    else {
+        return Ok(false);
+    };
+    let allowlist = parse_string_list(&tenant.channel_allowlist_json);
+    let mut query = channels::Entity::find()
+        .filter(channels::Column::CredentialId.eq(Some(credential_id.to_string())))
+        .filter(channels::Column::Enabled.eq(1));
+    if !allowlist.is_empty() {
+        query = query.filter(channels::Column::Id.is_in(allowlist));
+    }
+    Ok(query.one(&state.db().conn).await?.is_some())
 }
 
 fn public(row: channels::Model) -> ChannelPublic {

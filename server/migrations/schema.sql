@@ -1,5 +1,11 @@
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
@@ -263,3 +269,5 @@ CREATE INDEX IF NOT EXISTS idx_tenant_users_tenant ON tenant_users(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_tenant_invites_tenant ON tenant_invites(tenant_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_records_api_key ON usage_records(api_key_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_records_tenant ON usage_records(tenant_id, created_at);
+
+INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (1, 'initial_rust_rewrite_schema');

@@ -8,8 +8,15 @@ mod upstream;
 use std::net::SocketAddr;
 
 use anyhow::Context;
-use axum::Router;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use axum::{
+    http::{header, HeaderName, HeaderValue, Method},
+    Router,
+};
+use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{config::Config, db::Database, http::AppState};
@@ -39,10 +46,18 @@ async fn main() -> anyhow::Result<()> {
     db.migrate().await?;
 
     let state = AppState::new(config.clone(), db);
-    let app = Router::new()
+    let mut app = Router::new()
         .merge(http::routes(state))
-        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
+    if let Some(static_dir) = &config.static_dir {
+        app = app.fallback_service(
+            ServeDir::new(static_dir)
+                .not_found_service(ServeFile::new(static_dir.join("index.html"))),
+        );
+    }
+    if let Some(cors) = cors_layer(&config.cors_allowed_origins)? {
+        app = app.layer(cors);
+    }
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     tracing::info!(%addr, "starting RelayAPI Rust server");
@@ -51,4 +66,30 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to bind {addr}"))?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn cors_layer(origins: &[String]) -> anyhow::Result<Option<CorsLayer>> {
+    if origins.is_empty() {
+        return Ok(None);
+    }
+    let origins = origins
+        .iter()
+        .map(|origin| origin.parse::<HeaderValue>())
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+            .allow_headers(allowed_headers())
+            .allow_credentials(true),
+    ))
+}
+
+fn allowed_headers() -> [HeaderName; 4] {
+    [
+        header::AUTHORIZATION,
+        header::CONTENT_TYPE,
+        HeaderName::from_static("x-api-key"),
+        HeaderName::from_static("x-relay-web-key"),
+    ]
 }

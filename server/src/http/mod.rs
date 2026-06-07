@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use axum::{
+    body::Body,
+    extract::FromRequest,
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, Request, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
     Json, Router,
@@ -189,13 +191,18 @@ async fn web_login(
         .into_response())
 }
 
-async fn web_logout() -> Response {
+async fn web_logout(State(state): State<AppState>) -> Response {
+    let cookie = format!(
+        "relay_web_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        if state.config().secure_cookies {
+            "; Secure"
+        } else {
+            ""
+        }
+    );
     (
         StatusCode::OK,
-        [(
-            header::SET_COOKIE,
-            "relay_web_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
-        )],
+        [(header::SET_COOKIE, cookie)],
         Json(json!({ "ok": true })),
     )
         .into_response()
@@ -508,10 +515,13 @@ async fn tenant_login(
         .into_response())
 }
 
-async fn tenant_logout() -> Response {
+async fn tenant_logout(State(state): State<AppState>) -> Response {
     (
         StatusCode::OK,
-        [(header::SET_COOKIE, services::tenants::expired_cookie())],
+        [(
+            header::SET_COOKIE,
+            services::tenants::expired_cookie(state.config().secure_cookies),
+        )],
         Json(json!({ "ok": true })),
     )
         .into_response()
@@ -521,7 +531,7 @@ async fn tenant_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
-    let session = services::tenants::require(&state, &headers)?;
+    let session = services::tenants::require(&state, &headers).await?;
     Ok(Json(
         json!({ "tenant_id": session.tenant_id, "user_id": session.user_id, "email": session.email }),
     ))
@@ -531,7 +541,7 @@ async fn tenant_resources(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
-    let session = services::tenants::require(&state, &headers)?;
+    let session = services::tenants::require(&state, &headers).await?;
     Ok(Json(services::tenants::resources(&state, &session).await?))
 }
 
@@ -547,7 +557,7 @@ async fn tenant_patch_settings(
     headers: HeaderMap,
     Json(_input): Json<Value>,
 ) -> AppResult<Json<Value>> {
-    let session = services::tenants::require(&state, &headers)?;
+    let session = services::tenants::require(&state, &headers).await?;
     Ok(Json(services::tenants::resources(&state, &session).await?))
 }
 
@@ -555,7 +565,7 @@ async fn tenant_api_keys(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
-    let session = services::tenants::require(&state, &headers)?;
+    let session = services::tenants::require(&state, &headers).await?;
     Ok(Json(json!(
         services::api_keys::list_for_tenant(state.db(), &session.tenant_id).await?
     )))
@@ -566,7 +576,7 @@ async fn tenant_create_api_key(
     headers: HeaderMap,
     Json(input): Json<services::api_keys::CreateApiKeyRequest>,
 ) -> AppResult<Json<Value>> {
-    let session = services::tenants::require(&state, &headers)?;
+    let session = services::tenants::require(&state, &headers).await?;
     Ok(Json(json!(
         services::api_keys::create_for_tenant(state.db(), &session.tenant_id, input).await?
     )))
@@ -578,7 +588,7 @@ async fn tenant_patch_api_key(
     Path(id): Path<String>,
     Json(input): Json<services::api_keys::PatchApiKeyRequest>,
 ) -> AppResult<Json<Value>> {
-    let session = services::tenants::require(&state, &headers)?;
+    let session = services::tenants::require(&state, &headers).await?;
     Ok(Json(json!(
         services::api_keys::patch_for_tenant(state.db(), &session.tenant_id, &id, input).await?
     )))
@@ -589,7 +599,7 @@ async fn tenant_delete_api_key(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let session = services::tenants::require(&state, &headers)?;
+    let session = services::tenants::require(&state, &headers).await?;
     services::api_keys::delete_for_tenant(state.db(), &session.tenant_id, &id).await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -598,14 +608,16 @@ async fn tenant_overview(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> AppResult<Json<Value>> {
-    let _session = services::tenants::require(&state, &headers)?;
-    let counts = services::overview::counts(state.db()).await?;
+    let session = services::tenants::require(&state, &headers).await?;
+    let counts = services::overview::counts_for_tenant(state.db(), &session.tenant_id).await?;
     Ok(Json(json!({ "counts": counts })))
 }
 
 async fn tenant_logs(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<Value>> {
-    let _session = services::tenants::require(&state, &headers)?;
-    Ok(Json(json!(services::logs::recent(state.db(), 200).await?)))
+    let session = services::tenants::require(&state, &headers).await?;
+    Ok(Json(json!(
+        services::logs::recent_for_tenant(state.db(), &session.tenant_id, 200).await?
+    )))
 }
 
 async fn tenant_quota(
@@ -613,7 +625,12 @@ async fn tenant_quota(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let _session = services::tenants::require(&state, &headers)?;
+    let session = services::tenants::require(&state, &headers).await?;
+    if !services::channels::credential_visible_to_tenant(&state, &session.tenant_id, &id).await? {
+        return Err(crate::error::AppError::unauthorized(
+            "Credential is outside tenant scope",
+        ));
+    }
     Ok(Json(services::codex_quota::get(&state, &id, true).await?))
 }
 
@@ -759,8 +776,23 @@ async fn image_generations(
 async fn image_edits(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    request: Request<Body>,
 ) -> AppResult<Response> {
+    let is_multipart = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("multipart/form-data"));
+    let body = if is_multipart {
+        let multipart = axum::extract::Multipart::from_request(request, &state)
+            .await
+            .map_err(anyhow::Error::from)?;
+        codex::images::multipart_edit_input(multipart).await?
+    } else {
+        Json::<Value>::from_request(request, &state)
+            .await
+            .map_err(anyhow::Error::from)?
+            .0
+    };
     let response_format = codex::images::response_format(&body);
     let payload = codex::images::edit_to_responses(body)?;
     codex::relay::forward_images(
