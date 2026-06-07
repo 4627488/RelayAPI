@@ -1,33 +1,32 @@
 import "server-only";
 
-import { Database } from "bun:sqlite";
-import { drizzle, type BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
+import Database, {
+  type Database as BetterSqliteDatabase,
+  type RunResult,
+  type Statement,
+} from "better-sqlite3";
+import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { serverConfig } from "@/src/server/config/env";
 import { logSchema, mainSchema } from "@/src/server/db/schema";
 
-type SqliteRunResult = {
-  changes: number | bigint;
-  lastInsertRowid?: number | bigint;
-};
-
 type SqliteStatement = {
   get(...params: unknown[]): unknown;
   all(...params: unknown[]): unknown[];
-  run(...params: unknown[]): SqliteRunResult;
+  run(...params: unknown[]): RunResult;
 };
 
 type SqliteDatabase = {
-  client: Database;
+  client: BetterSqliteDatabase;
   exec(sql: string): void;
   prepare(sql: string): SqliteStatement;
 };
 
 let mainDb: SqliteDatabase | null = null;
 let logDb: SqliteDatabase | null = null;
-let mainOrm: BunSQLiteDatabase<typeof mainSchema> | null = null;
-let logOrm: BunSQLiteDatabase<typeof logSchema> | null = null;
+let mainOrm: BetterSQLite3Database<typeof mainSchema> | null = null;
+let logOrm: BetterSQLite3Database<typeof logSchema> | null = null;
 let initialized = false;
 
 export function getMainOrm() {
@@ -64,7 +63,7 @@ export function ensureInitialized() {
 }
 
 function openDatabase(filePath: string, foreignKeys: boolean) {
-  const db = openBunDatabase(filePath);
+  const db = openSqliteDatabase(filePath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec(`PRAGMA busy_timeout = ${serverConfig.sqliteBusyTimeoutMs}`);
@@ -72,15 +71,14 @@ function openDatabase(filePath: string, foreignKeys: boolean) {
   return db;
 }
 
-function openBunDatabase(filePath: string): SqliteDatabase {
+function openSqliteDatabase(filePath: string): SqliteDatabase {
   const database = new Database(filePath, {
-    create: true,
-    readwrite: true,
+    timeout: serverConfig.sqliteBusyTimeoutMs,
   });
   return {
     client: database,
     exec: (sql) => database.exec(sql),
-    prepare: (sql) => database.query(sql),
+    prepare: (sql) => database.prepare(sql) as Statement,
   };
 }
 
