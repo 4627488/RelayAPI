@@ -1,21 +1,27 @@
 services:
-  relay-api:
-    image: ghcr.io/4627488/relayapi:latest
-    container_name: relay-api
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     environment:
-      NODE_ENV: production
       PORT: "3000"
-      HOSTNAME: 0.0.0.0
       DATA_DIR: /app/data
-      # 生产环境建议改成强随机值；不设置时会在 data 卷内自动生成/保存。
-      # RELAY_WEB_ACCESS_KEY: "relay_web_change_me"
-      # RELAY_ENCRYPTION_KEY: "change_me_to_a_long_random_secret"
-      # CODEX_REDIRECT_URI: "http://localhost:1455/auth/callback"
+      CODEX_BASE_URL: https://chatgpt.com/backend-api/codex
     volumes:
       - relay-api-data:/app/data
+    ports:
+      - "3000:3000"
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "8080:8080"
 
 volumes:
   relay-api-data:

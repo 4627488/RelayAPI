@@ -1,123 +1,74 @@
-# RelayAPI
+# RelayAPI Rust Rewrite
 
-RelayAPI - 一站式管理你的 Codex OAuth
+RelayAPI is being rewritten as a separated Rust backend and Vite frontend.
 
-[快速开始](#快速开始) | [Web 访问密钥](#web-访问密钥) | [管理后台](#web-管理后台) | [LinuxDO](https://linux.do/)
+This branch intentionally removes the old Next.js/Bun implementation.
 
----
+## Architecture
 
-![Dashboard](img/dashboard.png)
-![Channels](img/channel.png)
-![OAuth](img/oauth.png)
+- `server/`: Rust API and relay service built with Axum, Tokio, SeaORM, Reqwest, and SQLite.
+- `web/`: Vite + React + TypeScript admin console.
+- `docker-compose.yml`: two-service deployment with nginx proxying frontend API calls to the Rust server.
 
----
+## Current Status
 
-## 项目简介
+The rewrite foundation is in place:
 
-RelayAPI 是一个基于 Next.js App Router 的分层中继服务，用于管理 Codex / OpenAI-compatible 请求流量、API Key、Codex 凭据、渠道路由、请求日志与用量状态。
+- Health endpoint: `GET /api/health`
+- Overview endpoint: `GET /api/admin/overview`
+- Models endpoint: `GET /v1/models`
+- Responses relay boundary: `POST /v1/responses`
+- Compact responses relay boundary: `POST /v1/responses/compact`
+- Chat completions compatibility boundary: `POST /v1/chat/completions`
+- Codex OAuth start/callback boundary
+- Redesigned single SQLite database, managed through SeaORM entities and raw startup migrations
+- Encrypted Codex token storage using a local RelayAPI secret
+- Web access key login with an HTTP-only session cookie
+- Relay API key creation and authentication
+- Channel selection and credential-backed Codex request forwarding
+- Basic request logging and quota refresh endpoint
 
-项目特性：
+The next work is to finish advanced tenant isolation, full image endpoint compatibility, richer quota normalization, and the complete admin/tenant UI parity.
 
-- 支持 OpenAI-compatible  接口。
-- 支持 Codex OAuth 凭据接入与配额刷新。
-- 支持 API Key 管理与 Web 管理后台。
-- 支持自动渠道路由，无需前端选择“当前凭据”。
-- 使用双 SQLite 数据库存储配置、运行状态、日志、审计与用量数据。
-- 使用 Bun 原生 `bun:sqlite` 作为 SQLite 后端，避免额外 native SQLite 依赖。
-- 支持 imge
+## Local Development
 
-## 环境要求
-
-- Bun `>=1.3.0`
-
-本地运行：
-
-```bash
-bun install
-bun run dev
-```
-
-## 快速开始
-
-```yaml
-services:
-  relay-api:
-    image: sipcink/relay-api:latest
-    container_name: relay-api
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      NODE_ENV: production
-      PORT: "3000"
-      HOSTNAME: 0.0.0.0
-      DATA_DIR: /app/data
-    volumes:
-      - relay-api-data:/app/data
-
-volumes:
-  relay-api-data:
-    name: relay-api-data
-```
-
-## Web 访问密钥
-
-首次启动服务时，RelayAPI 会自动生成一个 `relay_web_...` Web 访问密钥，并在首次启动日志中输出。使用 Docker Compose 部署时，可以通过以下命令查看：
+Run the Rust server:
 
 ```bash
-docker logs relay-api
+cargo run -p relay-api-server
 ```
 
-访问 Web 管理页面时必须输入该密钥；验证成功后，系统会写入 HTTP-only 会话 Cookie。
+Run the frontend:
 
-密钥明文只会在首次生成时显示一次，哈希会保存到：
-
-```text
-data/.relay-web-access-key
+```bash
+cd web
+npm install
+npm run dev
 ```
 
-如果密钥丢失，可以停止服务，删除该文件后重新启动，系统会生成新的 Web 访问密钥。
+Open `http://localhost:5173`.
 
-也可以通过环境变量指定固定 Web 访问密钥：
+## Docker
 
-```env
-RELAY_WEB_ACCESS_KEY=relay_web_...
-# 或
-WEB_ACCESS_KEY=relay_web_...
+```bash
+docker compose up --build
 ```
 
-设置后不会自动生成密钥文件。
+- Frontend: `http://localhost:8080`
+- Backend: `http://localhost:3000`
 
-## Codex User-Agent
+## Important Environment Variables
 
-发往 Codex 上游接口和额度刷新接口的 `User-Agent` 可在 Web 管理台的“全局设置”中配置，也可在单个 Codex 凭据的设置弹窗中单独覆盖。
+- `PORT`: backend port, default `3000`
+- `DATA_DIR`: SQLite and local secret data directory, default `data`
+- `RELAY_DB_PATH`: optional SQLite path, default `DATA_DIR/relay.sqlite`
+- `RELAY_WEB_ACCESS_KEY` or `WEB_ACCESS_KEY`: fixed web access key. If omitted, a `relay_web_...` key is generated once and printed at startup.
+- `RELAY_ENCRYPTION_KEY` or `RELAY_SECRET`: fixed encryption secret. If omitted, a local secret is generated under `DATA_DIR`.
+- `CODEX_BASE_URL`: default `https://chatgpt.com/backend-api/codex`
+- `CODEX_REDIRECT_URI`: default `http://localhost:1455/auth/callback`
+- `CODEX_DEFAULT_MODEL`: default `gpt-5.3-codex`
+- `CODEX_USER_AGENT`: defaults to a Codex CLI compatible user agent
 
-生效优先级：凭据覆盖值 → 管理台全局设置 → `CODEX_USER_AGENT` 环境变量 → 内置默认值。
+## Upstream Alignment
 
-```env
-CODEX_USER_AGENT="codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
-```
-
-清除管理台全局设置后，会回退到环境变量或内置默认值；清除凭据覆盖后，会使用当前全局 User-Agent。
-
-## 路由与冷却
-
-凭据级冷却时间可通过环境变量配置，单位为毫秒。默认只对 `429` 做 5 分钟冷却，`401` / `403` 不再固定长时间摘除凭据，避免上游或代理短暂波动导致长期无可用通道。
-
-```env
-RELAY_CODEX_CREDENTIAL_COOLDOWN_401_MS=0
-RELAY_CODEX_CREDENTIAL_COOLDOWN_403_MS=0
-RELAY_CODEX_CREDENTIAL_COOLDOWN_429_MS=300000
-RELAY_USAGE_HEALTH_CACHE_TTL_MS=5000
-```
-
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=SIPC%2FRelayAPI&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&legend=top-left" />
- </picture>
-</a>
+The Codex adapter is intentionally modeled as `server/src/upstream/codex` instead of being scattered through route handlers. Protocol behavior should be validated against OpenAI Codex CLI and documented in code comments/tests before expanding functionality.
