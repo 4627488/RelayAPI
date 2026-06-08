@@ -38,7 +38,6 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
-ENV RELAY_BIND_HOST=0.0.0.0
 ENV PORT=3000
 ENV DATA_DIR=/app/data
 
@@ -58,4 +57,4 @@ VOLUME ["/app/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/api/health').then((r) => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
 
-CMD ["node", "-e", "process.env.HOSTNAME = process.env.RELAY_BIND_HOST || process.env.HOSTNAME || '0.0.0.0'; require('./server.js')"]
+CMD ["node", "server.js"]
