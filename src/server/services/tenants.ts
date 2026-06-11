@@ -11,6 +11,8 @@ import {
 import {
   getTenantById,
   getTenantInviteByTokenHash,
+  getLatestTenantInvite,
+  getPendingTenantInvite,
   getTenantOwnerUser,
   getTenantUserByEmail,
   getTenantUserById,
@@ -20,7 +22,6 @@ import {
   listTenants,
   markTenantInviteAccepted,
   publicProxy,
-  revokeOpenTenantInvites,
   updateTenant,
   updateTenantUser,
 } from "@/src/server/repositories/tenants";
@@ -92,18 +93,11 @@ export function getPublicTenantById(id: string) {
 
 export function createTenant(input: TenantPayload): PublicTenant {
   const name = cleanString(input.name);
-  const ownerEmail = normalizeEmail(input.ownerEmail);
+  const ownerEmail = normalizeOptionalEmail(input.ownerEmail);
   if (!name) {
     throw new HttpError(400, "invalid_tenant_name", "Tenant name is required");
   }
-  if (!ownerEmail) {
-    throw new HttpError(
-      400,
-      "invalid_tenant_owner_email",
-      "Tenant owner email is required",
-    );
-  }
-  if (getTenantUserByEmail(ownerEmail)) {
+  if (ownerEmail && getTenantUserByEmail(ownerEmail)) {
     throw new HttpError(
       409,
       "tenant_owner_exists",
@@ -132,12 +126,14 @@ export function createTenant(input: TenantPayload): PublicTenant {
   if (!tenant) {
     throw new Error("Failed to create tenant");
   }
-  insertTenantUser({
-    id: randomId("tuser"),
-    tenantId: tenant.id,
-    email: ownerEmail,
-    displayName: name,
-  });
+  if (ownerEmail) {
+    insertTenantUser({
+      id: randomId("tuser"),
+      tenantId: tenant.id,
+      email: ownerEmail,
+      displayName: name,
+    });
+  }
   return toPublicTenant(tenant);
 }
 
@@ -145,15 +141,8 @@ export function patchTenant(id: string, input: TenantPayload): PublicTenant {
   const existing = requireTenantById(id);
   const ownerEmail =
     input.ownerEmail !== undefined
-      ? normalizeEmail(input.ownerEmail)
+      ? normalizeOptionalEmail(input.ownerEmail)
       : existing.ownerEmail;
-  if (!ownerEmail) {
-    throw new HttpError(
-      400,
-      "invalid_tenant_owner_email",
-      "Tenant owner email is required",
-    );
-  }
   const next = updateTenant(id, {
     ...(input.name !== undefined ? { name: cleanString(input.name) } : {}),
     ownerEmail,
@@ -216,18 +205,25 @@ export function createTenantInvite(input: {
   requestUrl: string;
 }): CreatedTenantInvite {
   const tenant = requireTenantById(input.tenantId);
-  const user = getTenantOwnerUser(tenant.id);
-  if (!user) {
-    throw new HttpError(404, "tenant_owner_not_found", "Tenant owner not found");
+  if (tenant.ownerEmail || getTenantOwnerUser(tenant.id)) {
+    throw new HttpError(
+      409,
+      "tenant_user_exists",
+      "Tenant already has a registered user",
+    );
   }
-  revokeOpenTenantInvites(tenant.id);
+  if (getLatestTenantInvite(tenant.id)) {
+    throw new HttpError(
+      409,
+      "tenant_invite_exists",
+      "Tenant already has an invitation",
+    );
+  }
   const token = `relay_invite_${base64Url(32)}`;
   const expiresAt = new Date(Date.now() + TENANT_INVITE_TTL_MS).toISOString();
   const invite = insertTenantInvite({
     id: randomId("tinvite"),
     tenantId: tenant.id,
-    userId: user.id,
-    email: user.email,
     tokenHash: sha256(token),
     expiresAt,
   });
@@ -237,7 +233,7 @@ export function createTenantInvite(input: {
   return {
     id: invite.id,
     tenantId: tenant.id,
-    email: user.email,
+    email: invite.email,
     expiresAt,
     token,
     activateUrl: tenantActivateUrl(input.requestUrl, token),
@@ -246,11 +242,28 @@ export function createTenantInvite(input: {
 
 export function activateTenantInvite(input: {
   token: unknown;
+  email: unknown;
   password: unknown;
   displayName?: unknown;
 }): TenantSessionContext {
   const token = cleanString(input.token);
+  const email = normalizeEmail(input.email);
+  const displayName = cleanString(input.displayName);
   const password = cleanString(input.password);
+  if (!displayName) {
+    throw new HttpError(
+      400,
+      "invalid_tenant_display_name",
+      "Display name is required",
+    );
+  }
+  if (!email) {
+    throw new HttpError(
+      400,
+      "invalid_tenant_email",
+      "Valid email is required",
+    );
+  }
   assertPassword(password);
   const invite = token ? getTenantInviteByTokenHash(sha256(token)) : null;
   if (!invite) {
@@ -266,17 +279,40 @@ export function activateTenantInvite(input: {
     throw new HttpError(403, "tenant_invite_expired", "Invite has expired");
   }
   const tenant = requireUsableTenant(invite.tenantId);
-  const user = getTenantUserById(invite.userId);
+  const existingUser = getTenantUserByEmail(email);
+  if (existingUser && existingUser.tenantId !== tenant.id) {
+    throw new HttpError(
+      409,
+      "tenant_email_exists",
+      "A tenant user with this email already exists",
+    );
+  }
+  if (existingUser && existingUser.passwordHash) {
+    throw new HttpError(
+      409,
+      "tenant_email_exists",
+      "A tenant user with this email already exists",
+    );
+  }
+  const user =
+    existingUser ||
+    insertTenantUser({
+      id: randomId("tuser"),
+      tenantId: tenant.id,
+      email,
+      displayName,
+      passwordHash: null,
+    });
   if (!user || user.tenantId !== tenant.id || !user.enabled) {
     throw new HttpError(403, "tenant_user_disabled", "Tenant user is disabled");
   }
-  const displayName = cleanString(input.displayName) || user.displayName;
   const updated = updateTenantUser(user.id, {
     displayName,
     passwordHash: hashPassword(password),
     lastLoginAt: new Date().toISOString(),
   });
-  markTenantInviteAccepted(invite.id);
+  updateTenant(tenant.id, { ownerEmail: email });
+  markTenantInviteAccepted(invite.id, { userId: user.id, email });
   if (!updated) {
     throw new Error("Failed to activate tenant user");
   }
@@ -493,12 +529,14 @@ export function expiredTenantSessionCookieOptions(request: Request | string) {
 
 export function toPublicTenant(tenant: TenantWithSecrets): PublicTenant {
   const counts = countApiKeysByTenant(tenant.id);
+  const pendingInvite = getPendingTenantInvite(tenant.id);
   return {
     ...tenant,
     proxy: publicProxy(tenant.proxy),
     apiKeyCount: counts.total,
     enabledApiKeyCount: counts.enabled,
     todayTokens: getTenantDailyUsage(tenant.id),
+    pendingInvite: Boolean(pendingInvite),
   };
 }
 
@@ -705,6 +743,22 @@ function cleanString(value: unknown) {
 function normalizeEmail(value: unknown) {
   const email = cleanString(value).toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
+}
+
+function normalizeOptionalEmail(value: unknown) {
+  const raw = cleanString(value);
+  if (!raw) {
+    return "";
+  }
+  const email = normalizeEmail(raw);
+  if (!email) {
+    throw new HttpError(
+      400,
+      "invalid_tenant_owner_email",
+      "Valid owner email is required",
+    );
+  }
+  return email;
 }
 
 function cleanStringArray(value: unknown) {

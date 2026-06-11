@@ -185,8 +185,8 @@ export const tenantInvites = sqliteTable(
   {
     id: text("id").primaryKey(),
     tenantId: text("tenant_id").notNull(),
-    userId: text("user_id").notNull(),
-    email: text("email").notNull(),
+    userId: text("user_id"),
+    email: text("email").notNull().default(""),
     tokenHash: text("token_hash").notNull(),
     expiresAt: text("expires_at").notNull(),
     acceptedAt: text("accepted_at"),

@@ -567,7 +567,7 @@ function ApiKeyTransferDialog({
               </Select>
               {selectedTenant && (
                 <FieldDescription>
-                  Owner：{selectedTenant.ownerEmail} · 当前 Key{" "}
+                  Owner：{formatTenantOwner(selectedTenant)} · 当前 Key{" "}
                   {formatNumber(selectedTenant.apiKeyCount)}
                   {selectedTenant.maxApiKeys === null
                     ? " / 不限制"
@@ -892,6 +892,13 @@ async function copyText(value: string) {
 
 function formatNullableDate(value: string | null) {
   return value ? formatDateTime(value) : <span className="text-muted-foreground">-</span>;
+}
+
+function formatTenantOwner(tenant: PublicTenant) {
+  if (tenant.ownerEmail) {
+    return tenant.ownerEmail;
+  }
+  return tenant.pendingInvite ? "Pending invite" : "未邀请";
 }
 
 function formatDateTime(value: string) {

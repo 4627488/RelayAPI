@@ -120,7 +120,13 @@ export function AdminTenantsSection({
 
   async function inviteTenant(id: string) {
     try {
-      setPendingInvite(await createTenantInvite(id));
+      const invite = await createTenantInvite(id);
+      setPendingInvite(invite);
+      onChanged(
+        tenants.map((tenant) =>
+          tenant.id === id ? { ...tenant, pendingInvite: true } : tenant,
+        ),
+      );
       toast.success("邀请链接已生成");
     } catch (error) {
       toast.error(adminErrorMessage(error));
@@ -134,7 +140,7 @@ export function AdminTenantsSection({
           <div>
             <CardTitle>租户</CardTitle>
             <CardDescription>
-              创建租户 profile、设置总池限制，并生成一次性邀请链接。
+              创建租户 profile、设置总池限制，并生成一次性注册邀请链接。
             </CardDescription>
           </div>
           <Button type="button" onClick={() => setCreating(true)}>
@@ -171,7 +177,15 @@ export function AdminTenantsSection({
                         {tenant.id}
                       </div>
                     </TableCell>
-                    <TableCell>{tenant.ownerEmail}</TableCell>
+                    <TableCell>
+                      {tenant.ownerEmail ? (
+                        tenant.ownerEmail
+                      ) : tenant.pendingInvite ? (
+                        <Badge variant="outline">Pending invite</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">未邀请</span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {formatNumber(tenant.apiKeyCount)}
                       {tenant.maxApiKeys === null
@@ -196,6 +210,9 @@ export function AdminTenantsSection({
                           variant="outline"
                           size="icon"
                           aria-label="生成邀请链接"
+                          disabled={Boolean(
+                            tenant.ownerEmail || tenant.pendingInvite,
+                          )}
                           onClick={() => inviteTenant(tenant.id)}
                         >
                           <LinkIcon />
@@ -233,7 +250,12 @@ export function AdminTenantsSection({
         mode="create"
         open={creating}
         onOpenChange={setCreating}
-        onSaved={(tenant) => onChanged([tenant, ...tenants])}
+        onSaved={async (tenant) => {
+          const invite = await createTenantInvite(tenant.id);
+          setPendingInvite(invite);
+          onChanged([{ ...tenant, pendingInvite: true }, ...tenants]);
+          toast.success("邀请链接已生成");
+        }}
       />
       <TenantFormDialog
         key={`edit:${editing?.id || "none"}`}
@@ -275,7 +297,7 @@ function TenantFormDialog({
   open: boolean;
   tenant?: PublicTenant | null;
   onOpenChange: (open: boolean) => void;
-  onSaved: (tenant: PublicTenant) => void;
+  onSaved: (tenant: PublicTenant) => void | Promise<void>;
 }) {
   const [form, setForm] = React.useState<TenantFormState>(() =>
     tenant ? tenantToForm(tenant) : EMPTY_TENANT_FORM,
@@ -291,7 +313,7 @@ function TenantFormDialog({
         mode === "create"
           ? await createTenant(payload)
           : await updateTenant(assertTenant(tenant).id, payload);
-      onSaved(saved);
+      await onSaved(saved);
       onOpenChange(false);
       toast.success(mode === "create" ? "租户已创建" : "租户已保存");
     } catch (error) {
@@ -310,7 +332,7 @@ function TenantFormDialog({
               {mode === "create" ? "新建租户" : "编辑租户"}
             </DialogTitle>
             <DialogDescription>
-              租户创建后可生成邀请链接，用户激活时设置密码。
+              租户创建后会生成邀请链接，用户注册时填写姓名、邮箱和密码。
             </DialogDescription>
           </DialogHeader>
           <FieldSet>
@@ -329,20 +351,28 @@ function TenantFormDialog({
                   }
                 />
               </Field>
-              <Field>
-                <FieldLabel htmlFor="tenant-owner-email">Owner 邮箱</FieldLabel>
-                <Input
-                  id="tenant-owner-email"
-                  type="email"
-                  value={form.ownerEmail}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      ownerEmail: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
+              {mode === "edit" && (
+                <Field>
+                  <FieldLabel htmlFor="tenant-owner-email">
+                    Owner 邮箱
+                  </FieldLabel>
+                  <Input
+                    id="tenant-owner-email"
+                    type="email"
+                    value={form.ownerEmail}
+                    placeholder="Pending invite"
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        ownerEmail: event.target.value,
+                      }))
+                    }
+                  />
+                  <FieldDescription>
+                    未注册前保持为空，用户接受邀请后会自动写入。
+                  </FieldDescription>
+                </Field>
+              )}
               <Field orientation="horizontal">
                 <div>
                   <FieldLabel htmlFor="tenant-enabled">启用租户</FieldLabel>
@@ -561,7 +591,7 @@ function InviteDialog({
         <DialogHeader>
           <DialogTitle>租户邀请链接</DialogTitle>
           <DialogDescription>
-            该链接一次性有效，用户打开后设置密码完成激活。
+            该链接一次性有效，用户打开后填写姓名、邮箱和密码完成注册。
           </DialogDescription>
         </DialogHeader>
         <div className="rounded-lg border bg-muted/50 p-3 text-sm break-all">

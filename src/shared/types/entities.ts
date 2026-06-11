@@ -98,6 +98,7 @@ export interface PublicTenant extends TenantRecord {
   apiKeyCount: number;
   enabledApiKeyCount: number;
   todayTokens: number;
+  pendingInvite: boolean;
 }
 
 export interface TenantUserRecord {
@@ -116,7 +117,7 @@ export interface TenantUserRecord {
 export interface TenantInviteRecord {
   id: string;
   tenantId: string;
-  userId: string;
+  userId: string | null;
   email: string;
   tokenHash: string;
   expiresAt: string;

@@ -17,6 +17,7 @@ export async function POST(request: Request) {
     const data = objectValue(body) || {};
     const context = activateTenantInvite({
       token: data.token,
+      email: data.email,
       password: data.password,
       displayName: data.displayName,
     });

@@ -24,6 +24,7 @@ import { activateTenant } from "@/lib/tenant-api";
 
 export function TenantActivate({ token }: { token: string }) {
   const [displayName, setDisplayName] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [pending, setPending] = React.useState(false);
@@ -33,6 +34,14 @@ export function TenantActivate({ token }: { token: string }) {
     event.preventDefault();
     if (!token) {
       setError("邀请链接缺少 token");
+      return;
+    }
+    if (!displayName.trim()) {
+      setError("请输入姓名");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError("请输入有效邮箱");
       return;
     }
     if (password.length < 8) {
@@ -48,8 +57,9 @@ export function TenantActivate({ token }: { token: string }) {
     try {
       await activateTenant({
         token,
+        email: email.trim(),
         password,
-        displayName: displayName.trim() || undefined,
+        displayName: displayName.trim(),
       });
       window.location.assign("/tenant");
     } catch (activateError) {
@@ -71,7 +81,7 @@ export function TenantActivate({ token }: { token: string }) {
             <UserRoundIcon />
           </div>
           <CardTitle className="text-xl">激活租户账号</CardTitle>
-          <CardDescription>设置密码后即可进入自己的 RelayAPI 面板。</CardDescription>
+          <CardDescription>填写账号信息后即可进入自己的 RelayAPI 面板。</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="flex flex-col gap-4" onSubmit={submit}>
@@ -84,7 +94,7 @@ export function TenantActivate({ token }: { token: string }) {
             )}
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="tenant-display-name">显示名</FieldLabel>
+                <FieldLabel htmlFor="tenant-display-name">姓名</FieldLabel>
                 <Input
                   id="tenant-display-name"
                   autoFocus
@@ -92,7 +102,17 @@ export function TenantActivate({ token }: { token: string }) {
                   value={displayName}
                   onChange={(event) => setDisplayName(event.target.value)}
                 />
-                <FieldDescription>可留空，之后将使用租户名称。</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="tenant-email">邮箱</FieldLabel>
+                <Input
+                  id="tenant-email"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+                <FieldDescription>之后使用该邮箱登录租户面板。</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="tenant-new-password">密码</FieldLabel>

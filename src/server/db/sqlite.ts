@@ -455,6 +455,65 @@ function migrateMainDb(db: SqliteDatabase) {
         ON api_keys(tenant_id, created_at);
     `);
   });
+
+  applyMigration(db, "009_unbound_tenant_invites", (database) => {
+    const columns = database
+      .prepare("PRAGMA table_info(tenant_invites)")
+      .all() as Array<{ name: string; notnull: number }>;
+    const userId = columns.find((column) => column.name === "user_id");
+    const email = columns.find((column) => column.name === "email");
+    if (userId?.notnull === 0 && email?.notnull === 1) {
+      return;
+    }
+
+    database.exec(`
+      DROP INDEX IF EXISTS tenant_invites_token_hash_unique;
+      DROP INDEX IF EXISTS idx_tenant_invites_tenant;
+      DROP INDEX IF EXISTS idx_tenant_invites_token;
+
+      CREATE TABLE tenant_invites_next (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        user_id TEXT,
+        email TEXT NOT NULL DEFAULT '',
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        accepted_at TEXT,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES tenant_users(id) ON DELETE CASCADE
+      ) STRICT;
+
+      INSERT INTO tenant_invites_next (
+        id, tenant_id, user_id, email, token_hash, expires_at,
+        accepted_at, revoked_at, created_at, updated_at
+      )
+      SELECT
+        id,
+        tenant_id,
+        NULLIF(user_id, ''),
+        COALESCE(email, ''),
+        token_hash,
+        expires_at,
+        accepted_at,
+        revoked_at,
+        created_at,
+        updated_at
+      FROM tenant_invites;
+
+      DROP TABLE tenant_invites;
+      ALTER TABLE tenant_invites_next RENAME TO tenant_invites;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS tenant_invites_token_hash_unique
+        ON tenant_invites(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_tenant_invites_tenant
+        ON tenant_invites(tenant_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_tenant_invites_token
+        ON tenant_invites(token_hash);
+    `);
+  });
 }
 
 function migrateLogDb(db: SqliteDatabase) {

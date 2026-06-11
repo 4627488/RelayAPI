@@ -58,8 +58,9 @@ export function loginTenant(payload: { email: string; password: string }) {
 
 export function activateTenant(payload: {
   token: string;
+  email: string;
   password: string;
-  displayName?: string;
+  displayName: string;
 }) {
   return tenantRequest<{ activated: true }>("/api/tenant/auth/activate", {
     method: "POST",

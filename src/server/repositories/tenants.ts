@@ -221,8 +221,8 @@ export function updateTenantUser(
 export function insertTenantInvite(input: {
   id: string;
   tenantId: string;
-  userId: string;
-  email: string;
+  userId?: string | null;
+  email?: string;
   tokenHash: string;
   expiresAt: string;
 }) {
@@ -232,8 +232,8 @@ export function insertTenantInvite(input: {
     .values({
       id: input.id,
       tenantId: input.tenantId,
-      userId: input.userId,
-      email: input.email,
+      userId: input.userId || null,
+      email: input.email || "",
       tokenHash: input.tokenHash,
       expiresAt: input.expiresAt,
       createdAt: now,
@@ -263,6 +263,38 @@ export function getTenantInviteByTokenHash(
   return row ? toTenantInviteRecord(row) : null;
 }
 
+export function getLatestTenantInvite(
+  tenantId: string,
+): TenantInviteRecord | null {
+  const row = getMainOrm()
+    .select()
+    .from(tenantInvites)
+    .where(eq(tenantInvites.tenantId, tenantId))
+    .orderBy(desc(tenantInvites.createdAt))
+    .limit(1)
+    .get();
+  return row ? toTenantInviteRecord(row) : null;
+}
+
+export function getPendingTenantInvite(
+  tenantId: string,
+): TenantInviteRecord | null {
+  const row = getMainOrm()
+    .select()
+    .from(tenantInvites)
+    .where(
+      and(
+        eq(tenantInvites.tenantId, tenantId),
+        isNull(tenantInvites.acceptedAt),
+        isNull(tenantInvites.revokedAt),
+      ),
+    )
+    .orderBy(desc(tenantInvites.createdAt))
+    .limit(1)
+    .get();
+  return row ? toTenantInviteRecord(row) : null;
+}
+
 export function revokeOpenTenantInvites(tenantId: string) {
   const now = new Date().toISOString();
   getMainOrm()
@@ -278,11 +310,19 @@ export function revokeOpenTenantInvites(tenantId: string) {
     .run();
 }
 
-export function markTenantInviteAccepted(id: string) {
+export function markTenantInviteAccepted(
+  id: string,
+  patch: { userId?: string | null; email?: string } = {},
+) {
   const now = new Date().toISOString();
   getMainOrm()
     .update(tenantInvites)
-    .set({ acceptedAt: now, updatedAt: now })
+    .set({
+      ...(patch.userId !== undefined ? { userId: patch.userId } : {}),
+      ...(patch.email !== undefined ? { email: patch.email } : {}),
+      acceptedAt: now,
+      updatedAt: now,
+    })
     .where(eq(tenantInvites.id, id))
     .run();
   return getTenantInviteById(id);
