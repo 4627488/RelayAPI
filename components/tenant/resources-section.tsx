@@ -33,10 +33,13 @@ import {
 } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
-import type { CodexQuotaReport } from "@/lib/admin-api";
+import type {
+  CodexQuotaReport,
+  CodexResetCreditsReport,
+} from "@/lib/admin-api";
 import {
-  consumeTenantCredentialResetCredit,
   getTenantCredentialQuota,
+  getTenantCredentialResetCredits,
   tenantErrorMessage,
 } from "@/lib/tenant-api";
 import type {
@@ -153,10 +156,13 @@ function TenantCredentialsPanel({
   const [quotaErrors, setQuotaErrors] = React.useState<Record<string, string>>(
     {},
   );
+  const [resetCredits, setResetCredits] = React.useState<
+    Record<string, CodexResetCreditsReport>
+  >({});
+  const [resetCreditErrors, setResetCreditErrors] = React.useState<
+    Record<string, string>
+  >({});
   const [refreshingAll, setRefreshingAll] = React.useState(false);
-  const [resettingQuotaIds, setResettingQuotaIds] = React.useState<Set<string>>(
-    () => new Set(),
-  );
   const quotaLoadRequestedRef = React.useRef(new Set<string>());
 
   const setQuotaLoading = React.useCallback((id: string, loading: boolean) => {
@@ -186,11 +192,35 @@ function TenantCredentialsPanel({
         delete next[credential.id];
         return next;
       });
+      setResetCreditErrors((current) => {
+        if (!(credential.id in current)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[credential.id];
+        return next;
+      });
 
       try {
-        const quota = await getTenantCredentialQuota(credential.id, {
-          refresh: forceRefresh,
-        });
+        const [quotaResult, resetCreditsResult] = await Promise.allSettled([
+          getTenantCredentialQuota(credential.id, { refresh: forceRefresh }),
+          getTenantCredentialResetCredits(credential.id),
+        ]);
+        if (resetCreditsResult.status === "fulfilled") {
+          setResetCredits((current) => ({
+            ...current,
+            [credential.id]: resetCreditsResult.value,
+          }));
+        } else {
+          setResetCreditErrors((current) => ({
+            ...current,
+            [credential.id]: tenantErrorMessage(resetCreditsResult.reason),
+          }));
+        }
+        if (quotaResult.status === "rejected") {
+          throw quotaResult.reason;
+        }
+        const quota = quotaResult.value;
         setQuotas((current) => ({ ...current, [credential.id]: quota }));
         if (!options.silent) {
           toast.success(forceRefresh ? "额度已刷新" : "额度已读取");
@@ -232,30 +262,6 @@ function TenantCredentialsPanel({
       setRefreshingAll(false);
     }
   }, [credentials, loadQuota]);
-
-  const redeemResetCredit = React.useCallback(
-    async (credential: TenantResourceCredential) => {
-      setResettingQuotaIds((current) => new Set(current).add(credential.id));
-      try {
-        const result = await consumeTenantCredentialResetCredit(credential.id);
-        toast.success(
-          result.windows_reset
-            ? `已兑换重置，重置 ${formatNumber(result.windows_reset)} 个窗口`
-            : "已兑换重置",
-        );
-        await loadQuota(credential, { forceRefresh: true, silent: true });
-      } catch (error) {
-        toast.error(tenantErrorMessage(error));
-      } finally {
-        setResettingQuotaIds((current) => {
-          const next = new Set(current);
-          next.delete(credential.id);
-          return next;
-        });
-      }
-    },
-    [loadQuota],
-  );
 
   React.useEffect(() => {
     credentials.forEach((credential) => {
@@ -317,8 +323,8 @@ function TenantCredentialsPanel({
                 onRefresh={() =>
                   void loadQuota(credential, { forceRefresh: true })
                 }
-                onResetCredit={() => redeemResetCredit(credential)}
-                resetting={resettingQuotaIds.has(credential.id)}
+                resetCreditError={resetCreditErrors[credential.id]}
+                resetCredits={resetCredits[credential.id]}
               />
             ))}
           </div>
@@ -333,17 +339,17 @@ function CredentialCard({
   errorMessage,
   loading,
   onRefresh,
-  onResetCredit,
   quota,
-  resetting,
+  resetCreditError,
+  resetCredits,
 }: {
   credential: TenantResourceCredential;
   errorMessage?: string;
   loading: boolean;
   onRefresh: () => void;
-  onResetCredit: () => void;
   quota: CodexQuotaReport | undefined;
-  resetting: boolean;
+  resetCreditError?: string;
+  resetCredits?: CodexResetCreditsReport;
 }) {
   return (
     <div className="grid gap-3 rounded-lg border bg-muted/20 p-3">
@@ -445,9 +451,9 @@ function CredentialCard({
           <QuotaProgressCell
             errorMessage={errorMessage}
             loading={loading}
-            onResetCredit={onResetCredit}
             quota={quota}
-            resetting={resetting}
+            resetCreditError={resetCreditError}
+            resetCredits={resetCredits}
           />
         </div>
       </div>
@@ -489,15 +495,15 @@ function QuotaSummaryBadge({ quota }: { quota: CodexQuotaReport }) {
 function QuotaProgressCell({
   errorMessage,
   loading,
-  onResetCredit,
   quota,
-  resetting,
+  resetCreditError,
+  resetCredits,
 }: {
   errorMessage?: string;
   loading: boolean;
-  onResetCredit?: () => void;
   quota: CodexQuotaReport | undefined;
-  resetting?: boolean;
+  resetCreditError?: string;
+  resetCredits?: CodexResetCreditsReport;
 }) {
   if (!quota) {
     if (errorMessage) {
@@ -523,6 +529,11 @@ function QuotaProgressCell({
   if (windows.length === 0) {
     return (
       <div className="grid gap-1">
+        <ResetCreditsLine
+          errorMessage={resetCreditError}
+          loading={loading}
+          resetCredits={resetCredits}
+        />
         <span className="text-xs text-muted-foreground">
           {quota.message || "没有可展示的额度窗口"}
         </span>
@@ -532,6 +543,11 @@ function QuotaProgressCell({
 
   return (
     <div className="grid gap-2">
+      <ResetCreditsLine
+        errorMessage={resetCreditError}
+        loading={loading}
+        resetCredits={resetCredits}
+      />
       {windows.map((window, index) => {
         const remainingPercent = window.remaining_percent;
         const progressValue =
@@ -567,22 +583,41 @@ function QuotaProgressCell({
           </div>
         );
       })}
-      {onResetCredit && (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={loading || resetting}
-          onClick={onResetCredit}
+    </div>
+  );
+}
+
+function ResetCreditsLine({
+  errorMessage,
+  loading,
+  resetCredits,
+}: {
+  errorMessage?: string;
+  loading: boolean;
+  resetCredits?: CodexResetCreditsReport;
+}) {
+  if (resetCredits) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-md border border-border/50 bg-background/50 px-2 py-1.5 text-xs">
+        <span className="text-muted-foreground">重置次数</span>
+        <Badge
+          variant={resetCredits.available_count > 0 ? "secondary" : "outline"}
         >
-          {resetting ? (
-            <Spinner data-icon="inline-start" />
-          ) : (
-            <RefreshCwIcon data-icon="inline-start" />
-          )}
-          兑换重置
-        </Button>
-      )}
+          {formatNumber(resetCredits.available_count)} 次
+        </Badge>
+      </div>
+    );
+  }
+  if (errorMessage) {
+    return (
+      <div className="text-xs text-amber-600 dark:text-amber-300">
+        重置次数读取失败
+      </div>
+    );
+  }
+  return (
+    <div className="text-xs text-muted-foreground">
+      {loading ? "重置次数读取中" : "重置次数未读取"}
     </div>
   );
 }
