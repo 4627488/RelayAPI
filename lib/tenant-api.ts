@@ -11,6 +11,8 @@ import type {
   AdminDeleteResponse,
   ApiKeyPayload,
   CodexQuotaReport,
+  CodexResetCreditConsumeReport,
+  CodexResetCreditsReport,
   CredentialProxyPayload,
   RequestLogDetail,
   RequestLogsPage,
@@ -167,6 +169,33 @@ export function getTenantCredentialQuota(
   const suffix = params.size ? `?${params.toString()}` : "";
   return tenantRequest<CodexQuotaReport>(
     `/api/tenant/codex/credentials/${encodeURIComponent(id)}/quota${suffix}`,
+  );
+}
+
+export function getTenantCredentialResetCredits(
+  id: string,
+  options: { raw?: boolean } = {},
+) {
+  const params = new URLSearchParams();
+  if (options.raw) {
+    params.set("raw", "1");
+  }
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return tenantRequest<CodexResetCreditsReport>(
+    `/api/tenant/codex/credentials/${encodeURIComponent(id)}/quota/reset-credits${suffix}`,
+  );
+}
+
+export function consumeTenantCredentialResetCredit(
+  id: string,
+  payload: { creditId?: string; redeemRequestId?: string } = {},
+) {
+  return tenantRequest<CodexResetCreditConsumeReport>(
+    `/api/tenant/codex/credentials/${encodeURIComponent(id)}/quota/reset-credits`,
+    {
+      method: "POST",
+      body: payload,
+    },
   );
 }
 

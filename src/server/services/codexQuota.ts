@@ -1,5 +1,7 @@
 import "server-only";
 
+import crypto from "node:crypto";
+
 import { serverConfig } from "@/src/server/config/env";
 import { HttpError, logServerError } from "@/src/server/http/errors";
 import { proxiedFetch } from "@/src/server/net/proxy";
@@ -19,6 +21,10 @@ import type {
 } from "@/src/shared/types/entities";
 
 export const WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+export const WHAM_RESET_CREDITS_URL =
+  "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+export const WHAM_RESET_CREDITS_CONSUME_URL =
+  "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
 
 const WINDOW_5H_SECONDS = 5 * 60 * 60;
 const WINDOW_7D_SECONDS = 7 * 24 * 60 * 60;
@@ -75,6 +81,39 @@ interface MissingCodexQuotaReport {
   cached: false;
   cache_state: "missing";
   message: string;
+}
+
+interface CodexResetCredit {
+  id: string;
+  available: boolean;
+  expires_at: string | null;
+  raw?: unknown;
+}
+
+interface CodexResetCreditsReport {
+  provider: "codex";
+  credential_id: string;
+  account_id: string;
+  email: string;
+  plan_type: string;
+  available_count: number;
+  credits: CodexResetCredit[];
+  retrieved_at: string;
+  raw?: unknown;
+}
+
+interface CodexResetCreditConsumeReport {
+  provider: "codex";
+  credential_id: string;
+  account_id: string;
+  email: string;
+  plan_type: string;
+  credit_id: string;
+  redeem_request_id: string;
+  code: string;
+  windows_reset: number | null;
+  consumed_at: string;
+  raw?: unknown;
 }
 
 export async function getCodexQuota({
@@ -191,6 +230,190 @@ export async function getCodexQuota({
   }
 }
 
+export async function getCodexResetCredits({
+  credentialId,
+  includeRaw = false,
+}: {
+  credentialId: string;
+  includeRaw?: boolean;
+}): Promise<CodexResetCreditsReport> {
+  const credential = await getCredentialForWham(credentialId);
+  try {
+    const body = await requestWhamJson({
+      credential,
+      url: WHAM_RESET_CREDITS_URL,
+      method: "GET",
+      errorCode: "codex_reset_credits_request_failed",
+      errorMessage: "Codex reset credits request failed",
+    });
+    const report = normalizeResetCreditsResponse(body, credential);
+    return includeRaw ? { ...report, raw: body } : report;
+  } catch (error) {
+    logServerError(error, {
+      operation: "codex.reset_credits.query",
+      metadata: { ...codexQuotaCredentialLogMetadata(credential), includeRaw },
+    });
+    throw error;
+  }
+}
+
+export async function consumeCodexResetCredit({
+  credentialId,
+  creditId,
+  redeemRequestId,
+  includeRaw = false,
+}: {
+  credentialId: string;
+  creditId?: string;
+  redeemRequestId?: string;
+  includeRaw?: boolean;
+}): Promise<CodexResetCreditConsumeReport> {
+  const credential = await getCredentialForWham(credentialId);
+  try {
+    const selectedCreditId =
+      cleanString(creditId) ||
+      firstAvailableResetCreditId(
+        normalizeResetCreditsResponse(
+          await requestWhamJson({
+            credential,
+            url: WHAM_RESET_CREDITS_URL,
+            method: "GET",
+            errorCode: "codex_reset_credits_request_failed",
+            errorMessage: "Codex reset credits request failed",
+          }),
+          credential,
+        ),
+      );
+
+    if (!selectedCreditId) {
+      throw new HttpError(
+        400,
+        "codex_reset_credit_unavailable",
+        "No available Codex reset credit found for this credential",
+      );
+    }
+
+    const requestId = cleanString(redeemRequestId) || crypto.randomUUID();
+    const body = await requestWhamJson({
+      credential,
+      url: WHAM_RESET_CREDITS_CONSUME_URL,
+      method: "POST",
+      body: {
+        credit_id: selectedCreditId,
+        redeem_request_id: requestId,
+      },
+      errorCode: "codex_reset_credit_consume_failed",
+      errorMessage: "Codex reset credit consume request failed",
+    });
+
+    const root = objectFrom(body) || {};
+    return {
+      provider: "codex",
+      credential_id: credential.id,
+      account_id: credential.accountId,
+      email: credential.email,
+      plan_type: credential.planType,
+      credit_id: selectedCreditId,
+      redeem_request_id: requestId,
+      code: cleanString(root.code),
+      windows_reset: numberPtr(
+        firstValue(root.windows_reset, root.windowsReset),
+      ),
+      consumed_at: new Date().toISOString(),
+      ...(includeRaw ? { raw: body } : {}),
+    };
+  } catch (error) {
+    logServerError(error, {
+      operation: "codex.reset_credits.consume",
+      metadata: {
+        ...codexQuotaCredentialLogMetadata(credential),
+        creditId: creditId ? "[provided]" : null,
+        redeemRequestId: redeemRequestId ? "[provided]" : null,
+        includeRaw,
+      },
+    });
+    throw error;
+  }
+}
+
+async function getCredentialForWham(credentialId: string) {
+  if (!credentialId) {
+    throw new HttpError(
+      400,
+      "missing_codex_credential_id",
+      "Codex credential id is required",
+    );
+  }
+
+  const credential = await ensureFreshCredential(credentialId);
+  if (!credential.tokens.access_token) {
+    throw new HttpError(
+      400,
+      "missing_access_token",
+      "Saved Codex credential does not contain an access token",
+    );
+  }
+  if (!credential.accountId) {
+    throw new HttpError(
+      400,
+      "missing_account_id",
+      "Saved Codex credential does not contain an account id",
+    );
+  }
+  return credential;
+}
+
+async function requestWhamJson({
+  body,
+  credential,
+  errorCode,
+  errorMessage,
+  method,
+  url,
+}: {
+  body?: Record<string, unknown>;
+  credential: CodexCredentialWithTokens;
+  errorCode: string;
+  errorMessage: string;
+  method: "GET" | "POST";
+  url: string;
+}) {
+  const response = await proxiedFetch(
+    url,
+    {
+      method,
+      headers: buildQuotaHeaders({
+        accessToken: credential.tokens.access_token,
+        accountId: credential.accountId,
+        userAgent: getEffectiveCodexUserAgent(credential),
+      }),
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
+    },
+    credential.proxy?.enabled
+      ? credential.proxy
+      : credential.useGlobalProxy
+        ? getGlobalProxySetting()
+        : null,
+  );
+
+  const text = await response.text();
+  const parsed = parseMaybeJson<unknown>(text) || { raw: text };
+  if (!response.ok) {
+    throw new HttpError(
+      response.status,
+      errorCode,
+      `${errorMessage} with HTTP ${response.status}`,
+      {
+        upstreamStatus: response.status,
+        upstreamStatusText: response.statusText,
+        upstreamBody: parsed,
+      },
+    );
+  }
+  return parsed;
+}
+
 function markQuotaCacheState(
   report: Record<string, unknown>,
   state: Exclude<CacheState, "missing">,
@@ -228,11 +451,71 @@ function buildQuotaHeaders(input: {
   userAgent: string;
 }) {
   return {
+    Accept: "application/json",
     Authorization: `Bearer ${input.accessToken}`,
     "Content-Type": "application/json",
     "User-Agent": input.userAgent,
     "Chatgpt-Account-Id": input.accountId,
   };
+}
+
+function normalizeResetCreditsResponse(
+  payload: unknown,
+  credential: CodexCredentialRecord,
+): CodexResetCreditsReport {
+  const root = objectFrom(payload) || {};
+  const rawCredits = arrayFrom(
+    firstValue(root.credits, root.data, root.items, root.reset_credits),
+  );
+  const credits = rawCredits
+    .map(normalizeResetCredit)
+    .filter((credit): credit is CodexResetCredit => credit !== null);
+  const availableCount = numberPtr(
+    firstValue(root.available_count, root.availableCount),
+  );
+  return {
+    provider: "codex",
+    credential_id: credential.id,
+    account_id: credential.accountId,
+    email: credential.email,
+    plan_type: credential.planType,
+    available_count:
+      availableCount ?? credits.filter((credit) => credit.available).length,
+    credits,
+    retrieved_at: new Date().toISOString(),
+  };
+}
+
+function normalizeResetCredit(value: unknown): CodexResetCredit | null {
+  const root = objectFrom(value);
+  if (!root) {
+    return null;
+  }
+  const id = cleanString(
+    firstValue(root.id, root.credit_id, root.creditId, root.uuid),
+  );
+  if (!id) {
+    return null;
+  }
+  const availableValue = firstValue(
+    root.available,
+    root.is_available,
+    root.isAvailable,
+    root.consumed === undefined ? undefined : !booleanFromAny(root.consumed),
+  );
+  return {
+    id,
+    available:
+      availableValue === undefined ? true : booleanFromAny(availableValue),
+    expires_at: normalizeMaybeDate(
+      firstValue(root.expires_at, root.expiresAt, root.expiration_time),
+    ),
+    raw: value,
+  };
+}
+
+function firstAvailableResetCreditId(report: CodexResetCreditsReport) {
+  return report.credits.find((credit) => credit.available)?.id || "";
 }
 
 function codexQuotaCredentialLogMetadata(
@@ -482,6 +765,10 @@ function objectFrom(value: unknown): RawObject | null {
     : null;
 }
 
+function arrayFrom(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
 function firstValue(...values: unknown[]) {
   for (const value of values) {
     if (value === undefined || value === null) {
@@ -534,7 +821,27 @@ function booleanFromAny(value: unknown) {
   if (typeof value === "boolean") {
     return value;
   }
-  return typeof value === "string" && value.trim().toLowerCase() === "true";
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1" || normalized === "yes";
+  }
+  return false;
+}
+
+function normalizeMaybeDate(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return new Date(
+      value > 10_000_000_000 ? value : value * 1000,
+    ).toISOString();
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value.trim() : parsed.toISOString();
+  }
+  return null;
 }
 
 function clamp(value: number, low: number, high: number) {

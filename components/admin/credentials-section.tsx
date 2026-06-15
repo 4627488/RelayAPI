@@ -63,6 +63,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   adminErrorMessage,
+  consumeCredentialResetCredit,
   deleteCredential,
   downloadCredentialsExport,
   finishCodexOAuth,
@@ -125,6 +126,9 @@ export function CredentialsSection({
     {},
   );
   const [refreshingAllQuotas, setRefreshingAllQuotas] = React.useState(false);
+  const [resettingQuotaIds, setResettingQuotaIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
   const quotaLoadRequestedRef = React.useRef(new Set<string>());
 
   const setQuotaLoading = React.useCallback((id: string, loading: boolean) => {
@@ -214,6 +218,30 @@ export function CredentialsSection({
       setRefreshingAllQuotas(false);
     }
   }, [credentials, loadQuota]);
+
+  const redeemResetCredit = React.useCallback(
+    async (credential: CodexCredentialRecord) => {
+      setResettingQuotaIds((current) => new Set(current).add(credential.id));
+      try {
+        const result = await consumeCredentialResetCredit(credential.id);
+        toast.success(
+          result.windows_reset
+            ? `已兑换重置，重置 ${formatNumber(result.windows_reset)} 个窗口`
+            : "已兑换重置",
+        );
+        await loadQuota(credential, { forceRefresh: true, silent: true });
+      } catch (error) {
+        toast.error(adminErrorMessage(error));
+      } finally {
+        setResettingQuotaIds((current) => {
+          const next = new Set(current);
+          next.delete(credential.id);
+          return next;
+        });
+      }
+    },
+    [loadQuota],
+  );
 
   React.useEffect(() => {
     credentials.forEach((credential) => {
@@ -607,7 +635,9 @@ export function CredentialsSection({
                           <QuotaProgressCell
                             errorMessage={quotaErrors[credential.id]}
                             loading={quotaLoading}
+                            onResetCredit={() => redeemResetCredit(credential)}
                             quota={quota}
+                            resetting={resettingQuotaIds.has(credential.id)}
                           />
                         </div>
                       </div>
@@ -1313,11 +1343,15 @@ function QuotaSummaryBadge({ quota }: { quota: CodexQuotaReport }) {
 function QuotaProgressCell({
   errorMessage,
   loading,
+  onResetCredit,
   quota,
+  resetting,
 }: {
   errorMessage?: string;
   loading: boolean;
+  onResetCredit?: () => void;
   quota: CodexQuotaReport | undefined;
+  resetting?: boolean;
 }) {
   if (!quota) {
     if (errorMessage) {
@@ -1388,6 +1422,22 @@ function QuotaProgressCell({
           </div>
         );
       })}
+      {onResetCredit && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={loading || resetting}
+          onClick={onResetCredit}
+        >
+          {resetting ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <RefreshCwIcon data-icon="inline-start" />
+          )}
+          兑换重置
+        </Button>
+      )}
     </div>
   );
 }

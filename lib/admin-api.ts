@@ -229,6 +229,39 @@ export type CodexQuotaReport = {
   raw?: unknown;
 };
 
+export type CodexResetCredit = {
+  id: string;
+  available: boolean;
+  expires_at: string | null;
+  raw?: unknown;
+};
+
+export type CodexResetCreditsReport = {
+  provider: "codex";
+  credential_id: string;
+  account_id: string;
+  email: string;
+  plan_type: string;
+  available_count: number;
+  credits: CodexResetCredit[];
+  retrieved_at: string;
+  raw?: unknown;
+};
+
+export type CodexResetCreditConsumeReport = {
+  provider: "codex";
+  credential_id: string;
+  account_id: string;
+  email: string;
+  plan_type: string;
+  credit_id: string;
+  redeem_request_id: string;
+  code: string;
+  windows_reset: number | null;
+  consumed_at: string;
+  raw?: unknown;
+};
+
 export type PruneRequestLogsResponse = {
   summaryRetentionDays: number;
   detailRetentionDays: number;
@@ -474,6 +507,33 @@ export function getCredentialQuota(
   const suffix = params.size ? `?${params.toString()}` : "";
   return adminRequest<CodexQuotaReport>(
     `/api/admin/codex/credentials/${encodePath(id)}/quota${suffix}`,
+  );
+}
+
+export function getCredentialResetCredits(
+  id: string,
+  options: { raw?: boolean } = {},
+) {
+  const params = new URLSearchParams();
+  if (options.raw) {
+    params.set("raw", "1");
+  }
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return adminRequest<CodexResetCreditsReport>(
+    `/api/admin/codex/credentials/${encodePath(id)}/quota/reset-credits${suffix}`,
+  );
+}
+
+export function consumeCredentialResetCredit(
+  id: string,
+  payload: { creditId?: string; redeemRequestId?: string } = {},
+) {
+  return adminRequest<CodexResetCreditConsumeReport>(
+    `/api/admin/codex/credentials/${encodePath(id)}/quota/reset-credits`,
+    {
+      method: "POST",
+      body: payload,
+    },
   );
 }
 
