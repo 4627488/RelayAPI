@@ -4,6 +4,7 @@ import * as React from "react";
 import { toast } from "sonner";
 import {
   AlertTriangleIcon,
+  BotIcon,
   FileTextIcon,
   GaugeIcon,
   KeyRoundIcon,
@@ -18,6 +19,7 @@ import { formatDateTime } from "@/components/dashboard/format";
 import { LimitLine } from "@/components/dashboard/limit-line";
 import { CreatedApiKeyDialog, TenantApiKeyDialog } from "@/components/tenant/api-key-dialogs";
 import { TenantApiKeysSection } from "@/components/tenant/api-keys-section";
+import { TenantCodexSetupSection } from "@/components/tenant/codex-setup-section";
 import { TenantLogsSection } from "@/components/tenant/logs-section";
 import { TenantOverviewSection } from "@/components/tenant/overview-section";
 import { TenantResourcesSection } from "@/components/tenant/resources-section";
@@ -46,7 +48,13 @@ import {
   tenantErrorMessage,
 } from "@/lib/tenant-api";
 
-type TenantSectionId = "overview" | "apiKeys" | "logs" | "resources" | "settings";
+type TenantSectionId =
+  | "overview"
+  | "setup"
+  | "apiKeys"
+  | "logs"
+  | "resources"
+  | "settings";
 
 type TenantDashboardProps = {
   initialTenant: PublicTenant;
@@ -119,6 +127,13 @@ export function TenantDashboard({
         setOverviewStats(await getTenantOverview());
       } else if (activeSection === "apiKeys") {
         setApiKeys(await listTenantApiKeys());
+      } else if (activeSection === "setup") {
+        const [nextApiKeys, nextResources] = await Promise.all([
+          listTenantApiKeys(),
+          getTenantResources(),
+        ]);
+        setApiKeys(nextApiKeys);
+        setResources(nextResources);
       } else if (activeSection === "logs") {
         const page = await getTenantRequestLogsPage({
           limit: requestLogsPage.limit,
@@ -175,6 +190,12 @@ export function TenantDashboard({
       description: "租户 Key",
       icon: KeyRoundIcon,
       count: apiKeys.length,
+    },
+    {
+      id: "setup",
+      label: "配置",
+      description: "Codex 引导",
+      icon: BotIcon,
     },
     {
       id: "logs",
@@ -280,6 +301,16 @@ export function TenantDashboard({
             onCreate={() => setCreatingKey(true)}
             onDelete={removeKey}
             onEdit={setEditingKey}
+          />
+        )}
+        {activeSection === "setup" && (
+          <TenantCodexSetupSection
+            apiKeys={apiKeys}
+            tenant={tenant}
+            onApiKeyCreated={(created) => {
+              setApiKeys((current) => [created, ...current]);
+              setCreatedKey(created);
+            }}
           />
         )}
         {activeSection === "logs" && (
