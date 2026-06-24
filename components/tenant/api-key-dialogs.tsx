@@ -12,7 +12,7 @@ import {
   assertApiKey,
   parseList,
   type ApiKeyFormState,
-} from "@/components/dashboard/api-key-form";
+} from "@/components/workspace/api-key-form";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

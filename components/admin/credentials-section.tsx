@@ -30,10 +30,10 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import {
   Dialog,
   DialogContent,
@@ -414,10 +414,6 @@ export function CredentialsSection({
       <Card>
         <CardHeader>
           <CardTitle>Codex 凭据</CardTitle>
-          <CardDescription>
-            连接 Codex 账号、刷新 token、查看额度。日常列表不会返回 token
-            明文；显式导出备份会下载包含 token 明文的 JSON。
-          </CardDescription>
           <CardAction>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
@@ -444,7 +440,7 @@ export function CredentialsSection({
                 ) : (
                   <RefreshCwIcon data-icon="inline-start" />
                 )}
-                刷新全部额度
+                刷新额度
               </Button>
               <Button
                 type="button"
@@ -457,11 +453,11 @@ export function CredentialsSection({
                 ) : (
                   <UploadIcon data-icon="inline-start" />
                 )}
-                上传凭证
+                上传
               </Button>
               <Button type="button" onClick={() => setOauthOpen(true)}>
                 <PlusIcon data-icon="inline-start" />
-                连接 Codex
+                连接
               </Button>
             </div>
           </CardAction>
@@ -474,10 +470,7 @@ export function CredentialsSection({
                   <UserRoundIcon />
                 </EmptyMedia>
                 <EmptyTitle>还没有 Codex 凭据</EmptyTitle>
-                <EmptyDescription>
-                  通过 OAuth 连接 Codex 账号后，服务端会保存加密 token
-                  并可创建默认通道。
-                </EmptyDescription>
+                <EmptyDescription>连接或上传 Codex 凭据。</EmptyDescription>
               </EmptyHeader>
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <Button
@@ -491,11 +484,11 @@ export function CredentialsSection({
                   ) : (
                     <UploadIcon data-icon="inline-start" />
                   )}
-                  上传凭证
+                  上传
                 </Button>
                 <Button type="button" onClick={() => setOauthOpen(true)}>
                   <PlusIcon data-icon="inline-start" />
-                  连接 Codex
+                  连接
                 </Button>
               </div>
             </Empty>
@@ -511,7 +504,7 @@ export function CredentialsSection({
                 return (
                   <Card
                     key={credential.id}
-                    className="relative bg-linear-to-br from-card via-card to-muted/45 shadow-sm"
+                    className="relative shadow-sm"
                   >
                     <CardContent className="grid gap-3">
                       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
@@ -547,20 +540,22 @@ export function CredentialsSection({
                         !credential.enabled) && (
                         <div className="flex flex-wrap gap-1.5">
                           {!credential.enabled && (
-                            <Badge variant="outline">
+                            <WorkspaceStatusBadge tone="muted">
                               {refreshStatus.autoDisabled
-                                ? "自动停用"
-                                : "已停用"}
-                            </Badge>
+                                ? "auto off"
+                                : "off"}
+                            </WorkspaceStatusBadge>
                           )}
                           {refreshStatus.exhausted ? (
-                            <Badge variant="destructive">Token 刷新错误</Badge>
+                            <WorkspaceStatusBadge tone="danger">
+                              refresh error
+                            </WorkspaceStatusBadge>
                           ) : refreshStatus.attemptCount > 0 ? (
-                            <Badge variant="outline">
-                              Token 刷新{" "}
+                            <WorkspaceStatusBadge tone="warning">
+                              refresh{" "}
                               {formatNumber(refreshStatus.attemptCount)}
                               /3
-                            </Badge>
+                            </WorkspaceStatusBadge>
                           ) : null}
                         </div>
                       )}
@@ -580,7 +575,9 @@ export function CredentialsSection({
                               </span>
                             </>
                           ) : (
-                            <Badge variant="outline">未知</Badge>
+                            <WorkspaceStatusBadge tone="muted">
+                              unknown
+                            </WorkspaceStatusBadge>
                           )}
                         </div>
                         {credential.usageHealth && (
@@ -594,8 +591,10 @@ export function CredentialsSection({
                           </div>
                         )}
                         {credential.cooldownUntil && (
-                          <div className="text-xs text-amber-600 dark:text-amber-300">
-                            凭据冷却至{" "}
+                          <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-300">
+                            <WorkspaceStatusBadge tone="warning">
+                              cooldown
+                            </WorkspaceStatusBadge>
                             {formatNullableDate(credential.cooldownUntil)}
                           </div>
                         )}
@@ -608,18 +607,14 @@ export function CredentialsSection({
                             }
                           >
                             {refreshStatus.exhausted ? (
-                              <>
-                                {refreshStatus.autoDisabled
-                                  ? "Token 自动刷新已连续失败 3 次，凭据已自动停用。"
-                                  : "Token 自动刷新已连续失败 3 次。"}
-                              </>
+                              <>token refresh failed 3/3</>
                             ) : (
                               <>
-                                Token 自动刷新失败{" "}
+                                refresh failed{" "}
                                 {formatNumber(refreshStatus.attemptCount)}/3
                                 {refreshStatus.nextAttemptAt && (
                                   <>
-                                    ，下次尝试：
+                                    {" · next "}
                                     <LocalDateTime
                                       value={refreshStatus.nextAttemptAt}
                                     />
@@ -628,7 +623,7 @@ export function CredentialsSection({
                               </>
                             )}
                             {refreshStatus.lastError && (
-                              <>。原因：{refreshStatus.lastError}</>
+                              <> · {refreshStatus.lastError}</>
                             )}
                           </div>
                         )}
@@ -1366,14 +1361,24 @@ function OAuthDialog({
 
 function QuotaSummaryBadge({ quota }: { quota: CodexQuotaReport }) {
   if (quota.status === "not_cached" || quota.status === "unknown") {
-    return <Badge variant="outline">{quotaStatusLabel(quota.status)}</Badge>;
+    return (
+      <WorkspaceStatusBadge tone="muted">
+        {quotaStatusLabel(quota.status)}
+      </WorkspaceStatusBadge>
+    );
   }
   if (quota.status === "exhausted" || quota.status === "low") {
     return (
-      <Badge variant="destructive">{quotaStatusLabel(quota.status)}</Badge>
+      <WorkspaceStatusBadge tone="danger">
+        {quotaStatusLabel(quota.status)}
+      </WorkspaceStatusBadge>
     );
   }
-  return <Badge variant="secondary">{quotaStatusLabel(quota.status)}</Badge>;
+  return (
+    <WorkspaceStatusBadge tone="success">
+      {quotaStatusLabel(quota.status)}
+    </WorkspaceStatusBadge>
+  );
 }
 
 function QuotaProgressCell({
@@ -1406,7 +1411,7 @@ function QuotaProgressCell({
             读取中
           </>
         ) : (
-          <Badge variant="outline">未读取</Badge>
+          <WorkspaceStatusBadge tone="muted">未读取</WorkspaceStatusBadge>
         )}
       </div>
     );
@@ -1901,21 +1906,18 @@ function UsageHealthBadge({
 }) {
   if (status === "normal") {
     return (
-      <Badge
-        variant="outline"
-        className="border-emerald-500/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      >
+      <WorkspaceStatusBadge tone="success">
         正常
-      </Badge>
+      </WorkspaceStatusBadge>
     );
   }
   if (status === "warning") {
-    return <Badge variant="outline">警告</Badge>;
+    return <WorkspaceStatusBadge tone="warning">警告</WorkspaceStatusBadge>;
   }
   if (status === "error") {
-    return <Badge variant="destructive">错误</Badge>;
+    return <WorkspaceStatusBadge tone="danger">错误</WorkspaceStatusBadge>;
   }
-  return <Badge variant="outline">未使用</Badge>;
+  return <WorkspaceStatusBadge tone="muted">未使用</WorkspaceStatusBadge>;
 }
 
 function globalProxyText(settings: GlobalSettingsRecord) {

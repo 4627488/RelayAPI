@@ -2,16 +2,15 @@
 
 import { KeyRoundIcon, PencilIcon, Trash2Icon } from "lucide-react";
 
-import { renderBadgeList } from "@/components/dashboard/format";
-import { Badge } from "@/components/ui/badge";
+import { renderBadgeList } from "@/components/workspace/format";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import {
   Empty,
   EmptyDescription,
@@ -50,11 +49,10 @@ export function TenantApiKeysSection({
       <CardHeader className="flex flex-row items-start justify-between gap-4">
         <div>
           <CardTitle>API 密钥</CardTitle>
-          <CardDescription>租户 Key 只能使用已授权的模型和通道。</CardDescription>
         </div>
         <Button type="button" onClick={onCreate}>
           <KeyRoundIcon data-icon="inline-start" />
-          新建 Key
+          新建
         </Button>
       </CardHeader>
       <CardContent>
@@ -65,7 +63,7 @@ export function TenantApiKeysSection({
                 <KeyRoundIcon />
               </EmptyMedia>
               <EmptyTitle>暂无 API 密钥</EmptyTitle>
-              <EmptyDescription>创建第一个 Key 后即可接入 Relay。</EmptyDescription>
+              <EmptyDescription>创建后即可接入 Relay。</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
@@ -101,9 +99,11 @@ export function TenantApiKeysSection({
                     )}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={apiKey.enabled ? "secondary" : "outline"}>
-                      {apiKey.enabled ? "启用" : "停用"}
-                    </Badge>
+                    <WorkspaceStatusBadge
+                      tone={apiKey.enabled ? "success" : "muted"}
+                    >
+                      {apiKey.enabled ? "on" : "off"}
+                    </WorkspaceStatusBadge>
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">

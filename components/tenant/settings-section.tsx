@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -19,6 +18,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import {
   tenantErrorMessage,
   updateTenantSettings,
@@ -60,8 +60,21 @@ export function TenantSettingsSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>租户设置</CardTitle>
-        <CardDescription>这些设置只有在管理员允许后才可修改。</CardDescription>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>租户设置</CardTitle>
+          <div className="flex flex-wrap gap-1">
+            <WorkspaceStatusBadge
+              tone={tenant.allowCustomUserAgent ? "success" : "muted"}
+            >
+              ua {tenant.allowCustomUserAgent ? "on" : "locked"}
+            </WorkspaceStatusBadge>
+            <WorkspaceStatusBadge
+              tone={tenant.allowCustomProxy ? "success" : "muted"}
+            >
+              proxy {tenant.allowCustomProxy ? "on" : "locked"}
+            </WorkspaceStatusBadge>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="grid gap-5">
         <FieldGroup>
@@ -108,7 +121,7 @@ export function TenantSettingsSection({
             onClick={save}
           >
             {saving && <Spinner data-icon="inline-start" />}
-            保存设置
+            保存
           </Button>
         </div>
       </CardContent>

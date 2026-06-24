@@ -20,12 +20,10 @@ import {
   DatabaseIcon,
   FileTextIcon,
   GaugeIcon,
-  KeyRoundIcon,
   RefreshCwIcon,
   RouteIcon,
   SettingsIcon,
   ShieldCheckIcon,
-  UserRoundIcon,
   WorkflowIcon,
   XCircleIcon,
   type LucideIcon,
@@ -38,7 +36,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -70,11 +67,13 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { DataPanel } from "@/components/workspace/data-panel";
+import { MetricStrip, MetricStripItem } from "@/components/workspace/metric-strip";
 import {
-  DashboardChrome,
-  DashboardSummaryLine,
-  type DashboardNavItem,
-} from "@/components/dashboard-chrome";
+  WorkspaceShell,
+  WorkspaceSummaryLine,
+  type WorkspaceNavItem,
+} from "@/components/workspace/workspace-shell";
 import {
   ApiKeysSection,
 } from "@/components/admin/api-keys-section";
@@ -116,7 +115,7 @@ import type {
   UsageStatsRow,
 } from "@/src/shared/types/entities";
 
-type AdminDashboardProps = {
+type AdminWorkbenchProps = {
   initialApiKeys: PublicApiKey[];
   initialTenants: PublicTenant[];
   initialChannels: ChannelRecord[];
@@ -132,13 +131,10 @@ type AdminDashboardProps = {
 
 type SectionId =
   | "overview"
-  | "tenants"
-  | "apiKeys"
-  | "credentials"
-  | "proxyPool"
-  | "channels"
-  | "settings"
-  | "logs";
+  | "traffic"
+  | "routing"
+  | "access"
+  | "settings";
 type AdminResourceCounts = {
   apiKeys: number;
   enabledApiKeys: number;
@@ -150,10 +146,15 @@ type AdminResourceCounts = {
   tenants: number;
 };
 
-type LoadedDataState = Record<
-  Exclude<SectionId, "overview">,
-  boolean
->;
+type LoadedDataState = {
+  apiKeys: boolean;
+  tenants: boolean;
+  credentials: boolean;
+  proxyPool: boolean;
+  channels: boolean;
+  settings: boolean;
+  logs: boolean;
+};
 
 type TrendDirection = "up" | "down" | "flat";
 type TrendTone = "positive" | "negative" | "neutral";
@@ -186,7 +187,7 @@ type CredentialProxyFormState = {
 const WEB_SESSION_EXPIRED_MESSAGE = "管理台会话已过期，请重新登录";
 const WEB_SESSION_EXPIRED_REDIRECT_MS = 2200;
 
-export function AdminDashboard({
+export function AdminWorkbench({
   initialApiKeys,
   initialTenants,
   initialChannels,
@@ -198,7 +199,7 @@ export function AdminDashboard({
   initialLoadedData,
   initialResourceCounts,
   initialNow,
-}: AdminDashboardProps) {
+}: AdminWorkbenchProps) {
   const [activeSection, setActiveSection] =
     React.useState<SectionId>("overview");
   const [apiKeys, setApiKeys] = React.useState(initialApiKeys);
@@ -284,7 +285,20 @@ export function AdminDashboard({
 
   const loadSectionData = React.useCallback(
     async (section: SectionId, force = false) => {
-      if (section !== "overview" && !force && loadedData[section]) {
+      const alreadyLoaded =
+        section === "overview" ||
+        (section === "traffic" && loadedData.logs) ||
+        (section === "routing" &&
+          loadedData.credentials &&
+          loadedData.channels &&
+          loadedData.proxyPool) ||
+        (section === "access" &&
+          loadedData.apiKeys &&
+          loadedData.tenants &&
+          loadedData.channels) ||
+        (section === "settings" && loadedData.settings);
+
+      if (!force && alreadyLoaded) {
         return;
       }
 
@@ -292,7 +306,7 @@ export function AdminDashboard({
       try {
         if (section === "overview") {
           await refreshOverviewStats();
-        } else if (section === "apiKeys") {
+        } else if (section === "access") {
           const [nextApiKeys, nextChannels, nextTenants] = await Promise.all([
             listApiKeys(),
             listChannels(),
@@ -303,12 +317,11 @@ export function AdminDashboard({
           setTenants(nextTenants);
           setLoadedData((current) => ({
             ...current,
+            apiKeys: true,
             channels: true,
             tenants: true,
           }));
-        } else if (section === "tenants") {
-          setTenants(await listTenants());
-        } else if (section === "credentials") {
+        } else if (section === "routing") {
           const [nextCredentials, nextChannels, nextProxyPool] =
             await Promise.all([
               listCredentials(),
@@ -320,29 +333,21 @@ export function AdminDashboard({
           setProxyPool(nextProxyPool);
           setLoadedData((current) => ({
             ...current,
+            credentials: true,
             channels: true,
             proxyPool: true,
           }));
-        } else if (section === "proxyPool") {
-          setProxyPool(await listProxyPoolItems());
-        } else if (section === "channels") {
-          const [nextChannels, nextCredentials] = await Promise.all([
-            listChannels(),
-            listCredentials(),
-          ]);
-          setChannels(nextChannels);
-          setCredentials(nextCredentials);
-          setLoadedData((current) => ({ ...current, credentials: true }));
         } else if (section === "settings") {
           setGlobalSettings(await getGlobalSettings());
-        } else if (section === "logs") {
+          setLoadedData((current) => ({ ...current, settings: true }));
+        } else if (section === "traffic") {
           const result = await getRequestLogsPage({
             limit: initialRequestLogsPage.limit,
             page: 1,
           });
           setRequestLogsPage(result);
+          setLoadedData((current) => ({ ...current, logs: true }));
         }
-        setLoadedData((current) => ({ ...current, [section]: true }));
         setSnapshotTime(Date.now());
         return true;
       } catch (error) {
@@ -355,7 +360,7 @@ export function AdminDashboard({
     [initialRequestLogsPage.limit, loadedData, refreshOverviewStats],
   );
 
-  async function refreshDashboard() {
+  async function refreshWorkbench() {
     if (await loadSectionData(activeSection, true)) {
       toast.success("当前页面数据已刷新");
     }
@@ -491,71 +496,44 @@ export function AdminDashboard({
     requestLogs[0]?.id ?? "empty"
   }:${requestLogs.length}:${requestLogsPage.total}`;
 
-  const navigationItems: DashboardNavItem<SectionId>[] = [
+  const navigationItems: WorkspaceNavItem<SectionId>[] = [
     {
       id: "overview",
-      label: "总览",
-      description: "运行概览",
+      label: "概览",
       icon: GaugeIcon,
     },
     {
-      id: "credentials",
-      label: "凭据",
-      description: "Codex 账号",
-      icon: UserRoundIcon,
-      count: credentialCount,
-    },
-    {
-      id: "proxyPool",
-      label: "代理池",
-      description: "SOCKS 代理",
-      icon: DatabaseIcon,
-      count: proxyPoolCount,
-    },
-    {
-      id: "channels",
-      label: "通道",
-      description: "路由通道",
-      icon: RouteIcon,
-      count: channelCount,
-    },
-    {
-      id: "tenants",
-      label: "租户",
-      description: "多租户",
-      icon: ShieldCheckIcon,
-      count: tenantCount,
-    },
-    {
-      id: "apiKeys",
-      label: "密钥",
-      description: "API 密钥",
-      icon: KeyRoundIcon,
-      count: apiKeyCount,
-    },
-    {
-      id: "logs",
-      label: "日志",
-      description: "请求记录",
+      id: "traffic",
+      label: "流量",
       icon: FileTextIcon,
       count: requestLogsPage.total,
     },
     {
+      id: "routing",
+      label: "路由",
+      icon: RouteIcon,
+      count: channelCount,
+    },
+    {
+      id: "access",
+      label: "访问",
+      icon: ShieldCheckIcon,
+      count: apiKeyCount + tenantCount,
+    },
+    {
       id: "settings",
       label: "设置",
-      description: "全局配置",
       icon: SettingsIcon,
     },
   ];
 
   return (
-    <DashboardChrome
+    <WorkspaceShell
       activeId={activeSection}
-      eyebrow="Admin Console"
+      eyebrow="ADMIN"
       navItems={navigationItems}
       width="admin"
-      title="RelayAPI Dashboard"
-      description="面向转发稳定性的运行控制台：凭据、代理、通道、租户、密钥和请求日志集中管理。"
+      title="RelayAPI"
       status={
         <Badge variant={hasOperationalData ? "secondary" : "outline"}>
           {hasOperationalData ? "运行中" : "等待首个请求"}
@@ -579,7 +557,7 @@ export function AdminDashboard({
           <Button
             type="button"
             disabled={sessionExpired || refreshing || loggingOut}
-            onClick={refreshDashboard}
+            onClick={refreshWorkbench}
           >
             {refreshing ? (
               <Spinner data-icon="inline-start" />
@@ -598,8 +576,8 @@ export function AdminDashboard({
       }
       summary={
         <>
-          <DashboardSummaryLine label="租户" value={formatNumber(tenantCount)} />
-          <DashboardSummaryLine
+          <WorkspaceSummaryLine label="租户" value={formatNumber(tenantCount)} />
+          <WorkspaceSummaryLine
             label="通道"
             value={
               <>
@@ -608,7 +586,16 @@ export function AdminDashboard({
               </>
             }
           />
-          <DashboardSummaryLine
+          <WorkspaceSummaryLine
+            label="路由资源"
+            value={
+              <>
+                凭据 {formatNumber(credentialCount)} · 代理{" "}
+                {formatNumber(proxyPoolCount)}
+              </>
+            }
+          />
+          <WorkspaceSummaryLine
             label="成功率"
             value={formatPercent(successRate)}
           />
@@ -653,44 +640,51 @@ export function AdminDashboard({
                 onRefresh={refreshOverviewStats}
               />
             )}
-            {activeSection === "apiKeys" && (
-              <ApiKeysSection
-                apiKeys={apiKeys}
-                channels={channels}
-                onCreated={handleApiKeyCreated}
-                onDeleted={handleApiKeyDeleted}
-                onTransferred={handleApiKeyTransferred}
-                onUpdated={handleApiKeyUpdated}
-                tenants={tenants}
+            {activeSection === "traffic" && (
+              <LogsSection
+                key={requestLogsRenderKey}
+                initialRequestLogsPage={requestLogsPage}
+                onLoaded={handleRequestLogsLoaded}
               />
             )}
-            {activeSection === "tenants" && (
-              <AdminTenantsSection tenants={tenants} onChanged={setTenants} />
+            {activeSection === "routing" && (
+              <div className="grid gap-3">
+                <CredentialsSection
+                  credentials={credentials}
+                  globalSettings={globalSettings}
+                  proxyPool={proxyPool}
+                  onDeleted={handleCredentialDeleted}
+                  onRefreshData={refreshCredentialAndChannelData}
+                  onUpdated={handleCredentialUpdated}
+                />
+                <div className="grid gap-3 xl:grid-cols-2">
+                  <ChannelsSection
+                    channels={channels}
+                    credentials={credentials}
+                    onCreated={handleChannelCreated}
+                    onDeleted={handleChannelDeleted}
+                    onUpdated={handleChannelUpdated}
+                  />
+                  <ProxyPoolSection
+                    proxyPool={proxyPool}
+                    onChanged={setProxyPool}
+                  />
+                </div>
+              </div>
             )}
-            {activeSection === "credentials" && (
-              <CredentialsSection
-                credentials={credentials}
-                globalSettings={globalSettings}
-                proxyPool={proxyPool}
-                onDeleted={handleCredentialDeleted}
-                onRefreshData={refreshCredentialAndChannelData}
-                onUpdated={handleCredentialUpdated}
-              />
-            )}
-            {activeSection === "proxyPool" && (
-              <ProxyPoolSection
-                proxyPool={proxyPool}
-                onChanged={setProxyPool}
-              />
-            )}
-            {activeSection === "channels" && (
-              <ChannelsSection
-                channels={channels}
-                credentials={credentials}
-                onCreated={handleChannelCreated}
-                onDeleted={handleChannelDeleted}
-                onUpdated={handleChannelUpdated}
-              />
+            {activeSection === "access" && (
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                <AdminTenantsSection tenants={tenants} onChanged={setTenants} />
+                <ApiKeysSection
+                  apiKeys={apiKeys}
+                  channels={channels}
+                  onCreated={handleApiKeyCreated}
+                  onDeleted={handleApiKeyDeleted}
+                  onTransferred={handleApiKeyTransferred}
+                  onUpdated={handleApiKeyUpdated}
+                  tenants={tenants}
+                />
+              </div>
             )}
             {activeSection === "settings" && (
               <SettingsSection
@@ -699,14 +693,7 @@ export function AdminDashboard({
                 onSaved={setGlobalSettings}
               />
             )}
-            {activeSection === "logs" && (
-              <LogsSection
-                key={requestLogsRenderKey}
-                initialRequestLogsPage={requestLogsPage}
-                onLoaded={handleRequestLogsLoaded}
-              />
-            )}
-    </DashboardChrome>
+    </WorkspaceShell>
   );
 }
 
@@ -971,31 +958,14 @@ function SettingsSection({
       <Card>
         <CardHeader>
           <CardTitle>全局设置</CardTitle>
-          <CardDescription>
-            配置 Codex 上游 User-Agent、日志策略和 OAuth 登录专用 SOCKS5
-            代理。凭据也可以单独覆盖 User-Agent。
-          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 xl:grid-cols-2">
-          <Alert className="items-start xl:col-span-2">
-            <SettingsIcon className="size-4" />
-            <AlertTitle>生效范围</AlertTitle>
-            <AlertDescription>
-              User-Agent 按“凭据覆盖 → 数据库全局设置 →
-              环境变量/默认值”生效。全局代理用于 OAuth 登录 callback 换
-              token；后续 refresh_token
-              和额度查询需在单个凭据中开启全局代理回退。
-            </AlertDescription>
-          </Alert>
-
           <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm xl:col-span-2">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="grid gap-1">
                 <div className="font-medium">Codex User-Agent</div>
-                <div className="text-xs text-muted-foreground">
-                  当前来源：{userAgentSourceLabel(settings.userAgentSource)}
-                  。用于 Codex
-                  请求和额度刷新；留空保存会回退到环境变量或默认值。
+                <div className="font-mono text-xs text-muted-foreground">
+                  source={userAgentSourceLabel(settings.userAgentSource)}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -1009,7 +979,7 @@ function SettingsSection({
                   onClick={clearUserAgent}
                 >
                   {userAgentSaving && <Spinner data-icon="inline-start" />}
-                  清除数据库配置
+                  清除
                 </Button>
                 <Button
                   type="button"
@@ -1018,7 +988,7 @@ function SettingsSection({
                   onClick={saveUserAgent}
                 >
                   {userAgentSaving && <Spinner data-icon="inline-start" />}
-                  保存 User-Agent
+                  保存
                 </Button>
               </div>
             </div>
@@ -1030,7 +1000,7 @@ function SettingsSection({
               onChange={(event) => setUserAgent(event.target.value)}
             />
             <div className="text-xs text-muted-foreground">
-              当前生效：{settings.userAgent || "未配置"}
+              active: {settings.userAgent || "-"}
             </div>
           </div>
 
@@ -1038,9 +1008,8 @@ function SettingsSection({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-medium">记录完整日志</div>
-                <div className="text-xs text-muted-foreground">
-                  开启后记录完整请求 body、转发到上游的 payload
-                  和上游响应；关闭后只保留概要日志与报错详情。
+                <div className="font-mono text-xs text-muted-foreground">
+                  body / upstream payload
                 </div>
               </div>
               <Switch
@@ -1058,10 +1027,8 @@ function SettingsSection({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="font-medium">自动停用错误凭据</div>
-                <div className="text-xs text-muted-foreground">
-                  Token 定时刷新始终会在凭据过期前 4
-                  天尝试执行；失败后每天再试，最多总共尝试 3
-                  次。开启此开关后，达到次数上限的错误凭据会自动停用；关闭时仅标记错误，不影响自动刷新。
+                <div className="font-mono text-xs text-muted-foreground">
+                  refresh exhausted
                 </div>
               </div>
               <Switch
@@ -1079,9 +1046,8 @@ function SettingsSection({
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="grid gap-1">
                 <div className="font-medium">日志保留与清理</div>
-                <div className="text-xs text-muted-foreground">
-                  概要日志会影响总览统计；详细日志包含请求/响应体，建议保留更短时间。
-                  系统会在请求日志写入时按策略自动清理；“立即清理”只用于马上执行一次。
+                <div className="font-mono text-xs text-muted-foreground">
+                  summary / detail retention
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -1364,48 +1330,73 @@ function OverviewSection({
 
   return (
     <div className="grid gap-6">
-      <div className="flex flex-col gap-3 rounded-2xl border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">运行观测</h2>
-          <p className="text-sm text-muted-foreground">
-            全量请求日志聚合统计；刷新只更新总览聚合数据，不影响配置。
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={refreshing}
-          onClick={refresh}
-        >
-          {refreshing ? (
-            <Spinner data-icon="inline-start" />
-          ) : (
-            <RefreshCwIcon data-icon="inline-start" />
-          )}
-          刷新总览
-        </Button>
-      </div>
-      <div className="flex flex-col gap-3 rounded-lg border bg-card p-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="grid gap-1">
-          <div className="text-sm font-medium">观察窗口</div>
-          <div className="text-xs text-muted-foreground">
-            {overviewStats.range.from} 至 {overviewStats.range.to} ·{" "}
-            {formatNumber(overviewStats.range.days)} 天
+      <DataPanel
+        title="运行观测"
+        action={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={refreshing}
+            onClick={refresh}
+          >
+            {refreshing ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <RefreshCwIcon data-icon="inline-start" />
+            )}
+            刷新
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="grid gap-1">
+            <div className="text-xs text-muted-foreground">观察窗口</div>
+            <div className="font-mono text-sm tabular-nums">
+              {overviewStats.range.from} / {overviewStats.range.to} /{" "}
+              {formatNumber(overviewStats.range.days)}d
+            </div>
           </div>
+          <ToggleGroup
+            value={[overviewDays]}
+            variant="outline"
+            size="sm"
+            onValueChange={(value) => void changeOverviewDays(String(value[0] || ""))}
+          >
+            {["7", "14", "30", "90"].map((days) => (
+              <ToggleGroupItem key={days} value={days}>
+                {days} 天
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         </div>
-        <ToggleGroup
-          value={[overviewDays]}
-          variant="outline"
-          size="sm"
-          onValueChange={(value) => void changeOverviewDays(String(value[0] || ""))}
-        >
-          {["7", "14", "30", "90"].map((days) => (
-            <ToggleGroupItem key={days} value={days}>
-              {days} 天
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
+      </DataPanel>
+
+      <MetricStrip className="md:grid-cols-3 xl:grid-cols-3">
+        <MetricStripItem
+          label="租户"
+          value={formatNumber(tenantCount)}
+          detail={`${formatNumber(apiKeyCount)} Key`}
+        />
+        <MetricStripItem
+          label="Codex 凭据"
+          value={formatNumber(credentialCount)}
+          detail="已授权"
+        />
+        <MetricStripItem
+          label="通道"
+          value={formatNumber(channelCount)}
+          detail={`${formatNumber(enabledChannelCount)} 启用`}
+        />
+      </MetricStrip>
+
+      {!hasOperationalData && (
+        <Alert>
+          <WorkflowIcon />
+          <AlertTitle>暂无请求数据</AlertTitle>
+          <AlertDescription>等待配置和请求。</AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {trendMetrics.map((metric) => (
@@ -1438,49 +1429,14 @@ function OverviewSection({
         errorRows={overviewStats.byErrorCodeDay}
       />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <ResourceSummaryCard
-          title="租户"
-          value={tenantCount}
-          description={`${formatNumber(apiKeyCount)} 个 API 密钥归属在租户或全局`}
-          icon={ShieldCheckIcon}
-        />
-        <ResourceSummaryCard
-          title="Codex 凭据"
-          value={credentialCount}
-          description="已授权的 Codex 账号"
-          icon={UserRoundIcon}
-        />
-        <ResourceSummaryCard
-          title="通道"
-          value={channelCount}
-          description={`${formatNumber(enabledChannelCount)} 个通道启用中`}
-          icon={RouteIcon}
-        />
-      </div>
-
-      {!hasOperationalData && (
-        <Alert>
-          <WorkflowIcon />
-          <AlertTitle>还没有请求数据</AlertTitle>
-          <AlertDescription>
-            创建 Relay API 密钥、配置 Codex 凭据和通道后，调用
-            `/v1/models`、`/v1/responses` 或 `/v1/chat/completions`
-            即可在这里看到统计和日志。
-          </AlertDescription>
-        </Alert>
-      )}
-
       <div className="grid gap-4 xl:grid-cols-3">
         <UsageListCard
           title="租户消耗排行"
-          description="最近 30 天按 token 消耗排序"
           emptyTitle="暂无租户使用数据"
           rows={topTenants}
         />
         <UsageListCard
           title="模型排行"
-          description="最近 30 天按 token 消耗排序"
           emptyTitle="暂无模型使用数据"
           rows={topModels}
         />
@@ -1491,19 +1447,16 @@ function OverviewSection({
         <TenantUsageCard rows={overviewStats.byTenant} />
         <UsageStatsTableCard
           title="通道用量"
-          description="按通道聚合的请求、错误和 token 消耗。"
           rows={overviewStats.byChannel}
           emptyTitle="暂无通道使用数据"
         />
         <UsageStatsTableCard
           title="凭据用量"
-          description="按 Codex 凭据聚合的公开使用统计。"
           rows={overviewStats.byCredential}
           emptyTitle="暂无凭据使用数据"
         />
         <UsageStatsTableCard
           title="请求类型用量"
-          description="按请求类型聚合，辅助区分模型、聊天、响应等入口。"
           rows={overviewStats.byRequestType}
           emptyTitle="暂无请求类型统计"
         />
@@ -1601,10 +1554,10 @@ function SignalCard({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardDescription>{label}</CardDescription>
+        <div className="text-xs text-muted-foreground">{label}</div>
         {badge && <CardAction>{badge}</CardAction>}
         <CardTitle className="text-2xl tabular-nums">{value}</CardTitle>
-        <CardDescription>{detail}</CardDescription>
+        <div className="text-xs text-muted-foreground">{detail}</div>
       </CardHeader>
     </Card>
   );
@@ -1622,9 +1575,6 @@ function DailyOperationsCard({ rows }: { rows: DailyUsageStatsRow[] }) {
     <Card>
       <CardHeader>
         <CardTitle>每日运行趋势</CardTitle>
-        <CardDescription>
-          按天观察请求、消耗、错误、延迟和缓存表现。
-        </CardDescription>
         <CardAction>
           <ToggleGroup
             value={[metric]}
@@ -1647,7 +1597,7 @@ function DailyOperationsCard({ rows }: { rows: DailyUsageStatsRow[] }) {
           <EmptyState
             icon={ActivityIcon}
             title="暂无趋势数据"
-            description="产生请求后会自动按天聚合。"
+            description="等待请求。"
             compact
           />
         ) : (
@@ -1731,7 +1681,6 @@ function AnomalyRadarCard({
     <Card>
       <CardHeader>
         <CardTitle>异常雷达</CardTitle>
-        <CardDescription>自动标记错误率、延迟、额度和路由异常。</CardDescription>
         <CardAction>
           <Badge variant={anomalies.length > 0 ? "destructive" : "secondary"}>
             {formatNumber(anomalies.length)} 项
@@ -1743,7 +1692,7 @@ function AnomalyRadarCard({
           <EmptyState
             icon={ShieldCheckIcon}
             title="暂无异常"
-            description="当前观察窗口内没有触发内置异常规则。"
+            description="观察窗口正常。"
             compact
           />
         ) : (
@@ -1791,16 +1740,13 @@ function DailyBreakdownCard({
     <Card>
       <CardHeader>
         <CardTitle>每日明细矩阵</CardTitle>
-        <CardDescription>
-          点击日期后，下方钻取区会展示当天各维度排行。
-        </CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
           <EmptyState
             icon={ActivityIcon}
             title="暂无每日明细"
-            description="产生请求后会自动展示。"
+            description="等待请求。"
             compact
           />
         ) : (
@@ -1885,9 +1831,6 @@ function DailyDimensionTabs({
     <Card>
       <CardHeader>
         <CardTitle>{selectedDate} 维度钻取</CardTitle>
-        <CardDescription>
-          从租户、模型、通道、凭据、请求类型和错误码定位当天流量结构。
-        </CardDescription>
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="tenant">
@@ -2084,9 +2027,6 @@ function TenantUsageCard({ rows }: { rows: TenantUsageStatsRow[] }) {
     <Card>
       <CardHeader>
         <CardTitle>租户消耗</CardTitle>
-        <CardDescription>
-          按租户聚合最近 30 天请求、成功率、token 消耗和今日额度利用率。
-        </CardDescription>
         <CardAction>
           <Badge variant="outline">{formatNumber(rows.length)} 个租户</Badge>
         </CardAction>
@@ -2096,7 +2036,7 @@ function TenantUsageCard({ rows }: { rows: TenantUsageStatsRow[] }) {
           <EmptyState
             icon={ShieldCheckIcon}
             title="暂无租户使用统计"
-            description="租户调用 Relay API 后，这里会展示其整体消耗。"
+            description="等待租户流量。"
             compact
           />
         ) : (
@@ -2146,12 +2086,10 @@ function TenantUsageCard({ rows }: { rows: TenantUsageStatsRow[] }) {
 }
 
 function UsageStatsTableCard({
-  description,
   emptyTitle,
   rows,
   title,
 }: {
-  description: string;
   emptyTitle: string;
   rows: UsageStatsRow[];
   title: string;
@@ -2160,7 +2098,6 @@ function UsageStatsTableCard({
     <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
         <CardAction>
           <Badge variant="outline">{formatNumber(rows.length)} 行</Badge>
         </CardAction>
@@ -2170,7 +2107,7 @@ function UsageStatsTableCard({
           <EmptyState
             icon={GaugeIcon}
             title={emptyTitle}
-            description="产生请求后会自动聚合。"
+            description="等待请求。"
             compact
           />
         ) : (
@@ -2494,10 +2431,10 @@ function TrendMetricCard({
       <CardHeader className="pb-0">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 space-y-1">
-            <CardDescription className="flex items-center gap-1.5 text-sm">
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Icon className="size-3.5" />
               {title}
-            </CardDescription>
+            </div>
             <CardTitle className="text-3xl leading-none font-semibold tracking-tight tabular-nums sm:text-4xl">
               {value}
             </CardTitle>
@@ -2538,43 +2475,12 @@ function TrendMetricCard({
   );
 }
 
-function ResourceSummaryCard({
-  title,
-  value,
-  description,
-  icon: Icon,
-}: {
-  title: string;
-  value: number;
-  description: string;
-  icon: LucideIcon;
-}) {
-  return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Icon className="size-4 text-muted-foreground" />
-          {title}
-        </CardTitle>
-        <CardAction>
-          <span className="text-lg font-semibold tabular-nums">
-            {formatNumber(value)}
-          </span>
-        </CardAction>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-    </Card>
-  );
-}
-
 function UsageListCard({
   title,
-  description,
   emptyTitle,
   rows,
 }: {
   title: string;
-  description: string;
   emptyTitle: string;
   rows: UsageStatsRow[];
 }) {
@@ -2584,14 +2490,13 @@ function UsageListCard({
     <Card>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
           <EmptyState
             icon={GaugeIcon}
             title={emptyTitle}
-            description="产生请求后会自动汇总。"
+            description="等待请求。"
             compact
           />
         ) : (
@@ -2650,14 +2555,13 @@ function DailyUsageCard({ rows }: { rows: AdminOverviewStats["byDay"] }) {
     <Card>
       <CardHeader>
         <CardTitle>每日用量</CardTitle>
-        <CardDescription>最近 7 天 token 消耗</CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
           <EmptyState
             icon={ActivityIcon}
             title="暂无每日统计"
-            description="产生请求后会自动按天聚合。"
+            description="等待请求。"
             compact
           />
         ) : (

@@ -1,23 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { ShieldAlertIcon, UserRoundIcon } from "lucide-react";
+import { ShieldAlertIcon } from "lucide-react";
 
+import { AuthPanel } from "@/components/auth/auth-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { activateTenant } from "@/lib/tenant-api";
@@ -74,76 +63,62 @@ export function TenantActivate({ token }: { token: string }) {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-12">
-      <Card className="w-full max-w-md shadow-xl">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <UserRoundIcon />
-          </div>
-          <CardTitle className="text-xl">激活租户账号</CardTitle>
-          <CardDescription>填写账号信息后即可进入自己的 RelayAPI 面板。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="flex flex-col gap-4" onSubmit={submit}>
-            {error && (
-              <Alert variant="destructive">
-                <ShieldAlertIcon />
-                <AlertTitle>激活失败</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="tenant-display-name">姓名</FieldLabel>
-                <Input
-                  id="tenant-display-name"
-                  autoFocus
-                  autoComplete="name"
-                  value={displayName}
-                  onChange={(event) => setDisplayName(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="tenant-email">邮箱</FieldLabel>
-                <Input
-                  id="tenant-email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
-                <FieldDescription>之后使用该邮箱登录租户面板。</FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="tenant-new-password">密码</FieldLabel>
-                <Input
-                  id="tenant-new-password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="tenant-confirm-password">
-                  确认密码
-                </FieldLabel>
-                <Input
-                  id="tenant-confirm-password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                />
-              </Field>
-            </FieldGroup>
-            <Button type="submit" size="lg" disabled={pending || !token}>
-              {pending && <Spinner data-icon="inline-start" />}
-              激活并进入面板
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-    </main>
+    <AuthPanel eyebrow="INVITE" meta="tenant activation" title="激活账号">
+      <form className="flex flex-col gap-4" onSubmit={submit}>
+        {error && (
+          <Alert variant="destructive">
+            <ShieldAlertIcon />
+            <AlertTitle>激活失败</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="tenant-display-name">姓名</FieldLabel>
+            <Input
+              id="tenant-display-name"
+              autoFocus
+              autoComplete="name"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="tenant-email">邮箱</FieldLabel>
+            <Input
+              id="tenant-email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="tenant-new-password">密码</FieldLabel>
+            <Input
+              id="tenant-new-password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="tenant-confirm-password">确认密码</FieldLabel>
+            <Input
+              id="tenant-confirm-password"
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+            />
+          </Field>
+        </FieldGroup>
+        <Button type="submit" disabled={pending || !token}>
+          {pending && <Spinner data-icon="inline-start" />}
+          激活
+        </Button>
+      </form>
+    </AuthPanel>
   );
 }

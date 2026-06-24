@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { TenantDashboard } from "@/components/tenant-dashboard";
+import { TenantWorkbench } from "@/components/tenant-workbench";
 import { emptyAdminOverviewStats } from "@/src/server/repositories/logs";
 import { listTenantApiKeyPublicRecords } from "@/src/server/services/apiKeys";
 import {
@@ -28,7 +28,7 @@ export default async function TenantPage() {
   const initialNow = new Date().getTime();
 
   return (
-    <TenantDashboard
+    <TenantWorkbench
       initialTenant={tenant}
       initialApiKeys={listTenantApiKeyPublicRecords(session.tenant.id)}
       initialResources={resources}

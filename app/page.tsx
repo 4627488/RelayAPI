@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { AdminDashboard } from "@/components/admin-dashboard";
+import { AdminWorkbench } from "@/components/admin-workbench";
 import { WebAccessLogin } from "@/components/auth/web-access-login";
 import { emptyAdminOverviewStats } from "@/src/server/repositories/logs";
 import { listChannels } from "@/src/server/repositories/channels";
@@ -73,7 +73,7 @@ export default async function Home() {
   const initialNow = new Date().getTime();
 
   return (
-    <AdminDashboard
+    <AdminWorkbench
       initialApiKeys={apiKeys}
       initialTenants={[]}
       initialChannels={[]}
