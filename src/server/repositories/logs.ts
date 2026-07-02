@@ -935,10 +935,31 @@ function requestLogWhere(input: RequestLogQueryInput) {
         lower(channel_name) LIKE ? OR
         lower(credential_email) LIKE ? OR
         lower(error_code) LIKE ? OR
-        CAST(status_code AS TEXT) LIKE ?
+        lower(error_message) LIKE ? OR
+        CAST(status_code AS TEXT) LIKE ? OR
+        EXISTS (
+          SELECT 1
+          FROM request_log_details
+          WHERE request_log_details.request_log_id = request_logs.id
+            AND (
+              lower(request_log_details.request_body_text) LIKE ? OR
+              lower(request_log_details.forwarded_body_text) LIKE ? OR
+              lower(request_log_details.upstream_body_text) LIKE ? OR
+              lower(request_log_details.error_message) LIKE ? OR
+              lower(request_log_details.error_stack) LIKE ? OR
+              lower(request_log_details.detail_json) LIKE ?
+            )
+        )
       )`,
     );
     params.push(
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
       like,
       like,
       like,
