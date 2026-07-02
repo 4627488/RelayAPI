@@ -10,6 +10,10 @@ import {
   resolveCredentialProxy,
 } from "@/src/server/services/codexCredentials";
 import { getEffectiveCodexUserAgent } from "@/src/server/services/settings";
+import {
+  applyCodexReasoningReplay,
+  getCodexReplaySessionKey,
+} from "@/src/server/codex/reasoningReplay";
 import type { StageTimer } from "@/src/server/http/stageTimer";
 import type {
   ChannelRecord,
@@ -108,6 +112,10 @@ export async function codexFetch(
     payload,
     input.promptCacheKey,
   );
+  const replaySessionKey = getCodexReplaySessionKey({
+    payload,
+    headers: input.sourceHeaders,
+  });
   const useWebSocket =
     input.transport === "websocket" &&
     credential.upstreamTransport === "websocket" &&
@@ -118,6 +126,7 @@ export async function codexFetch(
         fastServiceTier: shouldUsePriorityServiceTier(credential),
         promptCacheKey,
         planType: credential.planType,
+        replaySessionKey,
         transport: useWebSocket ? "websocket" : "http",
       }),
     ) ??
@@ -125,6 +134,7 @@ export async function codexFetch(
       fastServiceTier: shouldUsePriorityServiceTier(credential),
       promptCacheKey,
       planType: credential.planType,
+      replaySessionKey,
       transport: useWebSocket ? "websocket" : "http",
     });
   const proxy = resolveCredentialProxy({
@@ -164,6 +174,9 @@ export async function codexFetch(
         payload: upstreamPayload,
         proxy,
         timeoutMs: serverConfig.requestTimeoutMs,
+        sessionKey: replaySessionKey
+          ? `${credential.id}:${url}:${replaySessionKey}`
+          : null,
       });
     } catch {
       const fallbackResponse =
@@ -301,6 +314,7 @@ export function prepareCodexPayloadForUpstream(
     fastServiceTier?: boolean;
     promptCacheKey?: string | null;
     planType?: string | null;
+    replaySessionKey?: string | null;
     transport?: "http" | "websocket";
   } = {},
 ): Record<string, unknown> {
@@ -314,6 +328,14 @@ export function prepareCodexPayloadForUpstream(
   );
   if (promptCacheKey) {
     upstreamPayload.prompt_cache_key = promptCacheKey;
+  }
+  if (options.replaySessionKey) {
+    const replayed = applyCodexReasoningReplay({
+      model: stringValue(upstreamPayload.model),
+      sessionKey: options.replaySessionKey,
+      payload: upstreamPayload,
+    });
+    Object.assign(upstreamPayload, replayed);
   }
   if (
     upstreamPayload.service_tier &&

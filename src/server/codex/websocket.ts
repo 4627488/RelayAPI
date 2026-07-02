@@ -7,8 +7,59 @@ import type { CredentialProxyConfig } from "@/src/shared/types/entities";
 
 const CODEX_RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
 const CODEX_RESPONSES_WEBSOCKET_HANDSHAKE_MS = 30_000;
+const CODEX_RESPONSES_WEBSOCKET_IDLE_MS = 5 * 60_000;
+
+type WebSocketEventName =
+  | "open"
+  | "message"
+  | "error"
+  | "close"
+  | "unexpected-response";
+
+interface CodexWebSocketLike {
+  send(data: string, callback?: (error?: Error) => void): void;
+  close(): void;
+  terminate(): void;
+  on(event: WebSocketEventName, handler: (...args: unknown[]) => void): this;
+  off(event: WebSocketEventName, handler: (...args: unknown[]) => void): this;
+}
+
+interface CodexWebSocketFactoryResult {
+  socket: CodexWebSocketLike;
+  cleanup?: () => void;
+}
+
+type CodexWebSocketFactory = (input: {
+  httpUrl: string;
+  headers: HeadersInit;
+  proxy?: CredentialProxyConfig | null;
+  timeoutMs?: number;
+}) => CodexWebSocketFactoryResult;
+
+interface CodexWebSocketSession {
+  key: string;
+  socket: CodexWebSocketLike;
+  cleanup?: () => void;
+  inFlight: Promise<void>;
+  idleTimer: ReturnType<typeof setTimeout> | null;
+}
 
 export async function codexWebSocketResponse(input: {
+  httpUrl: string;
+  headers: HeadersInit;
+  payload: Record<string, unknown>;
+  proxy?: CredentialProxyConfig | null;
+  timeoutMs?: number;
+  sessionKey?: string | null;
+}) {
+  const sessionKey = stringValue(input.sessionKey).trim();
+  if (sessionKey) {
+    return codexWebSocketSessions.request({ ...input, sessionKey });
+  }
+  return singleUseCodexWebSocketResponse(input);
+}
+
+async function singleUseCodexWebSocketResponse(input: {
   httpUrl: string;
   headers: HeadersInit;
   payload: Record<string, unknown>;
@@ -116,8 +167,212 @@ export async function codexWebSocketResponse(input: {
   });
 }
 
+export class CodexWebSocketSessionManager {
+  private readonly sessions = new Map<string, CodexWebSocketSession>();
+  private readonly factory: CodexWebSocketFactory;
+  private readonly idleTimeoutMs: number;
+
+  constructor(input?: {
+    factory?: CodexWebSocketFactory;
+    idleTimeoutMs?: number;
+  }) {
+    this.factory = input?.factory || createCodexWebSocketConnection;
+    this.idleTimeoutMs =
+      input?.idleTimeoutMs ?? CODEX_RESPONSES_WEBSOCKET_IDLE_MS;
+  }
+
+  async request(input: {
+    sessionKey: string;
+    httpUrl: string;
+    headers: HeadersInit;
+    payload: Record<string, unknown>;
+    proxy?: CredentialProxyConfig | null;
+    timeoutMs?: number;
+  }) {
+    const sessionOrResponse = await this.getOrCreateSession(input);
+    if (sessionOrResponse instanceof Response) {
+      return sessionOrResponse;
+    }
+
+    const session = sessionOrResponse;
+    await session.inFlight.catch(() => undefined);
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer);
+      session.idleTimer = null;
+    }
+
+    const { response, done } = this.responseFromSession(session, input.payload);
+    session.inFlight = done.finally(() => this.scheduleIdleClose(session));
+    return response;
+  }
+
+  closeAll() {
+    for (const session of this.sessions.values()) {
+      this.invalidate(session.key, true);
+    }
+  }
+
+  private async getOrCreateSession(input: {
+    sessionKey: string;
+    httpUrl: string;
+    headers: HeadersInit;
+    proxy?: CredentialProxyConfig | null;
+    timeoutMs?: number;
+  }): Promise<CodexWebSocketSession | Response> {
+    const existing = this.sessions.get(input.sessionKey);
+    if (existing) {
+      return existing;
+    }
+
+    const created = this.factory(input);
+    const session: CodexWebSocketSession = {
+      key: input.sessionKey,
+      socket: created.socket,
+      cleanup: created.cleanup,
+      inFlight: Promise.resolve(),
+      idleTimer: null,
+    };
+
+    const onClose = () => this.invalidate(session.key, false);
+    const onError = () => this.invalidate(session.key, true);
+    session.socket.on("close", onClose);
+    session.socket.on("error", onError);
+
+    try {
+      const opened = await waitForOpenOrRejection(
+        session.socket,
+        input.timeoutMs,
+      );
+      if (opened instanceof Response) {
+        session.socket.off("close", onClose);
+        session.socket.off("error", onError);
+        session.cleanup?.();
+        return opened;
+      }
+    } catch (error) {
+      session.socket.off("close", onClose);
+      session.socket.off("error", onError);
+      session.cleanup?.();
+      session.socket.terminate();
+      throw error;
+    }
+
+    this.sessions.set(input.sessionKey, session);
+    return session;
+  }
+
+  private responseFromSession(
+    session: CodexWebSocketSession,
+    payload: Record<string, unknown>,
+  ) {
+    const encoder = new TextEncoder();
+    const payloadText = JSON.stringify(codexWebSocketRequestPayload(payload));
+    let settled = false;
+    let resolveDone: () => void;
+    let rejectDone: (error: unknown) => void;
+    const done = new Promise<void>((resolve, reject) => {
+      resolveDone = resolve;
+      rejectDone = reject;
+    });
+
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        const cleanupListeners = () => {
+          session.socket.off("message", onMessage);
+          session.socket.off("error", onError);
+          session.socket.off("close", onClose);
+        };
+        const finish = (invalidate: boolean) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanupListeners();
+          if (invalidate) {
+            this.invalidate(session.key, true);
+          }
+          controller.close();
+          resolveDone();
+        };
+        const fail = (error: unknown) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanupListeners();
+          this.invalidate(session.key, true);
+          controller.error(error);
+          rejectDone(error);
+        };
+        const onMessage = (data: unknown) => {
+          const text = webSocketDataToText(data as RawData).trim();
+          if (!text) {
+            return;
+          }
+          const normalized = normalizeCodexWebSocketEvent(text);
+          controller.enqueue(encoder.encode(`data: ${normalized}\n\n`));
+          const type = eventType(normalized);
+          if (type === "response.completed" || type === "response.failed") {
+            finish(false);
+          } else if (type === "error") {
+            finish(true);
+          }
+        };
+        const onError = (error: unknown) => fail(error);
+        const onClose = () => finish(true);
+
+        session.socket.on("message", onMessage);
+        session.socket.on("error", onError);
+        session.socket.on("close", onClose);
+        session.socket.send(payloadText, (error) => {
+          if (error) {
+            fail(error);
+          }
+        });
+      },
+      cancel: () => {
+        settled = true;
+        this.invalidate(session.key, true);
+        resolveDone();
+      },
+    });
+
+    return {
+      done,
+      response: new Response(body, {
+        status: 200,
+        headers: codexStreamResponseHeaders(),
+      }),
+    };
+  }
+
+  private scheduleIdleClose(session: CodexWebSocketSession) {
+    if (!this.sessions.has(session.key)) {
+      return;
+    }
+    session.idleTimer = setTimeout(() => {
+      this.invalidate(session.key, true);
+    }, this.idleTimeoutMs);
+  }
+
+  private invalidate(key: string, closeSocket: boolean) {
+    const session = this.sessions.get(key);
+    if (!session) {
+      return;
+    }
+    this.sessions.delete(key);
+    if (session.idleTimer) {
+      clearTimeout(session.idleTimer);
+    }
+    session.cleanup?.();
+    if (closeSocket) {
+      session.socket.close();
+    }
+  }
+}
+
 function waitForOpenOrRejection(
-  ws: WebSocket,
+  ws: CodexWebSocketLike,
   timeoutMs = CODEX_RESPONSES_WEBSOCKET_HANDSHAKE_MS,
 ) {
   return new Promise<true | Response>((resolve, reject) => {
@@ -151,13 +406,14 @@ function waitForOpenOrRejection(
       }
       settled = true;
       clearTimeout(timer);
+      const upstreamResponse = response as IncomingMessage;
       try {
-        const body = await incomingMessageText(response);
+        const body = await incomingMessageText(upstreamResponse);
         resolve(
           new Response(body, {
-            status: response.statusCode || 502,
-            statusText: response.statusMessage,
-            headers: incomingMessageHeaders(response),
+            status: upstreamResponse.statusCode || 502,
+            statusText: upstreamResponse.statusMessage,
+            headers: incomingMessageHeaders(upstreamResponse),
           }),
         );
       } catch (error) {
@@ -166,6 +422,30 @@ function waitForOpenOrRejection(
     });
   });
 }
+
+function createCodexWebSocketConnection(input: {
+  httpUrl: string;
+  headers: HeadersInit;
+  proxy?: CredentialProxyConfig | null;
+  timeoutMs?: number;
+}) {
+  const wsUrl = codexWebSocketUrl(input.httpUrl);
+  const headers = codexWebSocketHeaders(input.headers);
+  const agent = input.proxy?.enabled
+    ? new SocksProxyAgent(proxyUrl(input.proxy))
+    : undefined;
+  return {
+    cleanup: () => agent?.destroy(),
+    socket: new WebSocket(wsUrl, {
+      headers,
+      agent,
+      handshakeTimeout: input.timeoutMs ?? CODEX_RESPONSES_WEBSOCKET_HANDSHAKE_MS,
+      perMessageDeflate: true,
+    }),
+  };
+}
+
+const codexWebSocketSessions = new CodexWebSocketSessionManager();
 
 function codexWebSocketUrl(httpUrl: string) {
   const url = new URL(httpUrl);
@@ -231,6 +511,15 @@ function eventType(text: string) {
   }
 }
 
+function codexStreamResponseHeaders() {
+  return {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  };
+}
+
 function webSocketDataToText(data: RawData) {
   if (typeof data === "string") {
     return data;
@@ -245,6 +534,10 @@ function webSocketDataToText(data: RawData) {
     return Buffer.from(data).toString("utf8");
   }
   return "";
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : "";
 }
 
 function incomingMessageHeaders(response: IncomingMessage) {

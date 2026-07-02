@@ -25,6 +25,16 @@ import {
   parseCodexSseResponse,
 } from "@/src/server/codex/client";
 import { createOpenAIChatSseStream } from "@/src/server/codex/chatStream";
+import {
+  classifyCodexStreamEvent,
+  classifyCodexUpstreamError,
+  type CodexUpstreamErrorInfo,
+} from "@/src/server/codex/errors";
+import {
+  captureCodexReasoningReplay,
+  clearCodexReasoningReplay,
+  getCodexReplaySessionKey,
+} from "@/src/server/codex/reasoningReplay";
 import { serverConfig } from "@/src/server/config/env";
 import { HttpError, errorToResponse } from "@/src/server/http/errors";
 import {
@@ -187,12 +197,30 @@ export async function handleOpenAIResponses(request: Request) {
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(raw),
     );
+    let responseErrorInfo: CodexUpstreamErrorInfo | null = null;
     if (result.response.ok) {
+      captureReplayForResponse({
+        model,
+        request,
+        payload: result.upstreamPayload,
+        response: raw,
+      });
       recordChannelSuccess(channel);
     } else {
+      responseErrorInfo = classifyCodexFailure({
+        statusCode: result.response.status,
+        bodyText: result.text,
+      });
+      clearReplayForRequest({
+        model,
+        request,
+        payload: result.upstreamPayload,
+        info: responseErrorInfo,
+      });
       recordChannelFailure(channel, {
         statusCode: result.response.status,
-        message: result.text.slice(0, 500),
+        message: responseErrorInfo.message || result.text.slice(0, 500),
+        retryAfterMs: responseErrorInfo.retryAfterMs,
       });
     }
     appendSuccessLog({
@@ -207,6 +235,12 @@ export async function handleOpenAIResponses(request: Request) {
       model,
       statusCode: result.response.status,
       usage,
+      ...(responseErrorInfo
+        ? {
+            errorCode: responseErrorInfo.code,
+            errorMessage: responseErrorInfo.message.slice(0, 500),
+          }
+        : {}),
       requestBody: input,
       forwardedBody: result.upstreamPayload,
       upstreamHeaders: result.response.headers,
@@ -383,9 +417,20 @@ async function handleImagesProxy(
       timing,
     });
     if (!result.response.ok) {
+      const errorInfo = classifyCodexFailure({
+        statusCode: result.response.status,
+        bodyText: result.text,
+      });
+      clearReplayForRequest({
+        model: imageRequest.model,
+        request,
+        payload: result.upstreamPayload,
+        info: errorInfo,
+      });
       recordChannelFailure(channel, {
         statusCode: result.response.status,
-        message: result.text.slice(0, 500),
+        message: errorInfo.message || result.text.slice(0, 500),
+        retryAfterMs: errorInfo.retryAfterMs,
       });
       appendSuccessLog({
         request,
@@ -399,8 +444,8 @@ async function handleImagesProxy(
         model: imageRequest.model,
         statusCode: result.response.status,
         usage: emptyUsage(),
-        errorCode: "upstream_error",
-        errorMessage: result.text.slice(0, 500),
+        errorCode: errorInfo.code || "upstream_error",
+        errorMessage: (errorInfo.message || result.text).slice(0, 500),
         requestBody: imageRequest.requestBody,
         forwardedBody: result.upstreamPayload,
         upstreamHeaders: result.response.headers,
@@ -528,9 +573,20 @@ async function forwardImagesStream(input: {
           () => response.text(),
         )
       : await response.text();
+    const errorInfo = classifyCodexFailure({
+      statusCode: response.status,
+      bodyText: errorText,
+    });
+    clearReplayForRequest({
+      model: input.imageRequest.model,
+      request: input.request,
+      payload: upstreamPayload,
+      info: errorInfo,
+    });
     recordChannelFailure(input.channel, {
       statusCode: response.status,
-      message: errorText.slice(0, 500) || response.statusText,
+      message: errorInfo.message || errorText.slice(0, 500) || response.statusText,
+      retryAfterMs: errorInfo.retryAfterMs,
     });
     appendSuccessLog({
       request: input.request,
@@ -544,8 +600,8 @@ async function forwardImagesStream(input: {
       model: input.imageRequest.model,
       statusCode: response.status,
       usage: emptyUsage(),
-      errorCode: "upstream_error",
-      errorMessage: (errorText || response.statusText).slice(0, 500),
+      errorCode: errorInfo.code || "upstream_error",
+      errorMessage: (errorInfo.message || errorText || response.statusText).slice(0, 500),
       requestBody: input.imageRequest.requestBody,
       forwardedBody: upstreamPayload,
       upstreamHeaders: response.headers,
@@ -814,6 +870,12 @@ export async function handleChatCompletions(request: Request) {
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(raw),
     );
+    captureReplayForResponse({
+      model,
+      request,
+      payload: result.upstreamPayload,
+      response: raw,
+    });
     recordChannelSuccess(channel);
     appendSuccessLog({
       request,
@@ -924,12 +986,30 @@ async function handleRawCodexProxy(
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(result.json),
     );
+    let responseErrorInfo: CodexUpstreamErrorInfo | null = null;
     if (result.response.ok) {
+      captureReplayForResponse({
+        model,
+        request,
+        payload: result.upstreamPayload,
+        response: result.json,
+      });
       recordChannelSuccess(channel);
     } else {
+      responseErrorInfo = classifyCodexFailure({
+        statusCode: result.response.status,
+        bodyText: result.text,
+      });
+      clearReplayForRequest({
+        model,
+        request,
+        payload: result.upstreamPayload,
+        info: responseErrorInfo,
+      });
       recordChannelFailure(channel, {
         statusCode: result.response.status,
-        message: result.text.slice(0, 500),
+        message: responseErrorInfo.message || result.text.slice(0, 500),
+        retryAfterMs: responseErrorInfo.retryAfterMs,
       });
     }
     appendSuccessLog({
@@ -944,12 +1024,12 @@ async function handleRawCodexProxy(
       model,
       statusCode: result.response.status,
       usage,
-      ...(result.response.ok
-        ? {}
-        : {
-            errorCode: "upstream_error",
-            errorMessage: result.text.slice(0, 500),
-          }),
+      ...(responseErrorInfo
+        ? {
+            errorCode: responseErrorInfo.code,
+            errorMessage: responseErrorInfo.message.slice(0, 500),
+          }
+        : {}),
       requestBody: rawPayload,
       forwardedBody: result.upstreamPayload,
       upstreamHeaders: result.response.headers,
@@ -1071,7 +1151,13 @@ async function forwardCodexStream(input: {
           input.timing,
         ),
         {
-          onCompleted: (usage) => {
+          onCompleted: (usage, responsePayload) => {
+            captureReplayForResponse({
+              model,
+              request: input.request,
+              payload: upstreamPayload,
+              response: responsePayload,
+            });
             recordChannelSuccess(input.channel);
             appendSuccessLog({
               request: input.request,
@@ -1093,11 +1179,20 @@ async function forwardCodexStream(input: {
             });
           },
           onError: (error, usage) => {
+            const errorInfo = codexErrorInfoFromError(error);
             const message =
-              error instanceof Error ? error.message : String(error);
+              errorInfo?.message ||
+              (error instanceof Error ? error.message : String(error));
+            clearReplayForRequest({
+              model,
+              request: input.request,
+              payload: upstreamPayload,
+              info: errorInfo,
+            });
             recordChannelFailure(input.channel, {
-              statusCode: 502,
+              statusCode: errorInfo?.statusCode || 502,
               message,
+              retryAfterMs: errorInfo?.retryAfterMs,
             });
             appendSuccessLog({
               request: input.request,
@@ -1109,9 +1204,9 @@ async function forwardCodexStream(input: {
               requestType: input.requestType,
               stream: true,
               model,
-              statusCode: 502,
+              statusCode: errorInfo?.statusCode || 502,
               usage,
-              errorCode: "stream_error",
+              errorCode: errorInfo?.code || "stream_error",
               errorMessage: message.slice(0, 500),
               requestBody: input.requestBody,
               forwardedBody: upstreamPayload,
@@ -1133,7 +1228,7 @@ async function forwardCodexStream(input: {
 function createCodexUsageMeterStream(
   upstreamBody: ReadableStream<Uint8Array>,
   handlers: {
-    onCompleted: (usage: UsageSnapshot) => void;
+    onCompleted: (usage: UsageSnapshot, response?: unknown) => void;
     onError: (error: unknown, usage: UsageSnapshot) => void;
     onFirstToken?: () => void;
   },
@@ -1146,6 +1241,7 @@ function createCodexUsageMeterStream(
   let upstreamCompleted = false;
   let upstreamErrored = false;
   let completionReported = false;
+  let completedResponse: unknown;
 
   function reportFirstTokenOnce() {
     if (firstTokenReported) {
@@ -1160,7 +1256,7 @@ function createCodexUsageMeterStream(
       return;
     }
     completionReported = true;
-    handlers.onCompleted(usage);
+    handlers.onCompleted(usage, completedResponse);
   }
 
   function reportErrorOnce(error: unknown) {
@@ -1175,8 +1271,9 @@ function createCodexUsageMeterStream(
     for (const frame of framer.push(text)) {
       handleCodexStreamFrame(
         frame.event,
-        (nextUsage) => {
+        (nextUsage, responsePayload) => {
           usage = nextUsage;
+          completedResponse = responsePayload;
         },
         reportFirstTokenOnce,
         () => {
@@ -1204,8 +1301,9 @@ function createCodexUsageMeterStream(
         for (const frame of framer.flush()) {
           handleCodexStreamFrame(
             frame.event,
-            (nextUsage) => {
+            (nextUsage, responsePayload) => {
               usage = nextUsage;
+              completedResponse = responsePayload;
             },
             reportFirstTokenOnce,
             () => {
@@ -1236,7 +1334,7 @@ function createCodexUsageMeterStream(
 
 function handleCodexStreamFrame(
   event: Record<string, unknown> | null,
-  onUsage: (usage: UsageSnapshot) => void,
+  onUsage: (usage: UsageSnapshot, response?: unknown) => void,
   onFirstToken: () => void,
   onCompleted: () => void,
   onError: (error: unknown) => void,
@@ -1253,28 +1351,96 @@ function handleCodexStreamFrame(
     onFirstToken();
   }
   if (event.type === "response.completed") {
-    onUsage(extractUsageFromCodexResponse(event.response || event));
+    onUsage(extractUsageFromCodexResponse(event.response || event), event.response);
     onCompleted();
     return;
   }
-  if (event.type === "error") {
+  if (event.type === "error" || event.type === "response.failed") {
     onError(codexUpstreamStreamError(event));
   }
 }
 
 function codexUpstreamStreamError(event: Record<string, unknown>) {
+  const info = classifyCodexStreamEvent(event, { statusCode: 400 });
   const error =
     event.error && typeof event.error === "object" && !Array.isArray(event.error)
       ? (event.error as Record<string, unknown>)
       : event;
   const message =
+    info?.message ||
     stringValue(error.message) ||
     stringValue(error.code) ||
     "Upstream Codex stream returned an error";
   const out = new Error(message);
-  const withDetails = out as Error & { details?: unknown };
+  const withDetails = out as Error & {
+    details?: unknown;
+    codexErrorInfo?: CodexUpstreamErrorInfo | null;
+  };
   withDetails.details = event;
+  withDetails.codexErrorInfo = info;
   return out;
+}
+
+function captureReplayForResponse(input: {
+  model: string;
+  request: Request;
+  payload: unknown;
+  response: unknown;
+}) {
+  const sessionKey = getCodexReplaySessionKey({
+    payload: input.payload,
+    headers: input.request.headers,
+  });
+  if (!sessionKey) {
+    return;
+  }
+  captureCodexReasoningReplay({
+    model: input.model,
+    sessionKey,
+    response: input.response,
+  });
+}
+
+function classifyCodexFailure(input: {
+  statusCode: number;
+  bodyText?: string | null;
+  body?: unknown;
+}) {
+  const body =
+    input.body !== undefined
+      ? input.body
+      : parseMaybeJson<unknown>(input.bodyText || "") || input.bodyText || "";
+  return classifyCodexUpstreamError({
+    statusCode: input.statusCode,
+    body,
+  });
+}
+
+function clearReplayForRequest(input: {
+  model: string;
+  request: Request;
+  payload: unknown;
+  info: CodexUpstreamErrorInfo | null | undefined;
+}) {
+  if (!input.info?.clearReplay) {
+    return;
+  }
+  const sessionKey = getCodexReplaySessionKey({
+    payload: input.payload,
+    headers: input.request.headers,
+  });
+  if (!sessionKey) {
+    return;
+  }
+  clearCodexReasoningReplay({ model: input.model, sessionKey });
+}
+
+function codexErrorInfoFromError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+  const withInfo = error as { codexErrorInfo?: CodexUpstreamErrorInfo | null };
+  return withInfo.codexErrorInfo || null;
 }
 
 function codexStreamErrorFrame(error: unknown) {
@@ -1527,6 +1693,14 @@ function safeJsonStringify(value: unknown) {
     return JSON.stringify(value, null, 2);
   } catch {
     return String(value);
+  }
+}
+
+function parseMaybeJson<T>(text: string) {
+  try {
+    return text ? (JSON.parse(text) as T) : null;
+  } catch {
+    return null;
   }
 }
 
