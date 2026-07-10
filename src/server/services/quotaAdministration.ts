@@ -14,7 +14,9 @@ import {
 } from "@/src/server/services/modelPricing";
 import {
   getEffectiveQuotaBaselines,
+  getQuotaOversellRatios,
   setQuotaBaselineOverride,
+  setQuotaOversellRatio,
 } from "@/src/server/services/quotaCalibration";
 
 const PRICING_CONFIG_KEY = "model_pricing_config_v1";
@@ -74,6 +76,7 @@ export function attachConfiguredModelPrices<T extends {
 export function getQuotaAdministration() {
   const config = readPricingConfig();
   const baselines = getEffectiveQuotaBaselines();
+  const oversellRatios = getQuotaOversellRatios();
   return {
     baselines: Object.fromEntries(
       (["5h", "7d"] as const).map((kind) => [kind, {
@@ -82,6 +85,7 @@ export function getQuotaAdministration() {
         effectiveNanoUsd: stringOrNull(baselines[kind].effectiveNanoUsd),
         confidence: baselines[kind].confidence,
         sampleCount: baselines[kind].sampleCount,
+        oversellRatio: oversellRatios[kind],
       }]),
     ) as Record<"5h" | "7d", {
       automaticNanoUsd: string | null;
@@ -89,6 +93,7 @@ export function getQuotaAdministration() {
       effectiveNanoUsd: string | null;
       confidence: number;
       sampleCount: number;
+      oversellRatio: number;
     }>,
     pricing: {
       aliases: config.aliases,
@@ -110,6 +115,12 @@ export function patchQuotaAdministration(input: unknown) {
       if (Object.hasOwn(baselines, kind)) {
         setQuotaBaselineOverride(kind, nullablePositiveBigInt(baselines[kind], `${kind} baseline`));
       }
+    }
+  }
+  const oversellRatios = objectValue(body.oversellRatios);
+  for (const kind of ["5h", "7d"] as const) {
+    if (Object.hasOwn(oversellRatios, kind)) {
+      setQuotaOversellRatio(kind, positiveDecimal(oversellRatios[kind], `${kind} oversell ratio`));
     }
   }
   if (Object.hasOwn(body, "aliases")) {
@@ -225,6 +236,14 @@ function nullablePositiveBigInt(value: unknown, label: string) {
   } catch {
     throw new HttpError(400, "invalid_quota_value", `${label} must be a positive integer`);
   }
+}
+
+function positiveDecimal(value: unknown, label: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 1000) {
+    throw new HttpError(400, "invalid_quota_value", `${label} must be greater than 0 and no more than 1000`);
+  }
+  return parsed;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

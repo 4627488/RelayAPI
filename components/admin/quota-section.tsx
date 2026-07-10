@@ -27,6 +27,8 @@ export function AdminQuotaSection() {
   const [costs, setCosts] = React.useState<CostAnalysis | null>(null);
   const [fiveHour, setFiveHour] = React.useState("");
   const [weekly, setWeekly] = React.useState("");
+  const [fiveHourOversell, setFiveHourOversell] = React.useState("1");
+  const [weeklyOversell, setWeeklyOversell] = React.useState("1");
   const [loading, setLoading] = React.useState(true);
 
   const load = React.useCallback(async () => {
@@ -40,6 +42,8 @@ export function AdminQuotaSection() {
       setCosts(nextCosts);
       setFiveHour(nanoUsdToUsd(nextQuota.baselines["5h"].overrideNanoUsd));
       setWeekly(nanoUsdToUsd(nextQuota.baselines["7d"].overrideNanoUsd));
+      setFiveHourOversell(String(nextQuota.baselines["5h"].oversellRatio));
+      setWeeklyOversell(String(nextQuota.baselines["7d"].oversellRatio));
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -56,8 +60,9 @@ export function AdminQuotaSection() {
     try {
       setQuota(await updateQuotaAdministration({
         baselines: { "5h": usdToNanoUsd(fiveHour), "7d": usdToNanoUsd(weekly) },
+        oversellRatios: { "5h": positiveDecimal(fiveHourOversell), "7d": positiveDecimal(weeklyOversell) },
       }));
-      toast.success("份额额度覆盖已保存");
+      toast.success("份额额度基线与超卖比例已保存");
     } catch (error) { toast.error(adminErrorMessage(error)); }
   }
 
@@ -79,13 +84,15 @@ export function AdminQuotaSection() {
         <Card>
           <CardHeader>
             <CardTitle>份额额度基线</CardTitle>
-            <CardDescription>Plus 为 1 份，Pro 为 20 份；留空即使用自动校准结果。</CardDescription>
+            <CardDescription>Plus 为 1 份，Pro 为 20 份；基线留空即使用自动校准结果。超卖比例 1 表示不超卖，2 表示发放两倍额度。</CardDescription>
             <CardAction><Button size="sm" onClick={saveBaselines}><SaveIcon data-icon="inline-start" />保存</Button></CardAction>
           </CardHeader>
           <CardContent>
             <FieldGroup>
               <Field><FieldLabel htmlFor="quota-5h">每份 5 小时额度（USD）</FieldLabel><Input id="quota-5h" inputMode="decimal" value={fiveHour} placeholder={nanoUsdToUsd(quota?.baselines["5h"].automaticNanoUsd)} onChange={(event) => setFiveHour(event.target.value)} /><FieldDescription>置信度 {formatPercent(quota?.baselines["5h"].confidence)} · {quota?.baselines["5h"].sampleCount ?? 0} 个有效样本</FieldDescription></Field>
+              <Field><FieldLabel htmlFor="quota-5h-oversell">5 小时超卖比例</FieldLabel><Input id="quota-5h-oversell" inputMode="decimal" value={fiveHourOversell} onChange={(event) => setFiveHourOversell(event.target.value)} /><FieldDescription>当前向用户发放基线容量的 {fiveHourOversell || "-"} 倍。</FieldDescription></Field>
               <Field><FieldLabel htmlFor="quota-7d">每份 7 天额度（USD）</FieldLabel><Input id="quota-7d" inputMode="decimal" value={weekly} placeholder={nanoUsdToUsd(quota?.baselines["7d"].automaticNanoUsd)} onChange={(event) => setWeekly(event.target.value)} /><FieldDescription>置信度 {formatPercent(quota?.baselines["7d"].confidence)} · {quota?.baselines["7d"].sampleCount ?? 0} 个有效样本</FieldDescription></Field>
+              <Field><FieldLabel htmlFor="quota-7d-oversell">7 天超卖比例</FieldLabel><Input id="quota-7d-oversell" inputMode="decimal" value={weeklyOversell} onChange={(event) => setWeeklyOversell(event.target.value)} /><FieldDescription>当前向用户发放基线容量的 {weeklyOversell || "-"} 倍。</FieldDescription></Field>
             </FieldGroup>
           </CardContent>
         </Card>
@@ -103,6 +110,7 @@ export function AdminQuotaSection() {
 }
 
 function usdToNanoUsd(value: string) { const clean = value.trim(); return clean ? String(Math.round(Number(clean) * 1_000_000_000)) : null; }
+function positiveDecimal(value: string) { const parsed = Number(value.trim()); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
 function nanoUsdToUsd(value?: string | null) { return value ? (Number(value) / 1_000_000_000).toFixed(4) : ""; }
 function formatUsd(value?: string | null) { return `$${(Number(value || 0) / 1_000_000_000).toFixed(4)}`; }
 function formatPercent(value?: number) { return `${Math.round((value || 0) * 100)}%`; }

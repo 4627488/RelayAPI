@@ -663,7 +663,7 @@ export function AdminWorkbench({
               </div>
             )}
             {activeSection === "access" && (
-              <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+              <div className="flex flex-col gap-3">
                 <AdminTenantsSection tenants={tenants} onChanged={setTenants} publicBaseUrl={globalSettings.publicBaseUrl} />
                 <ApiKeysSection
                   apiKeys={apiKeys}

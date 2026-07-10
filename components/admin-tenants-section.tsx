@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -68,6 +69,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   adminErrorMessage,
   createTenant,
@@ -130,6 +137,13 @@ export function AdminTenantsSection({
     React.useState<CreatedTenantInvite | null>(null);
   const [passwordReset, setPasswordReset] = React.useState<{ url: string; expiresAt: string } | null>(null);
   const [subscriptionTenant, setSubscriptionTenant] = React.useState<PublicTenant | null>(null);
+  const [subscriptions, setSubscriptions] = React.useState<TenantSubscriptionRecord[]>([]);
+
+  React.useEffect(() => {
+    void listTenantSubscriptions()
+      .then(setSubscriptions)
+      .catch((error) => toast.error(adminErrorMessage(error)));
+  }, []);
 
   async function removeTenant(id: string) {
     if (!window.confirm("确认删除这个租户？该操作会禁用租户并保留历史日志。")) {
@@ -180,6 +194,9 @@ export function AdminTenantsSection({
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div>
             <CardTitle>租户</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              集中查看订阅容量、Key 活跃度、今日消耗和账号生命周期。
+            </p>
           </div>
           <Button type="button" onClick={() => setCreating(true)}>
             <PlusIcon data-icon="inline-start" />
@@ -198,99 +215,64 @@ export function AdminTenantsSection({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>租户</TableHead>
-                  <TableHead>Owner</TableHead>
-                  <TableHead>Key</TableHead>
-                  <TableHead>今日 Token</TableHead>
-                  <TableHead>状态</TableHead>
+                  <TableHead>租户与账号</TableHead>
+                  <TableHead>子订阅</TableHead>
+                  <TableHead>API Key</TableHead>
+                  <TableHead>今日消耗</TableHead>
+                  <TableHead>访问策略</TableHead>
+                  <TableHead>生命周期</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tenants.map((tenant) => (
-                  <TableRow key={tenant.id}>
+                {tenants.map((tenant) => {
+                  const tenantSubscriptions = subscriptions.filter((item) => item.tenantId === tenant.id);
+                  const activeSubscriptions = tenantSubscriptions.filter((item) => item.enabled && (!item.expiresAt || Date.parse(item.expiresAt) > Date.now()));
+                  const tokenPercent = tenant.tokenLimitDaily ? Math.min(100, tenant.todayTokens / tenant.tokenLimitDaily * 100) : null;
+                  return <TableRow key={tenant.id}>
                     <TableCell>
-                      <div className="font-medium">{tenant.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground">
-                        {tenant.id}
+                      <div className="flex min-w-48 flex-col gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-medium">{tenant.name}</span>
+                          <WorkspaceStatusBadge tone={tenant.enabled ? "success" : "muted"}>
+                            {tenant.enabled ? "启用" : "停用"}
+                          </WorkspaceStatusBadge>
+                          {!tenant.ownerEmail && <WorkspaceStatusBadge tone={tenant.pendingInvite ? "warning" : "muted"}>{tenant.pendingInvite ? "待注册" : "未邀请"}</WorkspaceStatusBadge>}
+                        </div>
+                        <span className="truncate text-sm">{tenant.ownerEmail || "尚未绑定 Owner"}</span>
+                        <span className="font-mono text-xs text-muted-foreground">{tenant.id}</span>
                       </div>
                     </TableCell>
                     <TableCell>
-                      {tenant.ownerEmail ? (
-                        <div><div>{tenant.ownerEmail}</div><div className="text-xs text-muted-foreground">最后登录 {formatDateTime(tenant.lastLoginAt)}</div></div>
-                      ) : tenant.pendingInvite ? (
-                        <WorkspaceStatusBadge tone="warning">
-                          invite
-                        </WorkspaceStatusBadge>
-                      ) : (
-                        <span className="text-muted-foreground">未邀请</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {formatNumber(tenant.apiKeyCount)}
-                      {tenant.maxApiKeys === null
-                        ? " / 不限制"
-                        : ` / ${formatNumber(tenant.maxApiKeys)}`}
-                    </TableCell>
-                    <TableCell>
-                      {formatTokenNumber(tenant.todayTokens)}
-                      {tenant.tokenLimitDaily === null
-                        ? " / 不限制"
-                        : ` / ${formatTokenNumber(tenant.tokenLimitDaily)}`}
-                    </TableCell>
-                    <TableCell>
-                      <WorkspaceStatusBadge tone={tenant.enabled ? "success" : "muted"}>
-                        {tenant.enabled ? "on" : "off"}
-                      </WorkspaceStatusBadge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          type="button" variant="outline" size="icon" aria-label="管理子订阅"
-                          onClick={() => setSubscriptionTenant(tenant)}
-                        ><PackagePlusIcon /></Button>
-                        <Button
-                          type="button" variant="outline" size="icon" aria-label="生成密码重置链接"
-                          disabled={!tenant.ownerEmail} onClick={() => resetPassword(tenant.id)}
-                        ><KeyRoundIcon /></Button>
-                        <Button
-                          type="button" variant="outline" size="icon" aria-label="强制退出所有设备"
-                          disabled={!tenant.ownerEmail} onClick={() => revokeSessions(tenant.id)}
-                        ><LogOutIcon /></Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          aria-label="生成邀请链接"
-                          disabled={Boolean(
-                            tenant.ownerEmail || tenant.pendingInvite,
-                          )}
-                          onClick={() => inviteTenant(tenant.id)}
-                        >
-                          <LinkIcon />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          aria-label="编辑租户"
-                          onClick={() => setEditing(tenant)}
-                        >
-                          <PencilIcon />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          aria-label="删除租户"
-                          onClick={() => removeTenant(tenant.id)}
-                        >
-                          <Trash2Icon />
-                        </Button>
+                      <div className="flex min-w-36 flex-col gap-1.5">
+                        <div className="flex items-center gap-2"><span className="text-lg font-semibold tabular-nums">{activeSubscriptions.length}</span><span className="text-xs text-muted-foreground">个可用</span></div>
+                        <div className="flex flex-wrap gap-1">{activeSubscriptions.length ? activeSubscriptions.slice(0, 3).map((item) => <Badge key={item.id} variant="outline">{item.units}/{item.unitsPerCredential}</Badge>) : <span className="text-xs text-muted-foreground">未分配容量</span>}{activeSubscriptions.length > 3 && <Badge variant="secondary">+{activeSubscriptions.length - 3}</Badge>}</div>
                       </div>
                     </TableCell>
-                  </TableRow>
-                ))}
+                    <TableCell>
+                      <div className="flex min-w-28 flex-col gap-1"><span><strong className="tabular-nums">{formatNumber(tenant.enabledApiKeyCount)}</strong><span className="text-muted-foreground"> / {formatNumber(tenant.apiKeyCount)} 启用</span></span><span className="text-xs text-muted-foreground">上限 {tenant.maxApiKeys === null ? "不限" : formatNumber(tenant.maxApiKeys)}</span></div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex min-w-32 flex-col gap-1"><span className="font-medium tabular-nums">{formatTokenNumber(tenant.todayTokens)}</span><span className="text-xs text-muted-foreground">{tenant.tokenLimitDaily === null ? "未设置日限额" : `${Math.round(tokenPercent || 0)}% / ${formatTokenNumber(tenant.tokenLimitDaily)}`}</span></div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex min-w-36 flex-col gap-1 text-xs"><span>RPM {tenant.rateLimitPerMinute === null ? "不限" : formatNumber(tenant.rateLimitPerMinute)}</span><span className="text-muted-foreground">模型 {tenant.modelAllowlist.length || "全部"} · 通道 {tenant.channelAllowlist.length || "全部"}</span><span className="text-muted-foreground">自定义代理 {tenant.allowCustomProxy ? "允许" : "关闭"}</span></div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex min-w-40 flex-col gap-1 text-xs"><span>登录 {formatDateTime(tenant.lastLoginAt)}</span><span className="text-muted-foreground">到期 {tenant.expiresAt ? formatDateTime(tenant.expiresAt) : "长期"}</span><span className="text-muted-foreground">创建 {formatDateTime(tenant.createdAt)}</span></div>
+                    </TableCell>
+                    <TableCell>
+                      <TooltipProvider><div className="flex min-w-32 flex-wrap justify-end gap-1">
+                        <TenantAction label="管理子订阅"><Button type="button" variant="outline" size="icon" aria-label="管理子订阅" onClick={() => setSubscriptionTenant(tenant)}><PackagePlusIcon /></Button></TenantAction>
+                        <TenantAction label="编辑租户"><Button type="button" variant="outline" size="icon" aria-label="编辑租户" onClick={() => setEditing(tenant)}><PencilIcon /></Button></TenantAction>
+                        <TenantAction label="生成密码重置链接"><Button type="button" variant="outline" size="icon" aria-label="生成密码重置链接" disabled={!tenant.ownerEmail} onClick={() => resetPassword(tenant.id)}><KeyRoundIcon /></Button></TenantAction>
+                        <TenantAction label="强制退出所有设备"><Button type="button" variant="outline" size="icon" aria-label="强制退出所有设备" disabled={!tenant.ownerEmail} onClick={() => revokeSessions(tenant.id)}><LogOutIcon /></Button></TenantAction>
+                        <TenantAction label="生成邀请链接"><Button type="button" variant="outline" size="icon" aria-label="生成邀请链接" disabled={Boolean(tenant.ownerEmail || tenant.pendingInvite)} onClick={() => inviteTenant(tenant.id)}><LinkIcon /></Button></TenantAction>
+                        <TenantAction label="删除租户"><Button type="button" variant="outline" size="icon" aria-label="删除租户" onClick={() => removeTenant(tenant.id)}><Trash2Icon /></Button></TenantAction>
+                      </div></TooltipProvider>
+                    </TableCell>
+                  </TableRow>;
+                })}
               </TableBody>
             </Table>
           )}
@@ -336,7 +318,7 @@ export function AdminTenantsSection({
         }}
       />
       <PasswordResetDialog value={passwordReset} onOpenChange={(open) => { if (!open) setPasswordReset(null); }} />
-      <SubscriptionDialog tenant={subscriptionTenant} onOpenChange={(open) => { if (!open) setSubscriptionTenant(null); }} />
+      <SubscriptionDialog tenant={subscriptionTenant} onSubscriptionsChanged={setSubscriptions} onOpenChange={(open) => { if (!open) setSubscriptionTenant(null); }} />
     </>
   );
 }
@@ -749,7 +731,11 @@ function nullablePositiveInteger(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
 }
 
-function SubscriptionDialog({ tenant, onOpenChange }: { tenant: PublicTenant | null; onOpenChange: (open: boolean) => void }) {
+function TenantAction({ children, label }: { children: React.ReactElement; label: string }) {
+  return <Tooltip><TooltipTrigger render={children} /><TooltipContent>{label}</TooltipContent></Tooltip>;
+}
+
+function SubscriptionDialog({ tenant, onOpenChange, onSubscriptionsChanged }: { tenant: PublicTenant | null; onOpenChange: (open: boolean) => void; onSubscriptionsChanged: (items: TenantSubscriptionRecord[]) => void }) {
   const [items, setItems] = React.useState<TenantSubscriptionRecord[]>([]);
   const [allItems, setAllItems] = React.useState<TenantSubscriptionRecord[]>([]);
   const [credentials, setCredentials] = React.useState<CodexCredentialRecord[]>([]);
@@ -761,9 +747,9 @@ function SubscriptionDialog({ tenant, onOpenChange }: { tenant: PublicTenant | n
   React.useEffect(() => {
     if (!tenant) return;
     void Promise.all([listTenantSubscriptions(tenant.id), listTenantSubscriptions(), listCredentials()])
-      .then(([tenantItems, subscriptions, credentialItems]) => { setItems(tenantItems); setAllItems(subscriptions); setCredentials(credentialItems); })
+      .then(([tenantItems, subscriptions, credentialItems]) => { setItems(tenantItems); setAllItems(subscriptions); onSubscriptionsChanged(subscriptions); setCredentials(credentialItems); })
       .catch((error) => toast.error(adminErrorMessage(error)));
-  }, [tenant]);
+  }, [tenant, onSubscriptionsChanged]);
   const selectedCredential = credentials.find((credential) => credential.id === credentialId);
   const allocated = credentialId ? allocatedRatio(allItems, credentialId) : 0;
   function selectCredential(id: string | null) {
@@ -773,8 +759,8 @@ function SubscriptionDialog({ tenant, onOpenChange }: { tenant: PublicTenant | n
     setDenominator(String(suggestedDenominator));
     setName(credential ? `${planLabel(credential.planType)} 子订阅` : "");
   }
-  async function create() { if (!tenant) return; setPending(true); try { const item = await createTenantSubscription({ tenantId: tenant.id, credentialId, name: name.trim(), units: Math.max(1, Number(units) || 1), unitsPerCredential: Math.max(1, Number(denominator) || 20) }); setItems((current) => [item, ...current]); setAllItems((current) => [item, ...current]); setCredentialId(""); setName(""); toast.success("子订阅已下发"); } catch (error) { toast.error(adminErrorMessage(error)); } finally { setPending(false); } }
-  async function remove(id: string) { if (!window.confirm("确认收回这个子订阅？")) return; try { await deleteTenantSubscription(id); setItems((current) => current.filter((item) => item.id !== id)); setAllItems((current) => current.filter((item) => item.id !== id)); toast.success("子订阅已收回"); } catch (error) { toast.error(adminErrorMessage(error)); } }
+  async function create() { if (!tenant) return; setPending(true); try { const item = await createTenantSubscription({ tenantId: tenant.id, credentialId, name: name.trim(), units: Math.max(1, Number(units) || 1), unitsPerCredential: Math.max(1, Number(denominator) || 20) }); setItems((current) => [item, ...current]); setAllItems((current) => { const next = [item, ...current]; onSubscriptionsChanged(next); return next; }); setCredentialId(""); setName(""); toast.success("子订阅已下发"); } catch (error) { toast.error(adminErrorMessage(error)); } finally { setPending(false); } }
+  async function remove(id: string) { if (!window.confirm("确认收回这个子订阅？")) return; try { await deleteTenantSubscription(id); setItems((current) => current.filter((item) => item.id !== id)); setAllItems((current) => { const next = current.filter((item) => item.id !== id); onSubscriptionsChanged(next); return next; }); toast.success("子订阅已收回"); } catch (error) { toast.error(adminErrorMessage(error)); } }
   return <Dialog open={Boolean(tenant)} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>管理子订阅</DialogTitle><DialogDescription>为 {tenant?.name || "租户"} 从具体上游凭据下发份额。总分配比例不能超过该凭据的 100%。</DialogDescription></DialogHeader><FieldGroup><div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>上游凭据</FieldLabel><Select value={credentialId || null} onValueChange={selectCredential}><SelectTrigger className="w-full"><SelectValue placeholder="选择上游凭据" /></SelectTrigger><SelectContent><SelectGroup>{credentials.map((credential) => { const used = allocatedRatio(allItems, credential.id); return <SelectItem key={credential.id} value={credential.id} disabled={!credential.enabled || used >= 1}><span className="flex min-w-0 flex-1 items-center justify-between gap-3"><span className="truncate">{credential.email || credential.accountId || credential.id} · {planLabel(credential.planType)}</span><span className="text-xs text-muted-foreground">已分配 {formatPercent(used)}</span></span></SelectItem>; })}</SelectGroup></SelectContent></Select><FieldDescription>{selectedCredential ? `已分配 ${formatPercent(allocated)}，剩余 ${formatPercent(Math.max(0, 1 - allocated))}` : "选择后会自动建议 Pro 或 Plus 的拆分数。"}</FieldDescription></Field><Field><FieldLabel htmlFor="subscription-name">展示名称</FieldLabel><Input id="subscription-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Pro20x 子订阅" /></Field><Field><FieldLabel htmlFor="subscription-units">持有份数</FieldLabel><Input id="subscription-units" inputMode="numeric" value={units} onChange={(event) => setUnits(event.target.value)} /></Field><Field><FieldLabel htmlFor="subscription-denominator">整份拆分数</FieldLabel><Input id="subscription-denominator" inputMode="numeric" value={denominator} onChange={(event) => setDenominator(event.target.value)} /><FieldDescription>Pro20x 默认 20；独享 Plus 默认 1。</FieldDescription></Field></div><Button type="button" disabled={pending || !credentialId} onClick={create}>{pending && <Spinner data-icon="inline-start" />}下发子订阅</Button></FieldGroup><Table><TableHeader><TableRow><TableHead>名称</TableHead><TableHead>份额</TableHead><TableHead>凭据</TableHead><TableHead>状态</TableHead><TableHead /></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.units}/{item.unitsPerCredential}</TableCell><TableCell>{credentialName(credentials, item.credentialId)}</TableCell><TableCell>{item.enabled ? "启用" : "停用"}</TableCell><TableCell className="text-right"><Button type="button" variant="outline" size="icon" aria-label="收回子订阅" onClick={() => remove(item.id)}><Trash2Icon /></Button></TableCell></TableRow>)}</TableBody></Table><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
 }
 

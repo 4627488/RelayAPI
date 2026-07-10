@@ -7,7 +7,7 @@ import { getTenantSubscription, listActiveTenantSubscriptions } from "@/src/serv
 import { getSubscriptionQuotaState, releaseSubscriptionQuota, reserveSubscriptionQuota, settleSubscriptionQuota, SubscriptionQuotaCapacityError, type SubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
 import type { ModelPriceSnapshot } from "@/src/server/services/modelPricing";
 import { resolveConfiguredModelPrice } from "@/src/server/services/quotaAdministration";
-import { getEffectiveQuotaBaselines, quotaSharesForPlan } from "@/src/server/services/quotaCalibration";
+import { getEffectiveQuotaBaselines, getQuotaOversellRatios, quotaSharesForPlan } from "@/src/server/services/quotaCalibration";
 
 export interface TenantQuotaAdmission { requestId: string; tenantId: string; subscriptionId: string | null; units: number | null; unitsPerCredential: number | null; price: ModelPriceSnapshot | null; state: SubscriptionQuotaState | null; }
 
@@ -17,6 +17,7 @@ export function admitTenantRequest(input: { tenantId: string; credentialId: stri
   const price = resolveConfiguredModelPrice(input.model);
   if (!price) throw new HttpError(503, "model_price_unavailable", `No price is configured for model ${input.model}`, { model: input.model });
   const baselines = getEffectiveQuotaBaselines();
+  const oversellRatios = getQuotaOversellRatios();
   if (!baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) throw new HttpError(503, "quota_baseline_unavailable", "Subscription capacity has not been calibrated or configured");
   const resetTimes = credentialResetTimes(input.credentialId);
   const credential = getCodexCredentialById(input.credentialId);
@@ -27,7 +28,8 @@ export function admitTenantRequest(input: { tenantId: string; credentialId: stri
   let capacityError: SubscriptionQuotaCapacityError | null = null;
   for (const subscription of candidates) {
     const fractionMilli = BigInt(Math.floor(subscription.units * 1_000_000 / subscription.unitsPerCredential));
-    const limits = { "5h": baselines["5h"].effectiveNanoUsd! * parentCapacityMultiplier * fractionMilli / 1_000_000n, "7d": baselines["7d"].effectiveNanoUsd! * parentCapacityMultiplier * fractionMilli / 1_000_000n };
+    const oversellMilli = { "5h": BigInt(Math.round(oversellRatios["5h"] * 1000)), "7d": BigInt(Math.round(oversellRatios["7d"] * 1000)) };
+    const limits = { "5h": baselines["5h"].effectiveNanoUsd! * parentCapacityMultiplier * fractionMilli * oversellMilli["5h"] / 1_000_000_000n, "7d": baselines["7d"].effectiveNanoUsd! * parentCapacityMultiplier * fractionMilli * oversellMilli["7d"] / 1_000_000_000n };
     const reserve = max(1n, min(10_000_000n, min(limits["5h"], limits["7d"]) / 100n));
     const now = input.now || new Date();
     try {

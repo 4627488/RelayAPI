@@ -129,6 +129,7 @@ type PersistedCalibrationState = {
   observations: Record<string, { usedPercent: number; resetsAt: string; totalNanoUsd: string; unpricedRequests: number }>;
   samples: Record<"5h" | "7d", Array<{ perShareNanoUsd: string; credentialId: string; percentSpan: number; observedAt: string }>>;
   baselines: Record<"5h" | "7d", { automaticNanoUsd: string | null; overrideNanoUsd: string | null; confidence: number; sampleCount: number }>;
+  oversellRatios: Record<"5h" | "7d", number>;
 };
 
 export function recordCredentialPricedUsage(
@@ -234,6 +235,20 @@ export function setQuotaBaselineOverride(
   return getEffectiveQuotaBaselines()[kind];
 }
 
+export function getQuotaOversellRatios() {
+  return readState().oversellRatios;
+}
+
+export function setQuotaOversellRatio(kind: "5h" | "7d", ratio: number) {
+  if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 1000) {
+    throw new Error(`${kind} oversell ratio must be between 0 and 1000`);
+  }
+  const state = readState();
+  state.oversellRatios[kind] = Math.round(ratio * 1000) / 1000;
+  writeState(state);
+  return state.oversellRatios[kind];
+}
+
 function readState(): PersistedCalibrationState {
   const empty: PersistedCalibrationState = {
     credentialUsage: {},
@@ -243,6 +258,7 @@ function readState(): PersistedCalibrationState {
       "5h": { automaticNanoUsd: null, overrideNanoUsd: null, confidence: 0, sampleCount: 0 },
       "7d": { automaticNanoUsd: null, overrideNanoUsd: null, confidence: 0, sampleCount: 0 },
     },
+    oversellRatios: { "5h": 1, "7d": 1 },
   };
   const raw = getSettingValue(CALIBRATION_STATE_KEY);
   if (!raw) return empty;
@@ -255,6 +271,7 @@ function readState(): PersistedCalibrationState {
       observations: parsed.observations || {},
       samples: { ...empty.samples, ...(parsed.samples || {}) },
       baselines: { ...empty.baselines, ...(parsed.baselines || {}) },
+      oversellRatios: { ...empty.oversellRatios, ...(parsed.oversellRatios || {}) },
     };
   } catch {
     return empty;

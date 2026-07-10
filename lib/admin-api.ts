@@ -409,6 +409,7 @@ export type QuotaAdministration = {
     effectiveNanoUsd: string | null;
     confidence: number;
     sampleCount: number;
+    oversellRatio: number;
   }>;
   pricing: {
     aliases: Record<string, string>;
