@@ -9,10 +9,8 @@ import {
   type TenantQuotaState,
 } from "@/src/server/repositories/quotaAccounting";
 import { getTenantById } from "@/src/server/repositories/tenants";
-import {
-  resolveModelPrice,
-  type ModelPriceSnapshot,
-} from "@/src/server/services/modelPricing";
+import type { ModelPriceSnapshot } from "@/src/server/services/modelPricing";
+import { resolveConfiguredModelPrice } from "@/src/server/services/quotaAdministration";
 import { getEffectiveQuotaBaselines } from "@/src/server/services/quotaCalibration";
 
 export interface TenantQuotaAdmission {
@@ -33,7 +31,7 @@ export function admitTenantRequest(input: {
   if (!tenant) {
     throw new HttpError(404, "tenant_not_found", "Tenant not found");
   }
-  const price = resolveModelPrice(input.model);
+  const price = resolveConfiguredModelPrice(input.model);
   if (tenant.quotaShares === null) {
     return {
       requestId: input.requestId,

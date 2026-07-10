@@ -118,6 +118,29 @@ export function getTenantOverview() {
   return tenantRequest<AdminOverviewStats>("/api/tenant/overview");
 }
 
+export type TenantQuotaReport = {
+  tenantId: string;
+  shares: number | null;
+  windows: Partial<Record<"5h" | "7d", {
+    kind: "5h" | "7d";
+    startedAt: string;
+    resetsAt: string;
+    limitNanoUsd: string;
+    settledNanoUsd: string;
+    reservedNanoUsd: string;
+  }>>;
+};
+
+export function getTenantQuota() {
+  return tenantRequest<TenantQuotaReport>("/api/tenant/quota");
+}
+
+export function getTenantCostAnalysis() {
+  return tenantRequest<import("@/lib/admin-api").CostAnalysis>(
+    "/api/tenant/cost-analysis",
+  );
+}
+
 export function getTenantResources() {
   return tenantRequest<TenantResources>("/api/tenant/resources");
 }

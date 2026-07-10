@@ -251,6 +251,52 @@ export function appendRequestLog(input: RequestLogInput) {
   return id;
 }
 
+export function getCostAnalysis(scope: { tenantId?: string | null } = {}) {
+  const clauses = ["cost_nano_usd IS NOT NULL"];
+  const params: unknown[] = [];
+  if (scope.tenantId !== undefined) {
+    if (scope.tenantId === null) {
+      clauses.push("tenant_id IS NULL");
+    } else {
+      clauses.push("tenant_id = ?");
+      params.push(scope.tenantId);
+    }
+  }
+  const where = `WHERE ${clauses.join(" AND ")}`;
+  const total = logGet(
+    `SELECT COALESCE(SUM(CAST(cost_nano_usd AS INTEGER)), 0) AS cost,
+            COUNT(*) AS priced_requests
+       FROM request_logs ${where}`,
+    params,
+  );
+  const models = logAll(
+    `SELECT model,
+            COALESCE(SUM(CAST(cost_nano_usd AS INTEGER)), 0) AS cost,
+            COUNT(*) AS request_count,
+            COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+            COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+            COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+            COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens
+       FROM request_logs ${where}
+       GROUP BY model
+       ORDER BY cost DESC`,
+    params,
+  );
+  return {
+    totalCostNanoUsd: String(total?.cost || 0),
+    pricedRequests: numberValue(total?.priced_requests),
+    models: models.map((row) => ({
+      model: String(row.model || ""),
+      costNanoUsd: String(row.cost || 0),
+      requestCount: numberValue(row.request_count),
+      promptTokens: numberValue(row.prompt_tokens),
+      completionTokens: numberValue(row.completion_tokens),
+      cachedTokens: numberValue(row.cached_tokens),
+      reasoningTokens: numberValue(row.reasoning_tokens),
+    })),
+  };
+}
+
 function insertRequestLog(
   id: string,
   input: RequestLogInput,

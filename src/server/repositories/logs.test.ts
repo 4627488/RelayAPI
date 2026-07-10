@@ -128,4 +128,24 @@ describe("queryRequestLogs", () => {
 
     expect(result.total).toBe(0);
   });
+
+  test("aggregates immutable priced cost by model within tenant scope", () => {
+    logs.appendRequestLog({
+      startedAt: "2026-07-02T01:00:00.000Z", method: "POST", path: "/v1/responses",
+      requestType: "responses", stream: false, model: "gpt-5.6-terra", statusCode: 200,
+      latencyMs: 10, tenantId: "tenant-cost-a",
+      usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12, cachedTokens: 1, costNanoUsd: "12345", priceModel: "gpt-5.6-terra", priceVersion: "v1", pricingComplete: true },
+    });
+    logs.appendRequestLog({
+      startedAt: "2026-07-02T01:01:00.000Z", method: "POST", path: "/v1/responses",
+      requestType: "responses", stream: false, model: "gpt-5.6-terra", statusCode: 200,
+      latencyMs: 10, tenantId: "tenant-cost-b",
+      usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12, cachedTokens: 0, costNanoUsd: "99999", priceModel: "gpt-5.6-terra", priceVersion: "v1", pricingComplete: true },
+    });
+    expect(logs.getCostAnalysis({ tenantId: "tenant-cost-a" })).toMatchObject({
+      totalCostNanoUsd: "12345",
+      pricedRequests: 1,
+      models: [{ model: "gpt-5.6-terra", costNanoUsd: "12345" }],
+    });
+  });
 });

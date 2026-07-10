@@ -376,6 +376,60 @@ export type TenantPayload = {
   expiresAt?: string | null;
 };
 
+export type QuotaAdministration = {
+  baselines: Record<"5h" | "7d", {
+    automaticNanoUsd: string | null;
+    overrideNanoUsd: string | null;
+    effectiveNanoUsd: string | null;
+    confidence: number;
+    sampleCount: number;
+  }>;
+  pricing: {
+    aliases: Record<string, string>;
+    overrides: Array<Record<string, string>>;
+    catalogModelCount: number;
+    catalogVersion: string | null;
+    catalogUpdatedAt: string | null;
+    catalogError: string | null;
+  };
+};
+
+export function getQuotaAdministration() {
+  return adminRequest<QuotaAdministration>("/api/admin/quota");
+}
+
+export function updateQuotaAdministration(payload: Record<string, unknown>) {
+  return adminRequest<QuotaAdministration>("/api/admin/quota", {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function refreshQuotaPricing() {
+  return adminRequest<QuotaAdministration>("/api/admin/quota/pricing/refresh", {
+    method: "POST",
+  });
+}
+
+export type CostAnalysis = {
+  totalCostNanoUsd: string;
+  pricedRequests: number;
+  models: Array<{
+    model: string;
+    costNanoUsd: string;
+    requestCount: number;
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+    reasoningTokens: number;
+  }>;
+};
+
+export function getAdminCostAnalysis(tenantId?: string) {
+  const suffix = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : "";
+  return adminRequest<CostAnalysis>(`/api/admin/cost-analysis${suffix}`);
+}
+
 export async function listTenants() {
   const result = await adminRequest<AdminListResponse<PublicTenant>>(
     "/api/admin/tenants",
