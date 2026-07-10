@@ -199,6 +199,23 @@ export function getTenantQuotaState(tenantId: string) {
   return readState(getMainOrm(), tenantId);
 }
 
+export function reclaimExpiredQuotaReservations(now = new Date()) {
+  return getMainOrm().transaction((tx) => {
+    const rows = tx
+      .select()
+      .from(quotaReservations)
+      .where(
+        and(
+          eq(quotaReservations.status, "active"),
+          lt(quotaReservations.expiresAt, now.toISOString()),
+        ),
+      )
+      .all();
+    for (const row of rows) releaseReservation(tx, row, "expired");
+    return rows.length;
+  });
+}
+
 type Transaction = Parameters<Parameters<ReturnType<typeof getMainOrm>["transaction"]>[0]>[0];
 
 function reclaimExpired(tx: Transaction, tenantId: string, now: Date) {

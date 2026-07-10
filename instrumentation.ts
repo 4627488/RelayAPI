@@ -8,9 +8,12 @@ export async function register() {
       await import("./src/server/services/timeZoneRebuild");
     const { registerRequestLogWriterShutdown } =
       await import("./src/server/repositories/logs");
+    const { startQuotaMaintenance } =
+      await import("./src/server/services/quotaMaintenance");
     initializeWebAccessKey();
     startCodexCredentialRefreshScheduler();
     resumePendingTimeZoneRebuild();
     registerRequestLogWriterShutdown();
+    startQuotaMaintenance();
   }
 }

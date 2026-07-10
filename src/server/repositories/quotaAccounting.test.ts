@@ -70,4 +70,10 @@ describe("quota accounting repository", () => {
     });
     expect(next.windows["7d"].settledNanoUsd).toBe(750n);
   });
+
+  test("reclaims expired reservations during maintenance", () => {
+    const now = new Date("2026-07-11T00:00:00Z");
+    repository.reserveTenantQuota({ requestId: "expired-1", tenantId, reserveNanoUsd: BigInt(10), limitsNanoUsd: { "5h": BigInt(1000), "7d": BigInt(10000) }, now, expiresAt: new Date(now.getTime() + 1000) });
+    expect(repository.reclaimExpiredQuotaReservations(new Date(now.getTime() + 2000))).toBe(1);
+  });
 });
