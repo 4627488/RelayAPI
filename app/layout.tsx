@@ -5,8 +5,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "RelayAPI Dashboard",
-  description: "用于管理 RelayAPI 通道、凭据和密钥的图形化控制台",
+  title: "RelayAPI Workbench",
+  description: "RelayAPI 运维工作台",
 };
 
 export default function RootLayout({

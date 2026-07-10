@@ -222,7 +222,11 @@ export function recordChannelSuccess(channel: ChannelRecord) {
 
 export function recordChannelFailure(
   channel: ChannelRecord,
-  input: { statusCode?: number | null; message?: string | null },
+  input: {
+    statusCode?: number | null;
+    message?: string | null;
+    retryAfterMs?: number | null;
+  },
 ) {
   const statusCode = input.statusCode ?? null;
   if (isCredentialScopedFailure(statusCode)) {
@@ -267,23 +271,50 @@ function isCredentialScopedFailure(statusCode: number | null) {
 
 function recordCredentialFailure(
   credentialId: string,
-  input: { statusCode?: number | null; message?: string | null },
+  input: {
+    statusCode?: number | null;
+    message?: string | null;
+    retryAfterMs?: number | null;
+  },
 ) {
-  const statusCode = input.statusCode ?? null;
-  const cooldownMs = credentialCooldownMs(statusCode);
-  if (cooldownMs <= 0) {
+  const cooldownUntil = resolveCredentialCooldownUntil({
+    statusCode: input.statusCode ?? null,
+    retryAfterMs: input.retryAfterMs,
+  });
+  if (!cooldownUntil) {
     updateCodexCredential(credentialId, {
       cooldownUntil: null,
       lastError: input.message || null,
     });
     return null;
   }
-  const cooldownUntil = new Date(Date.now() + cooldownMs).toISOString();
   updateCodexCredential(credentialId, {
     cooldownUntil,
     lastError: input.message || null,
   });
   return cooldownUntil;
+}
+
+export function resolveCredentialCooldownUntil(input: {
+  statusCode?: number | null;
+  retryAfterMs?: number | null;
+  now?: Date;
+}) {
+  const now = input.now || new Date();
+  const retryAfterMs =
+    typeof input.retryAfterMs === "number" &&
+    Number.isFinite(input.retryAfterMs) &&
+    input.retryAfterMs >= 0
+      ? input.retryAfterMs
+      : null;
+  const cooldownMs =
+    retryAfterMs !== null
+      ? retryAfterMs
+      : credentialCooldownMs(input.statusCode ?? null);
+  if (cooldownMs <= 0) {
+    return null;
+  }
+  return new Date(now.getTime() + cooldownMs).toISOString();
 }
 
 function credentialCooldownMs(statusCode: number | null) {

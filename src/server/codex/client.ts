@@ -2,6 +2,7 @@ import "server-only";
 
 import crypto from "node:crypto";
 import { serverConfig } from "@/src/server/config/env";
+import { applyCodexModelHeaderOverrides } from "@/src/server/codex/headerProfiles";
 import { parseCodexSseFrames } from "@/src/server/codex/sse";
 import { codexWebSocketResponse } from "@/src/server/codex/websocket";
 import { proxiedFetch } from "@/src/server/net/proxy";
@@ -10,6 +11,10 @@ import {
   resolveCredentialProxy,
 } from "@/src/server/services/codexCredentials";
 import { getEffectiveCodexUserAgent } from "@/src/server/services/settings";
+import {
+  applyCodexReasoningReplay,
+  getCodexReplaySessionKey,
+} from "@/src/server/codex/reasoningReplay";
 import type { StageTimer } from "@/src/server/http/stageTimer";
 import type {
   ChannelRecord,
@@ -108,6 +113,10 @@ export async function codexFetch(
     payload,
     input.promptCacheKey,
   );
+  const replaySessionKey = getCodexReplaySessionKey({
+    payload,
+    headers: input.sourceHeaders,
+  });
   const useWebSocket =
     input.transport === "websocket" &&
     credential.upstreamTransport === "websocket" &&
@@ -118,6 +127,7 @@ export async function codexFetch(
         fastServiceTier: shouldUsePriorityServiceTier(credential),
         promptCacheKey,
         planType: credential.planType,
+        replaySessionKey,
         transport: useWebSocket ? "websocket" : "http",
       }),
     ) ??
@@ -125,6 +135,7 @@ export async function codexFetch(
       fastServiceTier: shouldUsePriorityServiceTier(credential),
       promptCacheKey,
       planType: credential.planType,
+      replaySessionKey,
       transport: useWebSocket ? "websocket" : "http",
     });
   const proxy = resolveCredentialProxy({
@@ -135,6 +146,7 @@ export async function codexFetch(
   });
   const url = toCodexUrl(input.channel.baseUrl, upstreamPath);
   const headers = buildCodexHeaders(credential, {
+    model: stringValue(upstreamPayload.model),
     stream: input.stream,
     sourceHeaders: input.sourceHeaders,
     promptCacheKey,
@@ -164,6 +176,9 @@ export async function codexFetch(
         payload: upstreamPayload,
         proxy,
         timeoutMs: serverConfig.requestTimeoutMs,
+        sessionKey: replaySessionKey
+          ? `${credential.id}:${url}:${replaySessionKey}`
+          : null,
       });
     } catch {
       const fallbackResponse =
@@ -228,9 +243,10 @@ export function toCodexUrl(baseUrl: string, upstreamPath: string) {
   return `${baseUrl.replace(/\/+$/, "")}${upstreamPath}`;
 }
 
-function buildCodexHeaders(
+export function buildCodexHeaders(
   credential: Awaited<ReturnType<typeof ensureFreshCredential>>,
   input: {
+    model: string;
     stream: boolean;
     sourceHeaders: Headers;
     promptCacheKey?: string | null;
@@ -241,7 +257,7 @@ function buildCodexHeaders(
     userAgent: credential.userAgent,
     tenantUserAgent: input.tenant?.userAgent || null,
   });
-  const headers: Record<string, string> = {
+  let headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${credential.tokens.access_token}`,
     Accept: input.stream ? "text/event-stream" : "application/json",
@@ -269,6 +285,11 @@ function buildCodexHeaders(
   if (credential.accountId) {
     headers["Chatgpt-Account-Id"] = credential.accountId;
   }
+  headers = applyCodexModelHeaderOverrides(
+    headers,
+    serverConfig.codexModelHeaderOverrides,
+    input.model,
+  );
   const promptCacheKey = stringValue(input.promptCacheKey).trim();
   const sessionId =
     promptCacheKey ||
@@ -301,6 +322,7 @@ export function prepareCodexPayloadForUpstream(
     fastServiceTier?: boolean;
     promptCacheKey?: string | null;
     planType?: string | null;
+    replaySessionKey?: string | null;
     transport?: "http" | "websocket";
   } = {},
 ): Record<string, unknown> {
@@ -314,6 +336,14 @@ export function prepareCodexPayloadForUpstream(
   );
   if (promptCacheKey) {
     upstreamPayload.prompt_cache_key = promptCacheKey;
+  }
+  if (options.replaySessionKey) {
+    const replayed = applyCodexReasoningReplay({
+      model: stringValue(upstreamPayload.model),
+      sessionKey: options.replaySessionKey,
+      payload: upstreamPayload,
+    });
+    Object.assign(upstreamPayload, replayed);
   }
   if (
     upstreamPayload.service_tier &&
@@ -332,6 +362,7 @@ export function prepareCodexPayloadForUpstream(
   ensureImageGenerationTool(upstreamPayload, {
     planType: options.planType,
   });
+  normalizeParallelToolCalls(upstreamPayload);
   return upstreamPayload;
 }
 
@@ -444,7 +475,6 @@ export function normalizeResponsesPayload(
   payload.instructions = payload.instructions ?? "";
   payload.stream = Boolean(input.stream);
   payload.store = false;
-  payload.parallel_tool_calls = true;
   payload.include = [...CODEX_REASONING_INCLUDE];
 
   if (typeof payload.input === "string") {
@@ -461,6 +491,7 @@ export function normalizeResponsesPayload(
   }
 
   stripUnsupportedCodexFields(payload, { allowStore: true });
+  normalizeParallelToolCalls(payload);
   return payload;
 }
 
@@ -476,9 +507,9 @@ export function normalizeCompactPayload(inputPayload: unknown) {
 export function normalizeRawCodexResponsesPayload(inputPayload: unknown) {
   const payload = cloneJsonObject(inputPayload);
   payload.store = false;
-  payload.parallel_tool_calls = true;
   payload.include = [...CODEX_REASONING_INCLUDE];
   normalizeRawCodexPayloadForUpstream(payload);
+  normalizeParallelToolCalls(payload);
   return payload;
 }
 
@@ -555,7 +586,6 @@ export function chatCompletionsToCodex(
   } else {
     out.reasoning = { effort: "medium", summary: "auto" };
   }
-  out.parallel_tool_calls = true;
   out.include = [...CODEX_REASONING_INCLUDE];
 
   if (Array.isArray(payload.tools) && payload.tools.length > 0) {
@@ -575,6 +605,11 @@ export function chatCompletionsToCodex(
     });
   }
 
+  if (typeof payload.parallel_tool_calls === "boolean") {
+    out.parallel_tool_calls = payload.parallel_tool_calls;
+  }
+  normalizeParallelToolCalls(out);
+
   if (payload.tool_choice !== undefined) {
     out.tool_choice = normalizeToolChoice(payload.tool_choice, toolNameMaps);
   }
@@ -587,6 +622,24 @@ export function chatCompletionsToCodex(
   stripUndefinedDeep(out);
   stripUnsupportedCodexFields(out, { allowStore: true });
   return { payload: out, toolNameMaps };
+}
+
+function normalizeParallelToolCalls(payload: Record<string, unknown>) {
+  const hasValidTool =
+    Array.isArray(payload.tools) &&
+    payload.tools.some(
+      (tool) =>
+        isRecord(tool) &&
+        typeof tool.type === "string" &&
+        tool.type.trim().length > 0,
+    );
+  if (!hasValidTool) {
+    delete payload.parallel_tool_calls;
+    return;
+  }
+  if (typeof payload.parallel_tool_calls !== "boolean") {
+    payload.parallel_tool_calls = true;
+  }
 }
 
 function messageToCodexContent(

@@ -10,15 +10,19 @@ import {
   Trash2Icon,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
+import {
+  datetimeLocalToIso,
+  formatDateTime,
+  toDatetimeLocal,
+} from "@/components/workspace/format";
 import {
   Dialog,
   DialogContent,
@@ -139,13 +143,10 @@ export function AdminTenantsSection({
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <div>
             <CardTitle>租户</CardTitle>
-            <CardDescription>
-              创建租户 profile、设置总池限制，并生成一次性注册邀请链接。
-            </CardDescription>
           </div>
           <Button type="button" onClick={() => setCreating(true)}>
             <PlusIcon data-icon="inline-start" />
-            新建租户
+            新建
           </Button>
         </CardHeader>
         <CardContent>
@@ -153,7 +154,7 @@ export function AdminTenantsSection({
             <Empty>
               <EmptyHeader>
                 <EmptyTitle>暂无租户</EmptyTitle>
-                <EmptyDescription>创建租户后即可分配 Key 总池。</EmptyDescription>
+                <EmptyDescription>创建后分配 Key 总池。</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
@@ -181,7 +182,9 @@ export function AdminTenantsSection({
                       {tenant.ownerEmail ? (
                         tenant.ownerEmail
                       ) : tenant.pendingInvite ? (
-                        <Badge variant="outline">Pending invite</Badge>
+                        <WorkspaceStatusBadge tone="warning">
+                          invite
+                        </WorkspaceStatusBadge>
                       ) : (
                         <span className="text-muted-foreground">未邀请</span>
                       )}
@@ -199,9 +202,9 @@ export function AdminTenantsSection({
                         : ` / ${formatTokenNumber(tenant.tokenLimitDaily)}`}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={tenant.enabled ? "secondary" : "outline"}>
-                        {tenant.enabled ? "启用" : "停用"}
-                      </Badge>
+                      <WorkspaceStatusBadge tone={tenant.enabled ? "success" : "muted"}>
+                        {tenant.enabled ? "on" : "off"}
+                      </WorkspaceStatusBadge>
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
@@ -675,25 +678,6 @@ function nullablePositiveInteger(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
 }
 
-function datetimeLocalToIso(value: string) {
-  if (!value.trim()) {
-    return null;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function toDatetimeLocal(value: string | null) {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
-}
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-CN").format(value);
@@ -707,18 +691,4 @@ function formatTokenNumber(value: number) {
     return `${Math.round(value / 100) / 10}K`;
   }
   return formatNumber(value);
-}
-
-function formatDateTime(value: string | null) {
-  if (!value) {
-    return "未记录";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  }).format(date);
 }

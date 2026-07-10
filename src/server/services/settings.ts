@@ -9,11 +9,16 @@ import {
   upsertSettingValue,
 } from "@/src/server/repositories/settings";
 import { decryptJson, encryptJson } from "@/src/server/services/crypto";
+import {
+  DEFAULT_TIME_ZONE,
+  isValidTimeZone,
+} from "@/src/shared/time";
 import type {
   CredentialProxyConfig,
   CredentialProxyType,
   GlobalSettingsRecord,
   PublicCredentialProxyConfig,
+  TimeZoneRebuildStatus,
 } from "@/src/shared/types/entities";
 
 const GLOBAL_PROXY_SETTING_KEY = "global_proxy";
@@ -24,6 +29,10 @@ const CODEX_AUTO_DISABLE_REFRESH_EXHAUSTED_SETTING_KEY =
 const REQUEST_LOG_RETENTION_DAYS_SETTING_KEY = "request_log_retention_days";
 const REQUEST_LOG_DETAIL_RETENTION_DAYS_SETTING_KEY =
   "request_log_detail_retention_days";
+const TIME_ZONE_SETTING_KEY = "time_zone";
+const TIME_ZONE_PENDING_SETTING_KEY = "time_zone_pending";
+const TIME_ZONE_REBUILD_STATUS_SETTING_KEY = "time_zone_rebuild_status";
+const TIME_ZONE_REBUILD_ERROR_SETTING_KEY = "time_zone_rebuild_error";
 
 const DEFAULT_REQUEST_LOG_RETENTION_DAYS = 90;
 const DEFAULT_REQUEST_LOG_DETAIL_RETENTION_DAYS = 14;
@@ -58,6 +67,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
   const codexAutoDisableRefreshExhausted =
     getCodexAutoDisableRefreshExhaustedSetting();
   const retentionSettings = getRequestLogRetentionSettings();
+  const timeZoneSettings = getTimeZoneRebuildState();
   const updatedAt = latestUpdatedAt(
     getSettingUpdatedAt(GLOBAL_PROXY_SETTING_KEY),
     getSettingUpdatedAt(CODEX_USER_AGENT_SETTING_KEY),
@@ -65,6 +75,10 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
     getSettingUpdatedAt(CODEX_AUTO_DISABLE_REFRESH_EXHAUSTED_SETTING_KEY),
     getSettingUpdatedAt(REQUEST_LOG_RETENTION_DAYS_SETTING_KEY),
     getSettingUpdatedAt(REQUEST_LOG_DETAIL_RETENTION_DAYS_SETTING_KEY),
+    getSettingUpdatedAt(TIME_ZONE_SETTING_KEY),
+    getSettingUpdatedAt(TIME_ZONE_PENDING_SETTING_KEY),
+    getSettingUpdatedAt(TIME_ZONE_REBUILD_STATUS_SETTING_KEY),
+    getSettingUpdatedAt(TIME_ZONE_REBUILD_ERROR_SETTING_KEY),
   );
   if (stored) {
     return {
@@ -77,6 +91,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
       fullRequestLoggingEnabled,
       codexAutoDisableRefreshExhausted,
       ...retentionSettings,
+      ...timeZoneSettings,
       updatedAt,
     };
   }
@@ -91,6 +106,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
       fullRequestLoggingEnabled,
       codexAutoDisableRefreshExhausted,
       ...retentionSettings,
+      ...timeZoneSettings,
       updatedAt,
     };
   }
@@ -104,6 +120,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
     fullRequestLoggingEnabled,
     codexAutoDisableRefreshExhausted,
     ...retentionSettings,
+    ...timeZoneSettings,
     updatedAt,
   };
 }
@@ -115,6 +132,7 @@ export function patchGlobalSettings(input: {
   codexAutoDisableRefreshExhausted?: unknown;
   requestLogRetentionDays?: unknown;
   requestLogDetailRetentionDays?: unknown;
+  timeZone?: unknown;
 }) {
   if (Object.hasOwn(input, "proxy")) {
     const proxy = normalizeProxyInput(input.proxy, readStoredGlobalProxy());
@@ -156,7 +174,81 @@ export function patchGlobalSettings(input: {
       String(normalizeRetentionDays(input.requestLogDetailRetentionDays)),
     );
   }
+  if (Object.hasOwn(input, "timeZone")) {
+    requestGlobalTimeZoneChange(input.timeZone);
+  }
   return getPublicGlobalSettings();
+}
+
+export function getGlobalTimeZoneSetting() {
+  const value = getSettingValue(TIME_ZONE_SETTING_KEY);
+  return isValidTimeZone(value) ? value : DEFAULT_TIME_ZONE;
+}
+
+export function getTimeZoneRebuildState() {
+  const statusValue = getSettingValue(TIME_ZONE_REBUILD_STATUS_SETTING_KEY);
+  const status: TimeZoneRebuildStatus = isTimeZoneRebuildStatus(statusValue)
+    ? statusValue
+    : "idle";
+  const pendingValue = getSettingValue(TIME_ZONE_PENDING_SETTING_KEY);
+  return {
+    timeZone: getGlobalTimeZoneSetting(),
+    timeZonePending: isValidTimeZone(pendingValue) ? pendingValue : null,
+    timeZoneRebuildStatus: status,
+    timeZoneRebuildError:
+      getSettingValue(TIME_ZONE_REBUILD_ERROR_SETTING_KEY) || null,
+  };
+}
+
+export function requestGlobalTimeZoneChange(input: unknown) {
+  if (!isValidTimeZone(input)) {
+    throw new HttpError(
+      400,
+      "invalid_time_zone",
+      "Time zone must be a valid IANA timezone identifier",
+    );
+  }
+  const timeZone = input.trim();
+  if (timeZone === getGlobalTimeZoneSetting()) {
+    deleteSettingValue(TIME_ZONE_PENDING_SETTING_KEY);
+    upsertSettingValue(TIME_ZONE_REBUILD_STATUS_SETTING_KEY, "idle");
+    deleteSettingValue(TIME_ZONE_REBUILD_ERROR_SETTING_KEY);
+    return;
+  }
+  upsertSettingValue(TIME_ZONE_PENDING_SETTING_KEY, timeZone);
+  upsertSettingValue(TIME_ZONE_REBUILD_STATUS_SETTING_KEY, "pending");
+  deleteSettingValue(TIME_ZONE_REBUILD_ERROR_SETTING_KEY);
+}
+
+export function updateTimeZoneRebuildState(input: {
+  status: TimeZoneRebuildStatus;
+  error?: string | null;
+  activate?: string;
+}) {
+  if (input.activate) {
+    if (!isValidTimeZone(input.activate)) {
+      throw new Error("Cannot activate an invalid IANA timezone");
+    }
+    upsertSettingValue(TIME_ZONE_SETTING_KEY, input.activate);
+    deleteSettingValue(TIME_ZONE_PENDING_SETTING_KEY);
+  }
+  upsertSettingValue(TIME_ZONE_REBUILD_STATUS_SETTING_KEY, input.status);
+  if (input.error) {
+    upsertSettingValue(TIME_ZONE_REBUILD_ERROR_SETTING_KEY, input.error);
+  } else {
+    deleteSettingValue(TIME_ZONE_REBUILD_ERROR_SETTING_KEY);
+  }
+}
+
+function isTimeZoneRebuildStatus(
+  value: string | undefined,
+): value is TimeZoneRebuildStatus {
+  return (
+    value === "idle" ||
+    value === "pending" ||
+    value === "running" ||
+    value === "failed"
+  );
 }
 
 export function getFullRequestLoggingSetting() {

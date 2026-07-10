@@ -16,10 +16,11 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
+import { formatDateTime } from "@/components/workspace/format";
 import {
   Dialog,
   DialogContent,
@@ -160,10 +161,6 @@ export function ProxyPoolSection({
       <Card>
         <CardHeader>
           <CardTitle>代理池</CardTitle>
-          <CardDescription>
-            集中保存 SOCKS5 / SOCKS5H 代理账密，之后可在 Codex
-            凭据设置中直接选择使用。
-          </CardDescription>
           <CardAction>
             <div className="flex flex-wrap justify-end gap-2">
               <Button
@@ -176,7 +173,7 @@ export function ProxyPoolSection({
               </Button>
               <Button type="button" onClick={openCreate}>
                 <PlusIcon data-icon="inline-start" />
-                添加代理
+                添加
               </Button>
             </div>
           </CardAction>
@@ -189,13 +186,11 @@ export function ProxyPoolSection({
                   <DatabaseIcon />
                 </EmptyMedia>
                 <EmptyTitle>还没有代理</EmptyTitle>
-                <EmptyDescription>
-                  添加代理后，可以在凭据设置里下拉选择，不用重复输入账密。
-                </EmptyDescription>
+                <EmptyDescription>添加后可绑定到凭据。</EmptyDescription>
               </EmptyHeader>
               <Button type="button" onClick={openCreate}>
                 <PlusIcon data-icon="inline-start" />
-                添加代理
+                添加
               </Button>
             </Empty>
           ) : (
@@ -238,11 +233,11 @@ export function ProxyPoolSection({
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge
-                          variant={proxy.enabled ? "secondary" : "outline"}
+                        <WorkspaceStatusBadge
+                          tone={proxy.enabled ? "success" : "muted"}
                         >
-                          {proxy.enabled ? "已启用" : "已停用"}
-                        </Badge>
+                          {proxy.enabled ? "on" : "off"}
+                        </WorkspaceStatusBadge>
                       </TableCell>
                       <TableCell>
                         {formatNullableDate(proxy.lastUsedAt)}
@@ -477,12 +472,5 @@ function formatNullableDate(value: string | null) {
   if (!value) {
     return <span className="text-muted-foreground">-</span>;
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  }).format(date);
+  return formatDateTime(value);
 }

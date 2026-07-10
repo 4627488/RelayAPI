@@ -22,7 +22,8 @@ import {
   assertApiKey,
   parseList,
   type ApiKeyFormState,
-} from "@/components/dashboard/api-key-form";
+} from "@/components/workspace/api-key-form";
+import { formatDateTime } from "@/components/workspace/format";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -41,10 +42,10 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import {
   Dialog,
   DialogContent,
@@ -169,14 +170,10 @@ export function ApiKeysSection({
       <Card>
         <CardHeader>
           <CardTitle>API 密钥</CardTitle>
-          <CardDescription>
-            创建、启停、限制模型/通道、设置每日 token
-            上限。完整密钥明文只会在创建后显示一次。
-          </CardDescription>
           <CardAction>
             <Button type="button" onClick={() => setCreateOpen(true)}>
               <PlusIcon data-icon="inline-start" />
-              新建密钥
+              新建
             </Button>
           </CardAction>
         </CardHeader>
@@ -188,13 +185,11 @@ export function ApiKeysSection({
                   <KeyRoundIcon />
                 </EmptyMedia>
                 <EmptyTitle>还没有 Relay API 密钥</EmptyTitle>
-                <EmptyDescription>
-                  创建第一个密钥后，客户端即可通过 OpenAI 兼容接口访问 Relay。
-                </EmptyDescription>
+                <EmptyDescription>创建后即可调用 Relay。</EmptyDescription>
               </EmptyHeader>
               <Button type="button" onClick={() => setCreateOpen(true)}>
                 <PlusIcon data-icon="inline-start" />
-                新建密钥
+                新建
               </Button>
             </Empty>
           ) : (
@@ -803,25 +798,25 @@ function ApiKeyDeleteDialog({
 
 function renderEnabledBadge(enabled: boolean) {
   return enabled ? (
-    <Badge variant="secondary" className="gap-1.5">
+    <WorkspaceStatusBadge tone="success" className="gap-1.5">
       <CheckCircle2Icon data-icon="inline-start" />
-      已启用
-    </Badge>
+      on
+    </WorkspaceStatusBadge>
   ) : (
-    <Badge variant="outline" className="gap-1.5">
-      已禁用
-    </Badge>
+    <WorkspaceStatusBadge tone="muted" className="gap-1.5">
+      off
+    </WorkspaceStatusBadge>
   );
 }
 
 function renderChannelStatusBadge(status: ChannelStatus) {
   if (status === "healthy") {
-    return <Badge variant="secondary">{STATUS_LABELS[status]}</Badge>;
+    return <WorkspaceStatusBadge tone="success">{STATUS_LABELS[status]}</WorkspaceStatusBadge>;
   }
   if (status === "degraded" || status === "cooling_down") {
-    return <Badge variant="outline">{STATUS_LABELS[status]}</Badge>;
+    return <WorkspaceStatusBadge tone="warning">{STATUS_LABELS[status]}</WorkspaceStatusBadge>;
   }
-  return <Badge variant="destructive">{STATUS_LABELS[status]}</Badge>;
+  return <WorkspaceStatusBadge tone="danger">{STATUS_LABELS[status]}</WorkspaceStatusBadge>;
 }
 
 function renderStringList(values: string[], emptyLabel: string) {
@@ -899,22 +894,6 @@ function formatTenantOwner(tenant: PublicTenant) {
     return tenant.ownerEmail;
   }
   return tenant.pendingInvite ? "Pending invite" : "未邀请";
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(date);
 }
 
 function formatNumber(value: number) {

@@ -5,20 +5,17 @@ import {
   CheckIcon,
   ClipboardCopyIcon,
   KeyRoundIcon,
-  ShieldAlertIcon,
   SparklesIcon,
   TerminalIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -31,7 +28,6 @@ import {
 } from "@/components/ui/empty";
 import {
   Field,
-  FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
@@ -45,6 +41,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import { createTenantApiKey, tenantErrorMessage } from "@/lib/tenant-api";
 import type {
   CreatedApiKey,
@@ -117,10 +114,7 @@ export function TenantCodexSetupSection({
     <div className="grid gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>Codex 首次配置</CardTitle>
-          <CardDescription>
-            生成可直接写入本机 `~/.codex` 的配置，并使用租户 Key 接入 Relay。
-          </CardDescription>
+          <CardTitle>Codex 配置</CardTitle>
           <CardAction>
             <Button
               type="button"
@@ -135,21 +129,11 @@ export function TenantCodexSetupSection({
               ) : (
                 <KeyRoundIcon data-icon="inline-start" />
               )}
-              创建专用 Key
+              创建 Key
             </Button>
           </CardAction>
         </CardHeader>
-        <CardContent className="grid gap-5">
-          <Alert>
-            <ShieldAlertIcon />
-            <AlertTitle>安全开关默认保持关闭</AlertTitle>
-            <AlertDescription>
-              <code>approval_policy = &quot;never&quot;</code> 和{" "}
-              <code>sandbox_mode = &quot;danger-full-access&quot;</code>
-              已保留为注释，熟悉 Codex 后再手动开启。
-            </AlertDescription>
-          </Alert>
-
+        <CardContent className="grid gap-4">
           <FieldGroup>
             <Field>
               <FieldLabel>模型</FieldLabel>
@@ -166,9 +150,6 @@ export function TenantCodexSetupSection({
                 <ToggleGroupItem value="gpt-5.5">gpt-5.5</ToggleGroupItem>
                 <ToggleGroupItem value="gpt-5.4">gpt-5.4</ToggleGroupItem>
               </ToggleGroup>
-              <FieldDescription>
-                也可以把生成后的 `model` 改成任意已支持模型。
-              </FieldDescription>
             </Field>
 
             <Field>
@@ -180,9 +161,7 @@ export function TenantCodexSetupSection({
                       <KeyRoundIcon />
                     </EmptyMedia>
                     <EmptyTitle>还没有租户 Key</EmptyTitle>
-                    <EmptyDescription>
-                      创建专用 Key 后会自动填入 `auth.json`。
-                    </EmptyDescription>
+                    <EmptyDescription>创建后填入 auth.json。</EmptyDescription>
                   </EmptyHeader>
                 </Empty>
               ) : (
@@ -205,18 +184,17 @@ export function TenantCodexSetupSection({
                     </SelectContent>
                   </Select>
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Badge variant={selectedKey?.enabled ? "secondary" : "outline"}>
-                      {selectedKey?.enabled ? "启用" : "停用"}
-                    </Badge>
+                    <WorkspaceStatusBadge
+                      tone={selectedKey?.enabled ? "success" : "muted"}
+                    >
+                      {selectedKey?.enabled ? "on" : "off"}
+                    </WorkspaceStatusBadge>
                     <span className="font-mono text-xs">
                       {selectedKey?.prefix || "未选择"}
                     </span>
                   </div>
                 </div>
               )}
-              <FieldDescription>
-                已有 Key 只能显示前缀；新建专用 Key 后会在本页临时保留明文用于生成配置。
-              </FieldDescription>
             </Field>
           </FieldGroup>
 
@@ -245,7 +223,6 @@ export function TenantCodexSetupSection({
         <ConfigPanel
           filename="~/.codex/auth.json"
           icon={<SparklesIcon />}
-          muted={!keyReady}
           value={authJson}
         />
       </div>
@@ -278,12 +255,10 @@ function SetupStep({
 function ConfigPanel({
   filename,
   icon,
-  muted = false,
   value,
 }: {
   filename: string;
   icon: React.ReactNode;
-  muted?: boolean;
   value: string;
 }) {
   async function copy() {
@@ -298,9 +273,6 @@ function ConfigPanel({
           {icon}
           {filename}
         </CardTitle>
-        <CardDescription>
-          {muted ? "先创建专用 Key，即可得到完整 auth.json。" : "复制后写入对应文件。"}
-        </CardDescription>
         <CardAction>
           <Button type="button" variant="outline" onClick={copy}>
             <ClipboardCopyIcon data-icon="inline-start" />

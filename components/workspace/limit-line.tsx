@@ -1,7 +1,7 @@
 "use client";
 
-import { DashboardSummaryLine } from "@/components/dashboard-chrome";
-import { formatNumber } from "@/components/dashboard/format";
+import { formatNumber } from "@/components/workspace/format";
+import { WorkspaceSummaryLine } from "@/components/workspace/workspace-shell";
 
 export function LimitLine({
   hideValue,
@@ -15,7 +15,7 @@ export function LimitLine({
   hideValue?: boolean;
 }) {
   return (
-    <DashboardSummaryLine
+    <WorkspaceSummaryLine
       label={label}
       value={
         <>

@@ -3,6 +3,7 @@ import "server-only";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { parseCodexModelHeaderOverrides } from "@/src/server/codex/headerProfiles";
 import type {
   CredentialProxyConfig,
   CredentialProxyType,
@@ -101,6 +102,9 @@ const codexUserAgentFromEnv = process.env.CODEX_USER_AGENT?.trim() || "";
 const codexUserAgentSource: "environment" | "default" = codexUserAgentFromEnv
   ? "environment"
   : "default";
+const codexModelHeaderOverrides = parseCodexModelHeaderOverrides(
+  process.env.CODEX_MODEL_HEADER_OVERRIDES,
+);
 
 const port = intEnv("PORT", 3000);
 const dataDir = resolveFromProject(process.env.DATA_DIR, projectPath("data"));
@@ -156,6 +160,7 @@ export const serverConfig = {
   userAgent: codexUserAgentFromEnv || DEFAULT_CODEX_USER_AGENT,
   userAgentSource: codexUserAgentSource,
   codexOriginator: process.env.CODEX_ORIGINATOR || "codex_cli_rs",
+  codexModelHeaderOverrides,
   autoImportLegacyCredentials:
     process.env.RELAY_IMPORT_LEGACY_CREDENTIALS === "1",
   legacyCredentialDirs: [

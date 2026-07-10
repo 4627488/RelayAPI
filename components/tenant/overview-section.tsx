@@ -15,24 +15,20 @@ import {
 } from "recharts";
 import {
   ActivityIcon,
-  KeyRoundIcon,
-  NetworkIcon,
-  ShieldCheckIcon,
-  SparklesIcon,
 } from "lucide-react";
 
-import { LimitLine } from "@/components/dashboard/limit-line";
+import { LimitLine } from "@/components/workspace/limit-line";
 import {
   formatNumber,
   formatRatioPercent,
   formatTokenNumber,
-} from "@/components/dashboard/format";
+} from "@/components/workspace/format";
+import { MetricStrip, MetricStripItem } from "@/components/workspace/metric-strip";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -138,44 +134,37 @@ export function TenantOverviewSection({
 
   return (
     <div className="grid gap-4">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <TenantMetricCard
-          title="今日 Token"
+      <MetricStrip>
+        <MetricStripItem
+          label="今日 Token"
           value={formatTokenNumber(tenant.todayTokens)}
-          description={
+          detail={
             tenant.tokenLimitDaily
-              ? `每日上限 ${formatTokenNumber(tenant.tokenLimitDaily)}`
-              : "管理员未设置每日 token 上限"
+              ? `上限 ${formatTokenNumber(tenant.tokenLimitDaily)}`
+              : "无日限额"
           }
-          icon={NetworkIcon}
         />
-        <TenantMetricCard
-          title="成功率"
+        <MetricStripItem
+          label="成功率"
           value={formatRatioPercent(totals.successCount, totals.requestCount)}
-          description={`${formatNumber(totals.successCount)} 成功 / ${formatNumber(totals.requestCount)} 请求`}
-          icon={ShieldCheckIcon}
+          detail={`${formatNumber(totals.successCount)} / ${formatNumber(totals.requestCount)}`}
         />
-        <TenantMetricCard
-          title="缓存命中率"
+        <MetricStripItem
+          label="缓存"
           value={formatPercent(cacheHitRate)}
-          description={`${formatTokenNumber(totals.cachedTokens)} 缓存 token / ${formatTokenNumber(totals.promptTokens)} 输入 token`}
-          icon={SparklesIcon}
+          detail={`${formatTokenNumber(totals.cachedTokens)} 缓存`}
         />
-        <TenantMetricCard
-          title="活跃 Key"
+        <MetricStripItem
+          label="活跃 Key"
           value={formatNumber(totals.distinctApiKeyCount)}
-          description={`${formatNumber(tenant.enabledApiKeyCount)} 个启用 / ${formatNumber(tenant.apiKeyCount)} 个总 Key`}
-          icon={KeyRoundIcon}
+          detail={`${formatNumber(tenant.enabledApiKeyCount)} 启用`}
         />
-      </div>
+      </MetricStrip>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,0.85fr)]">
         <Card>
           <CardHeader>
             <CardTitle>Token 开销趋势</CardTitle>
-            <CardDescription>
-              按日、周、月查看当前租户的 token 消耗和缓存贡献。
-            </CardDescription>
             <CardAction className="flex flex-wrap items-center gap-2">
               <Select
                 value={keyFilter}
@@ -217,7 +206,7 @@ export function TenantOverviewSection({
             {spendRows.length === 0 ? (
               <TenantEmptyState
                 title="暂无开销趋势"
-                description="产生请求后会按时间窗口汇总 token 开销。"
+                description="等待请求。"
               />
             ) : (
               <ChartContainer
@@ -278,9 +267,6 @@ export function TenantOverviewSection({
         <Card>
           <CardHeader>
             <CardTitle>额度与效率</CardTitle>
-            <CardDescription>
-              关注今日额度压力、缓存命中率和所选 key 的表现。
-            </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-5">
             <div className="grid gap-3">
@@ -358,44 +344,12 @@ export function TenantOverviewSection({
   );
 }
 
-function TenantMetricCard({
-  description,
-  icon: Icon,
-  title,
-  value,
-}: {
-  description: string;
-  icon: React.ComponentType;
-  title: string;
-  value: string;
-}) {
-  return (
-    <Card className="bg-card/95">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Icon />
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-2">
-        <div className="text-2xl font-semibold tracking-tight tabular-nums">
-          {value}
-        </div>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
 function ApiKeyPerformanceCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
   const maxTokens = Math.max(...rows.map((row) => row.totalTokens), 0);
   return (
     <Card>
       <CardHeader>
         <CardTitle>Key 表现</CardTitle>
-        <CardDescription>
-          面向接入管理：每个 key 的 token、成功率、缓存命中率和今日额度。
-        </CardDescription>
         <CardAction>
           <Badge variant="outline">{formatNumber(rows.length)} 个 Key</Badge>
         </CardAction>
@@ -404,7 +358,7 @@ function ApiKeyPerformanceCard({ rows }: { rows: ApiKeyUsageStatsRow[] }) {
         {rows.length === 0 ? (
           <TenantEmptyState
             title="暂无 Key 数据"
-            description="创建 key 并调用后，这里会显示 key 级别表现。"
+            description="等待请求。"
           />
         ) : (
           <Table>
@@ -465,15 +419,12 @@ function ModelUsageCard({ rows }: { rows: UsageStatsRow[] }) {
     <Card>
       <CardHeader>
         <CardTitle>模型消耗</CardTitle>
-        <CardDescription>
-          当前筛选范围内，哪些模型贡献了主要 token 开销。
-        </CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
           <TenantEmptyState
             title="暂无模型数据"
-            description="请求产生后会按模型聚合 token 消耗。"
+            description="等待请求。"
           />
         ) : (
           <ChartContainer
@@ -530,9 +481,6 @@ function CacheBreakdownCard({ stats }: { stats: AdminOverviewStats }) {
     <Card>
       <CardHeader>
         <CardTitle>缓存命中率</CardTitle>
-        <CardDescription>
-          将输入 token 中已缓存的部分单独展示，方便观察复用效率。
-        </CardDescription>
         <CardAction>
           <Badge variant="secondary">{formatPercent(stats.totals.cacheHitRate)}</Badge>
         </CardAction>
@@ -541,7 +489,7 @@ function CacheBreakdownCard({ stats }: { stats: AdminOverviewStats }) {
         {rows.length === 0 ? (
           <TenantEmptyState
             title="暂无缓存数据"
-            description="产生带 usage 的请求后会展示缓存命中率。"
+            description="等待 usage。"
           />
         ) : (
           <div className="grid gap-4 md:grid-cols-[14rem_1fr]">
@@ -628,15 +576,12 @@ function RecentSpendTable({
     <Card>
       <CardHeader>
         <CardTitle>{periodLabel(period)}开销明细</CardTitle>
-        <CardDescription>
-          最近窗口内每个时间段的请求、错误、token 和缓存命中率。
-        </CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
           <TenantEmptyState
             title="暂无开销明细"
-            description="产生请求后会展示分时统计。"
+            description="等待请求。"
           />
         ) : (
           <Table>

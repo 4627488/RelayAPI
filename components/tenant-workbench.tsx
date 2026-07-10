@@ -14,9 +14,11 @@ import {
   XCircleIcon,
 } from "lucide-react";
 
-import { DashboardChrome, type DashboardNavItem } from "@/components/dashboard-chrome";
-import { formatDateTime } from "@/components/dashboard/format";
-import { LimitLine } from "@/components/dashboard/limit-line";
+import {
+  formatDateTime,
+  setDisplayTimeZone,
+} from "@/components/workspace/format";
+import { LimitLine } from "@/components/workspace/limit-line";
 import { CreatedApiKeyDialog, TenantApiKeyDialog } from "@/components/tenant/api-key-dialogs";
 import { TenantApiKeysSection } from "@/components/tenant/api-keys-section";
 import { TenantCodexSetupSection } from "@/components/tenant/codex-setup-section";
@@ -28,6 +30,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  WorkspaceShell,
+  type WorkspaceNavItem,
+} from "@/components/workspace/workspace-shell";
 import type {
   AdminOverviewStats,
   CreatedApiKey,
@@ -56,23 +62,26 @@ type TenantSectionId =
   | "resources"
   | "settings";
 
-type TenantDashboardProps = {
+type TenantWorkbenchProps = {
   initialTenant: PublicTenant;
   initialApiKeys: PublicApiKey[];
   initialResources: TenantResources;
   initialOverviewStats: AdminOverviewStats;
   initialRequestLogsPage: RequestLogsPage;
   initialNow: number;
+  initialTimeZone: string;
 };
 
-export function TenantDashboard({
+export function TenantWorkbench({
   initialTenant,
   initialApiKeys,
   initialResources,
   initialOverviewStats,
   initialRequestLogsPage,
   initialNow,
-}: TenantDashboardProps) {
+  initialTimeZone,
+}: TenantWorkbenchProps) {
+  setDisplayTimeZone(initialTimeZone);
   const [activeSection, setActiveSection] =
     React.useState<TenantSectionId>("overview");
   const [tenant, setTenant] = React.useState(initialTenant);
@@ -177,56 +186,49 @@ export function TenantDashboard({
     }
   }
 
-  const navigationItems: DashboardNavItem<TenantSectionId>[] = [
+  const navigationItems: WorkspaceNavItem<TenantSectionId>[] = [
     {
       id: "overview",
-      label: "总览",
-      description: "用量状态",
+      label: "概览",
       icon: GaugeIcon,
     },
     {
       id: "apiKeys",
       label: "密钥",
-      description: "租户 Key",
       icon: KeyRoundIcon,
       count: apiKeys.length,
     },
     {
       id: "setup",
       label: "配置",
-      description: "Codex 引导",
       icon: BotIcon,
     },
     {
       id: "logs",
-      label: "日志",
-      description: "请求记录",
+      label: "流量",
       icon: FileTextIcon,
       count: requestLogsPage.total,
     },
     {
       id: "resources",
       label: "资源",
-      description: "模型通道",
       icon: NetworkIcon,
       count: resources.channels.length,
     },
     {
       id: "settings",
       label: "设置",
-      description: "网络偏好",
       icon: SettingsIcon,
     },
   ];
 
   return (
     <>
-      <DashboardChrome
+      <WorkspaceShell
         activeId={activeSection}
-        eyebrow="Tenant Console"
+        eyebrow="TENANT"
         navItems={navigationItems}
         title={tenant.name}
-        description="租户控制台用于管理自己的密钥、请求日志、授权资源和网络偏好。"
         status={
           <Badge variant={tenant.enabled ? "secondary" : "destructive"}>
             {tenant.enabled ? "启用" : "停用"}
@@ -326,7 +328,7 @@ export function TenantDashboard({
         {activeSection === "settings" && (
           <TenantSettingsSection tenant={tenant} onSaved={setTenant} />
         )}
-      </DashboardChrome>
+      </WorkspaceShell>
 
       <TenantApiKeyDialog
         key={`create:${creatingKey ? "open" : "closed"}`}

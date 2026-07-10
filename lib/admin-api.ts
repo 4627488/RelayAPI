@@ -610,6 +610,7 @@ export function updateGlobalSettings(payload: {
   codexAutoDisableRefreshExhausted?: boolean;
   requestLogRetentionDays?: number;
   requestLogDetailRetentionDays?: number;
+  timeZone?: string;
 }) {
   return adminRequest<GlobalSettingsRecord>("/api/admin/settings", {
     method: "PATCH",

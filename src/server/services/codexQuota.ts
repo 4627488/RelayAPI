@@ -14,7 +14,9 @@ import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
 import {
   getEffectiveCodexUserAgent,
   getGlobalProxySetting,
+  getGlobalTimeZoneSetting,
 } from "@/src/server/services/settings";
+import { formatInstant } from "@/src/shared/time";
 import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
@@ -740,15 +742,11 @@ function formatResetLabel(window: RawObject) {
 }
 
 function formatLocalMinute(date: Date) {
-  const month = pad2(date.getMonth() + 1);
-  const day = pad2(date.getDate());
-  const hour = pad2(date.getHours());
-  const minute = pad2(date.getMinutes());
-  return `${month}-${day} ${hour}:${minute}`;
-}
-
-function pad2(value: number) {
-  return String(value).padStart(2, "0");
+  const formatted = formatInstant(
+    date.toISOString(),
+    getGlobalTimeZoneSetting(),
+  );
+  return formatted ? formatted.slice(5, 16) : "-";
 }
 
 function parseMaybeJson<T>(text: string) {

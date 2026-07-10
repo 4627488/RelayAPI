@@ -13,17 +13,17 @@ import {
   formatDateTime,
   formatNumber,
   renderBadgeList,
-} from "@/components/dashboard/format";
+} from "@/components/workspace/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import {
   Empty,
   EmptyDescription,
@@ -65,7 +65,6 @@ export function TenantResourcesSection({
       <Card>
         <CardHeader>
           <CardTitle>授权模型</CardTitle>
-          <CardDescription>Key 可从这些模型中选择更小子集。</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="rounded-lg bg-muted/35 p-3">
@@ -79,7 +78,6 @@ export function TenantResourcesSection({
       <Card>
         <CardHeader>
           <CardTitle>授权通道</CardTitle>
-          <CardDescription>Key 可从这些通道中选择更小子集。</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {resources.channels.length === 0 ? (
@@ -90,9 +88,7 @@ export function TenantResourcesSection({
                 </EmptyMedia>
                 <EmptyTitle>暂无授权通道</EmptyTitle>
                 <EmptyDescription>
-                  {tenant.channelAllowlist.length === 0
-                    ? "管理员未限制通道。"
-                    : "暂无可用授权通道。"}
+                  {tenant.channelAllowlist.length === 0 ? "未限制。" : "无可用通道。"}
                 </EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -109,9 +105,11 @@ export function TenantResourcesSection({
                       {channel.id}
                     </div>
                   </div>
-                  <Badge variant={channel.enabled ? "secondary" : "outline"}>
+                  <WorkspaceStatusBadge
+                    tone={channel.enabled ? "success" : "muted"}
+                  >
                     {channel.status}
-                  </Badge>
+                  </WorkspaceStatusBadge>
                 </div>
                 <div className="mt-3 text-xs text-muted-foreground">
                   {renderBadgeList(channel.modelAllowlist, "全部模型")}
@@ -279,9 +277,6 @@ function TenantCredentialsPanel({
     <Card>
       <CardHeader>
         <CardTitle>授权凭据</CardTitle>
-        <CardDescription>
-          当前租户可用通道绑定的 Codex 账号、健康状态和额度。
-        </CardDescription>
         <CardAction>
           <Button
             type="button"
@@ -294,7 +289,7 @@ function TenantCredentialsPanel({
             ) : (
               <RefreshCwIcon data-icon="inline-start" />
             )}
-            刷新全部额度
+            刷新额度
           </Button>
         </CardAction>
       </CardHeader>
@@ -306,9 +301,7 @@ function TenantCredentialsPanel({
                 <UserRoundIcon />
               </EmptyMedia>
               <EmptyTitle>暂无授权凭据</EmptyTitle>
-              <EmptyDescription>
-                授权通道绑定凭据后，这里会显示账号和额度。
-              </EmptyDescription>
+              <EmptyDescription>通道绑定后显示。</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
@@ -359,12 +352,14 @@ function CredentialCard({
             <Badge variant="outline">
               {codexPlanLabel(credential.planType)}
             </Badge>
-            <Badge variant={credential.enabled ? "secondary" : "outline"}>
-              {credential.enabled ? "启用" : "停用"}
-            </Badge>
+            <WorkspaceStatusBadge
+              tone={credential.enabled ? "success" : "muted"}
+            >
+              {credential.enabled ? "on" : "off"}
+            </WorkspaceStatusBadge>
             {credential.fastEnabled && <Badge variant="outline">Fast</Badge>}
             {credential.cooldownUntil && (
-              <Badge variant="outline">冷却中</Badge>
+              <WorkspaceStatusBadge tone="warning">cooldown</WorkspaceStatusBadge>
             )}
           </div>
           <div className="truncate text-base font-medium">
@@ -482,14 +477,24 @@ function InfoLine({
 
 function QuotaSummaryBadge({ quota }: { quota: CodexQuotaReport }) {
   if (quota.status === "not_cached" || quota.status === "unknown") {
-    return <Badge variant="outline">{quotaStatusLabel(quota.status)}</Badge>;
+    return (
+      <WorkspaceStatusBadge tone="muted">
+        {quotaStatusLabel(quota.status)}
+      </WorkspaceStatusBadge>
+    );
   }
   if (quota.status === "exhausted" || quota.status === "low") {
     return (
-      <Badge variant="destructive">{quotaStatusLabel(quota.status)}</Badge>
+      <WorkspaceStatusBadge tone="danger">
+        {quotaStatusLabel(quota.status)}
+      </WorkspaceStatusBadge>
     );
   }
-  return <Badge variant="secondary">{quotaStatusLabel(quota.status)}</Badge>;
+  return (
+    <WorkspaceStatusBadge tone="success">
+      {quotaStatusLabel(quota.status)}
+    </WorkspaceStatusBadge>
+  );
 }
 
 function QuotaProgressCell({
@@ -518,7 +523,7 @@ function QuotaProgressCell({
             读取中
           </>
         ) : (
-          <Badge variant="outline">未读取</Badge>
+          <WorkspaceStatusBadge tone="muted">未读取</WorkspaceStatusBadge>
         )}
       </div>
     );

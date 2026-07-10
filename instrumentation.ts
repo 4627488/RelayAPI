@@ -4,7 +4,10 @@ export async function register() {
       await import("./src/server/services/webAccess");
     const { startCodexCredentialRefreshScheduler } =
       await import("./src/server/services/codexCredentialRefreshScheduler");
+    const { resumePendingTimeZoneRebuild } =
+      await import("./src/server/services/timeZoneRebuild");
     initializeWebAccessKey();
     startCodexCredentialRefreshScheduler();
+    resumePendingTimeZoneRebuild();
   }
 }

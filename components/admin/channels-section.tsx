@@ -30,10 +30,11 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
+import { formatDateTime } from "@/components/workspace/format";
 import {
   Dialog,
   DialogContent,
@@ -179,23 +180,9 @@ export function ChannelsSection({
   return (
     <>
       <div className="grid gap-4">
-        <Alert>
-          <RouteIcon />
-          <AlertTitle>自动路由规则</AlertTitle>
-          <AlertDescription>
-            Relay
-            会先过滤已禁用、冷却中、凭据缺失和模型不匹配的通道；通道健康度取最近
-            100 次请求成功率，凭据健康度取最近 50
-            次请求成功率。路由先按健康度分层，再按优先级和权重加权选择。
-          </AlertDescription>
-        </Alert>
-
         <Card>
           <CardHeader>
             <CardTitle>通道</CardTitle>
-            <CardDescription>
-              配置自动路由单元、优先级、权重、健康状态与模型白名单。
-            </CardDescription>
             <CardAction>
               <Button
                 type="button"
@@ -203,7 +190,7 @@ export function ChannelsSection({
                 onClick={() => setCreateOpen(true)}
               >
                 <PlusIcon data-icon="inline-start" />
-                新建通道
+                新建
               </Button>
             </CardAction>
           </CardHeader>
@@ -215,10 +202,7 @@ export function ChannelsSection({
                     <RouteIcon />
                   </EmptyMedia>
                   <EmptyTitle>还没有通道</EmptyTitle>
-                  <EmptyDescription>
-                    添加 Codex
-                    凭据后通常会自动创建默认通道，也可以手动创建多个通道做优先级和权重路由。
-                  </EmptyDescription>
+                  <EmptyDescription>添加凭据后创建路由通道。</EmptyDescription>
                 </EmptyHeader>
                 <Button
                   type="button"
@@ -226,7 +210,7 @@ export function ChannelsSection({
                   onClick={() => setCreateOpen(true)}
                 >
                   <PlusIcon data-icon="inline-start" />
-                  新建通道
+                  新建
                 </Button>
               </Empty>
             ) : (
@@ -791,12 +775,24 @@ function assertChannel(channel: ChannelRecord | null | undefined) {
 
 function renderChannelStatusBadge(status: ChannelStatus) {
   if (status === "healthy") {
-    return <Badge variant="secondary">{STATUS_LABELS[status]}</Badge>;
+    return (
+      <WorkspaceStatusBadge tone="success">
+        {STATUS_LABELS[status]}
+      </WorkspaceStatusBadge>
+    );
   }
   if (status === "degraded" || status === "cooling_down") {
-    return <Badge variant="outline">{STATUS_LABELS[status]}</Badge>;
+    return (
+      <WorkspaceStatusBadge tone="warning">
+        {STATUS_LABELS[status]}
+      </WorkspaceStatusBadge>
+    );
   }
-  return <Badge variant="destructive">{STATUS_LABELS[status]}</Badge>;
+  return (
+    <WorkspaceStatusBadge tone="danger">
+      {STATUS_LABELS[status]}
+    </WorkspaceStatusBadge>
+  );
 }
 
 function renderStringList(values: string[], emptyLabel: string) {
@@ -853,14 +849,7 @@ function formatNullableDate(value: string | null) {
   if (!value) {
     return <span className="text-muted-foreground">-</span>;
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  }).format(date);
+  return formatDateTime(value);
 }
 
 function formatNumber(value: number) {

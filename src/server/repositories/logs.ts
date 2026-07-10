@@ -9,7 +9,11 @@ import {
   type SQLChunk,
 } from "drizzle-orm";
 
-import { getLogOrm, getMainOrm } from "@/src/server/db/sqlite";
+import {
+  getLogOrm,
+  getMainOrm,
+  setSqliteTimeZone,
+} from "@/src/server/db/sqlite";
 import { serverConfig } from "@/src/server/config/env";
 import {
   auditLogs,
@@ -37,6 +41,8 @@ import type {
   UsageSnapshot,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
+import { addDateKeyDays, instantToDateKey } from "@/src/shared/time";
+import { getGlobalTimeZoneSetting } from "@/src/server/services/settings";
 
 const ADMIN_OVERVIEW_CACHE_TTL_MS = 15_000;
 const OVERVIEW_GROUP_LIMIT = 100;
@@ -323,7 +329,7 @@ export function appendUsageRecord(input: {
     })
     .run();
 
-  const day = input.createdAt.slice(0, 10);
+  const day = instantToDateKey(input.createdAt, getGlobalTimeZoneSetting());
   getLogOrm()
     .insert(usageDailyBuckets)
     .values({
@@ -358,6 +364,55 @@ export function appendUsageRecord(input: {
       },
     })
     .run();
+}
+
+export function rebuildDailyAggregates(timeZone: string) {
+  const previousTimeZone = getGlobalTimeZoneSetting();
+  setSqliteTimeZone(timeZone);
+  try {
+    getLogOrm().transaction(() => {
+      logRun("DELETE FROM request_daily_buckets");
+      logRun(`INSERT INTO request_daily_buckets (
+          bucket_date, tenant_id, api_key_id, model, channel_id, credential_id,
+          request_type, request_count, success_count, error_count, stream_count,
+          prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+          total_latency_ms, first_request_at, last_request_at, updated_at
+        )
+        SELECT
+          relay_date_key(started_at), COALESCE(tenant_id, ''),
+          COALESCE(api_key_id, ''), COALESCE(model, ''),
+          COALESCE(channel_id, ''), COALESCE(credential_id, ''),
+          COALESCE(request_type, ''), COUNT(*),
+          SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END),
+          SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END),
+          SUM(stream), COALESCE(SUM(prompt_tokens), 0),
+          COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(total_tokens), 0),
+          COALESCE(SUM(cached_tokens), 0), COALESCE(SUM(latency_ms), 0),
+          MIN(started_at), MAX(started_at), MAX(completed_at)
+        FROM request_logs
+        GROUP BY relay_date_key(started_at), tenant_id, api_key_id, model,
+          channel_id, credential_id, request_type`);
+
+      logRun("DELETE FROM usage_daily_buckets");
+      logRun(`INSERT INTO usage_daily_buckets (
+          bucket_date, tenant_id, api_key_id, channel_id, credential_id, model,
+          prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+          request_count, updated_at
+        )
+        SELECT relay_date_key(created_at), COALESCE(tenant_id, ''),
+          COALESCE(api_key_id, ''), COALESCE(channel_id, ''),
+          COALESCE(credential_id, ''), COALESCE(model, ''),
+          COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0),
+          COALESCE(SUM(total_tokens), 0), COALESCE(SUM(cached_tokens), 0),
+          COUNT(*), MAX(created_at)
+        FROM usage_records
+        GROUP BY relay_date_key(created_at), tenant_id, api_key_id,
+          channel_id, credential_id, model`);
+    });
+  } catch (error) {
+    setSqliteTimeZone(previousTimeZone);
+    throw error;
+  }
 }
 
 export function pruneRequestLogs(
@@ -533,7 +588,7 @@ export function transferApiKeyLogScope(input: {
 }
 
 export function getApiKeyDailyUsage(apiKeyId: string, day = new Date()) {
-  const bucketDate = day.toISOString().slice(0, 10);
+  const bucketDate = instantToDateKey(day, getGlobalTimeZoneSetting());
   const row = getLogOrm()
     .select({
       totalTokens: sql<number>`COALESCE(SUM(${usageDailyBuckets.totalTokens}), 0)`,
@@ -550,7 +605,7 @@ export function getApiKeyDailyUsage(apiKeyId: string, day = new Date()) {
 }
 
 export function getTenantDailyUsage(tenantId: string, day = new Date()) {
-  const bucketDate = day.toISOString().slice(0, 10);
+  const bucketDate = instantToDateKey(day, getGlobalTimeZoneSetting());
   const row = getLogOrm()
     .select({
       totalTokens: sql<number>`COALESCE(SUM(${usageDailyBuckets.totalTokens}), 0)`,
@@ -598,10 +653,13 @@ export function getActivityHeatmapStats(
   input: ActivityHeatmapQueryInput = {},
 ): ActivityHeatmapStats {
   const weeks = normalizeHeatmapWeeks(input.weeks);
-  const endDateKey = utcDateKey(input.endDate || new Date());
-  const weekStart = addUtcDays(endDateKey, -utcWeekday(endDateKey));
-  const startDateKey = addUtcDays(weekStart, -(weeks - 1) * 7);
-  const endExclusive = addUtcDays(endDateKey, 1);
+  const endDateKey = instantToDateKey(
+    input.endDate || new Date(),
+    getGlobalTimeZoneSetting(),
+  );
+  const weekStart = addDateKeyDays(endDateKey, -calendarWeekday(endDateKey));
+  const startDateKey = addDateKeyDays(weekStart, -(weeks - 1) * 7);
+  const endExclusive = addDateKeyDays(endDateKey, 1);
   const apiKeyId = cleanNullableString(input.apiKeyId);
   const conditions = ["started_at >= ?", "started_at < ?"];
   const params: string[] = [startDateKey, endExclusive];
@@ -612,7 +670,7 @@ export function getActivityHeatmapStats(
 
   const rows = logAll(
     `SELECT
-        substr(started_at, 1, 10) AS date,
+        relay_date_key(started_at) AS date,
         COUNT(*) AS request_count,
         SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
         SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
@@ -620,13 +678,13 @@ export function getActivityHeatmapStats(
         COALESCE(SUM(total_tokens), 0) AS total_tokens
        FROM request_logs
        WHERE ${conditions.join(" AND ")}
-       GROUP BY substr(started_at, 1, 10)`,
+       GROUP BY relay_date_key(started_at)`,
     params,
   );
 
   const rowsByDate = new Map(rows.map((row) => [String(row.date || ""), row]));
   const rawDays = Array.from({ length: weeks * 7 }, (_, index) => {
-    const date = addUtcDays(startDateKey, index);
+    const date = addDateKeyDays(startDateKey, index);
     if (date > endDateKey) {
       return null;
     }
@@ -935,10 +993,31 @@ function requestLogWhere(input: RequestLogQueryInput) {
         lower(channel_name) LIKE ? OR
         lower(credential_email) LIKE ? OR
         lower(error_code) LIKE ? OR
-        CAST(status_code AS TEXT) LIKE ?
+        lower(error_message) LIKE ? OR
+        CAST(status_code AS TEXT) LIKE ? OR
+        EXISTS (
+          SELECT 1
+          FROM request_log_details
+          WHERE request_log_details.request_log_id = request_logs.id
+            AND (
+              lower(request_log_details.request_body_text) LIKE ? OR
+              lower(request_log_details.forwarded_body_text) LIKE ? OR
+              lower(request_log_details.upstream_body_text) LIKE ? OR
+              lower(request_log_details.error_message) LIKE ? OR
+              lower(request_log_details.error_stack) LIKE ? OR
+              lower(request_log_details.detail_json) LIKE ?
+            )
+        )
       )`,
     );
     params.push(
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
+      like,
       like,
       like,
       like,
@@ -1684,7 +1763,7 @@ function getErrorCodeDailyStats(scope: LogScope = {}): ErrorCodeDailyStatsRow[] 
   ], [recentStartedAt]);
   const rows = logAll(
     `SELECT
-        substr(started_at, 1, 10) AS date,
+        relay_date_key(started_at) AS date,
         COALESCE(error_code, 'unknown') AS error_code,
         COALESCE(tenant_id, '') AS tenant_id,
         COALESCE(tenant_name, '') AS tenant_name,
@@ -2023,7 +2102,7 @@ function apiKeysById(scope: LogScope = {}) {
 }
 
 function todayTokensByApiKey(scope: LogScope = {}) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = instantToDateKey(new Date(), getGlobalTimeZoneSetting());
   const { where, params } = overviewWhere(scope, ["bucket_date = ?"], [today]);
   const rows = logAll(
     `SELECT api_key_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
@@ -2053,7 +2132,7 @@ function tenantRecordsById() {
 }
 
 function todayTokensByTenantId() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = instantToDateKey(new Date(), getGlobalTimeZoneSetting());
   const rows = logAll(
     `SELECT tenant_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
        FROM usage_daily_buckets
@@ -2095,17 +2174,7 @@ function activityHeatmapStreaks(days: ActivityHeatmapStats["days"]) {
   return { current, longest };
 }
 
-function utcDateKey(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function addUtcDays(dateKey: string, deltaDays: number) {
-  const date = new Date(`${dateKey}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + deltaDays);
-  return utcDateKey(date);
-}
-
-function utcWeekday(dateKey: string) {
+function calendarWeekday(dateKey: string) {
   return new Date(`${dateKey}T00:00:00.000Z`).getUTCDay();
 }
 
@@ -2134,9 +2203,9 @@ function retentionCutoff(days: number) {
 
 function overviewRange(daysInput = OVERVIEW_DAILY_WINDOW_DAYS) {
   const days = normalizeOverviewDays(daysInput);
-  const to = new Date().toISOString().slice(0, 10);
+  const to = instantToDateKey(new Date(), getGlobalTimeZoneSetting());
   return {
-    from: addUtcDays(to, -days + 1),
+    from: addDateKeyDays(to, -days + 1),
     to,
     days,
   };

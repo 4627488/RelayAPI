@@ -127,11 +127,6 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-image: linear-gradient(
-      180deg,
-      color-mix(in oklch, var(--primary) 8%, transparent),
-      transparent 18rem
-    );
   }
   html {
     @apply font-sans;
