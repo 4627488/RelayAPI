@@ -45,6 +45,30 @@ describe("prepareCodexPayloadForUpstream", () => {
       { type: "message", role: "user", content: [] },
     ]);
   });
+
+  test("defaults parallel_tool_calls after injecting the image tool", () => {
+    const payload = prepareCodexPayloadForUpstream({
+      model: "gpt-5.3-codex",
+      input: [],
+    });
+
+    expect(payload.tools).toEqual([
+      { type: "image_generation", output_format: "png" },
+    ]);
+    expect(payload).toHaveProperty("parallel_tool_calls", true);
+  });
+
+  test("removes parallel_tool_calls for invalid-only tool arrays", () => {
+    const payload = prepareCodexPayloadForUpstream({
+      model: "gpt-5.3-codex-spark",
+      input: [],
+      parallel_tool_calls: true,
+      tools: [null, {}, { type: "" }, { type: 42 }],
+    });
+
+    expect(payload).not.toHaveProperty("parallel_tool_calls");
+    expect(payload.tools).toEqual([null, {}, { type: "" }, { type: 42 }]);
+  });
 });
 
 describe("parallel_tool_calls normalization", () => {
@@ -75,6 +99,19 @@ describe("parallel_tool_calls normalization", () => {
     expect(
       normalizeResponsesPayload({
         input: [],
+        tools: [tool],
+        parallel_tool_calls: false,
+      }),
+    ).toHaveProperty("parallel_tool_calls", false);
+  });
+
+  test("defaults and preserves raw Responses parallel_tool_calls", () => {
+    const tool = { type: "function", name: "lookup", parameters: {} };
+    expect(
+      normalizeRawCodexResponsesPayload({ tools: [tool] }),
+    ).toHaveProperty("parallel_tool_calls", true);
+    expect(
+      normalizeRawCodexResponsesPayload({
         tools: [tool],
         parallel_tool_calls: false,
       }),

@@ -354,6 +354,7 @@ export function prepareCodexPayloadForUpstream(
   ensureImageGenerationTool(upstreamPayload, {
     planType: options.planType,
   });
+  normalizeParallelToolCalls(upstreamPayload);
   return upstreamPayload;
 }
 
@@ -616,7 +617,15 @@ export function chatCompletionsToCodex(
 }
 
 function normalizeParallelToolCalls(payload: Record<string, unknown>) {
-  if (!Array.isArray(payload.tools) || payload.tools.length === 0) {
+  const hasValidTool =
+    Array.isArray(payload.tools) &&
+    payload.tools.some(
+      (tool) =>
+        isRecord(tool) &&
+        typeof tool.type === "string" &&
+        tool.type.trim().length > 0,
+    );
+  if (!hasValidTool) {
     delete payload.parallel_tool_calls;
     return;
   }
