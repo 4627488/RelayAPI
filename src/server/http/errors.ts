@@ -77,14 +77,26 @@ export function errorToResponse(
 ) {
   logServerError(error, context);
   if (isHttpError(error)) {
+    const details =
+      error.details && typeof error.details === "object" && !Array.isArray(error.details)
+        ? (error.details as Record<string, unknown>)
+        : {};
+    const retryAfter = Number(details.retry_after || 0);
     return Response.json(
       {
         error: {
           code: error.code,
           message: error.message,
+          ...details,
         },
       },
-      { status: error.status },
+      {
+        status: error.status,
+        headers:
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? { "Retry-After": String(Math.ceil(retryAfter)) }
+            : undefined,
+      },
     );
   }
   return Response.json(
