@@ -68,6 +68,11 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 import { DataPanel } from "@/components/workspace/data-panel";
+import {
+  formatDateTime,
+  getDisplayTimeZone,
+  setDisplayTimeZone,
+} from "@/components/workspace/format";
 import { MetricStrip, MetricStripItem } from "@/components/workspace/metric-strip";
 import {
   WorkspaceShell,
@@ -114,6 +119,11 @@ import type {
   TenantUsageStatsRow,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
+import {
+  addDateKeyDays,
+  instantToDateKey,
+  parseInstant,
+} from "@/src/shared/time";
 
 type AdminWorkbenchProps = {
   initialApiKeys: PublicApiKey[];
@@ -210,6 +220,7 @@ export function AdminWorkbench({
   const [globalSettings, setGlobalSettings] = React.useState(
     initialGlobalSettings,
   );
+  setDisplayTimeZone(globalSettings.timeZone);
   const [requestLogsPage, setRequestLogsPage] = React.useState(
     initialRequestLogsPage,
   );
@@ -2347,13 +2358,11 @@ function emptyDailyUsageRow(date: string): DailyUsageRow {
 }
 
 function todayDateKey() {
-  return new Date().toISOString().slice(0, 10);
+  return instantToDateKey(new Date(), getDisplayTimeZone());
 }
 
 function addUtcDays(dateKey: string, deltaDays: number) {
-  const date = new Date(`${dateKey}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + deltaDays);
-  return date.toISOString().slice(0, 10);
+  return addDateKeyDays(dateKey, deltaDays);
 }
 
 function dailySuccessRate(row: DailyUsageRow) {
@@ -2684,7 +2693,7 @@ function LocalDateTime({ value }: { value: string }) {
     () => true,
     () => false,
   );
-  const date = parseUtcDate(value);
+  const date = parseInstant(value);
   return (
     <time dateTime={date?.toISOString()} suppressHydrationWarning>
       {isClient ? formatDateTime(value) : "-"}
@@ -2694,49 +2703,6 @@ function LocalDateTime({ value }: { value: string }) {
 
 function subscribeNoop() {
   return () => undefined;
-}
-
-function formatDateTime(value: string) {
-  const date = parseUtcDate(value);
-  if (!date) {
-    return "-";
-  }
-
-  const parts = new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value || "";
-
-  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
-}
-
-function parseUtcDate(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const normalized = trimmed.includes(" ")
-    ? trimmed.replace(" ", "T")
-    : trimmed;
-  const normalizedWithTime = /^\d{4}-\d{2}-\d{2}$/.test(normalized)
-    ? `${normalized}T00:00:00`
-    : normalized;
-  const hasTimeZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(normalizedWithTime);
-  const timestamp = Date.parse(
-    hasTimeZone ? normalizedWithTime : `${normalizedWithTime}Z`,
-  );
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-  return new Date(timestamp);
 }
 
 function formatDuration(value: number) {

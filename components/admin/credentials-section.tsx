@@ -26,6 +26,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatDateTime } from "@/components/workspace/format";
+import { parseInstant } from "@/src/shared/time";
 import {
   Card,
   CardAction,
@@ -2010,7 +2012,7 @@ function LocalDateTime({ value }: { value: string }) {
     () => true,
     () => false,
   );
-  const date = parseUtcDate(value);
+  const date = parseInstant(value);
   return (
     <time dateTime={date?.toISOString()} suppressHydrationWarning>
       {isClient ? formatDateTime(value) : "-"}
@@ -2020,49 +2022,6 @@ function LocalDateTime({ value }: { value: string }) {
 
 function subscribeNoop() {
   return () => undefined;
-}
-
-function formatDateTime(value: string) {
-  const date = parseUtcDate(value);
-  if (!date) {
-    return "-";
-  }
-
-  const parts = new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value || "";
-
-  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
-}
-
-function parseUtcDate(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const normalized = trimmed.includes(" ")
-    ? trimmed.replace(" ", "T")
-    : trimmed;
-  const normalizedWithTime = /^\d{4}-\d{2}-\d{2}$/.test(normalized)
-    ? `${normalized}T00:00:00`
-    : normalized;
-  const hasTimeZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(normalizedWithTime);
-  const timestamp = Date.parse(
-    hasTimeZone ? normalizedWithTime : `${normalizedWithTime}Z`,
-  );
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-  return new Date(timestamp);
 }
 
 function metadataString(value: unknown) {

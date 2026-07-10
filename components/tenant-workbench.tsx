@@ -14,7 +14,10 @@ import {
   XCircleIcon,
 } from "lucide-react";
 
-import { formatDateTime } from "@/components/workspace/format";
+import {
+  formatDateTime,
+  setDisplayTimeZone,
+} from "@/components/workspace/format";
 import { LimitLine } from "@/components/workspace/limit-line";
 import { CreatedApiKeyDialog, TenantApiKeyDialog } from "@/components/tenant/api-key-dialogs";
 import { TenantApiKeysSection } from "@/components/tenant/api-keys-section";
@@ -66,6 +69,7 @@ type TenantWorkbenchProps = {
   initialOverviewStats: AdminOverviewStats;
   initialRequestLogsPage: RequestLogsPage;
   initialNow: number;
+  initialTimeZone: string;
 };
 
 export function TenantWorkbench({
@@ -75,7 +79,9 @@ export function TenantWorkbench({
   initialOverviewStats,
   initialRequestLogsPage,
   initialNow,
+  initialTimeZone,
 }: TenantWorkbenchProps) {
+  setDisplayTimeZone(initialTimeZone);
   const [activeSection, setActiveSection] =
     React.useState<TenantSectionId>("overview");
   const [tenant, setTenant] = React.useState(initialTenant);

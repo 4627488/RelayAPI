@@ -1,6 +1,25 @@
 import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
+import {
+  DEFAULT_TIME_ZONE,
+  formatInstant,
+  instantToLocalDateTime,
+  isValidTimeZone,
+  localDateTimeToInstant,
+} from "@/src/shared/time";
+
+let displayTimeZone = DEFAULT_TIME_ZONE;
+
+export function setDisplayTimeZone(timeZone: string) {
+  if (isValidTimeZone(timeZone)) {
+    displayTimeZone = timeZone;
+  }
+}
+
+export function getDisplayTimeZone() {
+  return displayTimeZone;
+}
 
 export function formatNumber(value: number) {
   if (!Number.isFinite(value)) {
@@ -67,24 +86,7 @@ export function formatRatioPercent(part: number, total: number) {
 }
 
 export function formatDateTime(value: string | null | undefined) {
-  const date = parseUtcDate(value);
-  if (!date) {
-    return "-";
-  }
-
-  const parts = new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value || "";
-
-  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
+  return formatInstant(value, displayTimeZone) || "-";
 }
 
 export function formatNullableDate(value: string | null | undefined) {
@@ -92,6 +94,18 @@ export function formatNullableDate(value: string | null | undefined) {
     return <span className="text-muted-foreground">-</span>;
   }
   return <time dateTime={value}>{formatDateTime(value)}</time>;
+}
+
+export function datetimeLocalToIso(value: string) {
+  if (!value.trim()) {
+    return null;
+  }
+  const result = localDateTimeToInstant(value, displayTimeZone);
+  return result.ok ? result.value : null;
+}
+
+export function toDatetimeLocal(value: string | null) {
+  return instantToLocalDateTime(value, displayTimeZone);
 }
 
 export function renderBadgeList(values: string[], empty: string) {
@@ -116,26 +130,4 @@ function formatScaledNumber(value: number) {
     maximumFractionDigits,
     minimumFractionDigits: 0,
   }).format(value);
-}
-
-function parseUtcDate(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const normalized = trimmed.includes(" ")
-    ? trimmed.replace(" ", "T")
-    : trimmed;
-  const normalizedWithTime = /^\d{4}-\d{2}-\d{2}$/.test(normalized)
-    ? `${normalized}T00:00:00`
-    : normalized;
-  const hasTimeZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(normalizedWithTime);
-  const timestamp = Date.parse(
-    hasTimeZone ? normalizedWithTime : `${normalizedWithTime}Z`,
-  );
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-  return new Date(timestamp);
 }

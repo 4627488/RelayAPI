@@ -34,6 +34,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
+import { formatDateTime } from "@/components/workspace/format";
 import {
   Dialog,
   DialogContent,
@@ -848,14 +849,7 @@ function formatNullableDate(value: string | null) {
   if (!value) {
     return <span className="text-muted-foreground">-</span>;
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  }).format(date);
+  return formatDateTime(value);
 }
 
 function formatNumber(value: number) {

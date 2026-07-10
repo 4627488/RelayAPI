@@ -11,6 +11,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  datetimeLocalToIso,
+  toDatetimeLocal,
+} from "@/components/workspace/format";
 import type { ApiKeyPayload } from "@/lib/admin-api";
 import type { PublicApiKey } from "@/src/shared/types/entities";
 
@@ -189,24 +193,4 @@ export function nullablePositiveInteger(value: string) {
   }
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
-}
-
-export function datetimeLocalToIso(value: string) {
-  if (!value.trim()) {
-    return null;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-export function toDatetimeLocal(value: string | null) {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
 }

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { TenantWorkbench } from "@/components/tenant-workbench";
 import { emptyAdminOverviewStats } from "@/src/server/repositories/logs";
 import { listTenantApiKeyPublicRecords } from "@/src/server/services/apiKeys";
+import { getGlobalTimeZoneSetting } from "@/src/server/services/settings";
 import {
   getTenantResources,
   getTenantSessionFromCookieValue,
@@ -50,6 +51,7 @@ export default async function TenantPage() {
         },
       }}
       initialNow={initialNow}
+      initialTimeZone={getGlobalTimeZoneSetting()}
     />
   );
 }

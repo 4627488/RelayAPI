@@ -19,6 +19,11 @@ import {
 } from "@/components/ui/card";
 import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import {
+  datetimeLocalToIso,
+  formatDateTime,
+  toDatetimeLocal,
+} from "@/components/workspace/format";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -673,25 +678,6 @@ function nullablePositiveInteger(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
 }
 
-function datetimeLocalToIso(value: string) {
-  if (!value.trim()) {
-    return null;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function toDatetimeLocal(value: string | null) {
-  if (!value) {
-    return "";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
-}
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-CN").format(value);
@@ -707,16 +693,3 @@ function formatTokenNumber(value: number) {
   return formatNumber(value);
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) {
-    return "未记录";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  }).format(date);
-}

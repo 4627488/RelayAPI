@@ -23,6 +23,7 @@ import {
   parseList,
   type ApiKeyFormState,
 } from "@/components/workspace/api-key-form";
+import { formatDateTime } from "@/components/workspace/format";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -893,22 +894,6 @@ function formatTenantOwner(tenant: PublicTenant) {
     return tenant.ownerEmail;
   }
   return tenant.pendingInvite ? "Pending invite" : "未邀请";
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(date);
 }
 
 function formatNumber(value: number) {
