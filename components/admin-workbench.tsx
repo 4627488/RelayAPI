@@ -975,7 +975,7 @@ function SettingsSection({
   const retentionPending = retentionSaving || pruning;
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-3">
       <Card>
         <CardHeader>
           <CardTitle>全局设置</CardTitle>
@@ -1464,24 +1464,6 @@ function OverviewSection({
         </div>
       </DataPanel>
 
-      <MetricStrip className="md:grid-cols-3 xl:grid-cols-3">
-        <MetricStripItem
-          label="租户"
-          value={formatNumber(tenantCount)}
-          detail={`${formatNumber(apiKeyCount)} Key`}
-        />
-        <MetricStripItem
-          label="Codex 凭据"
-          value={formatNumber(credentialCount)}
-          detail="已授权"
-        />
-        <MetricStripItem
-          label="通道"
-          value={formatNumber(channelCount)}
-          detail={`${formatNumber(enabledChannelCount)} 启用`}
-        />
-      </MetricStrip>
-
       {!hasOperationalData && (
         <Alert>
           <WorkflowIcon />
@@ -1496,63 +1478,41 @@ function OverviewSection({
         ))}
       </div>
 
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.65fr)_minmax(20rem,0.7fr)]">
+        <DailyOperationsCard rows={recentDays} />
+        <AnomalyRadarCard anomalies={overviewStats.anomalies} />
+      </div>
+
       <OperationsStatusStrip stats={overviewStats} />
 
-      <DailyOperationsCard rows={recentDays} />
-
-      <div className="grid gap-4 xl:grid-cols-[1fr_1.35fr]">
-        <AnomalyRadarCard anomalies={overviewStats.anomalies} />
-        <DailyBreakdownCard
-          rows={recentDays}
-          selectedDate={effectiveSelectedDate}
-          tenantRows={overviewStats.byTenantDay}
-          modelRows={overviewStats.byModelDay}
-          onSelectDate={setSelectedDate}
-        />
-      </div>
-
-      <DailyDimensionTabs
-        selectedDate={effectiveSelectedDate}
-        tenantRows={overviewStats.byTenantDay}
-        modelRows={overviewStats.byModelDay}
-        channelRows={overviewStats.byChannelDay}
-        credentialRows={overviewStats.byCredentialDay}
-        requestTypeRows={overviewStats.byRequestTypeDay}
-        errorRows={overviewStats.byErrorCodeDay}
-      />
-
-      <div className="grid gap-4 xl:grid-cols-3">
-        <UsageListCard
-          title="租户消耗排行"
-          emptyTitle="暂无租户使用数据"
-          rows={topTenants}
-        />
-        <UsageListCard
-          title="模型排行"
-          emptyTitle="暂无模型使用数据"
-          rows={topModels}
-        />
-        <DailyUsageCard rows={recentDays} />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-2">
-        <TenantUsageCard rows={overviewStats.byTenant} />
-        <UsageStatsTableCard
-          title="通道用量"
-          rows={overviewStats.byChannel}
-          emptyTitle="暂无通道使用数据"
-        />
-        <UsageStatsTableCard
-          title="凭据用量"
-          rows={overviewStats.byCredential}
-          emptyTitle="暂无凭据使用数据"
-        />
-        <UsageStatsTableCard
-          title="请求类型用量"
-          rows={overviewStats.byRequestType}
-          emptyTitle="暂无请求类型统计"
-        />
-      </div>
+      <details className="group rounded-md border bg-card">
+        <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium marker:hidden">
+          深度分析
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            排行、每日矩阵与维度钻取
+          </span>
+        </summary>
+        <div className="grid gap-4 border-t p-3">
+          <MetricStrip className="md:grid-cols-3 xl:grid-cols-3">
+            <MetricStripItem label="租户" value={formatNumber(tenantCount)} detail={`${formatNumber(apiKeyCount)} Key`} />
+            <MetricStripItem label="Codex 凭据" value={formatNumber(credentialCount)} detail="已授权" />
+            <MetricStripItem label="通道" value={formatNumber(channelCount)} detail={`${formatNumber(enabledChannelCount)} 启用`} />
+          </MetricStrip>
+          <DailyBreakdownCard rows={recentDays} selectedDate={effectiveSelectedDate} tenantRows={overviewStats.byTenantDay} modelRows={overviewStats.byModelDay} onSelectDate={setSelectedDate} />
+          <DailyDimensionTabs selectedDate={effectiveSelectedDate} tenantRows={overviewStats.byTenantDay} modelRows={overviewStats.byModelDay} channelRows={overviewStats.byChannelDay} credentialRows={overviewStats.byCredentialDay} requestTypeRows={overviewStats.byRequestTypeDay} errorRows={overviewStats.byErrorCodeDay} />
+          <div className="grid gap-4 xl:grid-cols-3">
+            <UsageListCard title="租户消耗排行" emptyTitle="暂无租户使用数据" rows={topTenants} />
+            <UsageListCard title="模型排行" emptyTitle="暂无模型使用数据" rows={topModels} />
+            <DailyUsageCard rows={recentDays} />
+          </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <TenantUsageCard rows={overviewStats.byTenant} />
+            <UsageStatsTableCard title="通道用量" rows={overviewStats.byChannel} emptyTitle="暂无通道使用数据" />
+            <UsageStatsTableCard title="凭据用量" rows={overviewStats.byCredential} emptyTitle="暂无凭据使用数据" />
+            <UsageStatsTableCard title="请求类型用量" rows={overviewStats.byRequestType} emptyTitle="暂无请求类型统计" />
+          </div>
+        </div>
+      </details>
     </div>
   );
 }

@@ -133,7 +133,7 @@ export function TenantOverviewSection({
     : 0;
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-3">
       <MetricStrip>
         <MetricStripItem
           label="今日 Token"
@@ -336,10 +336,16 @@ export function TenantOverviewSection({
         <ModelUsageCard rows={topModels} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <CacheBreakdownCard stats={filteredStats} />
-        <RecentSpendTable rows={spendRows} period={period} />
-      </div>
+      <details className="rounded-md border bg-card">
+        <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium marker:hidden">
+          Token 构成与历史明细
+          <span className="ml-2 text-xs font-normal text-muted-foreground">按需展开</span>
+        </summary>
+        <div className="grid gap-4 border-t p-3 xl:grid-cols-2">
+          <CacheBreakdownCard stats={filteredStats} />
+          <RecentSpendTable rows={spendRows} period={period} />
+        </div>
+      </details>
     </div>
   );
 }
