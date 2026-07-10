@@ -271,8 +271,18 @@ export interface GlobalSettingsRecord {
   codexAutoDisableRefreshExhausted: boolean;
   requestLogRetentionDays: number | null;
   requestLogDetailRetentionDays: number | null;
+  timeZone: string;
+  timeZonePending: string | null;
+  timeZoneRebuildStatus: TimeZoneRebuildStatus;
+  timeZoneRebuildError: string | null;
   updatedAt: string | null;
 }
+
+export type TimeZoneRebuildStatus =
+  | "idle"
+  | "pending"
+  | "running"
+  | "failed";
 
 export interface ChannelRecord {
   id: string;
