@@ -41,7 +41,7 @@ import type {
   UsageSnapshot,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
-import { instantToDateKey } from "@/src/shared/time";
+import { addDateKeyDays, instantToDateKey } from "@/src/shared/time";
 import { getGlobalTimeZoneSetting } from "@/src/server/services/settings";
 
 const ADMIN_OVERVIEW_CACHE_TTL_MS = 15_000;
@@ -588,7 +588,7 @@ export function transferApiKeyLogScope(input: {
 }
 
 export function getApiKeyDailyUsage(apiKeyId: string, day = new Date()) {
-  const bucketDate = day.toISOString().slice(0, 10);
+  const bucketDate = instantToDateKey(day, getGlobalTimeZoneSetting());
   const row = getLogOrm()
     .select({
       totalTokens: sql<number>`COALESCE(SUM(${usageDailyBuckets.totalTokens}), 0)`,
@@ -605,7 +605,7 @@ export function getApiKeyDailyUsage(apiKeyId: string, day = new Date()) {
 }
 
 export function getTenantDailyUsage(tenantId: string, day = new Date()) {
-  const bucketDate = day.toISOString().slice(0, 10);
+  const bucketDate = instantToDateKey(day, getGlobalTimeZoneSetting());
   const row = getLogOrm()
     .select({
       totalTokens: sql<number>`COALESCE(SUM(${usageDailyBuckets.totalTokens}), 0)`,
@@ -653,10 +653,13 @@ export function getActivityHeatmapStats(
   input: ActivityHeatmapQueryInput = {},
 ): ActivityHeatmapStats {
   const weeks = normalizeHeatmapWeeks(input.weeks);
-  const endDateKey = utcDateKey(input.endDate || new Date());
-  const weekStart = addUtcDays(endDateKey, -utcWeekday(endDateKey));
-  const startDateKey = addUtcDays(weekStart, -(weeks - 1) * 7);
-  const endExclusive = addUtcDays(endDateKey, 1);
+  const endDateKey = instantToDateKey(
+    input.endDate || new Date(),
+    getGlobalTimeZoneSetting(),
+  );
+  const weekStart = addDateKeyDays(endDateKey, -calendarWeekday(endDateKey));
+  const startDateKey = addDateKeyDays(weekStart, -(weeks - 1) * 7);
+  const endExclusive = addDateKeyDays(endDateKey, 1);
   const apiKeyId = cleanNullableString(input.apiKeyId);
   const conditions = ["started_at >= ?", "started_at < ?"];
   const params: string[] = [startDateKey, endExclusive];
@@ -667,7 +670,7 @@ export function getActivityHeatmapStats(
 
   const rows = logAll(
     `SELECT
-        substr(started_at, 1, 10) AS date,
+        relay_date_key(started_at) AS date,
         COUNT(*) AS request_count,
         SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
         SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
@@ -675,13 +678,13 @@ export function getActivityHeatmapStats(
         COALESCE(SUM(total_tokens), 0) AS total_tokens
        FROM request_logs
        WHERE ${conditions.join(" AND ")}
-       GROUP BY substr(started_at, 1, 10)`,
+       GROUP BY relay_date_key(started_at)`,
     params,
   );
 
   const rowsByDate = new Map(rows.map((row) => [String(row.date || ""), row]));
   const rawDays = Array.from({ length: weeks * 7 }, (_, index) => {
-    const date = addUtcDays(startDateKey, index);
+    const date = addDateKeyDays(startDateKey, index);
     if (date > endDateKey) {
       return null;
     }
@@ -1760,7 +1763,7 @@ function getErrorCodeDailyStats(scope: LogScope = {}): ErrorCodeDailyStatsRow[] 
   ], [recentStartedAt]);
   const rows = logAll(
     `SELECT
-        substr(started_at, 1, 10) AS date,
+        relay_date_key(started_at) AS date,
         COALESCE(error_code, 'unknown') AS error_code,
         COALESCE(tenant_id, '') AS tenant_id,
         COALESCE(tenant_name, '') AS tenant_name,
@@ -2099,7 +2102,7 @@ function apiKeysById(scope: LogScope = {}) {
 }
 
 function todayTokensByApiKey(scope: LogScope = {}) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = instantToDateKey(new Date(), getGlobalTimeZoneSetting());
   const { where, params } = overviewWhere(scope, ["bucket_date = ?"], [today]);
   const rows = logAll(
     `SELECT api_key_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
@@ -2129,7 +2132,7 @@ function tenantRecordsById() {
 }
 
 function todayTokensByTenantId() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = instantToDateKey(new Date(), getGlobalTimeZoneSetting());
   const rows = logAll(
     `SELECT tenant_id, COALESCE(SUM(total_tokens), 0) AS total_tokens
        FROM usage_daily_buckets
@@ -2171,17 +2174,7 @@ function activityHeatmapStreaks(days: ActivityHeatmapStats["days"]) {
   return { current, longest };
 }
 
-function utcDateKey(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function addUtcDays(dateKey: string, deltaDays: number) {
-  const date = new Date(`${dateKey}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + deltaDays);
-  return utcDateKey(date);
-}
-
-function utcWeekday(dateKey: string) {
+function calendarWeekday(dateKey: string) {
   return new Date(`${dateKey}T00:00:00.000Z`).getUTCDay();
 }
 
@@ -2210,9 +2203,9 @@ function retentionCutoff(days: number) {
 
 function overviewRange(daysInput = OVERVIEW_DAILY_WINDOW_DAYS) {
   const days = normalizeOverviewDays(daysInput);
-  const to = new Date().toISOString().slice(0, 10);
+  const to = instantToDateKey(new Date(), getGlobalTimeZoneSetting());
   return {
-    from: addUtcDays(to, -days + 1),
+    from: addDateKeyDays(to, -days + 1),
     to,
     days,
   };

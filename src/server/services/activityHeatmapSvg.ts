@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { ActivityHeatmapStats } from "@/src/shared/types/entities";
+import { addDateKeyDays } from "@/src/shared/time";
 
 export type ActivityHeatmapTheme = "auto" | "light" | "dark";
 
@@ -104,7 +105,7 @@ function heatmapCells(
   const cells: string[] = [];
   for (let week = 0; week < stats.weeks; week += 1) {
     for (let weekday = 0; weekday < 7; weekday += 1) {
-      const date = addUtcDays(stats.from, week * 7 + weekday);
+      const date = addDateKeyDays(stats.from, week * 7 + weekday);
       if (date > stats.to) {
         continue;
       }
@@ -127,7 +128,7 @@ function monthLabels(stats: ActivityHeatmapStats) {
   const labels: string[] = [];
   let previousMonth = "";
   for (let week = 0; week < stats.weeks; week += 1) {
-    const weekStart = addUtcDays(stats.from, week * 7);
+    const weekStart = addDateKeyDays(stats.from, week * 7);
     const visibleDate = weekStart > stats.to ? stats.to : weekStart;
     const month = visibleDate.slice(5, 7);
     if (month === previousMonth) {
@@ -235,12 +236,6 @@ function cleanTitle(value: string | null | undefined) {
 
 function formatNumber(value: number) {
   return Math.max(0, Math.floor(value || 0)).toLocaleString("en-US");
-}
-
-function addUtcDays(dateKey: string, deltaDays: number) {
-  const date = new Date(`${dateKey}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + deltaDays);
-  return date.toISOString().slice(0, 10);
 }
 
 function escapeXml(value: string) {
