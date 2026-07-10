@@ -530,6 +530,27 @@ function migrateMainDb(db: SqliteDatabase) {
         ON tenant_invites(token_hash);
     `);
   });
+
+  applyMigration(db, "010_tenant_account_operations", (database) => {
+    addColumnIfMissing(database, "tenant_users", "password_changed_at", "TEXT");
+    addColumnIfMissing(database, "tenant_users", "session_version", "INTEGER NOT NULL DEFAULT 1");
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS tenant_password_resets (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES tenant_users(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_tenant_password_resets_tenant
+        ON tenant_password_resets(tenant_id, created_at);
+    `);
+  });
 }
 
 export function setSqliteTimeZone(timeZone: string) {

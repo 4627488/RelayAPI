@@ -33,6 +33,7 @@ const TIME_ZONE_SETTING_KEY = "time_zone";
 const TIME_ZONE_PENDING_SETTING_KEY = "time_zone_pending";
 const TIME_ZONE_REBUILD_STATUS_SETTING_KEY = "time_zone_rebuild_status";
 const TIME_ZONE_REBUILD_ERROR_SETTING_KEY = "time_zone_rebuild_error";
+const PUBLIC_BASE_URL_SETTING_KEY = "public_base_url";
 
 const DEFAULT_REQUEST_LOG_RETENTION_DAYS = 90;
 const DEFAULT_REQUEST_LOG_DETAIL_RETENTION_DAYS = 14;
@@ -69,6 +70,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
   const retentionSettings = getRequestLogRetentionSettings();
   const timeZoneSettings = getTimeZoneRebuildState();
   const updatedAt = latestUpdatedAt(
+    getSettingUpdatedAt(PUBLIC_BASE_URL_SETTING_KEY),
     getSettingUpdatedAt(GLOBAL_PROXY_SETTING_KEY),
     getSettingUpdatedAt(CODEX_USER_AGENT_SETTING_KEY),
     getSettingUpdatedAt(FULL_REQUEST_LOGGING_SETTING_KEY),
@@ -80,8 +82,10 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
     getSettingUpdatedAt(TIME_ZONE_REBUILD_STATUS_SETTING_KEY),
     getSettingUpdatedAt(TIME_ZONE_REBUILD_ERROR_SETTING_KEY),
   );
+  const publicBaseUrl = getSettingValue(PUBLIC_BASE_URL_SETTING_KEY) || "";
   if (stored) {
     return {
+      publicBaseUrl,
       proxy: publicProxy(stored),
       proxySource: "database",
       userAgent: storedUserAgent || serverConfig.userAgent,
@@ -97,6 +101,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
   }
   if (serverConfig.globalProxy) {
     return {
+      publicBaseUrl,
       proxy: publicProxy(serverConfig.globalProxy),
       proxySource: "environment",
       userAgent: storedUserAgent || serverConfig.userAgent,
@@ -111,6 +116,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
     };
   }
   return {
+    publicBaseUrl,
     proxy: null,
     proxySource: "none",
     userAgent: storedUserAgent || serverConfig.userAgent,
@@ -126,6 +132,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
 }
 
 export function patchGlobalSettings(input: {
+  publicBaseUrl?: unknown;
   proxy?: unknown;
   userAgent?: unknown;
   fullRequestLoggingEnabled?: unknown;
@@ -134,6 +141,11 @@ export function patchGlobalSettings(input: {
   requestLogDetailRetentionDays?: unknown;
   timeZone?: unknown;
 }) {
+  if (Object.hasOwn(input, "publicBaseUrl")) {
+    const value = normalizePublicBaseUrl(input.publicBaseUrl);
+    if (value) upsertSettingValue(PUBLIC_BASE_URL_SETTING_KEY, value);
+    else deleteSettingValue(PUBLIC_BASE_URL_SETTING_KEY);
+  }
   if (Object.hasOwn(input, "proxy")) {
     const proxy = normalizeProxyInput(input.proxy, readStoredGlobalProxy());
     if (proxy) {
@@ -178,6 +190,22 @@ export function patchGlobalSettings(input: {
     requestGlobalTimeZoneChange(input.timeZone);
   }
   return getPublicGlobalSettings();
+}
+
+export function normalizePublicBaseUrl(input: unknown) {
+  const value = typeof input === "string" ? input.trim() : "";
+  if (!value) return "";
+  let url: URL;
+  try { url = new URL(value); } catch {
+    throw new HttpError(400, "invalid_public_base_url", "Public website URL must be an absolute HTTP URL");
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new HttpError(400, "invalid_public_base_url", "Public website URL must use HTTP or HTTPS");
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new HttpError(400, "invalid_public_base_url", "Public website URL cannot contain credentials, query, or fragment");
+  }
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
 }
 
 export function getGlobalTimeZoneSetting() {

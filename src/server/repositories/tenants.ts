@@ -5,6 +5,7 @@ import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { getMainOrm } from "@/src/server/db/sqlite";
 import {
   tenantInvites,
+  tenantPasswordResets,
   tenants,
   tenantUsers,
 } from "@/src/server/db/schema";
@@ -12,6 +13,7 @@ import type {
   CredentialProxyConfig,
   PublicCredentialProxyConfig,
   TenantInviteRecord,
+  TenantPasswordResetRecord,
   TenantUserRecord,
   TenantWithSecrets,
 } from "@/src/shared/types/entities";
@@ -25,6 +27,7 @@ import {
 type TenantRow = typeof tenants.$inferSelect;
 type TenantUserRow = typeof tenantUsers.$inferSelect;
 type TenantInviteRow = typeof tenantInvites.$inferSelect;
+type TenantPasswordResetRow = typeof tenantPasswordResets.$inferSelect;
 
 export interface SaveTenantInput {
   id: string;
@@ -196,6 +199,7 @@ export function updateTenantUser(
     Pick<
       TenantUserRecord,
       "displayName" | "enabled" | "passwordHash" | "lastLoginAt"
+      | "passwordChangedAt" | "sessionVersion"
     >
   >,
 ) {
@@ -211,11 +215,37 @@ export function updateTenantUser(
       enabled: next.enabled ? 1 : 0,
       passwordHash: next.passwordHash,
       lastLoginAt: next.lastLoginAt,
+      passwordChangedAt: next.passwordChangedAt,
+      sessionVersion: next.sessionVersion,
       updatedAt: new Date().toISOString(),
     })
     .where(eq(tenantUsers.id, id))
     .run();
   return getTenantUserById(id);
+}
+
+export function insertTenantPasswordReset(input: {
+  id: string; tenantId: string; userId: string; tokenHash: string; expiresAt: string;
+}) {
+  const now = new Date().toISOString();
+  getMainOrm().update(tenantPasswordResets)
+    .set({ revokedAt: now })
+    .where(and(eq(tenantPasswordResets.tenantId, input.tenantId), isNull(tenantPasswordResets.consumedAt), isNull(tenantPasswordResets.revokedAt)))
+    .run();
+  getMainOrm().insert(tenantPasswordResets).values({ ...input, createdAt: now }).run();
+  return getTenantPasswordResetByTokenHash(input.tokenHash);
+}
+
+export function getTenantPasswordResetByTokenHash(tokenHash: string): TenantPasswordResetRecord | null {
+  const row = getMainOrm().select().from(tenantPasswordResets)
+    .where(eq(tenantPasswordResets.tokenHash, tokenHash)).get();
+  return row ? toTenantPasswordResetRecord(row) : null;
+}
+
+export function consumeTenantPasswordReset(id: string) {
+  const now = new Date().toISOString();
+  getMainOrm().update(tenantPasswordResets).set({ consumedAt: now })
+    .where(eq(tenantPasswordResets.id, id)).run();
 }
 
 export function insertTenantInvite(input: {
@@ -377,8 +407,18 @@ function toTenantUserRecord(row: TenantUserRow): TenantUserRecord {
     enabled: row.enabled === 1,
     passwordHash: row.passwordHash,
     lastLoginAt: row.lastLoginAt,
+    passwordChangedAt: row.passwordChangedAt,
+    sessionVersion: row.sessionVersion,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toTenantPasswordResetRecord(row: TenantPasswordResetRow): TenantPasswordResetRecord {
+  return {
+    id: row.id, tenantId: row.tenantId, userId: row.userId,
+    tokenHash: row.tokenHash, expiresAt: row.expiresAt,
+    consumedAt: row.consumedAt, revokedAt: row.revokedAt, createdAt: row.createdAt,
   };
 }
 

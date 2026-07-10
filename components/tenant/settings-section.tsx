@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import {
+  changeTenantPassword,
   tenantErrorMessage,
   updateTenantSettings,
 } from "@/lib/tenant-api";
@@ -35,6 +36,8 @@ export function TenantSettingsSection({
   const [userAgent, setUserAgent] = React.useState(tenant.userAgent || "");
   const [proxyUrl, setProxyUrl] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+  const [passwords, setPasswords] = React.useState({ current: "", next: "", confirm: "" });
+  const [passwordSaving, setPasswordSaving] = React.useState(false);
 
   async function save() {
     setSaving(true);
@@ -57,7 +60,21 @@ export function TenantSettingsSection({
     }
   }
 
+  async function savePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (passwords.next.length < 10) return toast.error("新密码至少需要 10 位");
+    if (passwords.next !== passwords.confirm) return toast.error("两次输入的新密码不一致");
+    setPasswordSaving(true);
+    try {
+      await changeTenantPassword({ currentPassword: passwords.current, newPassword: passwords.next });
+      setPasswords({ current: "", next: "", confirm: "" });
+      toast.success("密码已修改，其他设备已退出登录");
+    } catch (error) { toast.error(tenantErrorMessage(error)); }
+    finally { setPasswordSaving(false); }
+  }
+
   return (
+    <div className="grid gap-3">
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -126,5 +143,19 @@ export function TenantSettingsSection({
         </div>
       </CardContent>
     </Card>
+    <Card>
+      <CardHeader><CardTitle>账户安全</CardTitle></CardHeader>
+      <CardContent>
+        <form className="grid max-w-xl gap-4" onSubmit={savePassword}>
+          <FieldGroup>
+            <Field><FieldLabel htmlFor="tenant-current-password">当前密码</FieldLabel><Input id="tenant-current-password" type="password" autoComplete="current-password" value={passwords.current} onChange={(event) => setPasswords((value) => ({ ...value, current: event.target.value }))} /></Field>
+            <Field><FieldLabel htmlFor="tenant-next-password">新密码</FieldLabel><Input id="tenant-next-password" type="password" autoComplete="new-password" value={passwords.next} onChange={(event) => setPasswords((value) => ({ ...value, next: event.target.value }))} /><FieldDescription>至少 10 位；修改后其他设备会退出登录。</FieldDescription></Field>
+            <Field><FieldLabel htmlFor="tenant-confirm-password">确认新密码</FieldLabel><Input id="tenant-confirm-password" type="password" autoComplete="new-password" value={passwords.confirm} onChange={(event) => setPasswords((value) => ({ ...value, confirm: event.target.value }))} /></Field>
+          </FieldGroup>
+          <div><Button type="submit" disabled={passwordSaving}>{passwordSaving && <Spinner data-icon="inline-start" />}修改密码</Button></div>
+        </form>
+      </CardContent>
+    </Card>
+    </div>
   );
 }

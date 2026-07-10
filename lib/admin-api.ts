@@ -410,6 +410,18 @@ export function createTenantInvite(id: string) {
   );
 }
 
+export function createTenantPasswordReset(id: string) {
+  return adminRequest<{ token: string; resetPath: string; expiresAt: string }>(
+    `/api/admin/tenants/${encodePath(id)}/password-reset`, { method: "POST" },
+  );
+}
+
+export function revokeTenantSessions(id: string) {
+  return adminRequest<{ revoked: true }>(
+    `/api/admin/tenants/${encodePath(id)}/sessions`, { method: "DELETE" },
+  );
+}
+
 export function listChannels() {
   return adminRequest<ChannelRecord[]>("/api/admin/channels");
 }
@@ -590,6 +602,10 @@ export function logoutWebSession() {
   });
 }
 
+export function changeAdminPassword(payload: { currentPassword: string; newPassword: string }) {
+  return adminRequest<{ changed: true }>("/api/admin/account/password", { method: "POST", body: payload });
+}
+
 export function getOverview(options: { days?: number } = {}) {
   const params = new URLSearchParams();
   if (options.days) {
@@ -604,6 +620,7 @@ export function getGlobalSettings() {
 }
 
 export function updateGlobalSettings(payload: {
+  publicBaseUrl?: string;
   proxy?: CredentialProxyPayload;
   userAgent?: string | null;
   fullRequestLoggingEnabled?: boolean;

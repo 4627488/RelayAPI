@@ -99,6 +99,8 @@ export interface PublicTenant extends TenantRecord {
   enabledApiKeyCount: number;
   todayTokens: number;
   pendingInvite: boolean;
+  lastLoginAt: string | null;
+  passwordChangedAt: string | null;
 }
 
 export interface TenantUserRecord {
@@ -110,8 +112,27 @@ export interface TenantUserRecord {
   enabled: boolean;
   passwordHash: string | null;
   lastLoginAt: string | null;
+  passwordChangedAt: string | null;
+  sessionVersion: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TenantPasswordResetRecord {
+  id: string;
+  tenantId: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+  consumedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+export interface CreatedTenantPasswordReset {
+  token: string;
+  resetPath: string;
+  expiresAt: string;
 }
 
 export interface TenantInviteRecord {
@@ -263,6 +284,7 @@ export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
 };
 
 export interface GlobalSettingsRecord {
+  publicBaseUrl: string;
   proxy: PublicCredentialProxyConfig | null;
   proxySource: "database" | "environment" | "none";
   userAgent: string;

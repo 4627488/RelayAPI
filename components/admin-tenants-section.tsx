@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import {
   CopyIcon,
   LinkIcon,
+  KeyRoundIcon,
+  LogOutIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
@@ -61,7 +63,9 @@ import {
   adminErrorMessage,
   createTenant,
   createTenantInvite,
+  createTenantPasswordReset,
   deleteTenant,
+  revokeTenantSessions,
   updateTenant,
   type TenantPayload,
 } from "@/lib/admin-api";
@@ -99,15 +103,18 @@ const EMPTY_TENANT_FORM: TenantFormState = {
 
 export function AdminTenantsSection({
   onChanged,
+  publicBaseUrl,
   tenants,
 }: {
   tenants: PublicTenant[];
   onChanged: (tenants: PublicTenant[]) => void;
+  publicBaseUrl: string;
 }) {
   const [creating, setCreating] = React.useState(false);
   const [editing, setEditing] = React.useState<PublicTenant | null>(null);
   const [pendingInvite, setPendingInvite] =
     React.useState<CreatedTenantInvite | null>(null);
+  const [passwordReset, setPasswordReset] = React.useState<{ url: string; expiresAt: string } | null>(null);
 
   async function removeTenant(id: string) {
     if (!window.confirm("确认删除这个租户？该操作会禁用租户并保留历史日志。")) {
@@ -135,6 +142,21 @@ export function AdminTenantsSection({
     } catch (error) {
       toast.error(adminErrorMessage(error));
     }
+  }
+
+  async function resetPassword(id: string) {
+    try {
+      const result = await createTenantPasswordReset(id);
+      const base = publicBaseUrl || window.location.origin;
+      setPasswordReset({ url: `${base.replace(/\/$/, "")}${result.resetPath}`, expiresAt: result.expiresAt });
+      toast.success("密码重置链接已生成");
+    } catch (error) { toast.error(adminErrorMessage(error)); }
+  }
+
+  async function revokeSessions(id: string) {
+    if (!window.confirm("让该租户的所有已登录设备立即退出？")) return;
+    try { await revokeTenantSessions(id); toast.success("租户会话已全部失效"); }
+    catch (error) { toast.error(adminErrorMessage(error)); }
   }
 
   return (
@@ -180,7 +202,7 @@ export function AdminTenantsSection({
                     </TableCell>
                     <TableCell>
                       {tenant.ownerEmail ? (
-                        tenant.ownerEmail
+                        <div><div>{tenant.ownerEmail}</div><div className="text-xs text-muted-foreground">最后登录 {formatDateTime(tenant.lastLoginAt)}</div></div>
                       ) : tenant.pendingInvite ? (
                         <WorkspaceStatusBadge tone="warning">
                           invite
@@ -208,6 +230,14 @@ export function AdminTenantsSection({
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-2">
+                        <Button
+                          type="button" variant="outline" size="icon" aria-label="生成密码重置链接"
+                          disabled={!tenant.ownerEmail} onClick={() => resetPassword(tenant.id)}
+                        ><KeyRoundIcon /></Button>
+                        <Button
+                          type="button" variant="outline" size="icon" aria-label="强制退出所有设备"
+                          disabled={!tenant.ownerEmail} onClick={() => revokeSessions(tenant.id)}
+                        ><LogOutIcon /></Button>
                         <Button
                           type="button"
                           variant="outline"
@@ -279,14 +309,31 @@ export function AdminTenantsSection({
       />
       <InviteDialog
         invite={pendingInvite}
+        publicBaseUrl={publicBaseUrl}
         onOpenChange={(open) => {
           if (!open) {
             setPendingInvite(null);
           }
         }}
       />
+      <PasswordResetDialog value={passwordReset} onOpenChange={(open) => { if (!open) setPasswordReset(null); }} />
     </>
   );
+}
+
+function PasswordResetDialog({ value, onOpenChange }: { value: { url: string; expiresAt: string } | null; onOpenChange: (open: boolean) => void }) {
+  async function copy() {
+    if (!value) return;
+    await navigator.clipboard.writeText(value.url);
+    toast.success("重置链接已复制");
+  }
+  return <Dialog open={Boolean(value)} onOpenChange={onOpenChange}>
+    <DialogContent><DialogHeader><DialogTitle>密码重置链接</DialogTitle><DialogDescription>链接一小时内单次有效；再次生成会使旧链接失效。</DialogDescription></DialogHeader>
+      <div className="rounded-md border bg-muted/50 p-3 text-sm break-all">{value?.url}</div>
+      <p className="text-sm text-muted-foreground">过期时间：{formatDateTime(value?.expiresAt || null)}</p>
+      <DialogFooter><Button type="button" variant="outline" onClick={copy}><CopyIcon data-icon="inline-start" />复制链接</Button><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>;
 }
 
 function TenantFormDialog({
@@ -576,15 +623,19 @@ function TenantFormDialog({
 function InviteDialog({
   invite,
   onOpenChange,
+  publicBaseUrl,
 }: {
   invite: CreatedTenantInvite | null;
   onOpenChange: (open: boolean) => void;
+  publicBaseUrl: string;
 }) {
+  const origin = publicBaseUrl || (typeof window !== "undefined" ? window.location.origin : "");
+  const inviteUrl = invite ? `${origin.replace(/\/$/, "")}/tenant/activate?token=${encodeURIComponent(invite.token)}` : "";
   async function copyInvite() {
     if (!invite) {
       return;
     }
-    await navigator.clipboard.writeText(invite.activateUrl);
+    await navigator.clipboard.writeText(inviteUrl);
     toast.success("邀请链接已复制");
   }
 
@@ -598,7 +649,7 @@ function InviteDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="rounded-lg border bg-muted/50 p-3 text-sm break-all">
-          {invite?.activateUrl}
+          {inviteUrl}
         </div>
         <p className="text-sm text-muted-foreground">
           过期时间：{formatDateTime(invite?.expiresAt || null)}

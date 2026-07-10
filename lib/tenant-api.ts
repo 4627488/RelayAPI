@@ -75,6 +75,14 @@ export function logoutTenantSession() {
   });
 }
 
+export function changeTenantPassword(payload: { currentPassword: string; newPassword: string }) {
+  return tenantRequest<{ changed: true }>("/api/tenant/auth/password", { method: "POST", body: payload });
+}
+
+export function resetTenantPassword(payload: { token: string; password: string }) {
+  return tenantRequest<{ reset: true }>("/api/tenant/auth/reset-password", { method: "POST", body: payload });
+}
+
 export async function listTenantApiKeys() {
   const result = await tenantRequest<{ object: "list"; data: PublicApiKey[] }>(
     "/api/tenant/api-keys",

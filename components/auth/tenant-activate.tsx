@@ -33,8 +33,8 @@ export function TenantActivate({ token }: { token: string }) {
       setError("请输入有效邮箱");
       return;
     }
-    if (password.length < 8) {
-      setError("密码至少需要 8 位");
+    if (password.length < 10) {
+      setError("密码至少需要 10 位");
       return;
     }
     if (password !== confirmPassword) {

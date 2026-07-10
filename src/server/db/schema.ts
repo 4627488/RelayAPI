@@ -171,12 +171,32 @@ export const tenantUsers = sqliteTable(
     enabled: integer("enabled").notNull().default(1),
     passwordHash: text("password_hash"),
     lastLoginAt: text("last_login_at"),
+    passwordChangedAt: text("password_changed_at"),
+    sessionVersion: integer("session_version").notNull().default(1),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("tenant_users_email_unique").on(table.email),
     index("idx_tenant_users_tenant").on(table.tenantId),
+  ],
+);
+
+export const tenantPasswordResets = sqliteTable(
+  "tenant_password_resets",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    userId: text("user_id").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+    revokedAt: text("revoked_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("tenant_password_resets_token_unique").on(table.tokenHash),
+    index("idx_tenant_password_resets_tenant").on(table.tenantId, table.createdAt),
   ],
 );
 
@@ -370,6 +390,7 @@ export const mainSchema = {
   proxyPool,
   settings,
   tenantInvites,
+  tenantPasswordResets,
   tenants,
   tenantUsers,
 };

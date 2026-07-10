@@ -17,6 +17,7 @@ export const WEB_SESSION_COOKIE = "relay_web_session";
 const ADMIN_USERNAME = "admin";
 const ADMIN_ACCOUNT_FILE = ".relay-admin-account";
 const WEB_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const ADMIN_PASSWORD_MIN_LENGTH = 10;
 const ADMIN_PASSWORD_ENV_NAMES = ["RELAY_ADMIN_PASSWORD", "ADMIN_PASSWORD"];
 
 type StoredAdminAccount = {
@@ -55,6 +56,28 @@ export function verifyAdminCredentials(input: {
     return false;
   }
   return verifyPassword(password, getAdminAccountRecord().passwordHash);
+}
+
+export function changeAdminPassword(currentInput: unknown, nextInput: unknown) {
+  const current = typeof currentInput === "string" ? currentInput : "";
+  const next = typeof nextInput === "string" ? nextInput : "";
+  const account = getAdminAccountRecord();
+  if (!verifyPassword(current, account.passwordHash)) {
+    throw new HttpError(401, "invalid_current_password", "Current password is incorrect");
+  }
+  if (next.length < ADMIN_PASSWORD_MIN_LENGTH) {
+    throw new HttpError(400, "weak_admin_password", `Password must be at least ${ADMIN_PASSWORD_MIN_LENGTH} characters`);
+  }
+  if (account.source === "env") {
+    throw new HttpError(409, "admin_password_managed_by_environment", "Administrator password is managed by an environment variable");
+  }
+  if (verifyPassword(next, account.passwordHash)) {
+    throw new HttpError(400, "password_unchanged", "New password must be different");
+  }
+  const accountPath = path.join(serverConfig.dataDir, ADMIN_ACCOUNT_FILE);
+  const stored: StoredAdminAccount = { v: 1, username: ADMIN_USERNAME, passwordHash: hashPassword(next), createdAt: new Date().toISOString() };
+  fs.writeFileSync(accountPath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
+  cachedAdminAccount = { username: ADMIN_USERNAME, passwordHash: stored.passwordHash, source: "file" };
 }
 
 export function createWebSessionToken(now = Date.now()) {

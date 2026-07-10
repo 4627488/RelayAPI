@@ -112,6 +112,7 @@ export function TenantOverviewSection({
   const [keyFilter, setKeyFilter] = React.useState<KeyFilter>("all");
   const period = periodValue[0] || "day";
   const totals = stats.totals;
+  const today = stats.byDay[0] || totals;
   const filteredStats = React.useMemo(
     () => scopedStats(stats, keyFilter),
     [stats, keyFilter],
@@ -126,7 +127,6 @@ export function TenantOverviewSection({
     keyFilter === "all"
       ? null
       : stats.byApiKey.find((row) => row.apiKeyId === keyFilter) || null;
-  const cacheHitRate = totals.cacheHitRate;
   const selectedCacheHitRate = filteredStats.totals.cacheHitRate;
   const tenantLimitValue = tenant.tokenLimitDaily
     ? Math.round((tenant.todayTokens / tenant.tokenLimitDaily) * 100)
@@ -136,28 +136,28 @@ export function TenantOverviewSection({
     <div className="grid gap-3">
       <MetricStrip>
         <MetricStripItem
-          label="今日 Token"
-          value={formatTokenNumber(tenant.todayTokens)}
+          label="剩余额度"
+          value={tenant.tokenLimitDaily ? formatTokenNumber(Math.max(tenant.tokenLimitDaily - tenant.todayTokens, 0)) : "不限"}
           detail={
             tenant.tokenLimitDaily
-              ? `上限 ${formatTokenNumber(tenant.tokenLimitDaily)}`
-              : "无日限额"
+              ? `已用 ${formatTokenNumber(tenant.todayTokens)} / ${formatTokenNumber(tenant.tokenLimitDaily)}`
+              : `今日已用 ${formatTokenNumber(tenant.todayTokens)}`
           }
         />
         <MetricStripItem
+          label="今日请求"
+          value={formatNumber(today.requestCount)}
+          detail={`${formatNumber(today.errorCount)} 次失败`}
+        />
+        <MetricStripItem
           label="成功率"
-          value={formatRatioPercent(totals.successCount, totals.requestCount)}
-          detail={`${formatNumber(totals.successCount)} / ${formatNumber(totals.requestCount)}`}
+          value={formatRatioPercent(today.successCount, today.requestCount)}
+          detail={`${formatNumber(today.errorCount)} 次失败`}
         />
         <MetricStripItem
-          label="缓存"
-          value={formatPercent(cacheHitRate)}
-          detail={`${formatTokenNumber(totals.cachedTokens)} 缓存`}
-        />
-        <MetricStripItem
-          label="活跃 Key"
-          value={formatNumber(totals.distinctApiKeyCount)}
-          detail={`${formatNumber(tenant.enabledApiKeyCount)} 启用`}
+          label="P95 首 Token"
+          value={formatDuration(today.p95FirstTokenLatencyMs)}
+          detail={`P95 总延迟 ${formatDuration(today.p95LatencyMs)}`}
         />
       </MetricStrip>
 

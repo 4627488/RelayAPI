@@ -50,6 +50,7 @@ import { Input } from "@/components/ui/input";
 import {
   Field,
   FieldDescription,
+  FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
@@ -92,6 +93,7 @@ import { LogsSection } from "@/components/admin/logs-section";
 import { ProxyPoolSection } from "@/components/admin/proxy-pool-section";
 import {
   adminErrorMessage,
+  changeAdminPassword,
   getGlobalSettings,
   getOverview,
   getRequestLogsPage,
@@ -653,7 +655,7 @@ export function AdminWorkbench({
             )}
             {activeSection === "access" && (
               <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-                <AdminTenantsSection tenants={tenants} onChanged={setTenants} />
+                <AdminTenantsSection tenants={tenants} onChanged={setTenants} publicBaseUrl={globalSettings.publicBaseUrl} />
                 <ApiKeysSection
                   apiKeys={apiKeys}
                   channels={channels}
@@ -698,6 +700,10 @@ function SettingsSection({
   );
   const [timeZoneSaving, setTimeZoneSaving] = React.useState(false);
   const [pruning, setPruning] = React.useState(false);
+  const [publicBaseUrl, setPublicBaseUrl] = React.useState(settings.publicBaseUrl);
+  const [publicBaseUrlSaving, setPublicBaseUrlSaving] = React.useState(false);
+  const [adminPasswords, setAdminPasswords] = React.useState({ current: "", next: "", confirm: "" });
+  const [adminPasswordSaving, setAdminPasswordSaving] = React.useState(false);
   const [retentionForm, setRetentionForm] = React.useState(() => ({
     requestLogRetentionDays: String(settings.requestLogRetentionDays ?? 90),
     requestLogDetailRetentionDays: String(
@@ -767,6 +773,29 @@ function SettingsSection({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function savePublicBaseUrl() {
+    setPublicBaseUrlSaving(true);
+    try {
+      const updated = await updateGlobalSettings({ publicBaseUrl: publicBaseUrl.trim() });
+      onSaved(updated); setPublicBaseUrl(updated.publicBaseUrl);
+      toast.success("公开网站地址已保存");
+    } catch (error) { toast.error(adminErrorMessage(error)); }
+    finally { setPublicBaseUrlSaving(false); }
+  }
+
+  async function saveAdminPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (adminPasswords.next.length < 10) return toast.error("新密码至少需要 10 位");
+    if (adminPasswords.next !== adminPasswords.confirm) return toast.error("两次输入的新密码不一致");
+    setAdminPasswordSaving(true);
+    try {
+      await changeAdminPassword({ currentPassword: adminPasswords.current, newPassword: adminPasswords.next });
+      setAdminPasswords({ current: "", next: "", confirm: "" });
+      toast.success("管理员密码已修改，其他会话已失效");
+    } catch (error) { toast.error(adminErrorMessage(error)); }
+    finally { setAdminPasswordSaving(false); }
   }
 
   async function clearProxy() {
@@ -981,6 +1010,18 @@ function SettingsSection({
           <CardTitle>全局设置</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-3 rounded-md border bg-muted/25 p-3 text-sm">
+            <div className="font-medium">公开网站地址</div>
+            <Field><FieldLabel htmlFor="public-base-url">外部访问 URL</FieldLabel><Input id="public-base-url" type="url" value={publicBaseUrl} placeholder="https://relay.example.com" onChange={(event) => setPublicBaseUrl(event.target.value)} /><FieldDescription>用于生成邀请和密码重置链接；留空时使用当前浏览器域名。</FieldDescription></Field>
+            <div><Button type="button" size="sm" disabled={publicBaseUrlSaving} onClick={savePublicBaseUrl}>{publicBaseUrlSaving && <Spinner data-icon="inline-start" />}保存网站地址</Button></div>
+          </div>
+          <div className="grid gap-3 rounded-md border bg-muted/25 p-3 text-sm">
+            <div className="font-medium">管理员密码</div>
+            <form className="grid gap-3" onSubmit={saveAdminPassword}>
+              <FieldGroup><Field><FieldLabel htmlFor="admin-current-password">当前密码</FieldLabel><Input id="admin-current-password" type="password" autoComplete="current-password" value={adminPasswords.current} onChange={(event) => setAdminPasswords((value) => ({ ...value, current: event.target.value }))} /></Field><Field><FieldLabel htmlFor="admin-next-password">新密码</FieldLabel><Input id="admin-next-password" type="password" autoComplete="new-password" value={adminPasswords.next} onChange={(event) => setAdminPasswords((value) => ({ ...value, next: event.target.value }))} /></Field><Field><FieldLabel htmlFor="admin-confirm-password">确认新密码</FieldLabel><Input id="admin-confirm-password" type="password" autoComplete="new-password" value={adminPasswords.confirm} onChange={(event) => setAdminPasswords((value) => ({ ...value, confirm: event.target.value }))} /></Field></FieldGroup>
+              <div><Button type="submit" size="sm" disabled={adminPasswordSaving}>{adminPasswordSaving && <Spinner data-icon="inline-start" />}修改管理员密码</Button></div>
+            </form>
+          </div>
           <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm xl:col-span-2">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="grid gap-1">
@@ -2311,8 +2352,8 @@ function buildOverviewTrendMetrics(
     today.requestCount,
     yesterday.requestCount,
   );
-  const tokenChange = percentChange(today.totalTokens, yesterday.totalTokens);
-  const latencyChange = percentChange(today.avgLatencyMs, yesterday.avgLatencyMs);
+  const tokenChange = percentChange(today.avgTokensPerRequest, yesterday.avgTokensPerRequest);
+  const latencyChange = percentChange(today.p95FirstTokenLatencyMs, yesterday.p95FirstTokenLatencyMs);
   const todaySuccessRate = dailySuccessRate(today);
   const yesterdaySuccessRate = dailySuccessRate(yesterday);
   const successPointChange = todaySuccessRate - yesterdaySuccessRate;
@@ -2343,25 +2384,25 @@ function buildOverviewTrendMetrics(
       icon: ShieldCheckIcon,
     },
     {
-      title: "今日 Token",
-      value: formatTokenNumber(today.totalTokens),
-      description: `输入 ${formatTokenNumber(today.promptTokens)} · 输出 ${formatTokenNumber(today.completionTokens)} · 缓存 ${formatTokenNumber(today.cachedTokens)} (${formatPercent(today.cacheHitRate)})`,
+      title: "每请求 Token",
+      value: formatTokenNumber(today.avgTokensPerRequest),
+      description: `缓存节省 ${formatTokenNumber(today.cachedTokens)} · 命中 ${formatPercent(today.cacheHitRate)}`,
       changeLabel: formatChangePercent(tokenChange.value),
       direction: tokenChange.direction,
       tone: directionTone(tokenChange.direction),
-      data: days.map((row) => ({ date: row.date, value: row.totalTokens })),
+      data: days.map((row) => ({ date: row.date, value: row.avgTokensPerRequest })),
       icon: DatabaseIcon,
     },
     {
-      title: "今日平均延迟",
-      value: formatDuration(today.avgLatencyMs),
-      description: `请求平均耗时 · ${formatTokenNumber(Math.round(today.tokensPerSecond))} token/秒`,
+      title: "P95 首 Token",
+      value: formatDuration(today.p95FirstTokenLatencyMs),
+      description: `P95 总延迟 ${formatDuration(today.p95LatencyMs)} · ${formatTokenNumber(Math.round(today.tokensPerSecond))} token/秒`,
       changeLabel: formatChangePercent(latencyChange.value),
       direction: latencyChange.direction,
       tone: directionTone(latencyChange.direction, { lowerIsBetter: true }),
       data: days.map((row) => ({
         date: row.date,
-        value: row.avgLatencyMs,
+        value: row.p95FirstTokenLatencyMs,
       })),
       icon: Clock3Icon,
     },

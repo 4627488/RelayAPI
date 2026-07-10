@@ -42,4 +42,12 @@ describe("global timezone settings", () => {
     expect(() => settings.patchGlobalSettings({ timeZone: "Mars/Olympus" }))
       .toThrowError(/valid IANA timezone/);
   });
+
+  it("normalizes and validates the public website URL", () => {
+    expect(settings.normalizePublicBaseUrl("https://relay.example.com///"))
+      .toBe("https://relay.example.com");
+    expect(settings.normalizePublicBaseUrl("")) .toBe("");
+    expect(() => settings.normalizePublicBaseUrl("ftp://relay.example.com"))
+      .toThrowError(/HTTP/);
+  });
 });

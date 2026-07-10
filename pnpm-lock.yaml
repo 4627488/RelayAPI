@@ -91,6 +91,9 @@ importers:
       eslint-config-next:
         specifier: 16.2.6
         version: 16.2.6(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3)
+      expect-type:
+        specifier: 1.3.0
+        version: 1.3.0
       shadcn:
         specifier: ^4.6.0
         version: 4.6.0(@types/node@24.12.2)(typescript@5.9.3)
@@ -2452,8 +2455,8 @@ packages:
     resolution: {integrity: sha512-XYfuKMvj4O35f/pOXLObndIRvyQ+/+6AhODh+OKWj9S9498pHHn/IMszH+gt0fBCRWMNfk1ZSp5x3AifmnI2vg==}
     engines: {node: '>=6'}
 
-  expect-type@1.4.0:
-    resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
+  expect-type@1.3.0:
+    resolution: {integrity: sha512-knvyeauYhqjOYvQ66MznSMs83wmHrCycNEN6Ao+2AeYEfxUIkuiVxdEa1qlGEPK+We3n0THiDciYSsCcgW/DoA==}
     engines: {node: '>=12.0.0'}
 
   express-rate-limit@8.5.0:
@@ -6387,7 +6390,7 @@ snapshots:
 
   expand-template@2.0.3: {}
 
-  expect-type@1.4.0: {}
+  expect-type@1.3.0: {}
 
   express-rate-limit@8.5.0(express@5.2.1):
     dependencies:
@@ -8139,7 +8142,7 @@ snapshots:
       '@vitest/spy': 4.1.9
       '@vitest/utils': 4.1.9
       es-module-lexer: 2.3.0
-      expect-type: 1.4.0
+      expect-type: 1.3.0
       magic-string: 0.30.21
       obug: 2.1.3
       pathe: 2.0.3

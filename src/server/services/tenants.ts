@@ -11,6 +11,7 @@ import {
 import {
   getTenantById,
   getTenantInviteByTokenHash,
+  getTenantPasswordResetByTokenHash,
   getLatestTenantInvite,
   getPendingTenantInvite,
   getTenantOwnerUser,
@@ -18,9 +19,11 @@ import {
   getTenantUserById,
   insertTenant,
   insertTenantInvite,
+  insertTenantPasswordReset,
   insertTenantUser,
   listTenants,
   markTenantInviteAccepted,
+  consumeTenantPasswordReset,
   publicProxy,
   updateTenant,
   updateTenantUser,
@@ -50,12 +53,14 @@ export const TENANT_SESSION_COOKIE = "relay_tenant_session";
 
 const TENANT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const TENANT_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
-const PASSWORD_MIN_LENGTH = 8;
+const PASSWORD_MIN_LENGTH = 10;
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
 
 type TenantSessionPayload = {
   v: 1;
   tenantId: string;
   userId: string;
+  sessionVersion: number;
   iat: number;
   exp: number;
   nonce: string;
@@ -352,6 +357,7 @@ export function createTenantSessionToken(
     v: 1,
     tenantId: context.tenant.id,
     userId: context.user.id,
+    sessionVersion: context.user.sessionVersion,
     iat: issuedAt,
     exp: issuedAt + TENANT_SESSION_TTL_SECONDS,
     nonce: crypto.randomBytes(16).toString("base64url"),
@@ -374,11 +380,75 @@ export function getTenantSessionFromCookieValue(
     user.tenantId !== tenant.id ||
     !tenant.enabled ||
     !user.enabled ||
+    payload.sessionVersion !== user.sessionVersion ||
     (tenant.expiresAt && Date.parse(tenant.expiresAt) <= Date.now())
   ) {
     return null;
   }
   return { tenant, user };
+}
+
+export function createTenantPasswordReset(tenantId: string) {
+  const tenant = requireTenantById(tenantId);
+  const user = getTenantOwnerUser(tenant.id);
+  if (!user) {
+    throw new HttpError(409, "tenant_user_missing", "Tenant has no registered owner");
+  }
+  const token = `relay_reset_${base64Url(32)}`;
+  const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS).toISOString();
+  insertTenantPasswordReset({
+    id: randomId("treset"), tenantId: tenant.id, userId: user.id,
+    tokenHash: sha256(token), expiresAt,
+  });
+  return { token, resetPath: `/tenant/reset-password?token=${encodeURIComponent(token)}`, expiresAt };
+}
+
+export function completeTenantPasswordReset(tokenInput: unknown, passwordInput: unknown): TenantSessionContext {
+  const token = cleanString(tokenInput);
+  const password = cleanString(passwordInput);
+  assertPassword(password);
+  const reset = token ? getTenantPasswordResetByTokenHash(sha256(token)) : null;
+  if (!reset || reset.consumedAt || reset.revokedAt || Date.parse(reset.expiresAt) <= Date.now()) {
+    throw new HttpError(400, "invalid_password_reset", "Password reset link is invalid or expired");
+  }
+  const tenant = requireUsableTenant(reset.tenantId);
+  const user = getTenantUserById(reset.userId);
+  if (!user || user.tenantId !== tenant.id || !user.enabled) {
+    throw new HttpError(400, "invalid_password_reset", "Password reset link is invalid or expired");
+  }
+  const updated = updateTenantUser(user.id, {
+    passwordHash: hashPassword(password),
+    passwordChangedAt: new Date().toISOString(),
+    sessionVersion: user.sessionVersion + 1,
+  });
+  consumeTenantPasswordReset(reset.id);
+  if (!updated) throw new Error("Failed to reset tenant password");
+  return { tenant, user: updated };
+}
+
+export function changeTenantPassword(context: TenantSessionContext, currentInput: unknown, nextInput: unknown) {
+  const current = cleanString(currentInput);
+  const next = cleanString(nextInput);
+  assertPassword(next);
+  if (!context.user.passwordHash || !verifyPassword(current, context.user.passwordHash)) {
+    throw new HttpError(401, "invalid_current_password", "Current password is incorrect");
+  }
+  if (verifyPassword(next, context.user.passwordHash)) {
+    throw new HttpError(400, "password_unchanged", "New password must be different");
+  }
+  const updated = updateTenantUser(context.user.id, {
+    passwordHash: hashPassword(next), passwordChangedAt: new Date().toISOString(),
+    sessionVersion: context.user.sessionVersion + 1,
+  });
+  if (!updated) throw new Error("Failed to change tenant password");
+  return { tenant: context.tenant, user: updated };
+}
+
+export function revokeTenantSessions(tenantId: string) {
+  const tenant = requireTenantById(tenantId);
+  const user = getTenantOwnerUser(tenant.id);
+  if (!user) throw new HttpError(409, "tenant_user_missing", "Tenant has no registered owner");
+  return updateTenantUser(user.id, { sessionVersion: user.sessionVersion + 1 });
 }
 
 export function requireTenantRequest(request: Request): TenantSessionContext {
@@ -537,6 +607,8 @@ export function toPublicTenant(tenant: TenantWithSecrets): PublicTenant {
     enabledApiKeyCount: counts.enabled,
     todayTokens: getTenantDailyUsage(tenant.id),
     pendingInvite: Boolean(pendingInvite),
+    lastLoginAt: getTenantOwnerUser(tenant.id)?.lastLoginAt || null,
+    passwordChangedAt: getTenantOwnerUser(tenant.id)?.passwordChangedAt || null,
   };
 }
 
@@ -587,6 +659,7 @@ function decodeTenantSessionPayload(value: string | null | undefined) {
       parsed.v === 1 &&
       typeof parsed.tenantId === "string" &&
       typeof parsed.userId === "string" &&
+      typeof parsed.sessionVersion === "number" &&
       typeof parsed.iat === "number" &&
       typeof parsed.exp === "number" &&
       typeof parsed.nonce === "string" &&
