@@ -41,7 +41,7 @@ export function estimateQuotaSample(input: {
   if (input.observedNanoUsd <= BigInt(0)) {
     return { accepted: false, reason: "missing_usage" };
   }
-  const planShares = sharesForPlan(input.planType, input.planShares);
+  const planShares = quotaSharesForPlan(input.planType, input.planShares);
   const deltaThousandths = BigInt(Math.round(delta * 1000));
   const credentialCapacity =
     (input.observedNanoUsd * BigInt(100_000)) / deltaThousandths;
@@ -85,7 +85,7 @@ export function deriveQuotaBaseline(samples: AcceptedCalibrationSample[]) {
   };
 }
 
-function sharesForPlan(planType: string, overrides?: Record<string, number>) {
+export function quotaSharesForPlan(planType: string, overrides?: Record<string, number>) {
   const plan = String(planType || "").trim().toLowerCase();
   const configured = overrides?.[plan];
   if (configured && Number.isInteger(configured) && configured > 0) {

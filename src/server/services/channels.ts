@@ -27,6 +27,7 @@ import {
 import { serverConfig } from "@/src/server/config/env";
 import { randomId } from "@/src/server/services/crypto";
 import { HttpError } from "@/src/server/http/errors";
+import { eligibleCredentialIdsForTenant } from "@/src/server/services/tenantQuota";
 
 const THINKING_SUFFIX_LEVELS = new Set([
   "none",
@@ -154,6 +155,9 @@ export function selectChannel(input: {
   }
 
   const now = Date.now();
+  const eligibleCredentialIds = input.apiKey.tenantId
+    ? new Set(eligibleCredentialIdsForTenant(input.apiKey.tenantId))
+    : null;
   const availableChannels = listChannels().filter((channel) =>
     isChannelAvailable(channel, input.apiKey, model, baseModel, now),
   );
@@ -166,6 +170,7 @@ export function selectChannel(input: {
       channel,
       credentialsById,
       now,
+      eligibleCredentialIds,
     );
     if (!credential) {
       return [];
@@ -377,12 +382,14 @@ function selectCredentialForChannel(
   channel: ChannelRecord,
   credentialsById: Map<string, CredentialRoutingRecord>,
   now: number,
+  eligibleCredentialIds: Set<string> | null,
 ) {
   const credentials = channel.credentialIds
     .map((credentialId) => credentialsById.get(credentialId))
     .filter((credential): credential is CredentialRoutingRecord =>
       Boolean(
         credential?.enabled &&
+        (!eligibleCredentialIds || eligibleCredentialIds.has(credential.id)) &&
         (!credential.cooldownUntil ||
           Date.parse(credential.cooldownUntil) <= now),
       ),

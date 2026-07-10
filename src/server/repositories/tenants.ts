@@ -34,7 +34,6 @@ export interface SaveTenantInput {
   name: string;
   ownerEmail: string;
   enabled: boolean;
-  quotaShares: number | null;
   maxApiKeys: number | null;
   tokenLimitDaily: number | null;
   rateLimitPerMinute: number | null;
@@ -82,8 +81,6 @@ export function insertTenant(input: SaveTenantInput) {
       name: input.name,
       ownerEmail: input.ownerEmail,
       enabled: input.enabled ? 1 : 0,
-      quotaSharesMilli:
-        input.quotaShares === null ? null : Math.round(input.quotaShares * 1000),
       maxApiKeys: input.maxApiKeys,
       tokenLimitDaily: input.tokenLimitDaily,
       rateLimitPerMinute: input.rateLimitPerMinute,
@@ -122,8 +119,6 @@ export function updateTenant(id: string, patch: UpdateTenantInput) {
       name: next.name,
       ownerEmail: next.ownerEmail,
       enabled: next.enabled ? 1 : 0,
-      quotaSharesMilli:
-        next.quotaShares === null ? null : Math.round(next.quotaShares * 1000),
       maxApiKeys: next.maxApiKeys,
       tokenLimitDaily: next.tokenLimitDaily,
       rateLimitPerMinute: next.rateLimitPerMinute,
@@ -385,8 +380,6 @@ function toTenantRecord(row: TenantRow): TenantWithSecrets {
     name: row.name,
     ownerEmail: row.ownerEmail,
     enabled: row.enabled === 1,
-    quotaShares:
-      row.quotaSharesMilli === null ? null : row.quotaSharesMilli / 1000,
     maxApiKeys: row.maxApiKeys,
     tokenLimitDaily: row.tokenLimitDaily,
     rateLimitPerMinute: row.rateLimitPerMinute,

@@ -28,7 +28,6 @@ import {
   updateTenant,
   updateTenantUser,
 } from "@/src/server/repositories/tenants";
-import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
 import { listChannelRecords } from "@/src/server/services/channels";
 import { normalizeCodexUserAgentInput } from "@/src/server/services/settings";
 import { base64Url, randomId, sha256 } from "@/src/server/services/crypto";
@@ -38,12 +37,10 @@ import {
 } from "@/src/server/services/passwords";
 import type {
   CreatedTenantInvite,
-  CodexCredentialRecord,
   CredentialProxyConfig,
   CredentialProxyType,
   PublicTenant,
   TenantRecord,
-  TenantResourceCredential,
   TenantResources,
   TenantUserRecord,
   TenantWithSecrets,
@@ -75,7 +72,6 @@ export type TenantPayload = {
   name?: unknown;
   ownerEmail?: unknown;
   enabled?: unknown;
-  quotaShares?: unknown;
   maxApiKeys?: unknown;
   tokenLimitDaily?: unknown;
   rateLimitPerMinute?: unknown;
@@ -116,7 +112,6 @@ export function createTenant(input: TenantPayload): PublicTenant {
     name,
     ownerEmail,
     enabled: input.enabled !== undefined ? Boolean(input.enabled) : true,
-    quotaShares: normalizeQuotaShares(input.quotaShares),
     maxApiKeys: normalizeNullablePositiveInteger(input.maxApiKeys),
     tokenLimitDaily: normalizeNullablePositiveInteger(input.tokenLimitDaily),
     rateLimitPerMinute: normalizeNullablePositiveInteger(
@@ -154,9 +149,6 @@ export function patchTenant(id: string, input: TenantPayload): PublicTenant {
     ...(input.name !== undefined ? { name: cleanString(input.name) } : {}),
     ownerEmail,
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
-    ...(input.quotaShares !== undefined
-      ? { quotaShares: normalizeQuotaShares(input.quotaShares) }
-      : {}),
     ...(input.maxApiKeys !== undefined
       ? { maxApiKeys: normalizeNullablePositiveInteger(input.maxApiKeys) }
       : {}),
@@ -491,68 +483,16 @@ export async function getTenantResources(
       enabled: channel.enabled,
       status: channel.status,
       modelAllowlist: channel.modelAllowlist,
-      credentialIds: channel.credentialIds,
     }));
   const channelModels = [
     ...new Set(channels.flatMap((channel) => channel.modelAllowlist)),
   ];
-  const credentialIds = new Set(
-    channels.flatMap((channel) => channel.credentialIds),
-  );
-  const credentials = (await listPublicCodexCredentials())
-    .filter((credential) => credentialIds.has(credential.id))
-    .map(toTenantResourceCredential)
-    .sort(
-      (left, right) =>
-        Number(right.enabled) - Number(left.enabled) ||
-        right.priority - left.priority ||
-        right.weight - left.weight,
-    );
   return {
     models: tenant.modelAllowlist.length > 0 ? tenant.modelAllowlist : channelModels,
     channels,
-    credentials,
   };
 }
 
-export async function assertTenantCredentialAccess(
-  tenant: TenantWithSecrets,
-  credentialId: string,
-) {
-  const resources = await getTenantResources(tenant);
-  if (!resources.credentials.some((credential) => credential.id === credentialId)) {
-    throw new HttpError(
-      404,
-      "tenant_credential_not_found",
-      "Credential is not available to this tenant",
-    );
-  }
-}
-
-function toTenantResourceCredential(
-  credential: CodexCredentialRecord,
-): TenantResourceCredential {
-  return {
-    id: credential.id,
-    provider: credential.provider,
-    email: credential.email,
-    accountId: credential.accountId,
-    planType: credential.planType,
-    enabled: credential.enabled,
-    priority: credential.priority,
-    weight: credential.weight,
-    fastEnabled: credential.fastEnabled,
-    upstreamTransport: credential.upstreamTransport,
-    useGlobalProxy: credential.useGlobalProxy,
-    proxy: credential.proxy,
-    usageHealth: credential.usageHealth,
-    expiresAt: credential.expiresAt,
-    lastRefreshAt: credential.lastRefreshAt,
-    lastUsedAt: credential.lastUsedAt,
-    cooldownUntil: credential.cooldownUntil,
-    lastError: credential.lastError,
-  };
-}
 
 export function patchTenantSettings(
   context: TenantSessionContext,
@@ -854,21 +794,6 @@ function normalizeNullablePositiveInteger(value: unknown) {
   return Number.isFinite(numberValue) && numberValue > 0
     ? Math.floor(numberValue)
     : null;
-}
-
-function normalizeQuotaShares(value: unknown) {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 100_000) {
-    throw new HttpError(
-      400,
-      "invalid_quota_shares",
-      "Quota shares must be a positive number",
-    );
-  }
-  return Math.round(parsed * 1000) / 1000;
 }
 
 function objectValue(value: unknown) {

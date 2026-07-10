@@ -10,8 +10,6 @@ import type {
   AdminDashboardRequestLogRow,
   AdminDeleteResponse,
   ApiKeyPayload,
-  CodexQuotaReport,
-  CodexResetCreditsReport,
   CredentialProxyPayload,
   RequestLogDetail,
   RequestLogsPage,
@@ -120,15 +118,14 @@ export function getTenantOverview() {
 
 export type TenantQuotaReport = {
   tenantId: string;
-  shares: number | null;
-  windows: Partial<Record<"5h" | "7d", {
-    kind: "5h" | "7d";
-    startedAt: string;
-    resetsAt: string;
-    limitNanoUsd: string;
-    settledNanoUsd: string;
-    reservedNanoUsd: string;
-  }>>;
+  subscriptions: Array<{
+    id: string; name: string; units: number; unitsPerCredential: number;
+    enabled: boolean; startsAt: string; expiresAt: string | null;
+    windows: Partial<Record<"5h" | "7d", {
+      kind: "5h" | "7d"; startedAt: string; resetsAt: string;
+      limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string;
+    }>>;
+  }>;
 };
 
 export function getTenantQuota() {
@@ -188,33 +185,6 @@ export function getTenantRequestLogDetail(id: string) {
   );
 }
 
-export function getTenantCredentialQuota(
-  id: string,
-  options: { refresh?: boolean } = {},
-) {
-  const params = new URLSearchParams();
-  if (options.refresh) {
-    params.set("refresh", "1");
-  }
-  const suffix = params.size ? `?${params.toString()}` : "";
-  return tenantRequest<CodexQuotaReport>(
-    `/api/tenant/codex/credentials/${encodeURIComponent(id)}/quota${suffix}`,
-  );
-}
-
-export function getTenantCredentialResetCredits(
-  id: string,
-  options: { raw?: boolean } = {},
-) {
-  const params = new URLSearchParams();
-  if (options.raw) {
-    params.set("raw", "1");
-  }
-  const suffix = params.size ? `?${params.toString()}` : "";
-  return tenantRequest<CodexResetCreditsReport>(
-    `/api/tenant/codex/credentials/${encodeURIComponent(id)}/quota/reset-credits${suffix}`,
-  );
-}
 
 export type TenantDashboardSnapshot = {
   tenant: PublicTenant;

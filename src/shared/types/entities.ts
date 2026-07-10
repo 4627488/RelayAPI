@@ -66,7 +66,6 @@ export interface CreatedApiKey extends PublicApiKey {
 }
 
 export interface TenantLimits {
-  quotaShares: number | null;
   maxApiKeys: number | null;
   tokenLimitDaily: number | null;
   rateLimitPerMinute: number | null;
@@ -164,7 +163,6 @@ export interface TenantResourceChannel {
   enabled: boolean;
   status: ChannelStatus;
   modelAllowlist: string[];
-  credentialIds: string[];
 }
 
 export interface TenantResourceCredential {
@@ -191,7 +189,6 @@ export interface TenantResourceCredential {
 export interface TenantResources {
   models: string[];
   channels: TenantResourceChannel[];
-  credentials: TenantResourceCredential[];
 }
 
 export interface TenantRuntimeContext {
@@ -199,7 +196,6 @@ export interface TenantRuntimeContext {
   name: string;
   proxy: CredentialProxyConfig | null;
   userAgent: string | null;
-  quotaShares: number | null;
 }
 
 export type CredentialProxyType = "socks5" | "socks5h";

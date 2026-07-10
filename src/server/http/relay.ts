@@ -174,7 +174,7 @@ export async function handleOpenAIResponses(request: Request) {
       selectChannel({ model, apiKey: apiKey! }),
     );
     channel = selected.channel;
-    quotaAdmission = admitRelayQuota(apiKey, model);
+    quotaAdmission = admitRelayQuota(apiKey, model, selected.credential.id);
 
     if (stream) {
       return await forwardCodexStream({
@@ -271,7 +271,7 @@ export async function handleOpenAIResponses(request: Request) {
     }
     return Response.json(raw, {
       status: result.response.status,
-      headers: quotaResponseHeaders(quotaState, apiKey.tenant?.quotaShares),
+      headers: quotaResponseHeaders(quotaState),
     });
   } catch (error) {
     releaseRelayQuota(quotaAdmission);
@@ -418,7 +418,7 @@ async function handleImagesProxy(
         "Image generation is not available for Free Codex credentials",
       );
     }
-    quotaAdmission = admitRelayQuota(apiKey, imageRequest.model);
+    quotaAdmission = admitRelayQuota(apiKey, imageRequest.model, selected.credential.id);
 
     if (imageRequest.stream) {
       return await forwardImagesStream({
@@ -552,7 +552,7 @@ async function handleImagesProxy(
     });
     return Response.json(responsePayload, {
       status: 200,
-      headers: quotaResponseHeaders(quotaState, apiKey.tenant?.quotaShares),
+      headers: quotaResponseHeaders(quotaState),
     });
   } catch (error) {
     releaseRelayQuota(quotaAdmission);
@@ -607,10 +607,10 @@ async function forwardImagesStream(input: {
       "text/event-stream; charset=utf-8",
     ),
   );
-  if (input.quotaAdmission?.state && input.quotaAdmission.shares) {
+  if (input.quotaAdmission?.state) {
     mergeHeaders(
       headers,
-      tenantQuotaHeaders(input.quotaAdmission.state, input.quotaAdmission.shares),
+      tenantQuotaHeaders(input.quotaAdmission.state),
     ).forEach((value, key) => headers.set(key, value));
   }
   if (!response.ok) {
@@ -761,7 +761,7 @@ export async function handleChatCompletions(request: Request) {
     );
     channel = selected.channel;
 
-    quotaAdmission = admitRelayQuota(apiKey, model);
+    quotaAdmission = admitRelayQuota(apiKey, model, selected.credential.id);
 
     if (stream) {
       const { response, credential, upstreamPayload } = await codexFetch(
@@ -817,10 +817,10 @@ export async function handleChatCompletions(request: Request) {
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       });
-      if (quotaAdmission?.state && quotaAdmission.shares) {
+      if (quotaAdmission?.state) {
         mergeHeaders(
           headers,
-          tenantQuotaHeaders(quotaAdmission.state, quotaAdmission.shares),
+          tenantQuotaHeaders(quotaAdmission.state),
         ).forEach((value, key) => headers.set(key, value));
       }
       const fullLog = getFullRequestLoggingSetting();
@@ -987,7 +987,7 @@ export async function handleChatCompletions(request: Request) {
     );
     return Response.json(responsePayload, {
       status: 200,
-      headers: quotaResponseHeaders(quotaState, apiKey.tenant?.quotaShares),
+      headers: quotaResponseHeaders(quotaState),
     });
   } catch (error) {
     releaseRelayQuota(quotaAdmission);
@@ -1049,7 +1049,7 @@ async function handleRawCodexProxy(
       selectChannel({ model, apiKey: apiKey! }),
     );
     channel = selected.channel;
-    quotaAdmission = admitRelayQuota(apiKey, model);
+    quotaAdmission = admitRelayQuota(apiKey, model, selected.credential.id);
     if (stream) {
       return await forwardCodexStream({
         request,
@@ -1143,7 +1143,7 @@ async function handleRawCodexProxy(
           copyUpstreamHeaders(result.response.headers),
           "application/json; charset=utf-8",
         ),
-        quotaResponseHeaders(quotaState, apiKey.tenant?.quotaShares),
+        quotaResponseHeaders(quotaState),
       ),
     });
   } catch (error) {
@@ -1207,13 +1207,10 @@ async function forwardCodexStream(input: {
       input.fallbackContentType,
     ),
   );
-  if (input.quotaAdmission?.state && input.quotaAdmission.shares) {
+  if (input.quotaAdmission?.state) {
     mergeHeaders(
       headers,
-      tenantQuotaHeaders(
-        input.quotaAdmission.state,
-        input.quotaAdmission.shares,
-      ),
+      tenantQuotaHeaders(input.quotaAdmission.state),
     ).forEach((value, key) => headers.set(key, value));
   }
   if (!response.ok) {
@@ -1270,13 +1267,10 @@ async function forwardCodexStream(input: {
               usage,
               credential.id,
             );
-            if (quotaState && input.apiKey.tenant?.quotaShares) {
+            if (quotaState) {
               mergeHeaders(
                 headers,
-                quotaResponseHeaders(
-                  quotaState,
-                  input.apiKey.tenant.quotaShares,
-                ),
+                quotaResponseHeaders(quotaState),
               ).forEach((value, key) => headers.set(key, value));
             }
             captureReplayForResponse({
@@ -2024,10 +2018,11 @@ function emptyUsage(): UsageSnapshot {
   };
 }
 
-function admitRelayQuota(apiKey: RelayApiKeyContext, model: string) {
+function admitRelayQuota(apiKey: RelayApiKeyContext, model: string, credentialId: string) {
   if (apiKey.tenantId) {
     return admitTenantRequest({
         tenantId: apiKey.tenantId,
+        credentialId,
         requestId: crypto.randomUUID(),
         model,
       });
@@ -2035,7 +2030,9 @@ function admitRelayQuota(apiKey: RelayApiKeyContext, model: string) {
   return {
     requestId: crypto.randomUUID(),
     tenantId: "",
-    shares: null,
+    subscriptionId: null,
+    units: null,
+    unitsPerCredential: null,
     price: resolveConfiguredModelPrice(model),
     state: null,
   } satisfies TenantQuotaAdmission;
@@ -2086,9 +2083,8 @@ function releaseRelayQuota(admission: TenantQuotaAdmission | null | undefined) {
 
 function quotaResponseHeaders(
   state: ReturnType<typeof settleTenantRequest>,
-  shares: number | null | undefined,
 ) {
-  return state && shares ? tenantQuotaHeaders(state, shares) : {};
+  return state ? tenantQuotaHeaders(state) : {};
 }
 
 function mergeHeaders(...inputs: HeadersInit[]) {

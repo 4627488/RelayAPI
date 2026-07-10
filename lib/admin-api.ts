@@ -368,7 +368,6 @@ export function transferApiKeyToTenant(id: string, tenantId: string) {
 
 export type TenantPayload = {
   name?: string;
-  quotaShares?: number | null;
   ownerEmail?: string;
   enabled?: boolean;
   maxApiKeys?: number | null;
@@ -381,6 +380,18 @@ export type TenantPayload = {
   proxy?: CredentialProxyPayload;
   userAgent?: string | null;
   expiresAt?: string | null;
+};
+
+export type TenantSubscriptionRecord = {
+  id: string; tenantId: string; credentialId: string; name: string;
+  units: number; unitsPerCredential: number; enabled: boolean; priority: number;
+  startsAt: string; expiresAt: string | null; createdAt: string; updatedAt: string;
+};
+
+export type TenantSubscriptionPayload = {
+  tenantId?: string; credentialId?: string; name?: string; units?: number;
+  unitsPerCredential?: number; enabled?: boolean; priority?: number;
+  startsAt?: string; expiresAt?: string | null;
 };
 
 export type ModelPricingSnapshot = {
@@ -465,6 +476,24 @@ export function updateTenant(id: string, payload: TenantPayload) {
     method: "PATCH",
     body: payload,
   });
+}
+
+export async function listTenantSubscriptions(tenantId?: string) {
+  const suffix = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : "";
+  const result = await adminRequest<{ object: "list"; data: TenantSubscriptionRecord[] }>(`/api/admin/subscriptions${suffix}`);
+  return result.data;
+}
+
+export function createTenantSubscription(payload: TenantSubscriptionPayload) {
+  return adminRequest<TenantSubscriptionRecord>("/api/admin/subscriptions", { method: "POST", body: payload });
+}
+
+export function updateTenantSubscription(id: string, payload: TenantSubscriptionPayload) {
+  return adminRequest<TenantSubscriptionRecord>(`/api/admin/subscriptions/${encodePath(id)}`, { method: "PATCH", body: payload });
+}
+
+export function deleteTenantSubscription(id: string) {
+  return adminRequest<AdminDeleteResponse>(`/api/admin/subscriptions/${encodePath(id)}`, { method: "DELETE" });
 }
 
 export function deleteTenant(id: string) {

@@ -329,9 +329,6 @@ export function RequestLogsWorkbench({
                             {log.stream ? " · stream" : ""}
                           </div>
                         </TableCell>
-                        <TableCell className="whitespace-nowrap font-mono">
-                          {log.cost_nano_usd ? formatCost(log.cost_nano_usd) : <span className="text-muted-foreground">未定价</span>}
-                        </TableCell>
                         <TableCell>{log.model || "-"}</TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1">
@@ -383,6 +380,9 @@ export function RequestLogsWorkbench({
                             cache {formatTokenNumber(log.cached_tokens)} ·{" "}
                             {formatPercent(log.cache_hit_rate)}
                           </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap font-mono">
+                          {log.cost_nano_usd ? formatCost(log.cost_nano_usd) : <span className="text-muted-foreground">未定价</span>}
                         </TableCell>
                         <TableCell>
                           <Button
@@ -475,12 +475,12 @@ function RequestLogDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-5xl">
+      <DialogContent className="h-[min(90vh,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>请求详情</DialogTitle>
           {log && <DialogDescription>{log.method} {log.path}</DialogDescription>}
         </DialogHeader>
-        <div className="min-h-0 overflow-auto">
+        <div className="min-h-0 overscroll-contain overflow-y-auto pr-1">
       {loading ? (
         <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
           <Spinner /> 加载详情

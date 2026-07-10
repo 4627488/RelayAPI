@@ -8,6 +8,7 @@ import {
   KeyRoundIcon,
   LogOutIcon,
   PencilIcon,
+  PackagePlusIcon,
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -64,10 +65,14 @@ import {
   createTenant,
   createTenantInvite,
   createTenantPasswordReset,
+  createTenantSubscription,
+  deleteTenantSubscription,
+  listTenantSubscriptions,
   deleteTenant,
   revokeTenantSessions,
   updateTenant,
   type TenantPayload,
+  type TenantSubscriptionRecord,
 } from "@/lib/admin-api";
 import type { CreatedTenantInvite, PublicTenant } from "@/src/shared/types/entities";
 
@@ -75,7 +80,6 @@ type TenantFormState = {
   name: string;
   ownerEmail: string;
   enabled: boolean;
-  quotaShares: string;
   maxApiKeys: string;
   tokenLimitDaily: string;
   rateLimitPerMinute: string;
@@ -91,7 +95,6 @@ const EMPTY_TENANT_FORM: TenantFormState = {
   name: "",
   ownerEmail: "",
   enabled: true,
-  quotaShares: "",
   maxApiKeys: "",
   tokenLimitDaily: "",
   rateLimitPerMinute: "",
@@ -117,6 +120,7 @@ export function AdminTenantsSection({
   const [pendingInvite, setPendingInvite] =
     React.useState<CreatedTenantInvite | null>(null);
   const [passwordReset, setPasswordReset] = React.useState<{ url: string; expiresAt: string } | null>(null);
+  const [subscriptionTenant, setSubscriptionTenant] = React.useState<PublicTenant | null>(null);
 
   async function removeTenant(id: string) {
     if (!window.confirm("确认删除这个租户？该操作会禁用租户并保留历史日志。")) {
@@ -233,6 +237,10 @@ export function AdminTenantsSection({
                     <TableCell>
                       <div className="flex justify-end gap-2">
                         <Button
+                          type="button" variant="outline" size="icon" aria-label="管理子订阅"
+                          onClick={() => setSubscriptionTenant(tenant)}
+                        ><PackagePlusIcon /></Button>
+                        <Button
                           type="button" variant="outline" size="icon" aria-label="生成密码重置链接"
                           disabled={!tenant.ownerEmail} onClick={() => resetPassword(tenant.id)}
                         ><KeyRoundIcon /></Button>
@@ -319,6 +327,7 @@ export function AdminTenantsSection({
         }}
       />
       <PasswordResetDialog value={passwordReset} onOpenChange={(open) => { if (!open) setPasswordReset(null); }} />
+      <SubscriptionDialog tenant={subscriptionTenant} onOpenChange={(open) => { if (!open) setSubscriptionTenant(null); }} />
     </>
   );
 }
@@ -449,19 +458,6 @@ function TenantFormDialog({
             <FieldLegend>限制</FieldLegend>
             <FieldGroup>
               <div className="grid gap-4 sm:grid-cols-3">
-                <Field>
-                  <FieldLabel htmlFor="tenant-quota-shares">额度份额</FieldLabel>
-                  <Input
-                    id="tenant-quota-shares"
-                    inputMode="decimal"
-                    value={form.quotaShares}
-                    placeholder="不启用"
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, quotaShares: event.target.value }))
-                    }
-                  />
-                  <FieldDescription>Plus=1，Pro=20；例如 3 表示 3 份。</FieldDescription>
-                </Field>
                 <Field>
                   <FieldLabel htmlFor="tenant-max-keys">Key 数上限</FieldLabel>
                   <Input
@@ -688,7 +684,6 @@ function tenantToForm(tenant: PublicTenant): TenantFormState {
     name: tenant.name,
     ownerEmail: tenant.ownerEmail,
     enabled: tenant.enabled,
-    quotaShares: tenant.quotaShares?.toString() || "",
     maxApiKeys: tenant.maxApiKeys?.toString() || "",
     tokenLimitDaily: tenant.tokenLimitDaily?.toString() || "",
     rateLimitPerMinute: tenant.rateLimitPerMinute?.toString() || "",
@@ -706,7 +701,6 @@ function tenantFormToPayload(form: TenantFormState): TenantPayload {
     name: form.name.trim(),
     ownerEmail: form.ownerEmail.trim(),
     enabled: form.enabled,
-    quotaShares: nullablePositiveNumber(form.quotaShares),
     maxApiKeys: nullablePositiveInteger(form.maxApiKeys),
     tokenLimitDaily: nullablePositiveInteger(form.tokenLimitDaily),
     rateLimitPerMinute: nullablePositiveInteger(form.rateLimitPerMinute),
@@ -746,12 +740,19 @@ function nullablePositiveInteger(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
 }
 
-function nullablePositiveNumber(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+function SubscriptionDialog({ tenant, onOpenChange }: { tenant: PublicTenant | null; onOpenChange: (open: boolean) => void }) {
+  const [items, setItems] = React.useState<TenantSubscriptionRecord[]>([]);
+  const [credentialId, setCredentialId] = React.useState("");
+  const [name, setName] = React.useState("");
+  const [units, setUnits] = React.useState("1");
+  const [denominator, setDenominator] = React.useState("20");
+  const [pending, setPending] = React.useState(false);
+  React.useEffect(() => { if (tenant) void listTenantSubscriptions(tenant.id).then(setItems).catch((error) => toast.error(adminErrorMessage(error))); }, [tenant]);
+  async function create() { if (!tenant) return; setPending(true); try { const item = await createTenantSubscription({ tenantId: tenant.id, credentialId: credentialId.trim(), name: name.trim(), units: Math.max(1, Number(units) || 1), unitsPerCredential: Math.max(1, Number(denominator) || 20) }); setItems((current) => [item, ...current]); setCredentialId(""); setName(""); toast.success("子订阅已下发"); } catch (error) { toast.error(adminErrorMessage(error)); } finally { setPending(false); } }
+  async function remove(id: string) { if (!window.confirm("确认收回这个子订阅？")) return; try { await deleteTenantSubscription(id); setItems((current) => current.filter((item) => item.id !== id)); toast.success("子订阅已收回"); } catch (error) { toast.error(adminErrorMessage(error)); } }
+  return <Dialog open={Boolean(tenant)} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>管理子订阅</DialogTitle><DialogDescription>为 {tenant?.name || "租户"} 从具体上游凭据下发份额。总分配比例不能超过该凭据的 100%。</DialogDescription></DialogHeader><FieldGroup><div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="subscription-credential">上游凭据 ID</FieldLabel><Input id="subscription-credential" value={credentialId} onChange={(event) => setCredentialId(event.target.value)} placeholder="cred_..." /></Field><Field><FieldLabel htmlFor="subscription-name">展示名称</FieldLabel><Input id="subscription-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Pro20x 子订阅" /></Field><Field><FieldLabel htmlFor="subscription-units">持有份数</FieldLabel><Input id="subscription-units" inputMode="numeric" value={units} onChange={(event) => setUnits(event.target.value)} /></Field><Field><FieldLabel htmlFor="subscription-denominator">整份拆分数</FieldLabel><Input id="subscription-denominator" inputMode="numeric" value={denominator} onChange={(event) => setDenominator(event.target.value)} /><FieldDescription>Pro20x 填 20；独享 Plus 填 1。</FieldDescription></Field></div><Button type="button" disabled={pending || !credentialId.trim()} onClick={create}>{pending && <Spinner data-icon="inline-start" />}下发子订阅</Button></FieldGroup><Table><TableHeader><TableRow><TableHead>名称</TableHead><TableHead>份额</TableHead><TableHead>凭据</TableHead><TableHead>状态</TableHead><TableHead /></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.units}/{item.unitsPerCredential}</TableCell><TableCell className="font-mono text-xs">{item.credentialId}</TableCell><TableCell>{item.enabled ? "启用" : "停用"}</TableCell><TableCell className="text-right"><Button type="button" variant="outline" size="icon" aria-label="收回子订阅" onClick={() => remove(item.id)}><Trash2Icon /></Button></TableCell></TableRow>)}</TableBody></Table><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
 }
+
 
 
 function formatNumber(value: number) {

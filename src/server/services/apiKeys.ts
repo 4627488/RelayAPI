@@ -330,7 +330,6 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
           name: tenant.name,
           proxy: tenant.allowCustomProxy ? tenant.proxy : null,
           userAgent: tenant.allowCustomUserAgent ? tenant.userAgent : null,
-          quotaShares: tenant.quotaShares,
         }
       : null,
     name: record.name,

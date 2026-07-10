@@ -585,6 +585,52 @@ function migrateMainDb(db: SqliteDatabase) {
         ON quota_reservations(tenant_id, status);
     `);
   });
+
+  applyMigration(db, "013_tenant_subscriptions", (database) => {
+    database.exec(`
+      DROP TABLE IF EXISTS quota_reservations;
+      DROP TABLE IF EXISTS tenant_quota_windows;
+      CREATE TABLE tenant_subscriptions (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        credential_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        units INTEGER NOT NULL DEFAULT 1 CHECK (units > 0),
+        units_per_credential INTEGER NOT NULL DEFAULT 20 CHECK (units_per_credential > 0),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        priority INTEGER NOT NULL DEFAULT 100,
+        starts_at TEXT NOT NULL,
+        expires_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX idx_tenant_subscriptions_tenant ON tenant_subscriptions(tenant_id, enabled);
+      CREATE INDEX idx_tenant_subscriptions_credential ON tenant_subscriptions(credential_id, enabled);
+      CREATE TABLE subscription_quota_windows (
+        subscription_id TEXT NOT NULL,
+        window_kind TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        resets_at TEXT NOT NULL,
+        limit_nano_usd TEXT NOT NULL,
+        settled_nano_usd TEXT NOT NULL DEFAULT '0',
+        reserved_nano_usd TEXT NOT NULL DEFAULT '0',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (subscription_id, window_kind)
+      ) STRICT;
+      CREATE INDEX idx_subscription_quota_windows_reset ON subscription_quota_windows(resets_at);
+      CREATE TABLE quota_reservations (
+        request_id TEXT PRIMARY KEY,
+        subscription_id TEXT NOT NULL,
+        reserve_nano_usd TEXT NOT NULL,
+        actual_nano_usd TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        settled_at TEXT
+      ) STRICT;
+      CREATE INDEX idx_quota_reservations_subscription_status ON quota_reservations(subscription_id, status);
+    `);
+  });
 }
 
 export function setSqliteTimeZone(timeZone: string) {

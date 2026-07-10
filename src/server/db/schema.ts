@@ -139,7 +139,6 @@ export const tenants = sqliteTable(
     enabled: integer("enabled").notNull().default(1),
     maxApiKeys: integer("max_api_keys"),
     tokenLimitDaily: integer("token_limit_daily"),
-    quotaSharesMilli: integer("quota_shares_milli"),
     rateLimitPerMinute: integer("rate_limit_per_minute"),
     modelAllowlistJson: text("model_allowlist_json").notNull().default("[]"),
     channelAllowlistJson: text("channel_allowlist_json").notNull().default("[]"),
@@ -161,10 +160,32 @@ export const tenants = sqliteTable(
   ],
 );
 
-export const tenantQuotaWindows = sqliteTable(
-  "tenant_quota_windows",
+export const tenantSubscriptions = sqliteTable(
+  "tenant_subscriptions",
   {
+    id: text("id").primaryKey(),
     tenantId: text("tenant_id").notNull(),
+    credentialId: text("credential_id").notNull(),
+    name: text("name").notNull(),
+    units: integer("units").notNull().default(1),
+    unitsPerCredential: integer("units_per_credential").notNull().default(20),
+    enabled: integer("enabled").notNull().default(1),
+    priority: integer("priority").notNull().default(100),
+    startsAt: text("starts_at").notNull(),
+    expiresAt: text("expires_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_tenant_subscriptions_tenant").on(table.tenantId, table.enabled),
+    index("idx_tenant_subscriptions_credential").on(table.credentialId, table.enabled),
+  ],
+);
+
+export const subscriptionQuotaWindows = sqliteTable(
+  "subscription_quota_windows",
+  {
+    subscriptionId: text("subscription_id").notNull(),
     windowKind: text("window_kind").notNull(),
     startedAt: text("started_at").notNull(),
     resetsAt: text("resets_at").notNull(),
@@ -174,8 +195,8 @@ export const tenantQuotaWindows = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.tenantId, table.windowKind] }),
-    index("idx_tenant_quota_windows_reset").on(table.resetsAt),
+    primaryKey({ columns: [table.subscriptionId, table.windowKind] }),
+    index("idx_subscription_quota_windows_reset").on(table.resetsAt),
   ],
 );
 
@@ -183,7 +204,7 @@ export const quotaReservations = sqliteTable(
   "quota_reservations",
   {
     requestId: text("request_id").primaryKey(),
-    tenantId: text("tenant_id").notNull(),
+    subscriptionId: text("subscription_id").notNull(),
     reserveNanoUsd: text("reserve_nano_usd").notNull(),
     actualNanoUsd: text("actual_nano_usd"),
     status: text("status").notNull().default("active"),
@@ -191,7 +212,7 @@ export const quotaReservations = sqliteTable(
     createdAt: text("created_at").notNull(),
     settledAt: text("settled_at"),
   },
-  (table) => [index("idx_quota_reservations_tenant_status").on(table.tenantId, table.status)],
+  (table) => [index("idx_quota_reservations_subscription_status").on(table.subscriptionId, table.status)],
 );
 
 export const tenantUsers = sqliteTable(
@@ -434,9 +455,10 @@ export const mainSchema = {
   oauthPendingStates,
   proxyPool,
   settings,
+  tenantSubscriptions,
   tenantInvites,
   tenantPasswordResets,
-  tenantQuotaWindows,
+  subscriptionQuotaWindows,
   quotaReservations,
   tenants,
   tenantUsers,
