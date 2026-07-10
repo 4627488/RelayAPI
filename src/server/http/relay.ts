@@ -1,5 +1,7 @@
 import "server-only";
 
+import crypto from "node:crypto";
+
 import { createModelsResponse } from "@/src/server/codex/models";
 import {
   buildImagesApiResponseFromSseText,
@@ -54,7 +56,16 @@ import {
 } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
 import { maybeAutoPruneRequestLogs } from "@/src/server/services/logRetention";
+import { calculateRequestCost } from "@/src/server/services/modelPricing";
+import { recordCredentialPricedUsage } from "@/src/server/services/quotaCalibration";
 import { getFullRequestLoggingSetting } from "@/src/server/services/settings";
+import {
+  admitTenantRequest,
+  releaseTenantRequest,
+  settleTenantRequest,
+  tenantQuotaHeaders,
+  type TenantQuotaAdmission,
+} from "@/src/server/services/tenantQuota";
 import type {
   ChannelRecord,
   RelayApiKeyContext,
@@ -145,6 +156,7 @@ export async function handleOpenAIResponses(request: Request) {
   let apiKey: RelayApiKeyContext | null = null;
   let channel: ChannelRecord | null = null;
   let input: Record<string, unknown> | null = null;
+  let quotaAdmission: TenantQuotaAdmission | null = null;
   try {
     apiKey = timing.time("authenticate", "认证 API Key", () =>
       authenticateRelayRequest(request),
@@ -161,6 +173,7 @@ export async function handleOpenAIResponses(request: Request) {
       selectChannel({ model, apiKey: apiKey! }),
     );
     channel = selected.channel;
+    quotaAdmission = admitRelayQuota(apiKey, model);
 
     if (stream) {
       return await forwardCodexStream({
@@ -176,6 +189,7 @@ export async function handleOpenAIResponses(request: Request) {
         requestBody: input,
         forwardedBody: payload,
         timing,
+        quotaAdmission,
       });
     }
 
@@ -197,6 +211,10 @@ export async function handleOpenAIResponses(request: Request) {
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(raw),
     );
+    const quotaState = result.response.ok
+      ? settleRelayQuota(quotaAdmission, usage, result.credential.id)
+      : releaseRelayQuota(quotaAdmission);
+    quotaAdmission = null;
     let responseErrorInfo: CodexUpstreamErrorInfo | null = null;
     if (result.response.ok) {
       captureReplayForResponse({
@@ -250,8 +268,13 @@ export async function handleOpenAIResponses(request: Request) {
     if (!result.response.ok) {
       return upstreamErrorResponse(result.response.status);
     }
-    return Response.json(raw, { status: result.response.status });
+    return Response.json(raw, {
+      status: result.response.status,
+      headers: quotaResponseHeaders(quotaState, apiKey.tenant?.quotaShares),
+    });
   } catch (error) {
+    releaseRelayQuota(quotaAdmission);
+    quotaAdmission = null;
     if (channel) {
       recordChannelFailure(channel, {
         message: error instanceof Error ? error.message : "request failed",
@@ -689,6 +712,7 @@ export async function handleChatCompletions(request: Request) {
   let apiKey: RelayApiKeyContext | null = null;
   let channel: ChannelRecord | null = null;
   let input: Record<string, unknown> | null = null;
+  let quotaAdmission: TenantQuotaAdmission | null = null;
   try {
     apiKey = timing.time("authenticate", "认证 API Key", () =>
       authenticateRelayRequest(request),
@@ -708,6 +732,8 @@ export async function handleChatCompletions(request: Request) {
     );
     channel = selected.channel;
 
+    quotaAdmission = admitRelayQuota(apiKey, model);
+
     if (stream) {
       const { response, credential, upstreamPayload } = await codexFetch(
         "/responses",
@@ -723,6 +749,8 @@ export async function handleChatCompletions(request: Request) {
         },
       );
       if (!response.ok) {
+        releaseRelayQuota(quotaAdmission);
+        quotaAdmission = null;
         const errorText = await timing.timeAsync(
           "read_upstream_error_body",
           "读取上游错误响应 Body",
@@ -760,6 +788,12 @@ export async function handleChatCompletions(request: Request) {
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       });
+      if (quotaAdmission?.state && quotaAdmission.shares) {
+        mergeHeaders(
+          headers,
+          tenantQuotaHeaders(quotaAdmission.state, quotaAdmission.shares),
+        ).forEach((value, key) => headers.set(key, value));
+      }
       const fullLog = getFullRequestLoggingSetting();
       const upstreamCapture = createTextCapture();
       const body = response.body
@@ -776,6 +810,8 @@ export async function handleChatCompletions(request: Request) {
                 timing.mark("stream_first_token", "收到首字输出");
               },
               onCompleted: (usage) => {
+                settleRelayQuota(quotaAdmission, usage, credential.id);
+                quotaAdmission = null;
                 recordChannelSuccess(channel!);
                 appendSuccessLog({
                   request,
@@ -797,6 +833,12 @@ export async function handleChatCompletions(request: Request) {
                 });
               },
               onError: (error, usage) => {
+                if (usage.totalTokens > 0) {
+                  settleRelayQuota(quotaAdmission, usage, credential.id);
+                } else {
+                  releaseRelayQuota(quotaAdmission);
+                }
+                quotaAdmission = null;
                 const message =
                   error instanceof Error ? error.message : String(error);
                 recordChannelFailure(channel!, {
@@ -840,6 +882,8 @@ export async function handleChatCompletions(request: Request) {
       timing,
     });
     if (!result.response.ok) {
+      releaseRelayQuota(quotaAdmission);
+      quotaAdmission = null;
       recordChannelFailure(channel, {
         statusCode: result.response.status,
         message: result.text.slice(0, 500),
@@ -874,6 +918,12 @@ export async function handleChatCompletions(request: Request) {
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(raw),
     );
+    const quotaState = settleRelayQuota(
+      quotaAdmission,
+      usage,
+      result.credential.id,
+    );
+    quotaAdmission = null;
     captureReplayForResponse({
       model,
       request,
@@ -904,8 +954,13 @@ export async function handleChatCompletions(request: Request) {
       "转换为 OpenAI Chat 响应",
       () => codexResponseToChatCompletion(raw, model, toolNameMaps),
     );
-    return Response.json(responsePayload, { status: 200 });
+    return Response.json(responsePayload, {
+      status: 200,
+      headers: quotaResponseHeaders(quotaState, apiKey.tenant?.quotaShares),
+    });
   } catch (error) {
+    releaseRelayQuota(quotaAdmission);
+    quotaAdmission = null;
     if (channel) {
       recordChannelFailure(channel, {
         message: error instanceof Error ? error.message : "request failed",
@@ -944,6 +999,7 @@ async function handleRawCodexProxy(
   let apiKey: RelayApiKeyContext | null = null;
   let channel: ChannelRecord | null = null;
   let rawPayload: Record<string, unknown> | null = null;
+  let quotaAdmission: TenantQuotaAdmission | null = null;
   try {
     apiKey = timing.time("authenticate", "认证 API Key", () =>
       authenticateRelayRequest(request),
@@ -962,6 +1018,7 @@ async function handleRawCodexProxy(
       selectChannel({ model, apiKey: apiKey! }),
     );
     channel = selected.channel;
+    quotaAdmission = admitRelayQuota(apiKey, model);
     if (stream) {
       return await forwardCodexStream({
         request,
@@ -977,6 +1034,7 @@ async function handleRawCodexProxy(
         forwardedBody: payload,
         exposeUpstreamErrors: input.exposeUpstreamErrors,
         timing,
+        quotaAdmission,
       });
     }
     const result = await codexJson(input.upstreamPath, payload, {
@@ -990,6 +1048,10 @@ async function handleRawCodexProxy(
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(result.json),
     );
+    const quotaState = result.response.ok
+      ? settleRelayQuota(quotaAdmission, usage, result.credential.id)
+      : releaseRelayQuota(quotaAdmission);
+    quotaAdmission = null;
     let responseErrorInfo: CodexUpstreamErrorInfo | null = null;
     if (result.response.ok) {
       captureReplayForResponse({
@@ -1045,12 +1107,17 @@ async function handleRawCodexProxy(
     }
     return new Response(result.text, {
       status: result.response.status,
-      headers: withDefaultContentType(
-        copyUpstreamHeaders(result.response.headers),
-        "application/json; charset=utf-8",
+      headers: mergeHeaders(
+        withDefaultContentType(
+          copyUpstreamHeaders(result.response.headers),
+          "application/json; charset=utf-8",
+        ),
+        quotaResponseHeaders(quotaState, apiKey.tenant?.quotaShares),
       ),
     });
   } catch (error) {
+    releaseRelayQuota(quotaAdmission);
+    quotaAdmission = null;
     if (channel) {
       recordChannelFailure(channel, {
         message: error instanceof Error ? error.message : "request failed",
@@ -1086,6 +1153,7 @@ async function forwardCodexStream(input: {
   exposeUpstreamErrors?: boolean;
   promptCacheKey?: string | null;
   timing?: StageTimer;
+  quotaAdmission?: TenantQuotaAdmission | null;
 }) {
   const model =
     stringValue(input.payload.model) || serverConfig.codexDefaultModel;
@@ -1108,7 +1176,17 @@ async function forwardCodexStream(input: {
       input.fallbackContentType,
     ),
   );
+  if (input.quotaAdmission?.state && input.quotaAdmission.shares) {
+    mergeHeaders(
+      headers,
+      tenantQuotaHeaders(
+        input.quotaAdmission.state,
+        input.quotaAdmission.shares,
+      ),
+    ).forEach((value, key) => headers.set(key, value));
+  }
   if (!response.ok) {
+    releaseRelayQuota(input.quotaAdmission);
     const errorText = input.timing
       ? await input.timing.timeAsync(
           "read_upstream_error_body",
@@ -1156,6 +1234,20 @@ async function forwardCodexStream(input: {
         ),
         {
           onCompleted: (usage, responsePayload) => {
+            const quotaState = settleRelayQuota(
+              input.quotaAdmission,
+              usage,
+              credential.id,
+            );
+            if (quotaState && input.apiKey.tenant?.quotaShares) {
+              mergeHeaders(
+                headers,
+                quotaResponseHeaders(
+                  quotaState,
+                  input.apiKey.tenant.quotaShares,
+                ),
+              ).forEach((value, key) => headers.set(key, value));
+            }
             captureReplayForResponse({
               model,
               request: input.request,
@@ -1183,6 +1275,11 @@ async function forwardCodexStream(input: {
             });
           },
           onError: (error, usage) => {
+            if (usage.totalTokens > 0) {
+              settleRelayQuota(input.quotaAdmission, usage, credential.id);
+            } else {
+              releaseRelayQuota(input.quotaAdmission);
+            }
             const errorInfo = codexErrorInfoFromError(error);
             const message =
               errorInfo?.message ||
@@ -1891,5 +1988,70 @@ function emptyUsage(): UsageSnapshot {
     completionTokens: 0,
     totalTokens: 0,
     cachedTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
   };
+}
+
+function admitRelayQuota(apiKey: RelayApiKeyContext, model: string) {
+  return apiKey.tenantId
+    ? admitTenantRequest({
+        tenantId: apiKey.tenantId,
+        requestId: crypto.randomUUID(),
+        model,
+      })
+    : null;
+}
+
+function settleRelayQuota(
+  admission: TenantQuotaAdmission | null | undefined,
+  usage: UsageSnapshot,
+  credentialId: string,
+) {
+  if (!admission) return null;
+  if (!admission.price) {
+    usage.costNanoUsd = null;
+    usage.pricingComplete = false;
+    recordCredentialPricedUsage(credentialId, BigInt(0), false);
+    releaseTenantRequest(admission.requestId);
+    return null;
+  }
+  const cost = calculateRequestCost(admission.price, {
+    inputTokens: usage.promptTokens,
+    outputTokens: usage.completionTokens,
+    cachedInputTokens: usage.cachedTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    reasoningTokens: usage.reasoningTokens,
+  });
+  usage.costNanoUsd = String(cost.totalNanoUsd);
+  usage.priceModel = admission.price.pricedModel;
+  usage.priceVersion = admission.price.version;
+  usage.pricingComplete = true;
+  recordCredentialPricedUsage(credentialId, cost.totalNanoUsd, true);
+  return admission.state
+    ? settleTenantRequest({
+        requestId: admission.requestId,
+        actualNanoUsd: cost.totalNanoUsd,
+      })
+    : null;
+}
+
+function releaseRelayQuota(admission: TenantQuotaAdmission | null | undefined) {
+  if (admission?.state) releaseTenantRequest(admission.requestId);
+  return null;
+}
+
+function quotaResponseHeaders(
+  state: ReturnType<typeof settleTenantRequest>,
+  shares: number | null | undefined,
+) {
+  return state && shares ? tenantQuotaHeaders(state, shares) : {};
+}
+
+function mergeHeaders(...inputs: HeadersInit[]) {
+  const output = new Headers();
+  for (const input of inputs) {
+    new Headers(input).forEach((value, key) => output.set(key, value));
+  }
+  return output;
 }

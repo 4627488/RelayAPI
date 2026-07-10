@@ -283,6 +283,12 @@ function insertRequestLog(
       completionTokens: usage.completionTokens,
       totalTokens: usage.totalTokens,
       cachedTokens: usage.cachedTokens,
+      cacheWriteTokens: usage.cacheWriteTokens,
+      reasoningTokens: usage.reasoningTokens,
+      costNanoUsd: usage.costNanoUsd || null,
+      priceModel: usage.priceModel || null,
+      priceVersion: usage.priceVersion || null,
+      pricingComplete: usage.pricingComplete ? 1 : 0,
       errorCode: input.errorCode || null,
       errorMessage: input.errorMessage || null,
     })
@@ -2360,6 +2366,18 @@ function normalizeUsageSnapshot(usage?: UsageSnapshot): UsageSnapshot {
     ),
     totalTokens: Math.max(0, Math.floor(numberValue(usage?.totalTokens))),
     cachedTokens: Math.max(0, Math.floor(numberValue(usage?.cachedTokens))),
+    cacheWriteTokens: Math.max(
+      0,
+      Math.floor(numberValue(usage?.cacheWriteTokens)),
+    ),
+    reasoningTokens: Math.max(
+      0,
+      Math.floor(numberValue(usage?.reasoningTokens)),
+    ),
+    costNanoUsd: usage?.costNanoUsd || null,
+    priceModel: usage?.priceModel || null,
+    priceVersion: usage?.priceVersion || null,
+    pricingComplete: Boolean(usage?.pricingComplete),
   };
 }
 

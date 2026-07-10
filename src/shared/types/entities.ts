@@ -199,6 +199,7 @@ export interface TenantRuntimeContext {
   name: string;
   proxy: CredentialProxyConfig | null;
   userAgent: string | null;
+  quotaShares: number | null;
 }
 
 export type CredentialProxyType = "socks5" | "socks5h";
@@ -360,6 +361,12 @@ export interface UsageSnapshot {
   completionTokens: number;
   totalTokens: number;
   cachedTokens: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  costNanoUsd?: string | null;
+  priceModel?: string | null;
+  priceVersion?: string | null;
+  pricingComplete?: boolean;
 }
 
 export interface UsageStatsRow {

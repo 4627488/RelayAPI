@@ -975,7 +975,31 @@ export function normalizeUsage(usage: unknown): UsageSnapshot {
   const totalTokens =
     numberValue(object.total_tokens) || promptTokens + completionTokens;
   const cachedTokens = extractCachedTokens(object);
-  return { promptTokens, completionTokens, totalTokens, cachedTokens };
+  const inputDetails =
+    recordValue(object.input_tokens_details) ||
+    recordValue(object.prompt_tokens_details) ||
+    {};
+  const outputDetails =
+    recordValue(object.output_tokens_details) ||
+    recordValue(object.completion_tokens_details) ||
+    {};
+  const cacheWriteTokens = firstPositiveNumber(
+    inputDetails.cache_write_tokens,
+    object.cache_creation_input_tokens,
+    object.cache_write_tokens,
+  );
+  const reasoningTokens = firstPositiveNumber(
+    outputDetails.reasoning_tokens,
+    object.reasoning_tokens,
+  );
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cachedTokens,
+    cacheWriteTokens,
+    reasoningTokens,
+  };
 }
 
 function extractCachedTokens(usage: Record<string, unknown>) {

@@ -7,8 +7,26 @@ import {
   codexResponseToChatCompletion,
   normalizeRawCodexResponsesPayload,
   normalizeResponsesPayload,
+  normalizeUsage,
   prepareCodexPayloadForUpstream,
 } from "@/src/server/codex/client";
+
+describe("usage pricing categories", () => {
+  test("extracts cache write and reasoning token details", () => {
+    expect(normalizeUsage({
+      input_tokens: 100,
+      output_tokens: 20,
+      input_tokens_details: { cached_tokens: 40, cache_write_tokens: 5 },
+      output_tokens_details: { reasoning_tokens: 7 },
+    })).toMatchObject({
+      promptTokens: 100,
+      completionTokens: 20,
+      cachedTokens: 40,
+      cacheWriteTokens: 5,
+      reasoningTokens: 7,
+    });
+  });
+});
 import { parseCodexModelHeaderOverrides } from "@/src/server/codex/headerProfiles";
 import { serverConfig } from "@/src/server/config/env";
 import {

@@ -962,6 +962,19 @@ function migrateLogDb(db: SqliteDatabase) {
         channel_id, credential_id, model;
     `);
   });
+
+  applyMigration(db, "011_priced_request_usage", (database) => {
+    addColumnIfMissing(database, "request_logs", "cache_write_tokens", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(database, "request_logs", "reasoning_tokens", "INTEGER NOT NULL DEFAULT 0");
+    addColumnIfMissing(database, "request_logs", "cost_nano_usd", "TEXT");
+    addColumnIfMissing(database, "request_logs", "price_model", "TEXT");
+    addColumnIfMissing(database, "request_logs", "price_version", "TEXT");
+    addColumnIfMissing(database, "request_logs", "pricing_complete", "INTEGER NOT NULL DEFAULT 0");
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_request_logs_tenant_cost
+        ON request_logs(tenant_id, started_at, model);
+    `);
+  });
 }
 
 function recreateRequestLogDetailsForeignKey(db: SqliteDatabase) {
