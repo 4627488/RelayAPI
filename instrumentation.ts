@@ -6,8 +6,11 @@ export async function register() {
       await import("./src/server/services/codexCredentialRefreshScheduler");
     const { resumePendingTimeZoneRebuild } =
       await import("./src/server/services/timeZoneRebuild");
+    const { registerRequestLogWriterShutdown } =
+      await import("./src/server/repositories/logs");
     initializeWebAccessKey();
     startCodexCredentialRefreshScheduler();
     resumePendingTimeZoneRebuild();
+    registerRequestLogWriterShutdown();
   }
 }

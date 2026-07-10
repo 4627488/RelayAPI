@@ -43,6 +43,7 @@ import type {
 } from "@/src/shared/types/entities";
 import { addDateKeyDays, instantToDateKey } from "@/src/shared/time";
 import { getGlobalTimeZoneSetting } from "@/src/server/services/settings";
+import { LogWriteQueue } from "@/src/server/services/logWriteQueue";
 
 const ADMIN_OVERVIEW_CACHE_TTL_MS = 15_000;
 const OVERVIEW_GROUP_LIMIT = 100;
@@ -50,6 +51,54 @@ const OVERVIEW_DAILY_WINDOW_DAYS = 30;
 const OVERVIEW_MAX_DAILY_WINDOW_DAYS = 90;
 const DEFAULT_HEATMAP_WEEKS = 53;
 const MAX_HEATMAP_WEEKS = 53;
+const LOG_WRITE_FLUSH_INTERVAL_MS = 100;
+const LOG_WRITE_MAX_BATCH_SIZE = 100;
+
+type LogWriteOperation = () => void;
+
+const requestLogWriteQueue = new LogWriteQueue<LogWriteOperation>({
+  flushIntervalMs: LOG_WRITE_FLUSH_INTERVAL_MS,
+  maxBatchSize: LOG_WRITE_MAX_BATCH_SIZE,
+  writeBatch: (operations) => {
+    getLogOrm().transaction(() => {
+      for (const operation of operations) {
+        operation();
+      }
+    });
+  },
+  onBackgroundError: (error) => {
+    console.error("[request-log-writer] Failed to flush log batch", error);
+  },
+});
+let requestLogShutdownRegistered = false;
+
+export function flushRequestLogWrites() {
+  requestLogWriteQueue.flushNow();
+}
+
+export function closeRequestLogWriter() {
+  flushRequestLogWrites();
+  requestLogWriteQueue.close();
+}
+
+export function registerRequestLogWriterShutdown() {
+  if (requestLogShutdownRegistered) {
+    return;
+  }
+  requestLogShutdownRegistered = true;
+  process.once("beforeExit", closeRequestLogWriter);
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+      try {
+        closeRequestLogWriter();
+      } catch (error) {
+        console.error("[request-log-writer] Failed to flush during shutdown", error);
+      } finally {
+        process.exit(signal === "SIGINT" ? 130 : 143);
+      }
+    });
+  }
+}
 
 let adminOverviewCache: {
   expiresAt: number;
@@ -86,18 +135,21 @@ function boundSql(query: string, params: unknown[] = []): SQL {
 }
 
 function logAll(query: string, params: unknown[] = []) {
+  flushRequestLogWrites();
   return getLogOrm().all(boundSql(query, params)) as Array<
     Record<string, unknown>
   >;
 }
 
 function logGet(query: string, params: unknown[] = []) {
+  flushRequestLogWrites();
   return getLogOrm().get(boundSql(query, params)) as
     | Record<string, unknown>
     | undefined;
 }
 
 function logRun(query: string, params: unknown[] = []) {
+  flushRequestLogWrites();
   return getLogOrm().run(boundSql(query, params)) as unknown as {
     changes: number | bigint;
   };
@@ -177,6 +229,34 @@ export function appendRequestLog(input: RequestLogInput) {
   const usage = normalizeUsageSnapshot(input.usage);
   const completedAt = input.completedAt || new Date().toISOString();
   const id = randomId("reqlog");
+  requestLogWriteQueue.enqueue(() => {
+    insertRequestLog(id, input, usage, completedAt);
+    if (usage.totalTokens > 0) {
+      appendUsageRecordSync({
+        createdAt: completedAt,
+        apiKeyId: input.apiKeyId,
+        apiKeyPrefix: input.apiKeyPrefix,
+        apiKeyName: input.apiKeyName,
+        tenantId: input.tenantId,
+        tenantName: input.tenantName,
+        channelId: input.channelId,
+        channelName: input.channelName,
+        credentialId: input.credentialId,
+        credentialEmail: input.credentialEmail,
+        model: input.model || "",
+        usage,
+      });
+    }
+  });
+  return id;
+}
+
+function insertRequestLog(
+  id: string,
+  input: RequestLogInput,
+  usage: UsageSnapshot,
+  completedAt: string,
+) {
   getLogOrm()
     .insert(requestLogsTable)
     .values({
@@ -208,27 +288,18 @@ export function appendRequestLog(input: RequestLogInput) {
     })
     .run();
 
-  if (usage.totalTokens > 0) {
-    appendUsageRecord({
-      createdAt: completedAt,
-      apiKeyId: input.apiKeyId,
-      apiKeyPrefix: input.apiKeyPrefix,
-      apiKeyName: input.apiKeyName,
-      tenantId: input.tenantId,
-      tenantName: input.tenantName,
-      channelId: input.channelId,
-      channelName: input.channelName,
-      credentialId: input.credentialId,
-      credentialEmail: input.credentialEmail,
-      model: input.model || "",
-      usage,
-    });
-  }
-
-  return id;
 }
 
 export function appendRequestLogDetail(
+  requestLogId: string,
+  input: RequestLogDetailInput,
+) {
+  requestLogWriteQueue.enqueue(() =>
+    appendRequestLogDetailSync(requestLogId, input),
+  );
+}
+
+function appendRequestLogDetailSync(
   requestLogId: string,
   input: RequestLogDetailInput,
 ) {
@@ -294,6 +365,23 @@ export function appendRequestLogDetail(
 }
 
 export function appendUsageRecord(input: {
+  createdAt: string;
+  tenantId?: string | null;
+  tenantName?: string | null;
+  apiKeyId?: string | null;
+  apiKeyPrefix?: string | null;
+  apiKeyName?: string | null;
+  channelId?: string | null;
+  channelName?: string | null;
+  credentialId?: string | null;
+  credentialEmail?: string | null;
+  model: string;
+  usage: UsageSnapshot;
+}) {
+  requestLogWriteQueue.enqueue(() => appendUsageRecordSync(input));
+}
+
+function appendUsageRecordSync(input: {
   createdAt: string;
   tenantId?: string | null;
   tenantName?: string | null;
