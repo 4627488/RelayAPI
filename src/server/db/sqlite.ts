@@ -10,6 +10,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { serverConfig } from "@/src/server/config/env";
 import { logSchema, mainSchema } from "@/src/server/db/schema";
+import {
+  DEFAULT_TIME_ZONE,
+  instantToDateKey,
+  isValidTimeZone,
+} from "@/src/shared/time";
 
 type SqliteStatement = {
   get(...params: unknown[]): unknown;
@@ -22,6 +27,8 @@ type SqliteDatabase = {
   exec(sql: string): void;
   prepare(sql: string): SqliteStatement;
 };
+
+let sqliteTimeZone = DEFAULT_TIME_ZONE;
 
 let mainDb: SqliteDatabase | null = null;
 let logDb: SqliteDatabase | null = null;
@@ -56,6 +63,15 @@ export function ensureInitialized() {
   mainDb = openDatabase(serverConfig.mainDbPath, true);
   logDb = openDatabase(serverConfig.logDbPath, true);
   migrateMainDb(mainDb);
+  const storedTimeZone = mainDb
+    .prepare("SELECT value FROM settings WHERE key = 'time_zone'")
+    .get() as { value?: string } | undefined;
+  sqliteTimeZone = isValidTimeZone(storedTimeZone?.value)
+    ? storedTimeZone.value
+    : DEFAULT_TIME_ZONE;
+  logDb.client.function("relay_date_key", (value: unknown) =>
+    instantToDateKey(String(value || ""), sqliteTimeZone),
+  );
   migrateLogDb(logDb);
   mainOrm = drizzle(mainDb.client, { schema: mainSchema });
   logOrm = drizzle(logDb.client, { schema: logSchema });
@@ -516,6 +532,13 @@ function migrateMainDb(db: SqliteDatabase) {
   });
 }
 
+export function setSqliteTimeZone(timeZone: string) {
+  if (!isValidTimeZone(timeZone)) {
+    throw new RangeError("A valid IANA timezone is required");
+  }
+  sqliteTimeZone = timeZone;
+}
+
 function migrateLogDb(db: SqliteDatabase) {
   applyMigration(
     db,
@@ -791,7 +814,7 @@ function migrateLogDb(db: SqliteDatabase) {
         total_latency_ms, first_request_at, last_request_at, updated_at
       )
       SELECT
-        substr(started_at, 1, 10) AS bucket_date,
+        relay_date_key(started_at) AS bucket_date,
         COALESCE(tenant_id, '') AS tenant_id,
         COALESCE(api_key_id, '') AS api_key_id,
         COALESCE(model, '') AS model,
@@ -812,7 +835,7 @@ function migrateLogDb(db: SqliteDatabase) {
         MAX(completed_at) AS updated_at
       FROM request_logs
       GROUP BY
-        substr(started_at, 1, 10),
+        relay_date_key(started_at),
         COALESCE(tenant_id, ''),
         COALESCE(api_key_id, ''),
         COALESCE(model, ''),
@@ -822,6 +845,67 @@ function migrateLogDb(db: SqliteDatabase) {
     `);
 
     recreateRequestMetricTriggers(database);
+  });
+
+  applyMigration(db, "010_configurable_time_zone_buckets", (database) => {
+    recreateRequestMetricTriggers(database);
+    database.exec(`
+      DELETE FROM request_daily_buckets;
+      INSERT INTO request_daily_buckets (
+        bucket_date, tenant_id, api_key_id, model, channel_id, credential_id,
+        request_type, request_count, success_count, error_count, stream_count,
+        prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+        total_latency_ms, first_request_at, last_request_at, updated_at
+      )
+      SELECT
+        relay_date_key(started_at),
+        COALESCE(tenant_id, ''),
+        COALESCE(api_key_id, ''),
+        COALESCE(model, ''),
+        COALESCE(channel_id, ''),
+        COALESCE(credential_id, ''),
+        COALESCE(request_type, ''),
+        COUNT(*),
+        SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END),
+        SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END),
+        SUM(stream),
+        COALESCE(SUM(prompt_tokens), 0),
+        COALESCE(SUM(completion_tokens), 0),
+        COALESCE(SUM(total_tokens), 0),
+        COALESCE(SUM(cached_tokens), 0),
+        COALESCE(SUM(latency_ms), 0),
+        MIN(started_at),
+        MAX(started_at),
+        MAX(completed_at)
+      FROM request_logs
+      GROUP BY
+        relay_date_key(started_at), tenant_id, api_key_id, model,
+        channel_id, credential_id, request_type;
+
+      DELETE FROM usage_daily_buckets;
+      INSERT INTO usage_daily_buckets (
+        bucket_date, tenant_id, api_key_id, channel_id, credential_id, model,
+        prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+        request_count, updated_at
+      )
+      SELECT
+        relay_date_key(created_at),
+        COALESCE(tenant_id, ''),
+        COALESCE(api_key_id, ''),
+        COALESCE(channel_id, ''),
+        COALESCE(credential_id, ''),
+        COALESCE(model, ''),
+        COALESCE(SUM(prompt_tokens), 0),
+        COALESCE(SUM(completion_tokens), 0),
+        COALESCE(SUM(total_tokens), 0),
+        COALESCE(SUM(cached_tokens), 0),
+        COUNT(*),
+        MAX(created_at)
+      FROM usage_records
+      GROUP BY
+        relay_date_key(created_at), tenant_id, api_key_id,
+        channel_id, credential_id, model;
+    `);
   });
 }
 
@@ -925,7 +1009,7 @@ function recreateRequestMetricTriggers(db: SqliteDatabase) {
         prompt_tokens, completion_tokens, total_tokens, cached_tokens,
         total_latency_ms, first_request_at, last_request_at, updated_at
       ) VALUES (
-        substr(NEW.started_at, 1, 10),
+        relay_date_key(NEW.started_at),
         COALESCE(NEW.tenant_id, ''),
         COALESCE(NEW.api_key_id, ''),
         COALESCE(NEW.model, ''),
@@ -995,7 +1079,7 @@ function recreateRequestMetricTriggers(db: SqliteDatabase) {
         total_latency_ms = MAX(total_latency_ms - OLD.latency_ms, 0),
         updated_at = datetime('now')
       WHERE
-        bucket_date = substr(OLD.started_at, 1, 10)
+        bucket_date = relay_date_key(OLD.started_at)
         AND tenant_id = COALESCE(OLD.tenant_id, '')
         AND api_key_id = COALESCE(OLD.api_key_id, '')
         AND model = COALESCE(OLD.model, '')
@@ -1033,7 +1117,7 @@ function recreateRequestMetricTriggers(db: SqliteDatabase) {
         total_latency_ms = MAX(total_latency_ms - OLD.latency_ms, 0),
         updated_at = datetime('now')
       WHERE
-        bucket_date = substr(OLD.started_at, 1, 10)
+        bucket_date = relay_date_key(OLD.started_at)
         AND tenant_id = COALESCE(OLD.tenant_id, '')
         AND api_key_id = COALESCE(OLD.api_key_id, '')
         AND model = COALESCE(OLD.model, '')
@@ -1050,7 +1134,7 @@ function recreateRequestMetricTriggers(db: SqliteDatabase) {
         prompt_tokens, completion_tokens, total_tokens, cached_tokens,
         total_latency_ms, first_request_at, last_request_at, updated_at
       ) VALUES (
-        substr(NEW.started_at, 1, 10),
+        relay_date_key(NEW.started_at),
         COALESCE(NEW.tenant_id, ''),
         COALESCE(NEW.api_key_id, ''),
         COALESCE(NEW.model, ''),

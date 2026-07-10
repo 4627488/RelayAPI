@@ -9,7 +9,11 @@ import {
   type SQLChunk,
 } from "drizzle-orm";
 
-import { getLogOrm, getMainOrm } from "@/src/server/db/sqlite";
+import {
+  getLogOrm,
+  getMainOrm,
+  setSqliteTimeZone,
+} from "@/src/server/db/sqlite";
 import { serverConfig } from "@/src/server/config/env";
 import {
   auditLogs,
@@ -37,6 +41,8 @@ import type {
   UsageSnapshot,
   UsageStatsRow,
 } from "@/src/shared/types/entities";
+import { instantToDateKey } from "@/src/shared/time";
+import { getGlobalTimeZoneSetting } from "@/src/server/services/settings";
 
 const ADMIN_OVERVIEW_CACHE_TTL_MS = 15_000;
 const OVERVIEW_GROUP_LIMIT = 100;
@@ -323,7 +329,7 @@ export function appendUsageRecord(input: {
     })
     .run();
 
-  const day = input.createdAt.slice(0, 10);
+  const day = instantToDateKey(input.createdAt, getGlobalTimeZoneSetting());
   getLogOrm()
     .insert(usageDailyBuckets)
     .values({
@@ -358,6 +364,55 @@ export function appendUsageRecord(input: {
       },
     })
     .run();
+}
+
+export function rebuildDailyAggregates(timeZone: string) {
+  const previousTimeZone = getGlobalTimeZoneSetting();
+  setSqliteTimeZone(timeZone);
+  try {
+    getLogOrm().transaction(() => {
+      logRun("DELETE FROM request_daily_buckets");
+      logRun(`INSERT INTO request_daily_buckets (
+          bucket_date, tenant_id, api_key_id, model, channel_id, credential_id,
+          request_type, request_count, success_count, error_count, stream_count,
+          prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+          total_latency_ms, first_request_at, last_request_at, updated_at
+        )
+        SELECT
+          relay_date_key(started_at), COALESCE(tenant_id, ''),
+          COALESCE(api_key_id, ''), COALESCE(model, ''),
+          COALESCE(channel_id, ''), COALESCE(credential_id, ''),
+          COALESCE(request_type, ''), COUNT(*),
+          SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END),
+          SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END),
+          SUM(stream), COALESCE(SUM(prompt_tokens), 0),
+          COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(total_tokens), 0),
+          COALESCE(SUM(cached_tokens), 0), COALESCE(SUM(latency_ms), 0),
+          MIN(started_at), MAX(started_at), MAX(completed_at)
+        FROM request_logs
+        GROUP BY relay_date_key(started_at), tenant_id, api_key_id, model,
+          channel_id, credential_id, request_type`);
+
+      logRun("DELETE FROM usage_daily_buckets");
+      logRun(`INSERT INTO usage_daily_buckets (
+          bucket_date, tenant_id, api_key_id, channel_id, credential_id, model,
+          prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+          request_count, updated_at
+        )
+        SELECT relay_date_key(created_at), COALESCE(tenant_id, ''),
+          COALESCE(api_key_id, ''), COALESCE(channel_id, ''),
+          COALESCE(credential_id, ''), COALESCE(model, ''),
+          COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0),
+          COALESCE(SUM(total_tokens), 0), COALESCE(SUM(cached_tokens), 0),
+          COUNT(*), MAX(created_at)
+        FROM usage_records
+        GROUP BY relay_date_key(created_at), tenant_id, api_key_id,
+          channel_id, credential_id, model`);
+    });
+  } catch (error) {
+    setSqliteTimeZone(previousTimeZone);
+    throw error;
+  }
 }
 
 export function pruneRequestLogs(

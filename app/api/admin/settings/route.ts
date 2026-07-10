@@ -26,10 +26,24 @@ export async function PATCH(request: Request) {
     if (hasRequestLogRetentionPatch(body)) {
       maybeAutoPruneRequestLogs({ force: true });
     }
+    if (hasTimeZonePatch(body)) {
+      const { scheduleTimeZoneRebuild } =
+        await import("@/src/server/services/timeZoneRebuild");
+      scheduleTimeZoneRebuild();
+    }
     return Response.json(settings);
   } catch (error) {
     return errorToResponse(error);
   }
+}
+
+function hasTimeZonePatch(body: unknown) {
+  return (
+    body !== null &&
+    typeof body === "object" &&
+    !Array.isArray(body) &&
+    Object.hasOwn(body, "timeZone")
+  );
 }
 
 function hasRequestLogRetentionPatch(body: unknown) {
