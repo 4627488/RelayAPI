@@ -19,7 +19,6 @@ import type { StageTimer } from "@/src/server/http/stageTimer";
 import type {
   ChannelRecord,
   TenantRuntimeContext,
-  RelayApiKeyContext,
   UsageSnapshot,
 } from "@/src/shared/types/entities";
 
@@ -57,24 +56,15 @@ const THINKING_SUFFIX_LEVELS = new Set([
 ]);
 
 const CODEX_REASONING_INCLUDE = ["reasoning.encrypted_content"];
-const CODEX_IMAGE_GENERATION_TOOL = {
-  type: "image_generation",
-  output_format: "png",
-};
-
 export interface ToolNameMaps {
   originalToShort: Map<string, string>;
   shortToOriginal: Map<string, string>;
 }
 
-export function codexPromptCacheKeyForApiKey(
-  apiKey: Pick<RelayApiKeyContext, "id"> | null | undefined,
-) {
-  const id = stringValue(apiKey?.id).trim();
-  if (!id) {
-    return "";
-  }
-  return deterministicUuid(`relay-api:codex:prompt-cache:${id}`);
+export function chatCompletionsPromptCacheKey(inputPayload: unknown) {
+  return isRecord(inputPayload)
+    ? stringValue(inputPayload.prompt_cache_key).trim()
+    : "";
 }
 
 function resolveCodexPromptCacheKey(
@@ -126,7 +116,6 @@ export async function codexFetch(
       prepareCodexPayloadForUpstream(payload, {
         fastServiceTier: shouldUsePriorityServiceTier(credential),
         promptCacheKey,
-        planType: credential.planType,
         replaySessionKey,
         transport: useWebSocket ? "websocket" : "http",
       }),
@@ -134,7 +123,6 @@ export async function codexFetch(
     prepareCodexPayloadForUpstream(payload, {
       fastServiceTier: shouldUsePriorityServiceTier(credential),
       promptCacheKey,
-      planType: credential.planType,
       replaySessionKey,
       transport: useWebSocket ? "websocket" : "http",
     });
@@ -321,7 +309,6 @@ export function prepareCodexPayloadForUpstream(
   options: {
     fastServiceTier?: boolean;
     promptCacheKey?: string | null;
-    planType?: string | null;
     replaySessionKey?: string | null;
     transport?: "http" | "websocket";
   } = {},
@@ -359,9 +346,6 @@ export function prepareCodexPayloadForUpstream(
     preservePreviousResponseId: options.transport === "websocket",
   });
   normalizeCodexBuiltinTools(upstreamPayload);
-  ensureImageGenerationTool(upstreamPayload, {
-    planType: options.planType,
-  });
   normalizeParallelToolCalls(upstreamPayload);
   return upstreamPayload;
 }
@@ -528,7 +512,14 @@ export function chatCompletionsToCodex(
   input: { stream: boolean; defaultModel?: string } = { stream: false },
 ) {
   const payload = cloneJsonObject(inputPayload);
-  const toolNameMaps = buildToolNameMaps(payload.tools);
+  const legacyFunctions = Array.isArray(payload.functions)
+    ? payload.functions
+    : [];
+  const toolsForNameMapping = [
+    ...(Array.isArray(payload.tools) ? payload.tools : []),
+    ...legacyFunctions.map((fn) => ({ type: "function", function: fn })),
+  ];
+  const toolNameMaps = buildToolNameMaps(toolsForNameMapping);
   const out: Record<string, unknown> = {
     model:
       payload.model || input.defaultModel || serverConfig.codexDefaultModel,
@@ -551,9 +542,31 @@ export function chatCompletionsToCodex(
       });
       continue;
     }
+    if (role === "function") {
+      outInput.push({
+        type: "function_call_output",
+        call_id: stringValue(message.name),
+        output: toolOutputToCodex(message.content),
+      });
+      continue;
+    }
 
     const mappedRole = role === "system" ? "developer" : role || "user";
     const content = messageToCodexContent(message, mappedRole === "assistant");
+    if (mappedRole === "assistant" && message.reasoning_content) {
+      const reasoningText = stringValue(message.reasoning_content);
+      const answerText = content
+        .filter((part) => part.type === "output_text")
+        .map((part) => stringValue(part.text))
+        .join("");
+      const combined = `<thinking>${reasoningText}</thinking>${
+        answerText ? `\n${answerText}` : ""
+      }`;
+      content.splice(0, content.length, {
+        type: "output_text",
+        text: combined,
+      });
+    }
     if (content.length > 0 || mappedRole !== "assistant") {
       outInput.push({ type: "message", role: mappedRole, content });
     }
@@ -588,8 +601,12 @@ export function chatCompletionsToCodex(
   }
   out.include = [...CODEX_REASONING_INCLUDE];
 
-  if (Array.isArray(payload.tools) && payload.tools.length > 0) {
-    out.tools = payload.tools.map((rawTool) => {
+  const declaredTools = [
+    ...(Array.isArray(payload.tools) ? payload.tools : []),
+    ...legacyFunctions.map((fn) => ({ type: "function", function: fn })),
+  ];
+  if (declaredTools.length > 0) {
+    out.tools = declaredTools.map((rawTool) => {
       const tool = isRecord(rawTool) ? rawTool : {};
       const fn = isRecord(tool.function) ? tool.function : null;
       if (tool.type === "function" && fn) {
@@ -612,6 +629,11 @@ export function chatCompletionsToCodex(
 
   if (payload.tool_choice !== undefined) {
     out.tool_choice = normalizeToolChoice(payload.tool_choice, toolNameMaps);
+  } else if (payload.function_call !== undefined) {
+    out.tool_choice = normalizeLegacyFunctionCall(
+      payload.function_call,
+      toolNameMaps,
+    );
   }
   if (payload.response_format) {
     out.text = responseFormatToText(payload.response_format, payload.text);
@@ -670,6 +692,19 @@ function messageToCodexContent(
           type: "input_file",
           file_data: item.file.file_data,
           filename: item.file.filename,
+        });
+      }
+    } else if (
+      item.type === "input_audio" &&
+      !assistant &&
+      isRecord(item.input_audio)
+    ) {
+      const data = stringValue(item.input_audio.data);
+      if (data) {
+        parts.push({
+          type: "input_audio",
+          data,
+          format: stringValue(item.input_audio.format),
         });
       }
     }
@@ -779,6 +814,22 @@ function normalizeToolChoice(toolChoice: unknown, toolNameMaps: ToolNameMaps) {
   return toolChoice;
 }
 
+function normalizeLegacyFunctionCall(
+  functionCall: unknown,
+  toolNameMaps: ToolNameMaps,
+) {
+  if (typeof functionCall === "string") {
+    return functionCall;
+  }
+  if (!isRecord(functionCall)) {
+    return functionCall;
+  }
+  return {
+    type: "function",
+    name: toCodexToolName(stringValue(functionCall.name), toolNameMaps),
+  };
+}
+
 export function buildToolNameMaps(tools: unknown): ToolNameMaps {
   const names: string[] = [];
   if (Array.isArray(tools)) {
@@ -850,6 +901,8 @@ function responseFormatToText(responseFormat: unknown, text: unknown = {}) {
   const out = isRecord(text) ? { ...text } : {};
   if (format.type === "text") {
     out.format = { type: "text" };
+  } else if (format.type === "json_object") {
+    out.format = { type: "json_object" };
   } else if (format.type === "json_schema" && isRecord(format.json_schema)) {
     out.format = {
       type: "json_schema",
@@ -1018,12 +1071,21 @@ export function codexResponseToChatCompletion(
   const rootObject = isRecord(root) ? root : {};
   const usage = extractUsageFromCodexResponse(raw);
   const toolCalls = extractToolCallsFromCodexResponse(rootObject, toolNameMaps);
+  const images = extractImagesFromCodexResponse(rootObject);
+  const content = extractTextFromCodexResponse(raw);
+  const reasoningContent = extractReasoningFromCodexResponse(rootObject);
   const message: Record<string, unknown> = {
     role: "assistant",
-    content: toolCalls.length > 0 ? null : extractTextFromCodexResponse(raw),
+    content: content || null,
   };
+  if (reasoningContent) {
+    message.reasoning_content = reasoningContent;
+  }
   if (toolCalls.length > 0) {
     message.tool_calls = toolCalls;
+  }
+  if (images.length > 0) {
+    message.images = images;
   }
   return {
     id: stringValue(rootObject.id) || `chatcmpl-${crypto.randomUUID()}`,
@@ -1036,12 +1098,7 @@ export function codexResponseToChatCompletion(
       {
         index: 0,
         message,
-        finish_reason:
-          toolCalls.length > 0
-            ? "tool_calls"
-            : rootObject.status === "completed" || !rootObject.status
-              ? "stop"
-              : String(rootObject.status),
+        finish_reason: chatFinishReason(rootObject, toolCalls.length > 0),
       },
     ],
     usage: {
@@ -1051,8 +1108,40 @@ export function codexResponseToChatCompletion(
       prompt_tokens_details: {
         cached_tokens: usage.cachedTokens,
       },
+      completion_tokens_details: {
+        reasoning_tokens: numberValue(
+          recordValue(rootObject.usage)?.output_tokens_details &&
+            recordValue(recordValue(rootObject.usage)?.output_tokens_details)
+              ?.reasoning_tokens,
+        ),
+      },
     },
   };
+}
+
+function extractReasoningFromCodexResponse(root: Record<string, unknown>) {
+  if (!Array.isArray(root.output)) {
+    return "";
+  }
+  return root.output
+    .filter((item) => isRecord(item) && item.type === "reasoning")
+    .flatMap((item) => (isRecord(item) && Array.isArray(item.summary) ? item.summary : []))
+    .filter((item) => isRecord(item) && item.type === "summary_text")
+    .map((item) => (isRecord(item) ? stringValue(item.text) : ""))
+    .join("");
+}
+
+function chatFinishReason(root: Record<string, unknown>, hasToolCalls: boolean) {
+  if (hasToolCalls) {
+    return "tool_calls";
+  }
+  if (
+    root.status === "incomplete" &&
+    recordValue(root.incomplete_details)?.reason === "max_output_tokens"
+  ) {
+    return "length";
+  }
+  return "stop";
 }
 
 function extractToolCallsFromCodexResponse(
@@ -1064,7 +1153,7 @@ function extractToolCallsFromCodexResponse(
   }
   return root.output.flatMap((rawItem) => {
     const item = isRecord(rawItem) ? rawItem : {};
-    if (item.type !== "function_call") {
+    if (item.type !== "function_call" && item.type !== "custom_tool_call") {
       return [];
     }
     const name = restoreOriginalToolName(stringValue(item.name), toolNameMaps);
@@ -1076,10 +1165,60 @@ function extractToolCallsFromCodexResponse(
       type: "function",
       function: {
         name,
-        arguments: sanitizeToolCallArguments(name, stringValue(item.arguments)),
+        arguments: sanitizeToolCallArguments(
+          name,
+          toolArgumentsText(item.arguments ?? item.input),
+        ),
       },
     };
   });
+}
+
+function extractImagesFromCodexResponse(root: Record<string, unknown>) {
+  if (!Array.isArray(root.output)) {
+    return [];
+  }
+  const images: Record<string, unknown>[] = [];
+  for (const rawItem of root.output) {
+    const item = isRecord(rawItem) ? rawItem : {};
+    const result = stringValue(item.result);
+    if (item.type !== "image_generation_call" || !result) {
+      continue;
+    }
+    images.push({
+      index: images.length,
+      type: "image_url",
+      image_url: {
+        url: `data:${imageMimeType(item.output_format)};base64,${result}`,
+      },
+    });
+  }
+  return images;
+}
+
+function toolArgumentsText(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  return JSON.stringify(value ?? {});
+}
+
+function imageMimeType(outputFormat: unknown) {
+  const format = stringValue(outputFormat).toLowerCase();
+  if (format.includes("/")) {
+    return format;
+  }
+  switch (format) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    default:
+      return "image/png";
+  }
 }
 
 export function sanitizeToolCallArguments(
@@ -1291,32 +1430,6 @@ function normalizeCodexBuiltinToolType(type: unknown) {
   }
 }
 
-function ensureImageGenerationTool(
-  payload: Record<string, unknown>,
-  input: { planType?: string | null } = {},
-) {
-  const model = stringValue(payload.model).trim();
-  if (model.endsWith("spark") || isFreeCodexPlan(input.planType)) {
-    return;
-  }
-  if (!Array.isArray(payload.tools)) {
-    payload.tools = [{ ...CODEX_IMAGE_GENERATION_TOOL }];
-    return;
-  }
-  if (
-    payload.tools.some(
-      (tool) => isRecord(tool) && tool.type === "image_generation",
-    )
-  ) {
-    return;
-  }
-  payload.tools = [...payload.tools, { ...CODEX_IMAGE_GENERATION_TOOL }];
-}
-
-function isFreeCodexPlan(planType: unknown) {
-  return stringValue(planType).trim().toLowerCase() === "free";
-}
-
 function normalizeReasoningEffort(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return budgetToCodexEffort(value);
@@ -1353,17 +1466,6 @@ function reasoningEnabledToEffort(value: unknown) {
     return "none";
   }
   return "";
-}
-
-function deterministicUuid(seed: string) {
-  const hash = crypto.createHash("sha1").update(seed).digest();
-  hash[6] = (hash[6] & 0x0f) | 0x50;
-  hash[8] = (hash[8] & 0x3f) | 0x80;
-  const hex = hash.subarray(0, 16).toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(
-    12,
-    16,
-  )}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 function cloneJsonObject(value: unknown): Record<string, unknown> {
