@@ -50,6 +50,14 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   Table,
@@ -68,13 +76,14 @@ import {
   createTenantSubscription,
   deleteTenantSubscription,
   listTenantSubscriptions,
+  listCredentials,
   deleteTenant,
   revokeTenantSessions,
   updateTenant,
   type TenantPayload,
   type TenantSubscriptionRecord,
 } from "@/lib/admin-api";
-import type { CreatedTenantInvite, PublicTenant } from "@/src/shared/types/entities";
+import type { CodexCredentialRecord, CreatedTenantInvite, PublicTenant } from "@/src/shared/types/entities";
 
 type TenantFormState = {
   name: string;
@@ -742,16 +751,37 @@ function nullablePositiveInteger(value: string) {
 
 function SubscriptionDialog({ tenant, onOpenChange }: { tenant: PublicTenant | null; onOpenChange: (open: boolean) => void }) {
   const [items, setItems] = React.useState<TenantSubscriptionRecord[]>([]);
+  const [allItems, setAllItems] = React.useState<TenantSubscriptionRecord[]>([]);
+  const [credentials, setCredentials] = React.useState<CodexCredentialRecord[]>([]);
   const [credentialId, setCredentialId] = React.useState("");
   const [name, setName] = React.useState("");
   const [units, setUnits] = React.useState("1");
   const [denominator, setDenominator] = React.useState("20");
   const [pending, setPending] = React.useState(false);
-  React.useEffect(() => { if (tenant) void listTenantSubscriptions(tenant.id).then(setItems).catch((error) => toast.error(adminErrorMessage(error))); }, [tenant]);
-  async function create() { if (!tenant) return; setPending(true); try { const item = await createTenantSubscription({ tenantId: tenant.id, credentialId: credentialId.trim(), name: name.trim(), units: Math.max(1, Number(units) || 1), unitsPerCredential: Math.max(1, Number(denominator) || 20) }); setItems((current) => [item, ...current]); setCredentialId(""); setName(""); toast.success("子订阅已下发"); } catch (error) { toast.error(adminErrorMessage(error)); } finally { setPending(false); } }
-  async function remove(id: string) { if (!window.confirm("确认收回这个子订阅？")) return; try { await deleteTenantSubscription(id); setItems((current) => current.filter((item) => item.id !== id)); toast.success("子订阅已收回"); } catch (error) { toast.error(adminErrorMessage(error)); } }
-  return <Dialog open={Boolean(tenant)} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>管理子订阅</DialogTitle><DialogDescription>为 {tenant?.name || "租户"} 从具体上游凭据下发份额。总分配比例不能超过该凭据的 100%。</DialogDescription></DialogHeader><FieldGroup><div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel htmlFor="subscription-credential">上游凭据 ID</FieldLabel><Input id="subscription-credential" value={credentialId} onChange={(event) => setCredentialId(event.target.value)} placeholder="cred_..." /></Field><Field><FieldLabel htmlFor="subscription-name">展示名称</FieldLabel><Input id="subscription-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Pro20x 子订阅" /></Field><Field><FieldLabel htmlFor="subscription-units">持有份数</FieldLabel><Input id="subscription-units" inputMode="numeric" value={units} onChange={(event) => setUnits(event.target.value)} /></Field><Field><FieldLabel htmlFor="subscription-denominator">整份拆分数</FieldLabel><Input id="subscription-denominator" inputMode="numeric" value={denominator} onChange={(event) => setDenominator(event.target.value)} /><FieldDescription>Pro20x 填 20；独享 Plus 填 1。</FieldDescription></Field></div><Button type="button" disabled={pending || !credentialId.trim()} onClick={create}>{pending && <Spinner data-icon="inline-start" />}下发子订阅</Button></FieldGroup><Table><TableHeader><TableRow><TableHead>名称</TableHead><TableHead>份额</TableHead><TableHead>凭据</TableHead><TableHead>状态</TableHead><TableHead /></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.units}/{item.unitsPerCredential}</TableCell><TableCell className="font-mono text-xs">{item.credentialId}</TableCell><TableCell>{item.enabled ? "启用" : "停用"}</TableCell><TableCell className="text-right"><Button type="button" variant="outline" size="icon" aria-label="收回子订阅" onClick={() => remove(item.id)}><Trash2Icon /></Button></TableCell></TableRow>)}</TableBody></Table><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
+  React.useEffect(() => {
+    if (!tenant) return;
+    void Promise.all([listTenantSubscriptions(tenant.id), listTenantSubscriptions(), listCredentials()])
+      .then(([tenantItems, subscriptions, credentialItems]) => { setItems(tenantItems); setAllItems(subscriptions); setCredentials(credentialItems); })
+      .catch((error) => toast.error(adminErrorMessage(error)));
+  }, [tenant]);
+  const selectedCredential = credentials.find((credential) => credential.id === credentialId);
+  const allocated = credentialId ? allocatedRatio(allItems, credentialId) : 0;
+  function selectCredential(id: string | null) {
+    const credential = credentials.find((item) => item.id === id);
+    const suggestedDenominator = credential?.planType.toLowerCase().includes("pro") ? 20 : 1;
+    setCredentialId(id || "");
+    setDenominator(String(suggestedDenominator));
+    setName(credential ? `${planLabel(credential.planType)} 子订阅` : "");
+  }
+  async function create() { if (!tenant) return; setPending(true); try { const item = await createTenantSubscription({ tenantId: tenant.id, credentialId, name: name.trim(), units: Math.max(1, Number(units) || 1), unitsPerCredential: Math.max(1, Number(denominator) || 20) }); setItems((current) => [item, ...current]); setAllItems((current) => [item, ...current]); setCredentialId(""); setName(""); toast.success("子订阅已下发"); } catch (error) { toast.error(adminErrorMessage(error)); } finally { setPending(false); } }
+  async function remove(id: string) { if (!window.confirm("确认收回这个子订阅？")) return; try { await deleteTenantSubscription(id); setItems((current) => current.filter((item) => item.id !== id)); setAllItems((current) => current.filter((item) => item.id !== id)); toast.success("子订阅已收回"); } catch (error) { toast.error(adminErrorMessage(error)); } }
+  return <Dialog open={Boolean(tenant)} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>管理子订阅</DialogTitle><DialogDescription>为 {tenant?.name || "租户"} 从具体上游凭据下发份额。总分配比例不能超过该凭据的 100%。</DialogDescription></DialogHeader><FieldGroup><div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>上游凭据</FieldLabel><Select value={credentialId || null} onValueChange={selectCredential}><SelectTrigger className="w-full"><SelectValue placeholder="选择上游凭据" /></SelectTrigger><SelectContent><SelectGroup>{credentials.map((credential) => { const used = allocatedRatio(allItems, credential.id); return <SelectItem key={credential.id} value={credential.id} disabled={!credential.enabled || used >= 1}><span className="flex min-w-0 flex-1 items-center justify-between gap-3"><span className="truncate">{credential.email || credential.accountId || credential.id} · {planLabel(credential.planType)}</span><span className="text-xs text-muted-foreground">已分配 {formatPercent(used)}</span></span></SelectItem>; })}</SelectGroup></SelectContent></Select><FieldDescription>{selectedCredential ? `已分配 ${formatPercent(allocated)}，剩余 ${formatPercent(Math.max(0, 1 - allocated))}` : "选择后会自动建议 Pro 或 Plus 的拆分数。"}</FieldDescription></Field><Field><FieldLabel htmlFor="subscription-name">展示名称</FieldLabel><Input id="subscription-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Pro20x 子订阅" /></Field><Field><FieldLabel htmlFor="subscription-units">持有份数</FieldLabel><Input id="subscription-units" inputMode="numeric" value={units} onChange={(event) => setUnits(event.target.value)} /></Field><Field><FieldLabel htmlFor="subscription-denominator">整份拆分数</FieldLabel><Input id="subscription-denominator" inputMode="numeric" value={denominator} onChange={(event) => setDenominator(event.target.value)} /><FieldDescription>Pro20x 默认 20；独享 Plus 默认 1。</FieldDescription></Field></div><Button type="button" disabled={pending || !credentialId} onClick={create}>{pending && <Spinner data-icon="inline-start" />}下发子订阅</Button></FieldGroup><Table><TableHeader><TableRow><TableHead>名称</TableHead><TableHead>份额</TableHead><TableHead>凭据</TableHead><TableHead>状态</TableHead><TableHead /></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.units}/{item.unitsPerCredential}</TableCell><TableCell>{credentialName(credentials, item.credentialId)}</TableCell><TableCell>{item.enabled ? "启用" : "停用"}</TableCell><TableCell className="text-right"><Button type="button" variant="outline" size="icon" aria-label="收回子订阅" onClick={() => remove(item.id)}><Trash2Icon /></Button></TableCell></TableRow>)}</TableBody></Table><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
 }
+
+function allocatedRatio(items: TenantSubscriptionRecord[], credentialId: string) { return items.filter((item) => item.enabled && item.credentialId === credentialId).reduce((sum, item) => sum + item.units / item.unitsPerCredential, 0); }
+function formatPercent(value: number) { return `${Math.round(value * 1000) / 10}%`; }
+function planLabel(planType: string) { const plan = planType.trim().toLowerCase(); return plan.includes("pro") ? "Pro20x" : plan.includes("plus") ? "Plus" : planType || "Codex"; }
+function credentialName(credentials: CodexCredentialRecord[], id: string) { const credential = credentials.find((item) => item.id === id); return credential ? `${credential.email || credential.accountId || id} · ${planLabel(credential.planType)}` : id; }
 
 
 
