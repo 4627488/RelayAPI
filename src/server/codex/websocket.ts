@@ -8,16 +8,19 @@ import type { CredentialProxyConfig } from "@/src/shared/types/entities";
 const CODEX_RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
 const CODEX_RESPONSES_WEBSOCKET_HANDSHAKE_MS = 30_000;
 const CODEX_RESPONSES_WEBSOCKET_IDLE_MS = 5 * 60_000;
+const CODEX_RESPONSES_WEBSOCKET_KEEPALIVE_MS = 30_000;
 
 type WebSocketEventName =
   | "open"
   | "message"
   | "error"
   | "close"
+  | "pong"
   | "unexpected-response";
 
 interface CodexWebSocketLike {
   send(data: string, callback?: (error?: Error) => void): void;
+  ping?(callback?: (error?: Error) => void): void;
   close(): void;
   terminate(): void;
   on(event: WebSocketEventName, handler: (...args: unknown[]) => void): this;
@@ -42,6 +45,17 @@ interface CodexWebSocketSession {
   cleanup?: () => void;
   inFlight: Promise<void>;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  awaitingPong: boolean;
+  detachSessionListeners: () => void;
+}
+
+class RetryableWebSocketSendError extends Error {
+  readonly retryableBeforeFirstEvent = true;
+
+  constructor(error: Error) {
+    super(error.message, { cause: error });
+    this.name = "RetryableWebSocketSendError";
+  }
 }
 
 export async function codexWebSocketResponse(input: {
@@ -171,14 +185,18 @@ export class CodexWebSocketSessionManager {
   private readonly sessions = new Map<string, CodexWebSocketSession>();
   private readonly factory: CodexWebSocketFactory;
   private readonly idleTimeoutMs: number;
+  private readonly keepAliveIntervalMs: number;
 
   constructor(input?: {
     factory?: CodexWebSocketFactory;
     idleTimeoutMs?: number;
+    keepAliveIntervalMs?: number;
   }) {
     this.factory = input?.factory || createCodexWebSocketConnection;
     this.idleTimeoutMs =
       input?.idleTimeoutMs ?? CODEX_RESPONSES_WEBSOCKET_IDLE_MS;
+    this.keepAliveIntervalMs =
+      input?.keepAliveIntervalMs ?? CODEX_RESPONSES_WEBSOCKET_KEEPALIVE_MS;
   }
 
   async request(input: {
@@ -189,26 +207,44 @@ export class CodexWebSocketSessionManager {
     proxy?: CredentialProxyConfig | null;
     timeoutMs?: number;
   }) {
-    const sessionOrResponse = await this.getOrCreateSession(input);
-    if (sessionOrResponse instanceof Response) {
-      return sessionOrResponse;
-    }
+    let lastError: unknown;
+    for (let attemptNumber = 0; attemptNumber < 2; attemptNumber += 1) {
+      const sessionOrResponse = await this.getOrCreateSession(input);
+      if (sessionOrResponse instanceof Response) {
+        return sessionOrResponse;
+      }
 
-    const session = sessionOrResponse;
-    await session.inFlight.catch(() => undefined);
-    if (session.idleTimer) {
-      clearTimeout(session.idleTimer);
-      session.idleTimer = null;
-    }
+      const session = sessionOrResponse;
+      await session.inFlight.catch(() => undefined);
+      this.clearIdleTimer(session);
+      session.awaitingPong = false;
 
-    const { response, done } = this.responseFromSession(session, input.payload);
-    session.inFlight = done.finally(() => this.scheduleIdleClose(session));
-    return response;
+      const attempt = this.responseFromSession(session, input.payload);
+      session.inFlight = attempt.done.then(
+        () => this.scheduleIdleCheck(session),
+        () => undefined,
+      );
+      try {
+        await attempt.ready;
+        return attempt.response;
+      } catch (error) {
+        lastError = error;
+        if (
+          attemptNumber > 0 ||
+          !(error instanceof RetryableWebSocketSendError)
+        ) {
+          throw error instanceof RetryableWebSocketSendError && error.cause
+            ? error.cause
+            : error;
+        }
+      }
+    }
+    throw lastError;
   }
 
   closeAll() {
-    for (const session of this.sessions.values()) {
-      this.invalidate(session.key, true);
+    for (const session of [...this.sessions.values()]) {
+      this.invalidate(session.key, "close");
     }
   }
 
@@ -231,12 +267,23 @@ export class CodexWebSocketSessionManager {
       cleanup: created.cleanup,
       inFlight: Promise.resolve(),
       idleTimer: null,
+      awaitingPong: false,
+      detachSessionListeners: () => undefined,
     };
 
-    const onClose = () => this.invalidate(session.key, false);
-    const onError = () => this.invalidate(session.key, true);
+    const onClose = () => this.invalidate(session.key, "none");
+    const onError = () => this.invalidate(session.key, "terminate");
+    const onPong = () => {
+      session.awaitingPong = false;
+    };
+    session.detachSessionListeners = () => {
+      session.socket.off("close", onClose);
+      session.socket.off("error", onError);
+      session.socket.off("pong", onPong);
+    };
     session.socket.on("close", onClose);
     session.socket.on("error", onError);
+    session.socket.on("pong", onPong);
 
     try {
       const opened = await waitForOpenOrRejection(
@@ -244,14 +291,12 @@ export class CodexWebSocketSessionManager {
         input.timeoutMs,
       );
       if (opened instanceof Response) {
-        session.socket.off("close", onClose);
-        session.socket.off("error", onError);
+        session.detachSessionListeners();
         session.cleanup?.();
         return opened;
       }
     } catch (error) {
-      session.socket.off("close", onClose);
-      session.socket.off("error", onError);
+      session.detachSessionListeners();
       session.cleanup?.();
       session.socket.terminate();
       throw error;
@@ -268,12 +313,35 @@ export class CodexWebSocketSessionManager {
     const encoder = new TextEncoder();
     const payloadText = JSON.stringify(codexWebSocketRequestPayload(payload));
     let settled = false;
+    let receivedEvent = false;
+    let readySettled = false;
     let resolveDone: () => void;
     let rejectDone: (error: unknown) => void;
     const done = new Promise<void>((resolve, reject) => {
       resolveDone = resolve;
       rejectDone = reject;
     });
+    let resolveReady: () => void;
+    let rejectReady: (error: unknown) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+
+    const markReady = () => {
+      if (readySettled) {
+        return;
+      }
+      readySettled = true;
+      resolveReady();
+    };
+    const markRetryable = (error: Error) => {
+      if (readySettled) {
+        return;
+      }
+      readySettled = true;
+      rejectReady(new RetryableWebSocketSendError(error));
+    };
 
     const body = new ReadableStream<Uint8Array>({
       start: (controller) => {
@@ -289,7 +357,7 @@ export class CodexWebSocketSessionManager {
           settled = true;
           cleanupListeners();
           if (invalidate) {
-            this.invalidate(session.key, true);
+            this.invalidate(session.key, "close");
           }
           controller.close();
           resolveDone();
@@ -300,7 +368,7 @@ export class CodexWebSocketSessionManager {
           }
           settled = true;
           cleanupListeners();
-          this.invalidate(session.key, true);
+          this.invalidate(session.key, "terminate");
           controller.error(error);
           rejectDone(error);
         };
@@ -309,6 +377,8 @@ export class CodexWebSocketSessionManager {
           if (!text) {
             return;
           }
+          receivedEvent = true;
+          markReady();
           const normalized = normalizeCodexWebSocketEvent(text);
           controller.enqueue(encoder.encode(`data: ${normalized}\n\n`));
           const type = eventType(normalized);
@@ -318,27 +388,43 @@ export class CodexWebSocketSessionManager {
             finish(true);
           }
         };
-        const onError = (error: unknown) => fail(error);
-        const onClose = () => finish(true);
+        const onError = (error: unknown) => {
+          markReady();
+          fail(error);
+        };
+        const onClose = () => {
+          markReady();
+          finish(true);
+        };
 
         session.socket.on("message", onMessage);
         session.socket.on("error", onError);
         session.socket.on("close", onClose);
         session.socket.send(payloadText, (error) => {
-          if (error) {
-            fail(error);
+          if (!error || settled) {
+            markReady();
+            return;
+          }
+          const retryable = !receivedEvent;
+          fail(error);
+          if (retryable) {
+            markRetryable(error);
+          } else {
+            markReady();
           }
         });
       },
       cancel: () => {
         settled = true;
-        this.invalidate(session.key, true);
+        markReady();
+        this.invalidate(session.key, "close");
         resolveDone();
       },
     });
 
     return {
       done,
+      ready,
       response: new Response(body, {
         status: 200,
         headers: codexStreamResponseHeaders(),
@@ -346,27 +432,55 @@ export class CodexWebSocketSessionManager {
     };
   }
 
-  private scheduleIdleClose(session: CodexWebSocketSession) {
+  private scheduleIdleCheck(session: CodexWebSocketSession) {
     if (!this.sessions.has(session.key)) {
       return;
     }
+    if (!session.socket.ping) {
+      session.idleTimer = setTimeout(() => {
+        this.invalidate(session.key, "close");
+      }, this.idleTimeoutMs);
+      return;
+    }
     session.idleTimer = setTimeout(() => {
-      this.invalidate(session.key, true);
-    }, this.idleTimeoutMs);
+      if (!this.sessions.has(session.key)) {
+        return;
+      }
+      if (session.awaitingPong) {
+        this.invalidate(session.key, "terminate");
+        return;
+      }
+      session.awaitingPong = true;
+      session.socket.ping?.((error) => {
+        if (error) {
+          this.invalidate(session.key, "terminate");
+        }
+      });
+      this.scheduleIdleCheck(session);
+    }, this.keepAliveIntervalMs);
   }
 
-  private invalidate(key: string, closeSocket: boolean) {
+  private clearIdleTimer(session: CodexWebSocketSession) {
+    if (!session.idleTimer) {
+      return;
+    }
+    clearTimeout(session.idleTimer);
+    session.idleTimer = null;
+  }
+
+  private invalidate(key: string, mode: "none" | "close" | "terminate") {
     const session = this.sessions.get(key);
     if (!session) {
       return;
     }
     this.sessions.delete(key);
-    if (session.idleTimer) {
-      clearTimeout(session.idleTimer);
-    }
+    this.clearIdleTimer(session);
+    session.detachSessionListeners();
     session.cleanup?.();
-    if (closeSocket) {
+    if (mode === "close") {
       session.socket.close();
+    } else if (mode === "terminate") {
+      session.socket.terminate();
     }
   }
 }
