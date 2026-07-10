@@ -1873,6 +1873,10 @@ function isFreeCodexPlan(planType: string) {
   return planType.trim().toLowerCase() === "free";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function stringValue(value: unknown) {
   return typeof value === "string"
     ? value.trim()
