@@ -38,8 +38,10 @@ describe("queryRequestLogs", () => {
       detail: { note: "needle in detail json" },
       stageTimings: [
         {
-          stage: "stage-only-token",
+          name: "stage-only-token",
           label: "Stage only",
+          startedAtMs: 0,
+          endedAtMs: 1,
           durationMs: 1,
         },
       ],
@@ -110,8 +112,10 @@ describe("queryRequestLogs", () => {
     logs.appendRequestLogDetail(id, {
       stageTimings: [
         {
-          stage: "stage-only-search-token",
+          name: "stage-only-search-token",
           label: "Stage only",
+          startedAtMs: 0,
+          endedAtMs: 1,
           durationMs: 1,
         },
       ],

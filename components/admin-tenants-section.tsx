@@ -692,4 +692,3 @@ function formatTokenNumber(value: number) {
   }
   return formatNumber(value);
 }
-

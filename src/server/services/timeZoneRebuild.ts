@@ -55,6 +55,11 @@ async function runRebuild() {
     rebuildDailyAggregates(target);
     updateTimeZoneRebuildState({ status: "idle", activate: target });
   } catch (error) {
+    try {
+      rebuildDailyAggregates(state.timeZone);
+    } catch {
+      // The original rebuild transaction already rolled back on failure.
+    }
     updateTimeZoneRebuildState({
       status: "failed",
       error: error instanceof Error ? error.message : String(error),

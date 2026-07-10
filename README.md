@@ -101,6 +101,14 @@ CODEX_USER_AGENT="codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
 
 清除管理台全局设置后，会回退到环境变量或内置默认值；清除凭据覆盖后，会使用当前全局 User-Agent。
 
+## 全局时区
+
+RelayAPI 将时间点以 UTC ISO 8601 格式存储和传输，并在界面中按管理台“全局设置”选择的 IANA 时区展示。默认时区为 `Asia/Shanghai`。
+
+全局时区同时决定“今日”、每日额度、趋势图、热力图和历史日聚合的日期边界。管理员修改时区后，系统会在后台重新构建历史每日统计；重建成功前继续使用原时区，失败不会破坏原有统计。设置界面支持运行环境提供的完整 IANA 时区列表，例如 `Asia/Shanghai`、`Europe/London` 和 `America/New_York`。
+
+SQLite 历史数据中不带时区的 `YYYY-MM-DD HH:mm:ss` 值按 UTC 解释。容器的 `TZ` 和访问者浏览器时区不会改变应用时间语义。
+
 ## Codex Model Header Overrides
 
 可通过 `CODEX_MODEL_HEADER_OVERRIDES` 为全部模型或指定模型覆盖 Codex 上游兼容性 Header：
