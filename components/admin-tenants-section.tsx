@@ -75,6 +75,7 @@ type TenantFormState = {
   name: string;
   ownerEmail: string;
   enabled: boolean;
+  quotaShares: string;
   maxApiKeys: string;
   tokenLimitDaily: string;
   rateLimitPerMinute: string;
@@ -90,6 +91,7 @@ const EMPTY_TENANT_FORM: TenantFormState = {
   name: "",
   ownerEmail: "",
   enabled: true,
+  quotaShares: "",
   maxApiKeys: "",
   tokenLimitDaily: "",
   rateLimitPerMinute: "",
@@ -448,6 +450,19 @@ function TenantFormDialog({
             <FieldGroup>
               <div className="grid gap-4 sm:grid-cols-3">
                 <Field>
+                  <FieldLabel htmlFor="tenant-quota-shares">额度份额</FieldLabel>
+                  <Input
+                    id="tenant-quota-shares"
+                    inputMode="decimal"
+                    value={form.quotaShares}
+                    placeholder="不启用"
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, quotaShares: event.target.value }))
+                    }
+                  />
+                  <FieldDescription>Plus=1，Pro=20；例如 3 表示 3 份。</FieldDescription>
+                </Field>
+                <Field>
                   <FieldLabel htmlFor="tenant-max-keys">Key 数上限</FieldLabel>
                   <Input
                     id="tenant-max-keys"
@@ -673,6 +688,7 @@ function tenantToForm(tenant: PublicTenant): TenantFormState {
     name: tenant.name,
     ownerEmail: tenant.ownerEmail,
     enabled: tenant.enabled,
+    quotaShares: tenant.quotaShares?.toString() || "",
     maxApiKeys: tenant.maxApiKeys?.toString() || "",
     tokenLimitDaily: tenant.tokenLimitDaily?.toString() || "",
     rateLimitPerMinute: tenant.rateLimitPerMinute?.toString() || "",
@@ -690,6 +706,7 @@ function tenantFormToPayload(form: TenantFormState): TenantPayload {
     name: form.name.trim(),
     ownerEmail: form.ownerEmail.trim(),
     enabled: form.enabled,
+    quotaShares: nullablePositiveNumber(form.quotaShares),
     maxApiKeys: nullablePositiveInteger(form.maxApiKeys),
     tokenLimitDaily: nullablePositiveInteger(form.tokenLimitDaily),
     rateLimitPerMinute: nullablePositiveInteger(form.rateLimitPerMinute),
@@ -727,6 +744,13 @@ function nullablePositiveInteger(value: string) {
   }
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : null;
+}
+
+function nullablePositiveNumber(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 

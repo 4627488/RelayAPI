@@ -25,6 +25,7 @@ import {
   SettingsIcon,
   ShieldCheckIcon,
   WorkflowIcon,
+  WalletCardsIcon,
   XCircleIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -91,6 +92,7 @@ import { ChannelsSection } from "@/components/admin/channels-section";
 import { CredentialsSection } from "@/components/admin/credentials-section";
 import { LogsSection } from "@/components/admin/logs-section";
 import { ProxyPoolSection } from "@/components/admin/proxy-pool-section";
+import { AdminQuotaSection } from "@/components/admin/quota-section";
 import {
   adminErrorMessage,
   changeAdminPassword,
@@ -150,6 +152,7 @@ type SectionId =
   | "traffic"
   | "routing"
   | "access"
+  | "quota"
   | "settings";
 type AdminResourceCounts = {
   apiKeys: number;
@@ -303,7 +306,7 @@ export function AdminWorkbench({
   const loadSectionData = React.useCallback(
     async (section: SectionId, force = false) => {
       const alreadyLoaded =
-        section === "overview" ||
+        section === "overview" || section === "quota" ||
         (section === "traffic" && loadedData.logs) ||
         (section === "routing" &&
           loadedData.credentials &&
@@ -535,6 +538,12 @@ export function AdminWorkbench({
       group: "权限",
     },
     {
+      id: "quota",
+      label: "份额与成本",
+      icon: WalletCardsIcon,
+      group: "运营",
+    },
+    {
       id: "settings",
       label: "全局设置",
       icon: SettingsIcon,
@@ -674,6 +683,7 @@ export function AdminWorkbench({
                 onSaved={setGlobalSettings}
               />
             )}
+            {activeSection === "quota" && <AdminQuotaSection />}
     </WorkspaceShell>
   );
 }

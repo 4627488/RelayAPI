@@ -9,6 +9,7 @@ import {
   GaugeIcon,
   KeyRoundIcon,
   NetworkIcon,
+  WalletCardsIcon,
   RefreshCwIcon,
   SettingsIcon,
   XCircleIcon,
@@ -20,6 +21,7 @@ import { TenantApiKeysSection } from "@/components/tenant/api-keys-section";
 import { TenantCodexSetupSection } from "@/components/tenant/codex-setup-section";
 import { TenantLogsSection } from "@/components/tenant/logs-section";
 import { TenantOverviewSection } from "@/components/tenant/overview-section";
+import { TenantQuotaSection } from "@/components/tenant/quota-section";
 import { TenantResourcesSection } from "@/components/tenant/resources-section";
 import { TenantSettingsSection } from "@/components/tenant/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -52,6 +54,7 @@ import {
 
 type TenantSectionId =
   | "overview"
+  | "quota"
   | "setup"
   | "apiKeys"
   | "logs"
@@ -190,6 +193,12 @@ export function TenantWorkbench({
       group: "用量",
     },
     {
+      id: "quota",
+      label: "份额额度",
+      icon: WalletCardsIcon,
+      group: "用量",
+    },
+    {
       id: "apiKeys",
       label: "API 密钥",
       icon: KeyRoundIcon,
@@ -276,6 +285,7 @@ export function TenantWorkbench({
         {activeSection === "overview" && (
           <TenantOverviewSection stats={overviewStats} tenant={tenant} />
         )}
+        {activeSection === "quota" && <TenantQuotaSection />}
         {activeSection === "apiKeys" && (
           <TenantApiKeysSection
             apiKeys={apiKeys}
