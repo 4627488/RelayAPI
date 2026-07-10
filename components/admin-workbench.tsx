@@ -47,6 +47,11 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import {
+  Field,
+  FieldDescription,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -725,6 +730,10 @@ function SettingsSection({
   const [loggingSaving, setLoggingSaving] = React.useState(false);
   const [refreshPolicySaving, setRefreshPolicySaving] = React.useState(false);
   const [retentionSaving, setRetentionSaving] = React.useState(false);
+  const [timeZone, setTimeZone] = React.useState(
+    settings.timeZonePending || settings.timeZone,
+  );
+  const [timeZoneSaving, setTimeZoneSaving] = React.useState(false);
   const [pruning, setPruning] = React.useState(false);
   const [retentionForm, setRetentionForm] = React.useState(() => ({
     requestLogRetentionDays: String(settings.requestLogRetentionDays ?? 90),
@@ -734,6 +743,22 @@ function SettingsSection({
     vacuum: false,
   }));
   const proxy = settings.proxy;
+  const timeZones = React.useMemo(() => supportedTimeZones(), []);
+
+  React.useEffect(() => {
+    if (
+      settings.timeZoneRebuildStatus !== "pending" &&
+      settings.timeZoneRebuildStatus !== "running"
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void getGlobalSettings()
+        .then(onSaved)
+        .catch((error) => toast.error(adminErrorMessage(error)));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [onSaved, settings.timeZoneRebuildStatus]);
 
   function patchForm(patch: Partial<CredentialProxyFormState>) {
     setForm((current) => ({ ...current, ...patch }));
@@ -835,6 +860,28 @@ function SettingsSection({
       toast.error(adminErrorMessage(error));
     } finally {
       setUserAgentSaving(false);
+    }
+  }
+
+  async function saveTimeZone() {
+    const value = timeZone.trim();
+    if (!value) {
+      toast.error("请选择有效的 IANA 时区");
+      return;
+    }
+    setTimeZoneSaving(true);
+    try {
+      const updated = await updateGlobalSettings({ timeZone: value });
+      onSaved(updated);
+      toast.success(
+        updated.timeZoneRebuildStatus === "idle"
+          ? "全局时区未发生变化"
+          : "已开始在后台重建每日统计",
+      );
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setTimeZoneSaving(false);
     }
   }
 
@@ -1013,6 +1060,77 @@ function SettingsSection({
             <div className="text-xs text-muted-foreground">
               active: {settings.userAgent || "-"}
             </div>
+          </div>
+
+          <div className="grid h-full gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="grid gap-1">
+                <div className="font-medium">全局时区</div>
+                <div className="font-mono text-xs text-muted-foreground">
+                  active={settings.timeZone}
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  timeZoneSaving ||
+                  settings.timeZoneRebuildStatus === "pending" ||
+                  settings.timeZoneRebuildStatus === "running"
+                }
+                onClick={saveTimeZone}
+              >
+                {(timeZoneSaving ||
+                  settings.timeZoneRebuildStatus === "pending" ||
+                  settings.timeZoneRebuildStatus === "running") && (
+                  <Spinner data-icon="inline-start" />
+                )}
+                保存并重建
+              </Button>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="global-time-zone">IANA 时区</FieldLabel>
+              <Input
+                id="global-time-zone"
+                list="global-time-zone-options"
+                autoComplete="off"
+                disabled={
+                  timeZoneSaving ||
+                  settings.timeZoneRebuildStatus === "pending" ||
+                  settings.timeZoneRebuildStatus === "running"
+                }
+                value={timeZone}
+                placeholder="Asia/Shanghai"
+                onChange={(event) => setTimeZone(event.target.value)}
+              />
+              <datalist id="global-time-zone-options">
+                {timeZones.map((item) => (
+                  <option key={item} value={item} />
+                ))}
+              </datalist>
+              <FieldDescription>
+                时间展示、今日额度、趋势图和热力图使用此时区。切换完成前继续使用旧时区。
+              </FieldDescription>
+            </Field>
+            {(settings.timeZoneRebuildStatus === "pending" ||
+              settings.timeZoneRebuildStatus === "running") && (
+              <Alert>
+                <Spinner />
+                <AlertTitle>正在重建每日统计</AlertTitle>
+                <AlertDescription>
+                  正在从 {settings.timeZone} 切换到 {settings.timeZonePending}。
+                </AlertDescription>
+              </Alert>
+            )}
+            {settings.timeZoneRebuildStatus === "failed" && (
+              <Alert variant="destructive">
+                <AlertTriangleIcon />
+                <AlertTitle>时区切换失败</AlertTitle>
+                <AlertDescription>
+                  {settings.timeZoneRebuildError || "后台重建失败，请重新保存后重试。"}
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
 
           <div className="grid h-full gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm">
@@ -2677,6 +2795,34 @@ function integerValue(value: string, fallback: number) {
 
 function isValidRetentionDays(value: number) {
   return Number.isFinite(value) && value >= 1 && value <= 3650;
+}
+
+function supportedTimeZones() {
+  const intl = Intl as typeof Intl & {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  };
+  const values = intl.supportedValuesOf?.("timeZone") || [
+    "Africa/Cairo",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/New_York",
+    "America/Sao_Paulo",
+    "Asia/Dubai",
+    "Asia/Hong_Kong",
+    "Asia/Shanghai",
+    "Asia/Singapore",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+    "Europe/Berlin",
+    "Europe/London",
+    "Europe/Paris",
+    "Pacific/Auckland",
+    "UTC",
+  ];
+  return [...new Set(["Asia/Shanghai", ...values])].sort((left, right) =>
+    left.localeCompare(right),
+  );
 }
 
 function formatNullableDate(value: string | null) {
