@@ -34,4 +34,15 @@ describe("tenant account operations", () => {
     tenants.revokeTenantSessions(context.tenant.id);
     expect(tenants.getTenantSessionFromCookieValue(token)).toBeNull();
   });
+
+  it("stores nullable tenant quota shares with millishare precision", () => {
+    const tenant = tenants.createTenant({
+      name: "Share tenant",
+      ownerEmail: "shares@example.com",
+      quotaShares: 3.125,
+    });
+    expect(tenant.quotaShares).toBe(3.125);
+    expect(tenants.patchTenant(tenant.id, { quotaShares: null }).quotaShares).toBeNull();
+    expect(() => tenants.patchTenant(tenant.id, { quotaShares: 0 })).toThrowError(/share/i);
+  });
 });

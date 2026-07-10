@@ -139,6 +139,7 @@ export const tenants = sqliteTable(
     enabled: integer("enabled").notNull().default(1),
     maxApiKeys: integer("max_api_keys"),
     tokenLimitDaily: integer("token_limit_daily"),
+    quotaSharesMilli: integer("quota_shares_milli"),
     rateLimitPerMinute: integer("rate_limit_per_minute"),
     modelAllowlistJson: text("model_allowlist_json").notNull().default("[]"),
     channelAllowlistJson: text("channel_allowlist_json").notNull().default("[]"),
@@ -158,6 +159,39 @@ export const tenants = sqliteTable(
     index("idx_tenants_enabled").on(table.enabled, table.createdAt),
     index("idx_tenants_owner_email").on(table.ownerEmail),
   ],
+);
+
+export const tenantQuotaWindows = sqliteTable(
+  "tenant_quota_windows",
+  {
+    tenantId: text("tenant_id").notNull(),
+    windowKind: text("window_kind").notNull(),
+    startedAt: text("started_at").notNull(),
+    resetsAt: text("resets_at").notNull(),
+    limitNanoUsd: text("limit_nano_usd").notNull(),
+    settledNanoUsd: text("settled_nano_usd").notNull().default("0"),
+    reservedNanoUsd: text("reserved_nano_usd").notNull().default("0"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tenantId, table.windowKind] }),
+    index("idx_tenant_quota_windows_reset").on(table.resetsAt),
+  ],
+);
+
+export const quotaReservations = sqliteTable(
+  "quota_reservations",
+  {
+    requestId: text("request_id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    reserveNanoUsd: text("reserve_nano_usd").notNull(),
+    actualNanoUsd: text("actual_nano_usd"),
+    status: text("status").notNull().default("active"),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
+    settledAt: text("settled_at"),
+  },
+  (table) => [index("idx_quota_reservations_tenant_status").on(table.tenantId, table.status)],
 );
 
 export const tenantUsers = sqliteTable(
@@ -391,6 +425,8 @@ export const mainSchema = {
   settings,
   tenantInvites,
   tenantPasswordResets,
+  tenantQuotaWindows,
+  quotaReservations,
   tenants,
   tenantUsers,
 };

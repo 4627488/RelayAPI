@@ -361,6 +361,7 @@ export function transferApiKeyToTenant(id: string, tenantId: string) {
 
 export type TenantPayload = {
   name?: string;
+  quotaShares?: number | null;
   ownerEmail?: string;
   enabled?: boolean;
   maxApiKeys?: number | null;

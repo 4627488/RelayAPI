@@ -75,6 +75,7 @@ export type TenantPayload = {
   name?: unknown;
   ownerEmail?: unknown;
   enabled?: unknown;
+  quotaShares?: unknown;
   maxApiKeys?: unknown;
   tokenLimitDaily?: unknown;
   rateLimitPerMinute?: unknown;
@@ -115,6 +116,7 @@ export function createTenant(input: TenantPayload): PublicTenant {
     name,
     ownerEmail,
     enabled: input.enabled !== undefined ? Boolean(input.enabled) : true,
+    quotaShares: normalizeQuotaShares(input.quotaShares),
     maxApiKeys: normalizeNullablePositiveInteger(input.maxApiKeys),
     tokenLimitDaily: normalizeNullablePositiveInteger(input.tokenLimitDaily),
     rateLimitPerMinute: normalizeNullablePositiveInteger(
@@ -152,6 +154,9 @@ export function patchTenant(id: string, input: TenantPayload): PublicTenant {
     ...(input.name !== undefined ? { name: cleanString(input.name) } : {}),
     ownerEmail,
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
+    ...(input.quotaShares !== undefined
+      ? { quotaShares: normalizeQuotaShares(input.quotaShares) }
+      : {}),
     ...(input.maxApiKeys !== undefined
       ? { maxApiKeys: normalizeNullablePositiveInteger(input.maxApiKeys) }
       : {}),
@@ -849,6 +854,21 @@ function normalizeNullablePositiveInteger(value: unknown) {
   return Number.isFinite(numberValue) && numberValue > 0
     ? Math.floor(numberValue)
     : null;
+}
+
+function normalizeQuotaShares(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 100_000) {
+    throw new HttpError(
+      400,
+      "invalid_quota_shares",
+      "Quota shares must be a positive number",
+    );
+  }
+  return Math.round(parsed * 1000) / 1000;
 }
 
 function objectValue(value: unknown) {

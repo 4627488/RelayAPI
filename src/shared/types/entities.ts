@@ -66,6 +66,7 @@ export interface CreatedApiKey extends PublicApiKey {
 }
 
 export interface TenantLimits {
+  quotaShares: number | null;
   maxApiKeys: number | null;
   tokenLimitDaily: number | null;
   rateLimitPerMinute: number | null;

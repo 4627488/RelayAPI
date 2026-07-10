@@ -551,6 +551,40 @@ function migrateMainDb(db: SqliteDatabase) {
         ON tenant_password_resets(tenant_id, created_at);
     `);
   });
+
+  applyMigration(db, "011_tenant_quota_accounting", (database) => {
+    addColumnIfMissing(database, "tenants", "quota_shares_milli", "INTEGER");
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS tenant_quota_windows (
+        tenant_id TEXT NOT NULL,
+        window_kind TEXT NOT NULL CHECK (window_kind IN ('5h', '7d')),
+        started_at TEXT NOT NULL,
+        resets_at TEXT NOT NULL,
+        limit_nano_usd TEXT NOT NULL,
+        settled_nano_usd TEXT NOT NULL DEFAULT '0',
+        reserved_nano_usd TEXT NOT NULL DEFAULT '0',
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, window_kind),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_tenant_quota_windows_reset
+        ON tenant_quota_windows(resets_at);
+
+      CREATE TABLE IF NOT EXISTS quota_reservations (
+        request_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        reserve_nano_usd TEXT NOT NULL,
+        actual_nano_usd TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'settled', 'released', 'expired')),
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        settled_at TEXT,
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS idx_quota_reservations_tenant_status
+        ON quota_reservations(tenant_id, status);
+    `);
+  });
 }
 
 export function setSqliteTimeZone(timeZone: string) {
