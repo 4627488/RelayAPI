@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, test } from "vitest";
 
 import {
+  buildCodexHeaders,
   chatCompletionsToCodex,
   normalizeRawCodexResponsesPayload,
   normalizeResponsesPayload,
   prepareCodexPayloadForUpstream,
 } from "@/src/server/codex/client";
+import { parseCodexModelHeaderOverrides } from "@/src/server/codex/headerProfiles";
+import { serverConfig } from "@/src/server/config/env";
 import {
   captureCodexReasoningReplay,
   clearCodexReasoningReplayCache,
@@ -134,5 +137,46 @@ describe("parallel_tool_calls normalization", () => {
         ],
       }).payload,
     ).toHaveProperty("parallel_tool_calls", false);
+  });
+});
+
+describe("buildCodexHeaders", () => {
+  test("applies exact model headers before deriving a Mac session id", () => {
+    const previousOverrides = serverConfig.codexModelHeaderOverrides;
+    serverConfig.codexModelHeaderOverrides = parseCodexModelHeaderOverrides(
+      JSON.stringify({
+        "*": { "x-codex-beta-features": "wildcard-beta" },
+        "gpt-5.3-codex": {
+          "User-Agent": "codex_cli_rs/test (Mac OS 26.3; arm64)",
+          Originator: "profile-originator",
+        },
+      }),
+    );
+
+    try {
+      const headers = buildCodexHeaders(
+        {
+          accountId: "",
+          userAgent: "base-agent",
+          tokens: { access_token: "token" },
+        } as never,
+        {
+          model: "gpt-5.3-codex",
+          stream: false,
+          sourceHeaders: new Headers(),
+        },
+      );
+
+      expect(headers).toMatchObject({
+        "User-Agent": "codex_cli_rs/test (Mac OS 26.3; arm64)",
+        Originator: "profile-originator",
+        "X-Codex-Beta-Features": "wildcard-beta",
+      });
+      expect(headers.Session_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+    } finally {
+      serverConfig.codexModelHeaderOverrides = previousOverrides;
+    }
   });
 });

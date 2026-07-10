@@ -101,6 +101,16 @@ CODEX_USER_AGENT="codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
 
 清除管理台全局设置后，会回退到环境变量或内置默认值；清除凭据覆盖后，会使用当前全局 User-Agent。
 
+## Codex Model Header Overrides
+
+可通过 `CODEX_MODEL_HEADER_OVERRIDES` 为全部模型或指定模型覆盖 Codex 上游兼容性 Header：
+
+```env
+CODEX_MODEL_HEADER_OVERRIDES='{"*":{"x-codex-beta-features":"responses_websockets=2026-07-10"},"gpt-5.3-codex":{"User-Agent":"codex_cli_rs/...","Originator":"codex_cli_rs"}}'
+```
+
+生效优先级：现有全局、租户或凭据 Header → `*` 通配配置 → 精确模型配置。只允许覆盖 `User-Agent`、`Originator`、`x-codex-beta-features` 和 `OpenAI-Beta`；JSON 格式错误、非法 Header 或包含控制字符的值会阻止服务启动。
+
 ## 路由与冷却
 
 凭据级冷却时间可通过环境变量配置，单位为毫秒。默认只对 `429` 做 5 分钟冷却，`401` / `403` 不再固定长时间摘除凭据，避免上游或代理短暂波动导致长期无可用通道。
