@@ -6,6 +6,10 @@ const source = readFileSync(
   resolve(process.cwd(), "components/workspace/workspace-shell.tsx"),
   "utf8",
 );
+const limitLineSource = readFileSync(
+  resolve(process.cwd(), "components/workspace/limit-line.tsx"),
+  "utf8",
+);
 
 describe("WorkspaceShell contract", () => {
   it("groups navigation without legacy presentation props", () => {
@@ -13,5 +17,9 @@ describe("WorkspaceShell contract", () => {
     expect(source).not.toContain("eyebrow:");
     expect(source).not.toContain("snapshot:");
     expect(source).toContain('aria-label="主导航"');
+  });
+
+  it("keeps quota presentation independent from the shell", () => {
+    expect(limitLineSource).not.toContain("WorkspaceSummaryLine");
   });
 });
