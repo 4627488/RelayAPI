@@ -12,9 +12,9 @@ import {
 import { CodexResponsesSseFramer } from "@/src/server/codex/sse";
 import {
   chatCompletionsToCodex,
+  chatCompletionsPromptCacheKey,
   codexFetch,
   codexJson,
-  codexPromptCacheKeyForApiKey,
   codexResponseToChatCompletion,
   copyUpstreamHeaders,
   extractUsageFromCodexResponse,
@@ -717,7 +717,7 @@ export async function handleChatCompletions(request: Request) {
           sourceHeaders: request.headers,
           channel,
           tenant: apiKey.tenant,
-          promptCacheKey: codexPromptCacheKeyForApiKey(apiKey),
+          promptCacheKey: chatCompletionsPromptCacheKey(input),
           transport: "websocket",
           timing,
         },
@@ -768,6 +768,10 @@ export async function handleChatCompletions(request: Request) {
             {
               fallbackModel: model,
               toolNameMaps,
+              includeUsage: Boolean(
+                isRecord(input.stream_options) &&
+                  input.stream_options.include_usage,
+              ),
               onFirstToken: () => {
                 timing.mark("stream_first_token", "收到首字输出");
               },
@@ -832,7 +836,7 @@ export async function handleChatCompletions(request: Request) {
       sourceHeaders: request.headers,
       channel,
       tenant: apiKey.tenant,
-      promptCacheKey: codexPromptCacheKeyForApiKey(apiKey),
+      promptCacheKey: chatCompletionsPromptCacheKey(input),
       timing,
     });
     if (!result.response.ok) {

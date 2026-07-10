@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, test } from "vitest";
 import {
   buildCodexHeaders,
   chatCompletionsToCodex,
+  chatCompletionsPromptCacheKey,
+  codexResponseToChatCompletion,
   normalizeRawCodexResponsesPayload,
   normalizeResponsesPayload,
   prepareCodexPayloadForUpstream,
@@ -49,16 +51,14 @@ describe("prepareCodexPayloadForUpstream", () => {
     ]);
   });
 
-  test("defaults parallel_tool_calls after injecting the image tool", () => {
+  test("does not inject an undeclared image generation tool", () => {
     const payload = prepareCodexPayloadForUpstream({
       model: "gpt-5.3-codex",
       input: [],
     });
 
-    expect(payload.tools).toEqual([
-      { type: "image_generation", output_format: "png" },
-    ]);
-    expect(payload).toHaveProperty("parallel_tool_calls", true);
+    expect(payload).not.toHaveProperty("tools");
+    expect(payload).not.toHaveProperty("parallel_tool_calls");
   });
 
   test("removes parallel_tool_calls for invalid-only tool arrays", () => {
@@ -71,6 +71,213 @@ describe("prepareCodexPayloadForUpstream", () => {
 
     expect(payload).not.toHaveProperty("parallel_tool_calls");
     expect(payload.tools).toEqual([null, {}, { type: "" }, { type: 42 }]);
+  });
+});
+
+describe("Chat Completions request compatibility", () => {
+  test("does not create shared continuity from an API key fallback", () => {
+    expect(chatCompletionsPromptCacheKey({ messages: [] })).toBe("");
+    expect(
+      chatCompletionsPromptCacheKey({
+        messages: [],
+        prompt_cache_key: "conversation-123",
+      }),
+    ).toBe("conversation-123");
+  });
+
+  test("converts legacy functions and function_call", () => {
+    const { payload } = chatCompletionsToCodex({
+      messages: [{ role: "user", content: "hello" }],
+      functions: [
+        {
+          name: "lookup",
+          description: "Look something up",
+          parameters: { type: "object", properties: {} },
+        },
+      ],
+      function_call: { name: "lookup" },
+    });
+
+    expect(payload.tools).toEqual([
+      {
+        type: "function",
+        name: "lookup",
+        description: "Look something up",
+        parameters: { type: "object", properties: {} },
+      },
+    ]);
+    expect(payload.tool_choice).toEqual({ type: "function", name: "lookup" });
+  });
+
+  test("preserves assistant reasoning history and legacy function output", () => {
+    const { payload } = chatCompletionsToCodex({
+      messages: [
+        {
+          role: "assistant",
+          content: "answer",
+          reasoning_content: "private summary",
+        },
+        { role: "function", name: "lookup", content: "result" },
+      ],
+    });
+
+    expect(payload.input).toEqual([
+      {
+        type: "message",
+        role: "assistant",
+        content: [
+          {
+            type: "output_text",
+            text: "<thinking>private summary</thinking>\nanswer",
+          },
+        ],
+      },
+      {
+        type: "function_call_output",
+        call_id: "lookup",
+        output: "result",
+      },
+    ]);
+  });
+
+  test("converts input_audio and json_object response format", () => {
+    const { payload } = chatCompletionsToCodex({
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_audio",
+              input_audio: { data: "base64-audio", format: "wav" },
+            },
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    expect(payload.input).toEqual([
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_audio", data: "base64-audio", format: "wav" },
+        ],
+      },
+    ]);
+    expect(payload.text).toEqual({ format: { type: "json_object" } });
+  });
+});
+
+describe("Chat Completions non-stream response compatibility", () => {
+  test("preserves text, reasoning, tool calls, and detailed usage together", () => {
+    const response = codexResponseToChatCompletion(
+      {
+        id: "resp_1",
+        model: "gpt-5.3-codex",
+        status: "completed",
+        output: [
+          {
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "reasoning summary" }],
+          },
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "I will call a tool." }],
+          },
+          {
+            type: "function_call",
+            call_id: "call_1",
+            name: "lookup",
+            arguments: "{\"q\":\"x\"}",
+          },
+        ],
+        usage: {
+          input_tokens: 10,
+          output_tokens: 6,
+          total_tokens: 16,
+          output_tokens_details: { reasoning_tokens: 4 },
+        },
+      },
+      "fallback",
+      null,
+    );
+
+    expect(response.choices[0].message).toMatchObject({
+      role: "assistant",
+      content: "I will call a tool.",
+      reasoning_content: "reasoning summary",
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: { name: "lookup", arguments: "{\"q\":\"x\"}" },
+        },
+      ],
+    });
+    expect(response.choices[0].finish_reason).toBe("tool_calls");
+    expect(response.usage.completion_tokens_details).toEqual({
+      reasoning_tokens: 4,
+    });
+  });
+
+  test("maps max-output incompletion to length", () => {
+    const response = codexResponseToChatCompletion(
+      {
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [],
+      },
+      "gpt-5.3-codex",
+      null,
+    );
+
+    expect(response.choices[0].finish_reason).toBe("length");
+  });
+
+  test("preserves custom tool calls and generated images", () => {
+    const response = codexResponseToChatCompletion(
+      {
+        status: "completed",
+        output: [
+          {
+            type: "custom_tool_call",
+            call_id: "call_patch",
+            name: "apply_patch",
+            input: "*** Begin Patch",
+          },
+          {
+            type: "image_generation_call",
+            id: "image_1",
+            output_format: "png",
+            result: "base64-image",
+          },
+        ],
+      },
+      "gpt-5.3-codex",
+      null,
+    );
+
+    expect(response.choices[0].message).toMatchObject({
+      tool_calls: [
+        {
+          id: "call_patch",
+          type: "function",
+          function: {
+            name: "apply_patch",
+            arguments: "*** Begin Patch",
+          },
+        },
+      ],
+      images: [
+        {
+          index: 0,
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,base64-image" },
+        },
+      ],
+    });
   });
 });
 

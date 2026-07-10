@@ -30,11 +30,14 @@ interface ChatStreamState {
   model: string;
   toolNameMaps: ToolNameMaps | null;
   nextToolCallIndex: number;
+  nextImageIndex: number;
   toolCallsByKey: Map<string, ToolCallStreamState>;
   toolCallsByOutputIndex: Map<number, ToolCallStreamState>;
   lastToolCall: ToolCallStreamState | null;
   hasEmittedToolCall: boolean;
   upstreamCompleted: boolean;
+  terminalError: Error | null;
+  includeUsage: boolean;
   firstTokenReported: boolean;
   done: boolean;
   usage: UsageSnapshot;
@@ -46,6 +49,7 @@ export function createOpenAIChatSseStream(
   input: {
     fallbackModel: string;
     toolNameMaps: ToolNameMaps | null;
+    includeUsage?: boolean;
     onFirstToken?: () => void;
     onCompleted?: (usage: UsageSnapshot) => void;
     onError?: (error: unknown, usage: UsageSnapshot) => void;
@@ -59,11 +63,14 @@ export function createOpenAIChatSseStream(
     model: input.fallbackModel || serverConfig.codexDefaultModel,
     toolNameMaps: input.toolNameMaps,
     nextToolCallIndex: 0,
+    nextImageIndex: 0,
     toolCallsByKey: new Map(),
     toolCallsByOutputIndex: new Map(),
     lastToolCall: null,
     hasEmittedToolCall: false,
     upstreamCompleted: false,
+    terminalError: null,
+    includeUsage: Boolean(input.includeUsage),
     firstTokenReported: false,
     done: false,
     usage: {
@@ -161,7 +168,11 @@ export function createOpenAIChatSseStream(
                 state.hasEmittedToolCall ? "tool_calls" : "stop",
               );
             }
-            reportCompletedOnce();
+            if (state.terminalError) {
+              reportErrorOnce(state.terminalError);
+            } else {
+              reportCompletedOnce();
+            }
           } else {
             const error = new Error(
               "Upstream stream ended before response.completed; refusing to synthesize a truncated Chat Completions response",
@@ -264,6 +275,7 @@ function handleCodexEventAsOpenAIChat(
       return;
     }
     case "response.reasoning_summary_text.delta":
+    case "response.reasoning_text.delta":
       if (typeof event.delta === "string") {
         reportFirstTokenOnce(state);
         writeOpenAIChatChunk(controller, encoder, state, {
@@ -287,9 +299,29 @@ function handleCodexEventAsOpenAIChat(
         });
       }
       return;
+    case "response.image_generation_call.partial_image": {
+      const image = stringValue(event.partial_image_b64);
+      if (!image) {
+        return;
+      }
+      writeOpenAIChatChunk(controller, encoder, state, {
+        role: "assistant",
+        images: [
+          {
+            index: state.nextImageIndex,
+            type: "image_url",
+            image_url: {
+              url: `data:${imageMimeType(event.output_format)};base64,${image}`,
+            },
+          },
+        ],
+      });
+      state.nextImageIndex += 1;
+      return;
+    }
     case "response.output_item.added": {
       const item = objectValue(event.item) || {};
-      if (item.type !== "function_call") {
+      if (item.type !== "function_call" && item.type !== "custom_tool_call") {
         return;
       }
       const toolCall = upsertToolCallFromCodexEvent(state, event, item);
@@ -297,7 +329,8 @@ function handleCodexEventAsOpenAIChat(
       flushPendingNormalArguments(controller, encoder, state, toolCall);
       return;
     }
-    case "response.function_call_arguments.delta": {
+    case "response.function_call_arguments.delta":
+    case "response.custom_tool_call_input.delta": {
       const deltaValue = stringValue(event.delta);
       if (!deltaValue) {
         return;
@@ -317,9 +350,10 @@ function handleCodexEventAsOpenAIChat(
       toolCall.argumentDeltasStreamed = true;
       return;
     }
-    case "response.function_call_arguments.done": {
+    case "response.function_call_arguments.done":
+    case "response.custom_tool_call_input.done": {
       const toolCall = getOrCreateToolCallForArgumentsEvent(state, event);
-      const fullArguments = stringValue(event.arguments);
+      const fullArguments = stringValue(event.arguments ?? event.input);
       if (fullArguments && !toolCall.argumentDeltasStreamed) {
         toolCall.rawArguments = fullArguments;
       }
@@ -328,19 +362,20 @@ function handleCodexEventAsOpenAIChat(
     }
     case "response.output_item.done": {
       const item = objectValue(event.item) || {};
-      if (item.type !== "function_call") {
+      if (item.type !== "function_call" && item.type !== "custom_tool_call") {
         return;
       }
       const toolCall = upsertToolCallFromCodexEvent(state, event, item);
       announceOpenAIChatToolCall(controller, encoder, state, toolCall);
-      const fullArguments = stringValue(item.arguments);
+      const fullArguments = stringValue(item.arguments ?? item.input);
       if (fullArguments && !toolCall.argumentDeltasStreamed) {
         toolCall.rawArguments = fullArguments;
       }
       flushCompletedToolArguments(controller, encoder, state, toolCall);
       return;
     }
-    case "response.completed": {
+    case "response.completed":
+    case "response.done": {
       state.upstreamCompleted = true;
       const response = objectValue(event.response) || {};
       state.usage = normalizeUsage(response.usage);
@@ -350,8 +385,33 @@ function handleCodexEventAsOpenAIChat(
         encoder,
         state,
         state.hasEmittedToolCall ? "tool_calls" : "stop",
-        state.usage,
+        state.includeUsage ? state.usage : null,
       );
+      return;
+    }
+    case "response.incomplete": {
+      state.upstreamCompleted = true;
+      const response = objectValue(event.response) || {};
+      state.usage = normalizeUsage(response.usage);
+      const details = objectValue(response.incomplete_details);
+      writeOpenAIChatDone(
+        controller,
+        encoder,
+        state,
+        details?.reason === "max_output_tokens" ? "length" : "stop",
+        state.includeUsage ? state.usage : null,
+      );
+      return;
+    }
+    case "response.failed": {
+      state.upstreamCompleted = true;
+      state.done = true;
+      const response = objectValue(event.response) || {};
+      const error = objectValue(response.error) || {};
+      const message = stringValue(error.message) || "Upstream response failed";
+      const code = stringValue(error.code) || "upstream_response_failed";
+      state.terminalError = new Error(message);
+      writeOpenAIChatStreamErrorPayload(controller, encoder, message, code);
       return;
     }
     default:
@@ -663,6 +723,43 @@ function writeOpenAIChatStreamError(
   safeEnqueue(controller, encoder.encode("data: [DONE]\n\n"));
 }
 
+function writeOpenAIChatStreamErrorPayload(
+  controller: ByteStreamController,
+  encoder: TextEncoder,
+  message: string,
+  code: string,
+) {
+  const payload = {
+    error: { message, type: "stream_error", code },
+  };
+  safeEnqueue(
+    controller,
+    encoder.encode(`data: ${JSON.stringify(payload)}\n\n`),
+  );
+  safeEnqueue(controller, encoder.encode("data: [DONE]\n\n"));
+}
+
+function writeOpenAIChatUsage(
+  controller: ByteStreamController,
+  encoder: TextEncoder,
+  state: ChatStreamState,
+) {
+  const chunk = {
+    id: state.id,
+    object: "chat.completion.chunk",
+    created: state.created,
+    model: state.model || serverConfig.codexDefaultModel,
+    choices: [],
+    usage: {
+      prompt_tokens: state.usage.promptTokens,
+      completion_tokens: state.usage.completionTokens,
+      total_tokens: state.usage.totalTokens,
+      prompt_tokens_details: { cached_tokens: state.usage.cachedTokens },
+    },
+  };
+  safeEnqueue(controller, encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+}
+
 function publicStreamErrorMessage(error: unknown) {
   if (
     error instanceof Error &&
@@ -683,7 +780,10 @@ function writeOpenAIChatDone(
   if (state.done) {
     return;
   }
-  writeOpenAIChatChunk(controller, encoder, state, {}, finishReason, usage);
+  writeOpenAIChatChunk(controller, encoder, state, {}, finishReason);
+  if (usage) {
+    writeOpenAIChatUsage(controller, encoder, state);
+  }
   safeEnqueue(controller, encoder.encode("data: [DONE]\n\n"));
   state.done = true;
 }
@@ -743,4 +843,22 @@ function integerValue(value: unknown) {
     return Number.isInteger(parsed) ? parsed : null;
   }
   return null;
+}
+
+function imageMimeType(outputFormat: unknown) {
+  const format = stringValue(outputFormat).toLowerCase();
+  if (format.includes("/")) {
+    return format;
+  }
+  switch (format) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    default:
+      return "image/png";
+  }
 }
