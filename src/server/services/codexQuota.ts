@@ -16,6 +16,7 @@ import {
   getGlobalProxySetting,
   getGlobalTimeZoneSetting,
 } from "@/src/server/services/settings";
+import { recordCodexQuotaObservation } from "@/src/server/services/quotaCalibration";
 import { formatInstant } from "@/src/shared/time";
 import type {
   CodexCredentialRecord,
@@ -49,6 +50,7 @@ interface QuotaWindow {
   used_percent: number | null;
   remaining_percent: number | null;
   reset_label: string;
+  resets_at: string | null;
   exhausted: boolean;
 }
 
@@ -210,6 +212,20 @@ export async function getCodexQuota({
       status: report.status,
       cache: reportToRecord(report),
       retrievedAt: report.retrieved_at,
+    });
+    recordCodexQuotaObservation({
+      credentialId: credential.id,
+      planType: report.plan_type,
+      observedAt: report.retrieved_at,
+      windows: report.windows.flatMap((window) =>
+        window.id === "code-5h" || window.id === "code-7d"
+          ? [{
+              kind: window.id === "code-5h" ? "5h" as const : "7d" as const,
+              usedPercent: window.used_percent,
+              resetsAt: window.resets_at,
+            }]
+          : [],
+      ),
     });
 
     const publicReport = markQuotaCacheState(reportToRecord(report), "fresh");
@@ -684,8 +700,20 @@ function buildWindow(
     used_percent: usedPercent,
     remaining_percent: remainingPercent,
     reset_label: formatResetLabel(window),
+    resets_at: resetInstant(window),
     exhausted: usedPercent !== null && usedPercent >= 100,
   };
+}
+
+function resetInstant(window: RawObject) {
+  const resetAt = numberFromAny(firstValue(window.reset_at, window.resetAt));
+  if (resetAt > 0) return new Date(resetAt * 1000).toISOString();
+  const resetAfterSeconds = numberFromAny(
+    firstValue(window.reset_after_seconds, window.resetAfterSeconds),
+  );
+  return resetAfterSeconds > 0
+    ? new Date(Date.now() + resetAfterSeconds * 1000).toISOString()
+    : null;
 }
 
 function deduceUsedPercent(
