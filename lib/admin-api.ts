@@ -72,6 +72,13 @@ export type AdminDashboardRequestLogRow = {
   completion_tokens: number;
   total_tokens: number;
   cached_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  cost_nano_usd: string | null;
+  price_model: string | null;
+  price_version: string | null;
+  pricing: ModelPricingSnapshot | null;
+  pricing_complete: boolean;
   cache_hit_rate: number;
   error_code: string | null;
 };
@@ -376,6 +383,14 @@ export type TenantPayload = {
   expiresAt?: string | null;
 };
 
+export type ModelPricingSnapshot = {
+  inputNanoUsdPerToken: string;
+  outputNanoUsdPerToken: string;
+  cachedInputNanoUsdPerToken: string;
+  cacheWriteNanoUsdPerToken: string;
+  reasoningNanoUsdPerToken: string;
+};
+
 export type QuotaAdministration = {
   baselines: Record<"5h" | "7d", {
     automaticNanoUsd: string | null;
@@ -422,6 +437,7 @@ export type CostAnalysis = {
     completionTokens: number;
     cachedTokens: number;
     reasoningTokens: number;
+    pricing: ModelPricingSnapshot | null;
   }>;
 };
 

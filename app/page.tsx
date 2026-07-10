@@ -45,6 +45,19 @@ type RequestLogRow = {
   completion_tokens: number;
   total_tokens: number;
   cached_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  cost_nano_usd: string | null;
+  price_model: string | null;
+  price_version: string | null;
+  pricing: {
+    inputNanoUsdPerToken: string;
+    outputNanoUsdPerToken: string;
+    cachedInputNanoUsdPerToken: string;
+    cacheWriteNanoUsdPerToken: string;
+    reasoningNanoUsdPerToken: string;
+  } | null;
+  pricing_complete: boolean;
   cache_hit_rate: number;
   error_code: string | null;
 };

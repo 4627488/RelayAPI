@@ -975,6 +975,14 @@ function migrateLogDb(db: SqliteDatabase) {
         ON request_logs(tenant_id, started_at, model);
     `);
   });
+
+  applyMigration(db, "012_request_price_snapshot", (database) => {
+    addColumnIfMissing(database, "request_logs", "input_nano_usd_per_token", "TEXT");
+    addColumnIfMissing(database, "request_logs", "output_nano_usd_per_token", "TEXT");
+    addColumnIfMissing(database, "request_logs", "cached_input_nano_usd_per_token", "TEXT");
+    addColumnIfMissing(database, "request_logs", "cache_write_nano_usd_per_token", "TEXT");
+    addColumnIfMissing(database, "request_logs", "reasoning_nano_usd_per_token", "TEXT");
+  });
 }
 
 function recreateRequestLogDetailsForeignKey(db: SqliteDatabase) {

@@ -366,6 +366,11 @@ export interface UsageSnapshot {
   costNanoUsd?: string | null;
   priceModel?: string | null;
   priceVersion?: string | null;
+  inputNanoUsdPerToken?: string | null;
+  outputNanoUsdPerToken?: string | null;
+  cachedInputNanoUsdPerToken?: string | null;
+  cacheWriteNanoUsdPerToken?: string | null;
+  reasoningNanoUsdPerToken?: string | null;
   pricingComplete?: boolean;
 }
 

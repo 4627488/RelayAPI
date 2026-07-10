@@ -2064,6 +2064,11 @@ function settleRelayQuota(
   usage.costNanoUsd = String(cost.totalNanoUsd);
   usage.priceModel = admission.price.pricedModel;
   usage.priceVersion = admission.price.version;
+  usage.inputNanoUsdPerToken = String(admission.price.inputNanoUsdPerToken);
+  usage.outputNanoUsdPerToken = String(admission.price.outputNanoUsdPerToken);
+  usage.cachedInputNanoUsdPerToken = String(admission.price.cachedInputNanoUsdPerToken);
+  usage.cacheWriteNanoUsdPerToken = String(admission.price.cacheWriteNanoUsdPerToken);
+  usage.reasoningNanoUsdPerToken = String(admission.price.reasoningNanoUsdPerToken);
   usage.pricingComplete = true;
   recordCredentialPricedUsage(credentialId, cost.totalNanoUsd, true);
   return admission.state

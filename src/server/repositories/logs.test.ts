@@ -134,7 +134,7 @@ describe("queryRequestLogs", () => {
       startedAt: "2026-07-02T01:00:00.000Z", method: "POST", path: "/v1/responses",
       requestType: "responses", stream: false, model: "gpt-5.6-terra", statusCode: 200,
       latencyMs: 10, tenantId: "tenant-cost-a",
-      usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12, cachedTokens: 1, costNanoUsd: "12345", priceModel: "gpt-5.6-terra", priceVersion: "v1", pricingComplete: true },
+      usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12, cachedTokens: 1, costNanoUsd: "12345", priceModel: "gpt-5.6-terra", priceVersion: "v1", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000", cachedInputNanoUsdPerToken: "500", cacheWriteNanoUsdPerToken: "1200", reasoningNanoUsdPerToken: "2500", pricingComplete: true },
     });
     logs.appendRequestLog({
       startedAt: "2026-07-02T01:01:00.000Z", method: "POST", path: "/v1/responses",
@@ -146,6 +146,13 @@ describe("queryRequestLogs", () => {
       totalCostNanoUsd: "12345",
       pricedRequests: 1,
       models: [{ model: "gpt-5.6-terra", costNanoUsd: "12345" }],
+    });
+    expect(logs.getCostAnalysis({ tenantId: "tenant-cost-a" }).models[0]?.pricing).toEqual({
+      inputNanoUsdPerToken: "1000",
+      outputNanoUsdPerToken: "2000",
+      cachedInputNanoUsdPerToken: "500",
+      cacheWriteNanoUsdPerToken: "1200",
+      reasoningNanoUsdPerToken: "2500",
     });
   });
 });

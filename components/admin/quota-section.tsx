@@ -95,8 +95,8 @@ export function AdminQuotaSection() {
         </Card>
       </div>
       <Card>
-        <CardHeader><CardTitle>模型成本剖析</CardTitle><CardDescription>累计价格加权成本 {formatUsd(costs?.totalCostNanoUsd)}，共 {costs?.pricedRequests ?? 0} 个已定价请求。</CardDescription></CardHeader>
-        <CardContent><Table><TableHeader><TableRow><TableHead>模型</TableHead><TableHead>请求</TableHead><TableHead>输入</TableHead><TableHead>输出</TableHead><TableHead>缓存</TableHead><TableHead className="text-right">换算成本</TableHead></TableRow></TableHeader><TableBody>{costs?.models.map((row) => <TableRow key={row.model}><TableCell>{row.model}</TableCell><TableCell>{row.requestCount}</TableCell><TableCell>{row.promptTokens.toLocaleString()}</TableCell><TableCell>{row.completionTokens.toLocaleString()}</TableCell><TableCell>{row.cachedTokens.toLocaleString()}</TableCell><TableCell className="text-right">{formatUsd(row.costNanoUsd)}</TableCell></TableRow>)}</TableBody></Table></CardContent>
+        <CardHeader><CardTitle>模型成本剖析</CardTitle><CardDescription>逐模型展示当前生效价格与累计用量；历史成本仍按请求发生时的价格快照计算。累计成本 {formatUsd(costs?.totalCostNanoUsd)}，共 {costs?.pricedRequests ?? 0} 个已定价请求。</CardDescription></CardHeader>
+        <CardContent><Table><TableHeader><TableRow><TableHead>模型</TableHead><TableHead>当前价格 / 1M Token</TableHead><TableHead>请求</TableHead><TableHead>输入</TableHead><TableHead>输出</TableHead><TableHead>缓存</TableHead><TableHead className="text-right">换算成本</TableHead></TableRow></TableHeader><TableBody>{costs?.models.map((row) => <TableRow key={row.model}><TableCell>{row.model}</TableCell><TableCell><ModelPrice value={row.pricing} /></TableCell><TableCell>{row.requestCount}</TableCell><TableCell>{row.promptTokens.toLocaleString()}</TableCell><TableCell>{row.completionTokens.toLocaleString()}</TableCell><TableCell>{row.cachedTokens.toLocaleString()}</TableCell><TableCell className="text-right">{formatUsd(row.costNanoUsd)}</TableCell></TableRow>)}</TableBody></Table></CardContent>
       </Card>
     </div>
   );
@@ -107,3 +107,5 @@ function nanoUsdToUsd(value?: string | null) { return value ? (Number(value) / 1
 function formatUsd(value?: string | null) { return `$${(Number(value || 0) / 1_000_000_000).toFixed(4)}`; }
 function formatPercent(value?: number) { return `${Math.round((value || 0) * 100)}%`; }
 function formatDate(value?: string | null) { return value ? new Date(value).toLocaleString("zh-CN") : "尚未同步"; }
+function ModelPrice({ value }: { value: CostAnalysis["models"][number]["pricing"] }) { return value ? <div className="flex flex-col gap-1 font-mono text-xs"><span>输入 {formatUnitPrice(value.inputNanoUsdPerToken)} · 输出 {formatUnitPrice(value.outputNanoUsdPerToken)}</span><span className="text-muted-foreground">缓存读 {formatUnitPrice(value.cachedInputNanoUsdPerToken)} · 写 {formatUnitPrice(value.cacheWriteNanoUsdPerToken)} · 推理 {formatUnitPrice(value.reasoningNanoUsdPerToken)}</span></div> : <span className="text-muted-foreground">当前目录未定价</span>; }
+function formatUnitPrice(value: string) { return `$${(Number(value) / 1_000).toFixed(4)}`; }

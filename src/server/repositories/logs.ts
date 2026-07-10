@@ -276,7 +276,11 @@ export function getCostAnalysis(scope: { tenantId?: string | null } = {}) {
             COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
             COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
             COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
-            COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens
+            COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+            MAX(started_at) AS latest_started_at,
+            input_nano_usd_per_token, output_nano_usd_per_token,
+            cached_input_nano_usd_per_token, cache_write_nano_usd_per_token,
+            reasoning_nano_usd_per_token
        FROM request_logs ${where}
        GROUP BY model
        ORDER BY cost DESC`,
@@ -293,6 +297,7 @@ export function getCostAnalysis(scope: { tenantId?: string | null } = {}) {
       completionTokens: numberValue(row.completion_tokens),
       cachedTokens: numberValue(row.cached_tokens),
       reasoningTokens: numberValue(row.reasoning_tokens),
+      pricing: priceSnapshot(row),
     })),
   };
 }
@@ -334,6 +339,11 @@ function insertRequestLog(
       costNanoUsd: usage.costNanoUsd || null,
       priceModel: usage.priceModel || null,
       priceVersion: usage.priceVersion || null,
+      inputNanoUsdPerToken: usage.inputNanoUsdPerToken || null,
+      outputNanoUsdPerToken: usage.outputNanoUsdPerToken || null,
+      cachedInputNanoUsdPerToken: usage.cachedInputNanoUsdPerToken || null,
+      cacheWriteNanoUsdPerToken: usage.cacheWriteNanoUsdPerToken || null,
+      reasoningNanoUsdPerToken: usage.reasoningNanoUsdPerToken || null,
       pricingComplete: usage.pricingComplete ? 1 : 0,
       errorCode: input.errorCode || null,
       errorMessage: input.errorMessage || null,
@@ -892,6 +902,19 @@ export interface PublicRequestLogRow {
   completion_tokens: number;
   total_tokens: number;
   cached_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  cost_nano_usd: string | null;
+  price_model: string | null;
+  price_version: string | null;
+  pricing: {
+    inputNanoUsdPerToken: string;
+    outputNanoUsdPerToken: string;
+    cachedInputNanoUsdPerToken: string;
+    cacheWriteNanoUsdPerToken: string;
+    reasoningNanoUsdPerToken: string;
+  } | null;
+  pricing_complete: boolean;
   cache_hit_rate: number;
   error_code: string | null;
 }
@@ -974,7 +997,11 @@ export function getRequestLogDetail(
         ${firstTokenLatencySelect("request_logs")},
         tenant_id, tenant_name, api_key_id, api_key_prefix, api_key_name, channel_name,
         credential_email, prompt_tokens, completion_tokens, total_tokens,
-        cached_tokens, error_code, error_message
+        cached_tokens, cache_write_tokens, reasoning_tokens, cost_nano_usd,
+        price_model, price_version, input_nano_usd_per_token,
+        output_nano_usd_per_token, cached_input_nano_usd_per_token,
+        cache_write_nano_usd_per_token, reasoning_nano_usd_per_token,
+        pricing_complete, error_code, error_message
       FROM request_logs
       WHERE id = ? ${tenantWhere}`,
     params,
@@ -1019,7 +1046,11 @@ export function queryRequestLogs(
         ${firstTokenLatencySelect("request_logs")},
         tenant_id, tenant_name, api_key_id, api_key_prefix, api_key_name, channel_name,
         credential_email, prompt_tokens, completion_tokens, total_tokens,
-        cached_tokens, error_code
+        cached_tokens, cache_write_tokens, reasoning_tokens, cost_nano_usd,
+        price_model, price_version, input_nano_usd_per_token,
+        output_nano_usd_per_token, cached_input_nano_usd_per_token,
+        cache_write_nano_usd_per_token, reasoning_nano_usd_per_token,
+        pricing_complete, error_code
       FROM request_logs
       ${where}
       ORDER BY started_at DESC
@@ -2423,6 +2454,11 @@ function normalizeUsageSnapshot(usage?: UsageSnapshot): UsageSnapshot {
     costNanoUsd: usage?.costNanoUsd || null,
     priceModel: usage?.priceModel || null,
     priceVersion: usage?.priceVersion || null,
+    inputNanoUsdPerToken: usage?.inputNanoUsdPerToken || null,
+    outputNanoUsdPerToken: usage?.outputNanoUsdPerToken || null,
+    cachedInputNanoUsdPerToken: usage?.cachedInputNanoUsdPerToken || null,
+    cacheWriteNanoUsdPerToken: usage?.cacheWriteNanoUsdPerToken || null,
+    reasoningNanoUsdPerToken: usage?.reasoningNanoUsdPerToken || null,
     pricingComplete: Boolean(usage?.pricingComplete),
   };
 }
@@ -2502,11 +2538,31 @@ function toPublicRequestLogRow(
     completion_tokens: Number(row.completion_tokens || 0),
     total_tokens: Number(row.total_tokens || 0),
     cached_tokens: Number(row.cached_tokens || 0),
+    cache_write_tokens: Number(row.cache_write_tokens || 0),
+    reasoning_tokens: Number(row.reasoning_tokens || 0),
+    cost_nano_usd: nullableString(row.cost_nano_usd),
+    price_model: nullableString(row.price_model),
+    price_version: nullableString(row.price_version),
+    pricing: priceSnapshot(row),
+    pricing_complete: Boolean(row.pricing_complete),
     cache_hit_rate: cacheHitRate(
       Number(row.cached_tokens || 0),
       Number(row.prompt_tokens || 0),
     ),
     error_code: nullableString(row.error_code),
+  };
+}
+
+function priceSnapshot(row: Record<string, unknown>) {
+  const input = nullableString(row.input_nano_usd_per_token);
+  const output = nullableString(row.output_nano_usd_per_token);
+  if (!input || !output) return null;
+  return {
+    inputNanoUsdPerToken: input,
+    outputNanoUsdPerToken: output,
+    cachedInputNanoUsdPerToken: nullableString(row.cached_input_nano_usd_per_token) || input,
+    cacheWriteNanoUsdPerToken: nullableString(row.cache_write_nano_usd_per_token) || input,
+    reasoningNanoUsdPerToken: nullableString(row.reasoning_nano_usd_per_token) || output,
   };
 }
 

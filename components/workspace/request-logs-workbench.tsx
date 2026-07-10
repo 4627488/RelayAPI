@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -22,7 +23,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DataPanel } from "@/components/workspace/data-panel";
-import { WorkbenchDetailSheet } from "@/components/workspace/detail-sheet";
 import {
   formatDateTime,
   formatDuration,
@@ -310,6 +310,7 @@ export function RequestLogsWorkbench({
                         {detailTenantColumn ? "租户 / 通道" : "密钥 / 通道"}
                       </TableHead>
                       <TableHead>Token</TableHead>
+                      <TableHead>价格</TableHead>
                       <TableHead className="w-20">操作</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -327,6 +328,9 @@ export function RequestLogsWorkbench({
                             {log.request_type}
                             {log.stream ? " · stream" : ""}
                           </div>
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap font-mono">
+                          {log.cost_nano_usd ? formatCost(log.cost_nano_usd) : <span className="text-muted-foreground">未定价</span>}
                         </TableCell>
                         <TableCell>{log.model || "-"}</TableCell>
                         <TableCell>
@@ -445,7 +449,7 @@ export function RequestLogsWorkbench({
         </div>
       </DataPanel>
 
-      <RequestLogDetailSheet
+      <RequestLogDetailDialog
         detail={selectedDetail}
         loading={detailLoading}
         onOpenChange={setDetailOpen}
@@ -455,7 +459,7 @@ export function RequestLogsWorkbench({
   );
 }
 
-function RequestLogDetailSheet({
+function RequestLogDetailDialog({
   detail,
   loading,
   onOpenChange,
@@ -470,13 +474,13 @@ function RequestLogDetailSheet({
   const body = detail?.detail;
 
   return (
-    <WorkbenchDetailSheet
-      className="sm:max-w-4xl"
-      description={log ? `${log.method} ${log.path}` : undefined}
-      onOpenChange={onOpenChange}
-      open={open}
-      title="请求详情"
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-5xl">
+        <DialogHeader>
+          <DialogTitle>请求详情</DialogTitle>
+          {log && <DialogDescription>{log.method} {log.path}</DialogDescription>}
+        </DialogHeader>
+        <div className="min-h-0 overflow-auto">
       {loading ? (
         <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
           <Spinner /> 加载详情
@@ -504,6 +508,7 @@ function RequestLogDetailSheet({
                 label="Token"
                 value={`${formatTokenNumber(log.total_tokens)} · cache ${formatTokenNumber(log.cached_tokens)} (${formatPercent(log.cache_hit_rate)})`}
               />
+              <DetailKV label="价格" value={log.cost_nano_usd ? formatCost(log.cost_nano_usd) : "未定价"} />
               <DetailKV label="密钥" value={log.api_key_name || "未知密钥"} />
               <DetailKV
                 label="通道"
@@ -511,6 +516,8 @@ function RequestLogDetailSheet({
               />
             </div>
           </DataPanel>
+
+          <CostCalculationBlock log={log} />
 
           {!body ? (
             <LogsEmptyState filtered />
@@ -560,9 +567,36 @@ function RequestLogDetailSheet({
           )}
         </div>
       )}
-    </WorkbenchDetailSheet>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
+
+function CostCalculationBlock({ log }: { log: RequestLogDetail["log"] }) {
+  if (!log.pricing || !log.cost_nano_usd) {
+    return <DataPanel title="价格计算"><p className="text-sm text-muted-foreground">此请求没有完整的历史单价快照，无法还原逐项计算。</p></DataPanel>;
+  }
+  const uncachedInput = Math.max(0, log.prompt_tokens - log.cached_tokens);
+  const rows = [
+    ["普通输入", uncachedInput, log.pricing.inputNanoUsdPerToken],
+    ["缓存输入", log.cached_tokens, log.pricing.cachedInputNanoUsdPerToken],
+    ["缓存写入", log.cache_write_tokens, log.pricing.cacheWriteNanoUsdPerToken],
+    ["输出", log.completion_tokens, log.pricing.outputNanoUsdPerToken],
+    ["推理", log.reasoning_tokens, log.pricing.reasoningNanoUsdPerToken],
+  ] as const;
+  return <DataPanel title="价格计算">
+    <div className="flex flex-col gap-3 text-sm">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground"><span>计价模型 {log.price_model || log.model}</span><span>价格版本 {log.price_version || "-"}</span><span>单价单位 USD / 1M Token</span></div>
+      <Table><TableHeader><TableRow><TableHead>项目</TableHead><TableHead className="text-right">Token</TableHead><TableHead className="text-right">单价</TableHead><TableHead className="text-right">小计</TableHead></TableRow></TableHeader><TableBody>{rows.map(([label, tokens, price]) => <TableRow key={label}><TableCell>{label}</TableCell><TableCell className="text-right font-mono">{formatTokenNumber(tokens)}</TableCell><TableCell className="text-right font-mono">{formatUnitPrice(price)}</TableCell><TableCell className="text-right font-mono">{formatCost(String(BigInt(tokens) * BigInt(price)))}</TableCell></TableRow>)}</TableBody></Table>
+      <div className="text-right font-medium">合计 {formatCost(log.cost_nano_usd)}</div>
+      <p className="text-xs text-muted-foreground">普通输入 = 输入 Token − 缓存输入 Token；总成本为五项小计之和。</p>
+    </div>
+  </DataPanel>;
+}
+
+function formatCost(value: string) { return `$${(Number(value) / 1_000_000_000).toFixed(6)}`; }
+function formatUnitPrice(value: string) { return `$${(Number(value) / 1_000).toFixed(4)}`; }
 
 function DetailKV({
   label,

@@ -50,6 +50,27 @@ export function resolveConfiguredModelPrice(model: string) {
   });
 }
 
+export function attachConfiguredModelPrices<T extends {
+  models: Array<{ model: string; pricing?: unknown }>;
+}>(analysis: T): T {
+  return {
+    ...analysis,
+    models: analysis.models.map((row) => {
+      const price = resolveConfiguredModelPrice(row.model);
+      return {
+        ...row,
+        pricing: price ? {
+          inputNanoUsdPerToken: String(price.inputNanoUsdPerToken),
+          outputNanoUsdPerToken: String(price.outputNanoUsdPerToken),
+          cachedInputNanoUsdPerToken: String(price.cachedInputNanoUsdPerToken),
+          cacheWriteNanoUsdPerToken: String(price.cacheWriteNanoUsdPerToken),
+          reasoningNanoUsdPerToken: String(price.reasoningNanoUsdPerToken),
+        } : null,
+      };
+    }),
+  } as T;
+}
+
 export function getQuotaAdministration() {
   const config = readPricingConfig();
   const baselines = getEffectiveQuotaBaselines();
