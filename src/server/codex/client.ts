@@ -466,7 +466,6 @@ export function normalizeResponsesPayload(
   payload.instructions = payload.instructions ?? "";
   payload.stream = Boolean(input.stream);
   payload.store = false;
-  payload.parallel_tool_calls = true;
   payload.include = [...CODEX_REASONING_INCLUDE];
 
   if (typeof payload.input === "string") {
@@ -483,6 +482,7 @@ export function normalizeResponsesPayload(
   }
 
   stripUnsupportedCodexFields(payload, { allowStore: true });
+  normalizeParallelToolCalls(payload);
   return payload;
 }
 
@@ -498,9 +498,9 @@ export function normalizeCompactPayload(inputPayload: unknown) {
 export function normalizeRawCodexResponsesPayload(inputPayload: unknown) {
   const payload = cloneJsonObject(inputPayload);
   payload.store = false;
-  payload.parallel_tool_calls = true;
   payload.include = [...CODEX_REASONING_INCLUDE];
   normalizeRawCodexPayloadForUpstream(payload);
+  normalizeParallelToolCalls(payload);
   return payload;
 }
 
@@ -577,7 +577,6 @@ export function chatCompletionsToCodex(
   } else {
     out.reasoning = { effort: "medium", summary: "auto" };
   }
-  out.parallel_tool_calls = true;
   out.include = [...CODEX_REASONING_INCLUDE];
 
   if (Array.isArray(payload.tools) && payload.tools.length > 0) {
@@ -597,6 +596,11 @@ export function chatCompletionsToCodex(
     });
   }
 
+  if (typeof payload.parallel_tool_calls === "boolean") {
+    out.parallel_tool_calls = payload.parallel_tool_calls;
+  }
+  normalizeParallelToolCalls(out);
+
   if (payload.tool_choice !== undefined) {
     out.tool_choice = normalizeToolChoice(payload.tool_choice, toolNameMaps);
   }
@@ -609,6 +613,16 @@ export function chatCompletionsToCodex(
   stripUndefinedDeep(out);
   stripUnsupportedCodexFields(out, { allowStore: true });
   return { payload: out, toolNameMaps };
+}
+
+function normalizeParallelToolCalls(payload: Record<string, unknown>) {
+  if (!Array.isArray(payload.tools) || payload.tools.length === 0) {
+    delete payload.parallel_tool_calls;
+    return;
+  }
+  if (typeof payload.parallel_tool_calls !== "boolean") {
+    payload.parallel_tool_calls = true;
+  }
 }
 
 function messageToCodexContent(

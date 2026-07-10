@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, test } from "vitest";
 
 import {
+  chatCompletionsToCodex,
+  normalizeRawCodexResponsesPayload,
+  normalizeResponsesPayload,
   prepareCodexPayloadForUpstream,
 } from "@/src/server/codex/client";
 import {
@@ -41,5 +44,58 @@ describe("prepareCodexPayloadForUpstream", () => {
       },
       { type: "message", role: "user", content: [] },
     ]);
+  });
+});
+
+describe("parallel_tool_calls normalization", () => {
+  test.each([
+    ["missing", undefined],
+    ["empty", []],
+  ])("removes parallel_tool_calls when tools are %s", (_label, tools) => {
+    const input = {
+      model: "gpt-5.3-codex",
+      input: [],
+      parallel_tool_calls: true,
+      ...(tools === undefined ? {} : { tools }),
+    };
+
+    expect(normalizeResponsesPayload(input)).not.toHaveProperty(
+      "parallel_tool_calls",
+    );
+    expect(normalizeRawCodexResponsesPayload(input)).not.toHaveProperty(
+      "parallel_tool_calls",
+    );
+  });
+
+  test("defaults to true with tools and preserves an explicit false", () => {
+    const tool = { type: "function", name: "lookup", parameters: {} };
+    expect(
+      normalizeResponsesPayload({ input: [], tools: [tool] }),
+    ).toHaveProperty("parallel_tool_calls", true);
+    expect(
+      normalizeResponsesPayload({
+        input: [],
+        tools: [tool],
+        parallel_tool_calls: false,
+      }),
+    ).toHaveProperty("parallel_tool_calls", false);
+  });
+
+  test("applies the same rule after Chat Completions tool conversion", () => {
+    expect(chatCompletionsToCodex({ messages: [] }).payload).not.toHaveProperty(
+      "parallel_tool_calls",
+    );
+    expect(
+      chatCompletionsToCodex({
+        messages: [],
+        parallel_tool_calls: false,
+        tools: [
+          {
+            type: "function",
+            function: { name: "lookup", parameters: { type: "object" } },
+          },
+        ],
+      }).payload,
+    ).toHaveProperty("parallel_tool_calls", false);
   });
 });
