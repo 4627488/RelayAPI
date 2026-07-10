@@ -14,11 +14,7 @@ import {
   XCircleIcon,
 } from "lucide-react";
 
-import {
-  formatDateTime,
-  setDisplayTimeZone,
-} from "@/components/workspace/format";
-import { LimitLine } from "@/components/workspace/limit-line";
+import { setDisplayTimeZone } from "@/components/workspace/format";
 import { CreatedApiKeyDialog, TenantApiKeyDialog } from "@/components/tenant/api-key-dialogs";
 import { TenantApiKeysSection } from "@/components/tenant/api-keys-section";
 import { TenantCodexSetupSection } from "@/components/tenant/codex-setup-section";
@@ -93,7 +89,7 @@ export function TenantWorkbench({
     initialRequestLogsPage,
   );
   const [requestLogsRefreshKey, setRequestLogsRefreshKey] = React.useState(0);
-  const [snapshotTime, setSnapshotTime] = React.useState(initialNow);
+  const [, setSnapshotTime] = React.useState(initialNow);
   const [refreshing, setRefreshing] = React.useState(false);
   const [loggingOut, setLoggingOut] = React.useState(false);
   const [sessionExpired, setSessionExpired] = React.useState(false);
@@ -189,36 +185,42 @@ export function TenantWorkbench({
   const navigationItems: WorkspaceNavItem<TenantSectionId>[] = [
     {
       id: "overview",
-      label: "概览",
+      label: "用量总览",
       icon: GaugeIcon,
+      group: "用量",
     },
     {
       id: "apiKeys",
-      label: "密钥",
+      label: "API 密钥",
       icon: KeyRoundIcon,
       count: apiKeys.length,
+      group: "访问",
     },
     {
       id: "setup",
-      label: "配置",
+      label: "Codex 接入",
       icon: BotIcon,
+      group: "连接",
     },
     {
       id: "logs",
-      label: "流量",
+      label: "请求日志",
       icon: FileTextIcon,
       count: requestLogsPage.total,
+      group: "诊断",
     },
     {
       id: "resources",
       label: "资源",
       icon: NetworkIcon,
       count: resources.channels.length,
+      group: "配置",
     },
     {
       id: "settings",
       label: "设置",
       icon: SettingsIcon,
+      group: "配置",
     },
   ];
 
@@ -226,9 +228,8 @@ export function TenantWorkbench({
     <>
       <WorkspaceShell
         activeId={activeSection}
-        eyebrow="TENANT"
         navItems={navigationItems}
-        title={tenant.name}
+        title={navigationItems.find((item) => item.id === activeSection)?.label ?? tenant.name}
         status={
           <Badge variant={tenant.enabled ? "secondary" : "destructive"}>
             {tenant.enabled ? "启用" : "停用"}
@@ -261,27 +262,6 @@ export function TenantWorkbench({
               )}
               刷新
             </Button>
-          </>
-        }
-        snapshot={`数据快照：${formatDateTime(new Date(snapshotTime).toISOString())}`}
-        summary={
-          <>
-            <LimitLine
-              label="Key 数"
-              value={apiKeys.length}
-              limit={tenant.maxApiKeys}
-            />
-            <LimitLine
-              label="今日 token"
-              value={tenant.todayTokens}
-              limit={tenant.tokenLimitDaily}
-            />
-            <LimitLine
-              label="每分钟请求"
-              value={0}
-              limit={tenant.rateLimitPerMinute}
-              hideValue
-            />
           </>
         }
         onNavChange={setActiveSection}

@@ -81,7 +81,6 @@ import {
 import { MetricStrip, MetricStripItem } from "@/components/workspace/metric-strip";
 import {
   WorkspaceShell,
-  WorkspaceSummaryLine,
   type WorkspaceNavItem,
 } from "@/components/workspace/workspace-shell";
 import {
@@ -241,7 +240,7 @@ export function AdminWorkbench({
   });
   const [overviewStats, setOverviewStats] =
     React.useState(initialOverviewStats);
-  const [snapshotTime, setSnapshotTime] = React.useState(initialNow);
+  const [, setSnapshotTime] = React.useState(initialNow);
   const [refreshing, setRefreshing] = React.useState(false);
   const [loggingOut, setLoggingOut] = React.useState(false);
   const [sessionExpired, setSessionExpired] = React.useState(false);
@@ -494,19 +493,12 @@ export function AdminWorkbench({
   const enabledChannelCount = loadedData.channels
     ? channels.filter((channel) => channel.enabled).length
     : initialResourceCounts.enabledChannels;
-  const healthyChannelCount = loadedData.channels
-    ? channels.filter((channel) => channel.status === "healthy").length
-    : initialResourceCounts.healthyChannels;
   const credentialCount = loadedData.credentials
     ? credentials.length
     : initialResourceCounts.credentials;
-  const proxyPoolCount = loadedData.proxyPool
-    ? proxyPool.length
-    : initialResourceCounts.proxyPool;
   const tenantCount = loadedData.tenants
     ? tenants.length
     : initialResourceCounts.tenants;
-  const successRate = ratio(totals.successCount, totals.requestCount);
   const hasOperationalData = totals.requestCount > 0;
   const requestLogsRenderKey = `${requestLogsPage.page}:${
     requestLogs[0]?.id ?? "empty"
@@ -515,41 +507,45 @@ export function AdminWorkbench({
   const navigationItems: WorkspaceNavItem<SectionId>[] = [
     {
       id: "overview",
-      label: "概览",
+      label: "运行总览",
       icon: GaugeIcon,
+      group: "监控",
     },
     {
       id: "traffic",
-      label: "流量",
+      label: "请求日志",
       icon: FileTextIcon,
       count: requestLogsPage.total,
+      group: "监控",
     },
     {
       id: "routing",
-      label: "路由",
+      label: "路由资源",
       icon: RouteIcon,
       count: channelCount,
+      group: "调度",
     },
     {
       id: "access",
-      label: "访问",
+      label: "租户与密钥",
       icon: ShieldCheckIcon,
       count: apiKeyCount + tenantCount,
+      group: "权限",
     },
     {
       id: "settings",
-      label: "设置",
+      label: "全局设置",
       icon: SettingsIcon,
+      group: "系统",
     },
   ];
 
   return (
     <WorkspaceShell
       activeId={activeSection}
-      eyebrow="ADMIN"
       navItems={navigationItems}
       width="admin"
-      title="RelayAPI"
+      title={navigationItems.find((item) => item.id === activeSection)?.label ?? "运行总览"}
       status={
         <Badge variant={hasOperationalData ? "secondary" : "outline"}>
           {hasOperationalData ? "运行中" : "等待首个请求"}
@@ -582,39 +578,6 @@ export function AdminWorkbench({
             )}
             刷新数据
           </Button>
-        </>
-      }
-      snapshot={
-        <>
-          数据快照：
-          <LocalDateTime value={new Date(snapshotTime).toISOString()} />
-        </>
-      }
-      summary={
-        <>
-          <WorkspaceSummaryLine label="租户" value={formatNumber(tenantCount)} />
-          <WorkspaceSummaryLine
-            label="通道"
-            value={
-              <>
-                健康 {formatNumber(healthyChannelCount)}/
-                {formatNumber(channelCount)}
-              </>
-            }
-          />
-          <WorkspaceSummaryLine
-            label="路由资源"
-            value={
-              <>
-                凭据 {formatNumber(credentialCount)} · 代理{" "}
-                {formatNumber(proxyPoolCount)}
-              </>
-            }
-          />
-          <WorkspaceSummaryLine
-            label="成功率"
-            value={formatPercent(successRate)}
-          />
         </>
       }
       onNavChange={(section) => {

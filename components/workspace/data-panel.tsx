@@ -25,10 +25,10 @@ export function DataPanel({
   title?: React.ReactNode;
 }) {
   return (
-    <Card className={cn("rounded-lg py-0", className)}>
+    <Card className={cn("rounded-md py-0 shadow-none", className)}>
       {(title || action) && (
-        <CardHeader className="border-b px-3 py-2">
-          {title && <CardTitle className="text-sm">{title}</CardTitle>}
+        <CardHeader className="min-h-10 border-b px-3 py-2">
+          {title && <CardTitle className="text-xs font-semibold tracking-wide uppercase">{title}</CardTitle>}
           {action && <CardAction>{action}</CardAction>}
         </CardHeader>
       )}

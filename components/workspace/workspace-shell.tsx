@@ -1,10 +1,16 @@
 "use client";
 
 import * as React from "react";
-import type { LucideIcon } from "lucide-react";
+import { MenuIcon, type LucideIcon } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
 export type WorkspaceNavItem<TId extends string> = {
@@ -12,6 +18,7 @@ export type WorkspaceNavItem<TId extends string> = {
   label: string;
   icon: LucideIcon;
   count?: number;
+  group?: string;
 };
 
 export function WorkspaceShell<TId extends string>({
@@ -19,12 +26,9 @@ export function WorkspaceShell<TId extends string>({
   actions,
   children,
   className,
-  eyebrow,
   navItems,
   onNavChange,
-  snapshot,
   status,
-  summary,
   title,
   width = "tenant",
 }: {
@@ -32,129 +36,160 @@ export function WorkspaceShell<TId extends string>({
   actions: React.ReactNode;
   children: React.ReactNode;
   className?: string;
-  eyebrow: string;
   navItems: WorkspaceNavItem<TId>[];
   onNavChange: (id: TId) => void;
-  snapshot: React.ReactNode;
   status?: React.ReactNode;
-  summary?: React.ReactNode;
   title: React.ReactNode;
   width?: "admin" | "tenant";
 }) {
   const activeItem = navItems.find((item) => item.id === activeId);
+  const groups = groupItems(navItems);
 
   return (
-    <main className="min-h-screen bg-muted/25 text-sm">
+    <main className="min-h-screen bg-muted/30 text-sm">
       <div
         className={cn(
-          "mx-auto grid w-full gap-3 px-2 py-2 sm:px-3 lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:py-3",
-          width === "admin" ? "max-w-[1800px]" : "max-w-[1560px]",
+          "mx-auto grid min-h-screen w-full lg:grid-cols-[13.5rem_minmax(0,1fr)]",
+          width === "admin" ? "max-w-[1920px]" : "max-w-[1680px]",
           className,
         )}
       >
-        <aside className="min-w-0 rounded-lg border bg-card lg:sticky lg:top-3 lg:h-[calc(100vh-1.5rem)]">
-          <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-            <div className="min-w-0">
-              <div className="truncate font-mono text-xs text-muted-foreground">
-                {eyebrow}
-              </div>
-              <div className="truncate text-sm font-medium">
-                {activeItem?.label ?? "Workbench"}
-              </div>
-            </div>
-            {status}
-          </div>
-          <nav className="flex gap-1 overflow-x-auto p-2 lg:grid lg:overflow-visible">
-            {navItems.map((item) => (
-              <WorkspaceNavButton
-                active={item.id === activeId}
-                item={item}
-                key={item.id}
-                onClick={() => onNavChange(item.id)}
-              />
-            ))}
+        <aside className="hidden border-r bg-card lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col">
+          <Brand status={status} />
+          <nav aria-label="主导航" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 py-4">
+            <NavigationGroups
+              activeId={activeId}
+              groups={groups}
+              onNavChange={onNavChange}
+            />
           </nav>
-          {summary && (
-            <div className="hidden lg:block">
-              <Separator />
-              <div className="grid gap-2 p-3 text-xs text-muted-foreground">
-                {summary}
-              </div>
-            </div>
-          )}
+          <div className="border-t p-2">{actions}</div>
         </aside>
 
         <div className="min-w-0">
-          <header className="mb-3 rounded-lg border bg-card">
-            <div className="flex flex-col gap-2 px-3 py-2 md:flex-row md:items-center md:justify-between">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <h1 className="truncate text-base font-semibold leading-7">
-                  {title}
-                </h1>
-                {activeItem && (
-                  <Badge variant="outline" className="font-mono">
-                    {activeItem.label}
-                  </Badge>
-                )}
+          <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b bg-background/95 px-3 backdrop-blur sm:px-5">
+            <MobileNavigation
+              activeId={activeId}
+              groups={groups}
+              onNavChange={onNavChange}
+              status={status}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[0.68rem] font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                {activeItem?.group ?? "控制台"}
               </div>
-              <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                <div className="text-xs text-muted-foreground">{snapshot}</div>
-                {actions}
-              </div>
+              <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
             </div>
-            {summary && (
-              <div className="border-t px-3 py-2 lg:hidden">
-                <div className="grid gap-2 text-xs text-muted-foreground">
-                  {summary}
-                </div>
-              </div>
-            )}
+            <div className="hidden items-center gap-1.5 lg:flex">{actions}</div>
           </header>
-          <section className="min-w-0">{children}</section>
+          <section className="min-w-0 p-2.5 sm:p-4 xl:p-5">{children}</section>
         </div>
       </div>
     </main>
   );
 }
 
-function WorkspaceNavButton<TId extends string>({
-  active,
-  item,
-  onClick,
+function Brand({ status }: { status?: React.ReactNode }) {
+  return (
+    <div className="flex h-14 items-center gap-2.5 border-b px-3">
+      <div className="grid size-7 place-items-center rounded-md bg-primary font-mono text-xs font-bold text-primary-foreground">
+        R
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-semibold tracking-tight">RelayAPI</div>
+        <div className="text-[0.68rem] text-muted-foreground">Operations</div>
+      </div>
+      {status}
+    </div>
+  );
+}
+
+function MobileNavigation<TId extends string>({
+  activeId,
+  groups,
+  onNavChange,
+  status,
 }: {
+  activeId: TId;
+  groups: Array<[string, WorkspaceNavItem<TId>[]]>;
+  onNavChange: (id: TId) => void;
+  status?: React.ReactNode;
+}) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger
+        render={<Button variant="ghost" size="icon" className="lg:hidden" />}
+      >
+        <MenuIcon />
+        <span className="sr-only">打开导航</span>
+      </SheetTrigger>
+      <SheetContent side="left" className="w-72 gap-0 p-0">
+        <SheetHeader className="border-b">
+          <SheetTitle className="flex items-center justify-between gap-3">
+            RelayAPI
+            {status}
+          </SheetTitle>
+        </SheetHeader>
+        <nav aria-label="主导航" className="flex flex-col gap-5 overflow-y-auto p-3">
+          <NavigationGroups
+            activeId={activeId}
+            groups={groups}
+            onNavChange={(id) => {
+              onNavChange(id);
+              setOpen(false);
+            }}
+          />
+        </nav>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function NavigationGroups<TId extends string>({ activeId, groups, onNavChange }: {
+  activeId: TId;
+  groups: Array<[string, WorkspaceNavItem<TId>[]]>;
+  onNavChange: (id: TId) => void;
+}) {
+  return groups.map(([group, items]) => (
+    <div className="flex flex-col gap-1" key={group}>
+      <div className="px-2 text-[0.65rem] font-semibold tracking-[0.14em] text-muted-foreground/75 uppercase">
+        {group}
+      </div>
+      {items.map((item) => (
+        <WorkspaceNavButton
+          active={item.id === activeId}
+          item={item}
+          key={item.id}
+          onClick={() => onNavChange(item.id)}
+        />
+      ))}
+    </div>
+  ));
+}
+
+function WorkspaceNavButton<TId extends string>({ active, item, onClick }: {
   active: boolean;
   item: WorkspaceNavItem<TId>;
   onClick: () => void;
 }) {
   const Icon = item.icon;
-
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "flex h-10 min-w-32 items-center gap-2 rounded-md px-2 text-left transition-colors lg:min-w-0",
+        "group relative flex h-8 w-full items-center gap-2 rounded-md px-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
         active
-          ? "bg-primary text-primary-foreground"
+          ? "bg-accent font-medium text-accent-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-primary"
           : "text-muted-foreground hover:bg-muted hover:text-foreground",
       )}
       aria-current={active ? "page" : undefined}
     >
-      <Icon className="shrink-0" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">
-          {item.label}
-        </span>
-      </span>
+      <Icon />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
       {typeof item.count === "number" && (
-        <span
-          className={cn(
-            "rounded px-1.5 py-0.5 font-mono text-[0.68rem] tabular-nums",
-            active
-              ? "bg-primary-foreground/15 text-primary-foreground"
-              : "bg-muted text-muted-foreground",
-          )}
-        >
+        <span className="font-mono text-[0.68rem] tabular-nums text-muted-foreground">
           {formatNavCount(item.count)}
         </span>
       )}
@@ -162,26 +197,18 @@ function WorkspaceNavButton<TId extends string>({
   );
 }
 
+function groupItems<TId extends string>(items: WorkspaceNavItem<TId>[]) {
+  const groups = new Map<string, WorkspaceNavItem<TId>[]>();
+  for (const item of items) {
+    const group = item.group ?? "工作区";
+    groups.set(group, [...(groups.get(group) ?? []), item]);
+  }
+  return [...groups.entries()];
+}
+
 function formatNavCount(value: number) {
   return new Intl.NumberFormat("zh-CN", {
     maximumFractionDigits: 0,
     notation: value >= 10000 ? "compact" : "standard",
   }).format(value);
-}
-
-export function WorkspaceSummaryLine({
-  label,
-  value,
-}: {
-  label: string;
-  value: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="truncate">{label}</span>
-      <span className="min-w-0 truncate text-right font-mono font-medium text-foreground">
-        {value}
-      </span>
-    </div>
-  );
 }

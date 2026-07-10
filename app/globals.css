@@ -126,9 +126,17 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-variant-numeric: tabular-nums;
   }
   html {
     @apply font-sans;
+  }
+  ::selection {
+    @apply bg-primary/20 text-foreground;
+  }
+  * {
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 32%, transparent) transparent;
+    scrollbar-width: thin;
   }
 }
