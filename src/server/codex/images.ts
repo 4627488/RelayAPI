@@ -202,7 +202,7 @@ export function createImagesSseStream(
   input: {
     responseFormat: "b64_json" | "url";
     streamPrefix: ImageStreamPrefix;
-    onCompleted: () => void;
+    onCompleted: (response?: unknown) => void;
     onError: (error: unknown) => void;
     onFirstEvent?: () => void;
   },
@@ -297,7 +297,7 @@ export function createImagesSseStream(
         });
       }
       completed = true;
-      input.onCompleted();
+      input.onCompleted(event.response || event);
     }
   }
 

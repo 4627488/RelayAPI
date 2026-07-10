@@ -58,6 +58,7 @@ import { listPublicCodexCredentials } from "@/src/server/services/codexCredentia
 import { maybeAutoPruneRequestLogs } from "@/src/server/services/logRetention";
 import { calculateRequestCost } from "@/src/server/services/modelPricing";
 import { recordCredentialPricedUsage } from "@/src/server/services/quotaCalibration";
+import { resolveConfiguredModelPrice } from "@/src/server/services/quotaAdministration";
 import { getFullRequestLoggingSetting } from "@/src/server/services/settings";
 import {
   admitTenantRequest,
@@ -399,6 +400,7 @@ async function handleImagesProxy(
   let apiKey: RelayApiKeyContext | null = null;
   let channel: ChannelRecord | null = null;
   let imageRequest: CodexImagesRequest | null = null;
+  let quotaAdmission: TenantQuotaAdmission | null = null;
   try {
     apiKey = timing.time("authenticate", "认证 API Key", () =>
       authenticateRelayRequest(request),
@@ -416,6 +418,7 @@ async function handleImagesProxy(
         "Image generation is not available for Free Codex credentials",
       );
     }
+    quotaAdmission = admitRelayQuota(apiKey, imageRequest.model);
 
     if (imageRequest.stream) {
       return await forwardImagesStream({
@@ -427,6 +430,7 @@ async function handleImagesProxy(
         imageRequest,
         requestType: input.requestType,
         timing,
+        quotaAdmission,
       });
     }
 
@@ -478,6 +482,15 @@ async function handleImagesProxy(
       return upstreamErrorResponse(result.response.status);
     }
 
+    const usage = extractUsageFromCodexResponse(
+      parseCodexSseResponse(result.text) || result.json,
+    );
+    const quotaState = settleRelayQuota(
+      quotaAdmission,
+      usage,
+      result.credential.id,
+    );
+    quotaAdmission = null;
     let responsePayload: Record<string, unknown>;
     try {
       responsePayload = timing.time("transform_response", "转换图片响应", () =>
@@ -506,7 +519,7 @@ async function handleImagesProxy(
         stream: false,
         model: imageRequest.model,
         statusCode,
-        usage: emptyUsage(),
+        usage,
         errorCode,
         errorMessage: message.slice(0, 500),
         requestBody: imageRequest.requestBody,
@@ -530,15 +543,20 @@ async function handleImagesProxy(
       stream: false,
       model: imageRequest.model,
       statusCode: 200,
-      usage: emptyUsage(),
+      usage,
       requestBody: imageRequest.requestBody,
       forwardedBody: result.upstreamPayload,
       upstreamHeaders: result.response.headers,
       upstreamBody: result.text,
       timing,
     });
-    return Response.json(responsePayload, { status: 200 });
+    return Response.json(responsePayload, {
+      status: 200,
+      headers: quotaResponseHeaders(quotaState, apiKey.tenant?.quotaShares),
+    });
   } catch (error) {
+    releaseRelayQuota(quotaAdmission);
+    quotaAdmission = null;
     if (channel) {
       recordChannelFailure(channel, {
         message: error instanceof Error ? error.message : "request failed",
@@ -568,6 +586,7 @@ async function forwardImagesStream(input: {
   imageRequest: CodexImagesRequest;
   requestType: string;
   timing?: StageTimer;
+  quotaAdmission?: TenantQuotaAdmission | null;
 }) {
   const { response, credential, upstreamPayload } = await codexFetch(
     "/responses",
@@ -588,7 +607,14 @@ async function forwardImagesStream(input: {
       "text/event-stream; charset=utf-8",
     ),
   );
+  if (input.quotaAdmission?.state && input.quotaAdmission.shares) {
+    mergeHeaders(
+      headers,
+      tenantQuotaHeaders(input.quotaAdmission.state, input.quotaAdmission.shares),
+    ).forEach((value, key) => headers.set(key, value));
+  }
   if (!response.ok) {
+    releaseRelayQuota(input.quotaAdmission);
     const errorText = input.timing
       ? await input.timing.timeAsync(
           "read_upstream_error_body",
@@ -649,7 +675,9 @@ async function forwardImagesStream(input: {
           onFirstEvent: () => {
             input.timing?.mark("stream_first_token", "收到图片流首个事件");
           },
-          onCompleted: () => {
+          onCompleted: (responsePayload) => {
+            const usage = extractUsageFromCodexResponse(responsePayload);
+            settleRelayQuota(input.quotaAdmission, usage, credential.id);
             recordChannelSuccess(input.channel);
             appendSuccessLog({
               request: input.request,
@@ -662,7 +690,7 @@ async function forwardImagesStream(input: {
               stream: true,
               model: input.imageRequest.model,
               statusCode: response.status,
-              usage: emptyUsage(),
+              usage,
               requestBody: input.imageRequest.requestBody,
               forwardedBody: upstreamPayload,
               upstreamHeaders: response.headers,
@@ -671,6 +699,7 @@ async function forwardImagesStream(input: {
             });
           },
           onError: (error) => {
+            releaseRelayQuota(input.quotaAdmission);
             const message =
               error instanceof Error ? error.message : String(error);
             recordChannelFailure(input.channel, {
@@ -882,6 +911,8 @@ export async function handleChatCompletions(request: Request) {
       timing,
     });
     if (!result.response.ok) {
+      releaseRelayQuota(quotaAdmission);
+      quotaAdmission = null;
       releaseRelayQuota(quotaAdmission);
       quotaAdmission = null;
       recordChannelFailure(channel, {
@@ -1994,13 +2025,20 @@ function emptyUsage(): UsageSnapshot {
 }
 
 function admitRelayQuota(apiKey: RelayApiKeyContext, model: string) {
-  return apiKey.tenantId
-    ? admitTenantRequest({
+  if (apiKey.tenantId) {
+    return admitTenantRequest({
         tenantId: apiKey.tenantId,
         requestId: crypto.randomUUID(),
         model,
-      })
-    : null;
+      });
+  }
+  return {
+    requestId: crypto.randomUUID(),
+    tenantId: "",
+    shares: null,
+    price: resolveConfiguredModelPrice(model),
+    state: null,
+  } satisfies TenantQuotaAdmission;
 }
 
 function settleRelayQuota(

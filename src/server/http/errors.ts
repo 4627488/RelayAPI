@@ -78,7 +78,10 @@ export function errorToResponse(
   logServerError(error, context);
   if (isHttpError(error)) {
     const details =
-      error.details && typeof error.details === "object" && !Array.isArray(error.details)
+      error.code === "tenant_quota_exceeded" &&
+      error.details &&
+      typeof error.details === "object" &&
+      !Array.isArray(error.details)
         ? (error.details as Record<string, unknown>)
         : {};
     const retryAfter = Number(details.retry_after || 0);
