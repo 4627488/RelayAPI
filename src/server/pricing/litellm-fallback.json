@@ -1,0 +1,13 @@
+{
+  "catalogVersion": "bundled-2026-07-10",
+  "source": "https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json",
+  "models": {
+    "gpt-5.2": { "input_cost_per_token": 0.00000175, "output_cost_per_token": 0.000014, "cache_read_input_token_cost": 0.000000175 },
+    "gpt-5.3-codex": { "input_cost_per_token": 0.00000175, "output_cost_per_token": 0.000014, "cache_read_input_token_cost": 0.000000175 },
+    "gpt-5.4": { "input_cost_per_token": 0.0000025, "output_cost_per_token": 0.000015, "cache_read_input_token_cost": 0.00000025 },
+    "gpt-5.4-mini": { "input_cost_per_token": 0.00000075, "output_cost_per_token": 0.0000045, "cache_read_input_token_cost": 0.000000075 },
+    "gpt-5.5": { "input_cost_per_token": 0.000005, "output_cost_per_token": 0.00003, "cache_read_input_token_cost": 0.0000005 },
+    "gpt-5.6": { "input_cost_per_token": 0.000005, "output_cost_per_token": 0.00003, "cache_read_input_token_cost": 0.0000005 },
+    "gpt-5.6-terra": { "input_cost_per_token": 0.0000025, "output_cost_per_token": 0.000015, "cache_read_input_token_cost": 0.00000025 }
+  }
+}
