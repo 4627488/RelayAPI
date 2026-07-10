@@ -1,6 +1,9 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodexWebSocketSessionManager } from "@/src/server/codex/websocket";
+import {
+  CodexWebSocketSessionManager,
+  codexWebSocketHeaders,
+} from "@/src/server/codex/websocket";
 
 class FakeSocket extends EventEmitter {
   sent: string[] = [];
@@ -59,6 +62,19 @@ function requestInput(value: string) {
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("codexWebSocketHeaders", () => {
+  it("merges an existing OpenAI-Beta value without duplicate casing", () => {
+    const headers = codexWebSocketHeaders({
+      "Content-Type": "application/json",
+      "OpenAI-Beta": "custom_beta=v1",
+    });
+
+    expect(headers).toEqual({
+      "OpenAI-Beta": "custom_beta=v1,responses_websockets=2026-02-06",
+    });
+  });
 });
 
 describe("CodexWebSocketSessionManager", () => {
@@ -312,6 +328,77 @@ describe("CodexWebSocketSessionManager", () => {
       "send failed",
     );
     expect(sockets).toHaveLength(2);
+    manager.closeAll();
+  });
+
+  it("classifies an oversized-message close as context scoped", async () => {
+    const sockets: FakeSocket[] = [];
+    const manager = new CodexWebSocketSessionManager({
+      idleTimeoutMs: 60_000,
+      factory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        queueMicrotask(() => socket.emit("open"));
+        return { socket };
+      },
+    });
+
+    const response = await manager.request(requestInput("one"));
+    sockets[0].emit("close", 1009, Buffer.from("message too big"));
+
+    await expect(response.text()).rejects.toMatchObject({
+      codexErrorInfo: {
+        code: "context_too_large",
+        requestScoped: true,
+        credentialScoped: false,
+      },
+      details: { closeCode: 1009, closeReason: "message too big" },
+    });
+  });
+
+  it("keeps unknown close metadata transport scoped", async () => {
+    const sockets: FakeSocket[] = [];
+    const manager = new CodexWebSocketSessionManager({
+      idleTimeoutMs: 60_000,
+      factory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        queueMicrotask(() => socket.emit("open"));
+        return { socket };
+      },
+    });
+
+    const response = await manager.request(requestInput("one"));
+    sockets[0].emit("close", 1011, Buffer.from("upstream restart"));
+
+    await expect(response.text()).rejects.toMatchObject({
+      codexErrorInfo: {
+        code: "websocket_closed",
+        requestScoped: false,
+        credentialScoped: false,
+        retryAfterMs: null,
+      },
+      details: { closeCode: 1011, closeReason: "upstream restart" },
+    });
+  });
+
+  it("does not reconnect or classify caller cancellation", async () => {
+    const sockets: FakeSocket[] = [];
+    const manager = new CodexWebSocketSessionManager({
+      idleTimeoutMs: 60_000,
+      factory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        queueMicrotask(() => socket.emit("open"));
+        return { socket };
+      },
+    });
+
+    const response = await manager.request(requestInput("one"));
+    await response.body?.cancel();
+
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].closed).toBe(true);
     manager.closeAll();
   });
 });

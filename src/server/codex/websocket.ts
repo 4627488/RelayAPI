@@ -3,6 +3,10 @@ import "server-only";
 import type { IncomingMessage } from "node:http";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import WebSocket, { type RawData } from "ws";
+import {
+  classifyCodexUpstreamError,
+  type CodexUpstreamErrorInfo,
+} from "@/src/server/codex/errors";
 import type { CredentialProxyConfig } from "@/src/shared/types/entities";
 
 const CODEX_RESPONSES_WEBSOCKET_BETA = "responses_websockets=2026-02-06";
@@ -145,13 +149,13 @@ async function singleUseCodexWebSocketResponse(input: {
         cleanup();
         controller.error(error);
       });
-      ws.on("close", () => {
+      ws.on("close", (code, reason) => {
         cleanup();
         if (closed) {
           return;
         }
         closed = true;
-        controller.close();
+        controller.error(codexWebSocketCloseError(code, reason));
       });
       ws.send(payload, (error) => {
         if (!error || closed) {
@@ -272,7 +276,7 @@ export class CodexWebSocketSessionManager {
     };
 
     const onClose = () => this.invalidate(session.key, "none");
-    const onError = () => this.invalidate(session.key, "terminate");
+    const onError = () => this.invalidate(session.key, "none");
     const onPong = () => {
       session.awaitingPong = false;
     };
@@ -362,13 +366,16 @@ export class CodexWebSocketSessionManager {
           controller.close();
           resolveDone();
         };
-        const fail = (error: unknown) => {
+        const fail = (
+          error: unknown,
+          invalidateMode: "none" | "close" | "terminate" = "terminate",
+        ) => {
           if (settled) {
             return;
           }
           settled = true;
           cleanupListeners();
-          this.invalidate(session.key, "terminate");
+          this.invalidate(session.key, invalidateMode);
           controller.error(error);
           rejectDone(error);
         };
@@ -392,9 +399,9 @@ export class CodexWebSocketSessionManager {
           markReady();
           fail(error);
         };
-        const onClose = () => {
+        const onClose = (code: unknown, reason: unknown) => {
           markReady();
-          finish(true);
+          fail(codexWebSocketCloseError(code, reason), "none");
         };
 
         session.socket.on("message", onMessage);
@@ -573,7 +580,7 @@ function codexWebSocketUrl(httpUrl: string) {
   return url.toString();
 }
 
-function codexWebSocketHeaders(headers: HeadersInit) {
+export function codexWebSocketHeaders(headers: HeadersInit) {
   const out: Record<string, string> = {};
   new Headers(headers).forEach((value, key) => {
     if (key.toLowerCase() === "content-type") {
@@ -581,7 +588,9 @@ function codexWebSocketHeaders(headers: HeadersInit) {
     }
     out[key] = value;
   });
-  out["OpenAI-Beta"] = betaHeaderWithResponsesWebSockets(out["OpenAI-Beta"]);
+  const openAiBeta = out["openai-beta"];
+  delete out["openai-beta"];
+  out["OpenAI-Beta"] = betaHeaderWithResponsesWebSockets(openAiBeta);
   return out;
 }
 
@@ -623,6 +632,45 @@ function eventType(text: string) {
   } catch {
     return "";
   }
+}
+
+function codexWebSocketCloseError(rawCode: unknown, rawReason: unknown) {
+  const closeCode =
+    typeof rawCode === "number" && Number.isFinite(rawCode) ? rawCode : 0;
+  const closeReason = webSocketCloseReason(rawReason);
+  const oversized =
+    closeCode === 1009 ||
+    /message too big|payload too large|max message size/i.test(closeReason);
+  const body = {
+    error: {
+      code: oversized ? "context_length_exceeded" : "websocket_closed",
+      message:
+        closeReason || `Codex websocket closed with code ${closeCode || "unknown"}`,
+    },
+  };
+  const error = new Error(body.error.message) as Error & {
+    details: { closeCode: number; closeReason: string };
+    codexErrorInfo: CodexUpstreamErrorInfo;
+  };
+  error.details = { closeCode, closeReason };
+  error.codexErrorInfo = classifyCodexUpstreamError({
+    statusCode: oversized ? 413 : null,
+    body,
+  });
+  return error;
+}
+
+function webSocketCloseReason(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Buffer.isBuffer(value)) {
+    return value.toString("utf8");
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value).toString("utf8");
+  }
+  return "";
 }
 
 function codexStreamResponseHeaders() {

@@ -129,6 +129,22 @@ describe("classifyCodexUpstreamError", () => {
       retryAfterMs: 0,
     });
   });
+
+  test("preserves usage reset metadata from a websocket envelope", () => {
+    const info = classifyCodexUpstreamError({
+      statusCode: 429,
+      body: {
+        type: "error",
+        error: { type: "usage_limit_reached", resets_in_seconds: 30 },
+      },
+    });
+
+    expect(info).toMatchObject({
+      code: "usage_limit_reached",
+      retryAfterMs: 30_000,
+      credentialScoped: true,
+    });
+  });
 });
 
 describe("classifyCodexStreamEvent", () => {
