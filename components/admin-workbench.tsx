@@ -93,6 +93,7 @@ import { CredentialsSection } from "@/components/admin/credentials-section";
 import { LogsSection } from "@/components/admin/logs-section";
 import { ProxyPoolSection } from "@/components/admin/proxy-pool-section";
 import { AdminQuotaSection } from "@/components/admin/quota-section";
+import { SubscriptionAllocationSection } from "@/components/admin/subscription-allocation-section";
 import {
   adminErrorMessage,
   changeAdminPassword,
@@ -639,6 +640,10 @@ export function AdminWorkbench({
             )}
             {activeSection === "routing" && (
               <div className="grid gap-3">
+                <SubscriptionAllocationSection
+                  credentials={credentials}
+                  tenants={tenants}
+                />
                 <CredentialsSection
                   credentials={credentials}
                   globalSettings={globalSettings}
