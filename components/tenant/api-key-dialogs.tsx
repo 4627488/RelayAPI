@@ -93,11 +93,7 @@ export function TenantApiKeyDialog({
             <FieldLegend>密钥配置</FieldLegend>
             <ApiKeyBaseFields
               form={form}
-              modelPlaceholder={
-                resources.models.length > 0
-                  ? resources.models.join("\n")
-                  : "留空表示全部授权模型"
-              }
+              modelOptions={resources.models}
               onChange={setForm}
               channelSelector={
                 <TenantChannelSelector

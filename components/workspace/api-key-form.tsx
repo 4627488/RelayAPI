@@ -11,6 +11,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { ModelSelector, stripThinkingLevel } from "@/components/workspace/model-selector";
 import {
   datetimeLocalToIso,
   toDatetimeLocal,
@@ -43,12 +44,12 @@ export const EMPTY_API_KEY_FORM: ApiKeyFormState = {
 export function ApiKeyBaseFields({
   channelSelector,
   form,
-  modelPlaceholder,
+  modelOptions,
   onChange,
 }: {
   channelSelector: React.ReactNode;
   form: ApiKeyFormState;
-  modelPlaceholder: string;
+  modelOptions?: string[];
   onChange: React.Dispatch<React.SetStateAction<ApiKeyFormState>>;
 }) {
   const update = <K extends keyof ApiKeyFormState>(
@@ -121,12 +122,11 @@ export function ApiKeyBaseFields({
         />
       </Field>
       <Field>
-        <FieldLabel htmlFor="api-key-models">模型白名单</FieldLabel>
-        <Textarea
-          id="api-key-models"
-          value={form.modelAllowlist}
-          placeholder={modelPlaceholder}
-          onChange={(event) => update("modelAllowlist", event.target.value)}
+        <FieldLabel>模型白名单</FieldLabel>
+        <ModelSelector
+          models={modelOptions}
+          selectedModels={parseList(form.modelAllowlist)}
+          onSelectedModelsChange={(models) => update("modelAllowlist", models.join("\n"))}
         />
       </Field>
       <Field>
@@ -160,12 +160,16 @@ export function apiKeyFormToPayload(
     name: form.name.trim() || options.fallbackName,
     enabled: form.enabled,
     scopes: scopes.length > 0 ? scopes : ["relay"],
-    modelAllowlist: parseList(form.modelAllowlist),
+    modelAllowlist: normalizeModelList(form.modelAllowlist),
     channelAllowlist: parseList(form.channelAllowlist),
     tokenLimitDaily: nullablePositiveInteger(form.tokenLimitDaily),
     rateLimitPerMinute: nullablePositiveInteger(form.rateLimitPerMinute),
     expiresAt: datetimeLocalToIso(form.expiresAt),
   };
+}
+
+function normalizeModelList(value: string) {
+  return [...new Set(parseList(value).map(stripThinkingLevel).filter(Boolean))];
 }
 
 export function assertApiKey(apiKey: PublicApiKey | null | undefined) {

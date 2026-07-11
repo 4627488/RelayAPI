@@ -61,6 +61,7 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { ModelSelector, stripThinkingLevel } from "@/components/workspace/model-selector";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -71,7 +72,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import {
   adminErrorMessage,
   createChannel,
@@ -182,7 +182,12 @@ export function ChannelsSection({
       <div className="grid gap-4">
         <Card>
           <CardHeader>
-            <CardTitle>通道</CardTitle>
+            <div>
+              <CardTitle>路由池</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                将一组凭据包装成稳定的授权与调度边界。
+              </p>
+            </div>
             <CardAction>
               <Button
                 type="button"
@@ -201,8 +206,8 @@ export function ChannelsSection({
                   <EmptyMedia variant="icon">
                     <RouteIcon />
                   </EmptyMedia>
-                  <EmptyTitle>还没有通道</EmptyTitle>
-                  <EmptyDescription>添加凭据后创建路由通道。</EmptyDescription>
+                  <EmptyTitle>还没有路由池</EmptyTitle>
+                  <EmptyDescription>添加凭据后创建路由池，再把池授权给租户或 API 密钥。</EmptyDescription>
                 </EmptyHeader>
                 <Button
                   type="button"
@@ -469,9 +474,9 @@ function ChannelFormDialogBody({
   return (
     <form className="grid gap-4" onSubmit={submit}>
       <DialogHeader>
-        <DialogTitle>{mode === "create" ? "新建通道" : "编辑通道"}</DialogTitle>
+        <DialogTitle>{mode === "create" ? "新建路由池" : "编辑路由池"}</DialogTitle>
         <DialogDescription>
-          通道是自动路由单元。优先级越高越优先，同优先级下按权重加权选择。
+          路由池由凭据集合、模型范围和调度策略组成。请求先匹配一个池，再由池选择实际凭据。
         </DialogDescription>
       </DialogHeader>
       <ChannelFields credentials={credentials} form={form} onChange={setForm} />
@@ -486,7 +491,7 @@ function ChannelFormDialogBody({
         </Button>
         <Button type="submit" disabled={pending || credentials.length === 0}>
           {pending && <Spinner data-icon="inline-start" />}
-          {mode === "create" ? "创建通道" : "保存通道"}
+          {mode === "create" ? "创建路由池" : "保存路由池"}
         </Button>
       </DialogFooter>
     </form>
@@ -511,14 +516,14 @@ function ChannelFields({
 
   return (
     <FieldSet>
-      <FieldLegend>通道配置</FieldLegend>
+      <FieldLegend>路由池配置</FieldLegend>
       <FieldGroup>
         {credentials.length === 0 && (
           <Alert>
             <UserRoundIcon />
             <AlertTitle>需要先连接 Codex 凭据</AlertTitle>
             <AlertDescription>
-              创建通道前必须至少有一个 Codex 凭据。
+              创建路由池前必须至少有一个 Codex 凭据。
             </AlertDescription>
           </Alert>
         )}
@@ -543,15 +548,15 @@ function ChannelFields({
             }
           />
           <FieldDescription>
-            可选择多个凭据。通道内会按凭据优先级、权重和健康度自动选择实际发送请求的凭据。
+            池内可放入多个凭据，并按凭据优先级、权重和健康度选择实际出口；租户只需绑定路由池，无需感知凭据变化。
           </FieldDescription>
         </Field>
 
         <Field orientation="horizontal">
           <FieldContent>
-            <FieldLabel htmlFor="channel-enabled">启用通道</FieldLabel>
+            <FieldLabel htmlFor="channel-enabled">启用路由池</FieldLabel>
             <FieldDescription>
-              关闭后这个通道不会参与自动路由。
+              关闭后这个池不会参与自动路由，已有授权无需修改。
             </FieldDescription>
           </FieldContent>
           <Switch
@@ -595,14 +600,8 @@ function ChannelFields({
         </div>
 
         <Field>
-          <FieldLabel htmlFor="channel-models">模型白名单</FieldLabel>
-          <Textarea
-            id="channel-models"
-            className="min-h-24"
-            value={form.modelAllowlist}
-            placeholder="留空表示不限模型，例如 gpt-5.5 或 gpt-5.5(xhigh)"
-            onChange={(event) => update("modelAllowlist", event.target.value)}
-          />
+          <FieldLabel>模型白名单</FieldLabel>
+          <ModelSelector selectedModels={parseList(form.modelAllowlist)} onSelectedModelsChange={(models) => update("modelAllowlist", models.join("\n"))} />
         </Field>
       </FieldGroup>
     </FieldSet>
@@ -719,9 +718,9 @@ function ChannelDeleteDialog({
           <AlertDialogMedia>
             <Trash2Icon />
           </AlertDialogMedia>
-          <AlertDialogTitle>删除通道？</AlertDialogTitle>
+          <AlertDialogTitle>删除路由池？</AlertDialogTitle>
           <AlertDialogDescription>
-            将删除 {channel.name}。自动路由将不再选择这个通道。
+            将删除 {channel.name}。关联租户与 API 密钥将不再能通过这个池路由。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -762,7 +761,7 @@ function channelFormToPayload(form: ChannelFormState): ChannelPayload {
     baseUrl: form.baseUrl.trim(),
     priority: integerValue(form.priority, 100),
     weight: Math.max(1, integerValue(form.weight, 1)),
-    modelAllowlist: parseList(form.modelAllowlist),
+    modelAllowlist: [...new Set(parseList(form.modelAllowlist).map(stripThinkingLevel).filter(Boolean))],
   };
 }
 

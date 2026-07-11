@@ -3,7 +3,7 @@ import "server-only";
 import { serverConfig } from "@/src/server/config/env";
 
 const CREATED_2024_01_01 = 1704067200;
-const REMOTE_CATALOG_CACHE_MS = 3 * 60 * 60 * 1000;
+const REMOTE_CATALOG_CACHE_MS = 5 * 60 * 1000;
 const REMOTE_CATALOG_TIMEOUT_MS = 30 * 1000;
 const REMOTE_MODEL_URLS = [
   "https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
@@ -122,6 +122,14 @@ export async function createModelsResponse(
     catalog_source: catalog.source,
     data,
   };
+}
+
+export async function listUpstreamModelIds() {
+  const response = await createModelsResponse({
+    planType: "pro",
+    openAICompatible: true,
+  });
+  return [...new Set(response.data.map((entry) => entry.id).filter(Boolean))];
 }
 
 export function normalizePlan(planType?: string) {

@@ -4,7 +4,6 @@ import { HttpError } from "@/src/server/http/errors";
 import { getCodexCredentialById } from "@/src/server/repositories/codexCredentials";
 import { getTenantById } from "@/src/server/repositories/tenants";
 import {
-  allocatedUnitsForCredential,
   deleteTenantSubscription,
   getTenantSubscription,
   insertTenantSubscription,
@@ -25,7 +24,6 @@ export function createSubscription(input: Record<string, unknown>) {
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
   const units = positiveInt(input.units, 1);
   const unitsPerCredential = positiveInt(input.unitsPerCredential, credential.planType.toLowerCase().includes("pro") ? 20 : 1);
-  assertCapacity(credentialId, units, unitsPerCredential);
   return insertTenantSubscription({
     id: randomId("sub"), tenantId, credentialId,
     name: clean(input.name) || `${credential.planType || "Codex"} ${units}/${unitsPerCredential}`,
@@ -43,7 +41,6 @@ export function patchSubscription(id: string, input: Record<string, unknown>) {
   if (!getCodexCredentialById(credentialId)) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
   const units = input.units === undefined ? current.units : positiveInt(input.units, current.units);
   const unitsPerCredential = input.unitsPerCredential === undefined ? current.unitsPerCredential : positiveInt(input.unitsPerCredential, current.unitsPerCredential);
-  assertCapacity(credentialId, units, unitsPerCredential, id);
   return updateTenantSubscription(id, {
     ...(input.name !== undefined ? { name: clean(input.name) || current.name } : {}),
     credentialId, units, unitsPerCredential,
@@ -58,10 +55,6 @@ export function removeSubscription(id: string) {
   if (!deleteTenantSubscription(id)) throw new HttpError(404, "subscription_not_found", "Subscription not found");
 }
 
-function assertCapacity(credentialId: string, units: number, denominator: number, excludeId?: string) {
-  const allocated = allocatedUnitsForCredential(credentialId, excludeId) + units / denominator;
-  if (allocated > 1.0000001) throw new HttpError(409, "credential_overallocated", "Credential subscription capacity exceeds 100%", { allocated });
-}
 function clean(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
 function integer(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) ? Math.floor(n) : fallback; }
 function positiveInt(value: unknown, fallback: number) { return Math.max(1, integer(value, fallback)); }

@@ -444,7 +444,6 @@ function ApiKeyFormDialogBody({
         <ApiKeyBaseFields
           form={form}
           onChange={setForm}
-          modelPlaceholder="留空表示不限模型，例如 gpt-5.5 或 gpt-5.5(xhigh)"
           channelSelector={
             <ChannelVisualSelector
               channels={channels}
