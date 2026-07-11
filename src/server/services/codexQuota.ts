@@ -5,7 +5,10 @@ import crypto from "node:crypto";
 import { serverConfig } from "@/src/server/config/env";
 import { HttpError, logServerError } from "@/src/server/http/errors";
 import { proxiedFetch } from "@/src/server/net/proxy";
-import { getCodexCredentialById } from "@/src/server/repositories/codexCredentials";
+import {
+  getCodexCredentialById,
+  updateCodexCredential,
+} from "@/src/server/repositories/codexCredentials";
 import {
   getCodexQuotaCacheByCredentialId,
   upsertCodexQuotaCache,
@@ -205,6 +208,9 @@ export async function getCodexQuota({
     }
 
     const report = normalizeQuotaResponse(body, credential);
+    if (report.plan_type && report.plan_type !== credential.planType) {
+      updateCodexCredential(credential.id, { planType: report.plan_type });
+    }
     // Quota cache belongs to the main DB because automatic channel routing may
     // use current quota state in a later routing slice.
     upsertCodexQuotaCache({

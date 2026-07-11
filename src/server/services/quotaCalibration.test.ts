@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   deriveQuotaBaseline,
   estimateQuotaSample,
+  quotaSharesForPlan,
 } from "@/src/server/services/quotaCalibration";
 
 describe("quota calibration", () => {
@@ -19,6 +20,14 @@ describe("quota calibration", () => {
     });
     expect(plus).toMatchObject({ accepted: true, perShareNanoUsd: BigInt(10_000) });
     expect(pro).toMatchObject({ accepted: true, perShareNanoUsd: BigInt(10_000) });
+  });
+
+  test("recognizes Pro 5x plan aliases", () => {
+    expect(quotaSharesForPlan("prolite")).toBe(5);
+    expect(quotaSharesForPlan("pro-lite")).toBe(5);
+    expect(quotaSharesForPlan("pro_lite")).toBe(5);
+    expect(quotaSharesForPlan("pro5x")).toBe(5);
+    expect(quotaSharesForPlan("pro")).toBe(20);
   });
 
   test("rejects reset boundaries, incomplete pricing, and tiny deltas", () => {

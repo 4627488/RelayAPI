@@ -139,6 +139,7 @@ export function updateCodexCredential(
     Pick<
       CodexCredentialRecord,
       | "enabled"
+      | "planType"
       | "priority"
       | "weight"
       | "fastEnabled"
@@ -174,6 +175,7 @@ export function updateCodexCredential(
     .update(codexCredentials)
     .set({
       enabled: next.enabled ? 1 : 0,
+      planType: next.planType,
       priority: next.priority,
       weight: Math.max(1, next.weight),
       proxyEnvelope: next.proxy ? encryptJson(next.proxy) : null,

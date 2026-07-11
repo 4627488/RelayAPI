@@ -1,3 +1,5 @@
+import { codexPlanShares } from "@/src/shared/codexPlans";
+
 export type CalibrationRejectionReason =
   | "window_reset"
   | "incomplete_pricing"
@@ -91,7 +93,7 @@ export function quotaSharesForPlan(planType: string, overrides?: Record<string, 
   if (configured && Number.isInteger(configured) && configured > 0) {
     return configured;
   }
-  return plan === "pro" ? 20 : 1;
+  return codexPlanShares(planType);
 }
 
 function weightedMedian(samples: AcceptedCalibrationSample[]) {

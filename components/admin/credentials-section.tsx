@@ -212,6 +212,9 @@ export function CredentialsSection({
         }
         const quota = quotaResult.value;
         setQuotas((current) => ({ ...current, [credential.id]: quota }));
+        if (quota.plan_type && quota.plan_type !== credential.planType) {
+          onUpdated({ ...credential, planType: quota.plan_type });
+        }
         if (!options.silent) {
           toast.success(forceRefresh ? "额度已刷新" : "额度已读取");
         }
@@ -227,7 +230,7 @@ export function CredentialsSection({
         setQuotaLoading(credential.id, false);
       }
     },
-    [setQuotaLoading],
+    [onUpdated, setQuotaLoading],
   );
 
   const refreshAllQuotas = React.useCallback(async () => {

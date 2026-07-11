@@ -92,6 +92,7 @@ import {
   type TenantSubscriptionRecord,
 } from "@/lib/admin-api";
 import type { CodexCredentialRecord, CreatedTenantInvite, PublicTenant } from "@/src/shared/types/entities";
+import { codexPlanLabel, codexPlanShares } from "@/src/shared/codexPlans";
 
 type TenantFormState = {
   name: string;
@@ -745,7 +746,7 @@ function SubscriptionDialog({ tenant, onOpenChange, onSubscriptionsChanged }: { 
   const allocated = credentialId ? allocatedRatio(allItems, credentialId) : 0;
   function selectCredential(id: string | null) {
     const credential = credentials.find((item) => item.id === id);
-    const suggestedDenominator = credential?.planType.toLowerCase().includes("pro") ? 20 : 1;
+    const suggestedDenominator = credential ? codexPlanShares(credential.planType) : 1;
     setCredentialId(id || "");
     setDenominator(String(suggestedDenominator));
     setName(credential ? `${planLabel(credential.planType)} 子订阅` : "");
@@ -757,7 +758,7 @@ function SubscriptionDialog({ tenant, onOpenChange, onSubscriptionsChanged }: { 
 
 function allocatedRatio(items: TenantSubscriptionRecord[], credentialId: string) { return items.filter((item) => item.enabled && item.credentialId === credentialId).reduce((sum, item) => sum + item.units / item.unitsPerCredential, 0); }
 function formatPercent(value: number) { return `${Math.round(value * 1000) / 10}%`; }
-function planLabel(planType: string) { const plan = planType.trim().toLowerCase(); return plan.includes("pro") ? "Pro20x" : plan.includes("plus") ? "Plus" : planType || "Codex"; }
+function planLabel(planType: string) { return codexPlanLabel(planType); }
 function credentialName(credentials: CodexCredentialRecord[], id: string) { const credential = credentials.find((item) => item.id === id); return credential ? `${credential.email || credential.accountId || id} · ${planLabel(credential.planType)}` : id; }
 
 

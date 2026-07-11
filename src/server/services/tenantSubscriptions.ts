@@ -11,6 +11,7 @@ import {
   updateTenantSubscription,
 } from "@/src/server/repositories/tenantSubscriptions";
 import { randomId } from "@/src/server/services/crypto";
+import { codexPlanLabel, codexPlanShares } from "@/src/shared/codexPlans";
 
 export function listSubscriptions(tenantId?: string) {
   return listTenantSubscriptions(tenantId);
@@ -23,10 +24,10 @@ export function createSubscription(input: Record<string, unknown>) {
   const credential = getCodexCredentialById(credentialId);
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
   const units = positiveInt(input.units, 1);
-  const unitsPerCredential = positiveInt(input.unitsPerCredential, credential.planType.toLowerCase().includes("pro") ? 20 : 1);
+  const unitsPerCredential = positiveInt(input.unitsPerCredential, codexPlanShares(credential.planType));
   return insertTenantSubscription({
     id: randomId("sub"), tenantId, credentialId,
-    name: clean(input.name) || `${credential.planType || "Codex"} ${units}/${unitsPerCredential}`,
+    name: clean(input.name) || `${codexPlanLabel(credential.planType)} ${units}/${unitsPerCredential}`,
     units, unitsPerCredential, enabled: input.enabled !== false,
     priority: integer(input.priority, 100),
     startsAt: date(input.startsAt) || new Date().toISOString(),
