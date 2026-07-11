@@ -106,7 +106,7 @@ const EMPTY_CHANNEL_FORM: ChannelFormState = {
 };
 
 const STATUS_LABELS: Record<ChannelStatus, string> = {
-  healthy: "健康",
+  healthy: "可用",
   degraded: "降级",
   cooling_down: "冷却中",
   disabled: "已禁用",
@@ -156,7 +156,7 @@ export function ChannelsSection({
         cooldownUntil: null,
       });
       onUpdated(updated);
-      toast.success("通道已恢复健康");
+      toast.success("通道状态已重置");
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -228,7 +228,7 @@ export function ChannelsSection({
                     <TableHead>优先级</TableHead>
                     <TableHead>权重</TableHead>
                     <TableHead>模型</TableHead>
-                    <TableHead>健康度</TableHead>
+                    <TableHead>采样分数</TableHead>
                     <TableHead className="text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -548,7 +548,7 @@ function ChannelFields({
             }
           />
           <FieldDescription>
-            池内可放入多个凭据，并按凭据优先级、权重和健康度选择实际出口；租户只需绑定路由池，无需感知凭据变化。
+            池内可放入多个凭据，并按凭据优先级、权重和采样分数选择实际出口；租户只需绑定路由池，无需感知凭据变化。
           </FieldDescription>
         </Field>
 
@@ -668,7 +668,7 @@ function CredentialVisualSelector({
                 <div className="truncate font-mono">{credential.id}</div>
                 <div>
                   优先级 {formatNumber(credential.priority)} · 权重{" "}
-                  {formatNumber(credential.weight)} · 健康度{" "}
+                  {formatNumber(credential.weight)} · 采样分数{" "}
                   {formatNumber(usageHealthScore(credential.usageHealth))}%
                 </div>
               </div>

@@ -105,7 +105,7 @@ import type {
 } from "@/src/shared/types/entities";
 
 const STATUS_LABELS: Record<ChannelStatus, string> = {
-  healthy: "健康",
+  healthy: "可用",
   degraded: "降级",
   cooling_down: "冷却中",
   disabled: "已禁用",
@@ -674,7 +674,7 @@ function ChannelVisualSelector({
                   <div>
                     优先级 {formatNumber(channel.priority)} · 权重{" "}
                     {formatNumber(channel.weight)} · 凭据{" "}
-                    {formatNumber(channel.credentialIds.length)} · 健康度{" "}
+                    {formatNumber(channel.credentialIds.length)} · 采样分数{" "}
                     {formatNumber(channel.healthScore)}%
                   </div>
                 </div>

@@ -2003,7 +2003,7 @@ function buildAdminOverviewAnomalies(input: {
       anomalies.push(adminOverviewAnomaly({
         severity: "critical",
         category: "error",
-        title: "今日错误率严重偏高",
+        title: `今日错误率 ${errorRate.toFixed(1)}%`,
         description: `今日错误率 ${errorRate.toFixed(1)}%，共 ${formatInteger(today.errorCount)} 个错误请求。`,
         date: today.date,
         metric: "error_rate",
@@ -2013,7 +2013,7 @@ function buildAdminOverviewAnomalies(input: {
       anomalies.push(adminOverviewAnomaly({
         severity: "warning",
         category: "error",
-        title: "今日错误率偏高",
+        title: `今日错误率 ${errorRate.toFixed(1)}%`,
         description: `今日错误率 ${errorRate.toFixed(1)}%，建议查看错误码和通道分布。`,
         date: today.date,
         metric: "error_rate",
@@ -2024,7 +2024,7 @@ function buildAdminOverviewAnomalies(input: {
       anomalies.push(adminOverviewAnomaly({
         severity: "critical",
         category: "latency",
-        title: "今日平均延迟严重偏高",
+        title: `今日平均延迟 ${formatMilliseconds(today.avgLatencyMs)}`,
         description: `今日平均延迟 ${formatMilliseconds(today.avgLatencyMs)}，可能存在上游或代理瓶颈。`,
         date: today.date,
         metric: "avg_latency_ms",
@@ -2034,7 +2034,7 @@ function buildAdminOverviewAnomalies(input: {
       anomalies.push(adminOverviewAnomaly({
         severity: "warning",
         category: "latency",
-        title: "今日平均延迟偏高",
+        title: `今日平均延迟 ${formatMilliseconds(today.avgLatencyMs)}`,
         description: `今日平均延迟 ${formatMilliseconds(today.avgLatencyMs)}。`,
         date: today.date,
         metric: "avg_latency_ms",
@@ -2063,7 +2063,7 @@ function buildAdminOverviewAnomalies(input: {
       anomalies.push(adminOverviewAnomaly({
         severity: "critical",
         category: "quota",
-        title: `${tenant.tenantName} 接近或已达到今日额度`,
+        title: `${tenant.tenantName} 今日额度使用 ${tenant.tokenLimitUtilization}%`,
         description: `今日已使用 ${formatInteger(tenant.todayTokens)} token，额度利用率 ${tenant.tokenLimitUtilization}%。`,
         tenantId: tenant.tenantId,
         tenantName: tenant.tenantName,
@@ -2076,7 +2076,7 @@ function buildAdminOverviewAnomalies(input: {
       anomalies.push(adminOverviewAnomaly({
         severity: "warning",
         category: "quota",
-        title: `${tenant.tenantName} 今日额度使用较高`,
+        title: `${tenant.tenantName} 今日额度使用 ${tenant.tokenLimitUtilization}%`,
         description: `额度利用率 ${tenant.tokenLimitUtilization}%。`,
         tenantId: tenant.tenantId,
         tenantName: tenant.tenantName,
@@ -2094,7 +2094,7 @@ function buildAdminOverviewAnomalies(input: {
       anomalies.push(adminOverviewAnomaly({
         severity: errorRate >= 25 ? "critical" : "warning",
         category: "routing",
-        title: `${row.label || row.key} 错误率偏高`,
+        title: `${row.label || row.key} 错误率 ${errorRate.toFixed(1)}%`,
         description: `最近窗口内 ${formatInteger(row.requestCount)} 次请求，错误率 ${errorRate.toFixed(1)}%。`,
         targetId: row.key,
         targetName: row.label,
@@ -2111,7 +2111,7 @@ function buildAdminOverviewAnomalies(input: {
       anomalies.push(adminOverviewAnomaly({
         severity: "warning",
         category: "traffic",
-        title: "未归属流量占比较高",
+        title: `未归属流量占比 ${unassignedRate.toFixed(1)}%`,
         description: `未归属流量占最近窗口请求的 ${unassignedRate.toFixed(1)}%。`,
         targetName: "未归属流量",
         metric: "unassigned_traffic_rate",

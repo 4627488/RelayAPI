@@ -626,29 +626,52 @@ function StageTimingsBlock({
     ...timings.map((item) => item.durationMs),
     1,
   );
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const colors = [
+    "bg-chart-1",
+    "bg-chart-2",
+    "bg-chart-3",
+    "bg-chart-4",
+    "bg-chart-5",
+  ];
   return (
     <DataPanel title="阶段耗时">
-      <div className="grid gap-2">
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-[minmax(8rem,0.75fr)_minmax(12rem,1.5fr)_auto] items-end gap-3 px-2 text-[10px] text-muted-foreground">
+          <span>阶段</span>
+          <div className="flex justify-between font-mono">
+            {ticks.map((tick) => (
+              <span key={tick}>{formatDuration(total * tick)}</span>
+            ))}
+          </div>
+          <span className="text-right">耗时</span>
+        </div>
         {timings.map((item, index) => (
           <div
             key={`${item.name}:${index}`}
-            className="grid gap-1 rounded-md bg-muted/25 p-2 text-xs"
+            className="grid grid-cols-[minmax(8rem,0.75fr)_minmax(12rem,1.5fr)_auto] items-center gap-3 rounded-md px-2 py-1.5 text-xs hover:bg-muted/40"
           >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-medium">{item.label || item.name}</span>
-              <span className="font-mono text-muted-foreground">
-                {formatDuration(item.durationMs)} ·{" "}
-                {formatNumber(item.startedAtMs)}-{formatNumber(item.endedAtMs)}
-                ms
-              </span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <span className="truncate font-medium" title={item.label || item.name}>
+              {item.label || item.name}
+            </span>
+            <div className="relative h-5 overflow-hidden rounded-sm bg-muted/55">
+              <div className="absolute inset-y-0 left-1/4 border-l border-background/70" />
+              <div className="absolute inset-y-0 left-1/2 border-l border-background/70" />
+              <div className="absolute inset-y-0 left-3/4 border-l border-background/70" />
               <div
-                className="h-full rounded-full bg-primary"
+                className={`absolute inset-y-1 rounded-sm ${colors[index % colors.length]}`}
                 style={{
-                  width: `${Math.max(2, Math.min(100, (item.durationMs / total) * 100))}%`,
+                  left: `${Math.min(100, (item.startedAtMs / total) * 100)}%`,
+                  width: `${Math.max(0.8, Math.min(100 - (item.startedAtMs / total) * 100, (item.durationMs / total) * 100))}%`,
                 }}
+                title={`${formatDuration(item.durationMs)} · ${formatNumber(item.startedAtMs)}-${formatNumber(item.endedAtMs)}ms`}
               />
+            </div>
+            <div className="text-right">
+              <div className="font-mono font-medium">{formatDuration(item.durationMs)}</div>
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {formatNumber(item.startedAtMs)}-{formatNumber(item.endedAtMs)}ms
+              </span>
             </div>
           </div>
         ))}

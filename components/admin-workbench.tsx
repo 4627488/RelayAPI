@@ -1599,22 +1599,7 @@ function OperationsStatusStrip({ stats }: { stats: AdminOverviewStats }) {
   const latest = usageDateWindow(stats.byDay, 2).at(-1);
   const errorRate = latest ? ratio(latest.errorCount, latest.requestCount) : null;
   const streamRate = latest ? ratio(latest.streamCount, latest.requestCount) : null;
-  const status =
-    !latest || latest.requestCount === 0
-      ? "等待流量"
-      : (errorRate || 0) >= 15
-        ? "错误严重"
-        : latest.avgLatencyMs >= 10_000
-          ? "延迟偏高"
-          : (errorRate || 0) >= 5
-            ? "错误偏高"
-            : "运行稳定";
-  const statusVariant =
-    status === "运行稳定"
-      ? "secondary"
-      : status === "等待流量"
-        ? "outline"
-        : "destructive";
+  const status = latest?.requestCount ? `${formatNumber(latest.requestCount)} 次请求` : "暂无请求";
 
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1622,7 +1607,7 @@ function OperationsStatusStrip({ stats }: { stats: AdminOverviewStats }) {
         label="运行状态"
         value={status}
         detail={`最近请求 ${stats.totals.lastRequestAt ? formatDateTime(stats.totals.lastRequestAt) : "-"}`}
-        badge={<Badge variant={statusVariant}>{status}</Badge>}
+        badge={<Badge variant="outline">{status}</Badge>}
       />
       <SignalCard
         label="今日错误率"
@@ -1783,7 +1768,7 @@ function AnomalyRadarCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>异常雷达</CardTitle>
+        <CardTitle>阈值记录</CardTitle>
         <CardAction>
           <Badge variant={anomalies.length > 0 ? "destructive" : "secondary"}>
             {formatNumber(anomalies.length)} 项
@@ -1794,8 +1779,8 @@ function AnomalyRadarCard({
         {anomalies.length === 0 ? (
           <EmptyState
             icon={ShieldCheckIcon}
-            title="暂无异常"
-            description="观察窗口正常。"
+            title="暂无记录"
+            description="观察窗口内没有生成分析项。"
             compact
           />
         ) : (
@@ -2091,12 +2076,12 @@ function dailyAnomalyLabels(row: DailyUsageStatsRow) {
   const labels: string[] = [];
   const errorRate = ratio(row.errorCount, row.requestCount) || 0;
   if (errorRate >= 15) {
-    labels.push("错误严重");
+    labels.push(`错误率 ${formatPercent(errorRate)}`);
   } else if (errorRate >= 5) {
-    labels.push("错误偏高");
+    labels.push(`错误率 ${formatPercent(errorRate)}`);
   }
   if (row.avgLatencyMs >= 10_000) {
-    labels.push("延迟偏高");
+    labels.push(`平均延迟 ${formatDuration(row.avgLatencyMs)}`);
   }
   return labels;
 }
@@ -2118,9 +2103,9 @@ function anomalySeverityLabel(
     AdminOverviewStats["anomalies"][number]["severity"],
     string
   > = {
-    critical: "严重",
-    warning: "关注",
-    info: "提示",
+    critical: "阈值 2",
+    warning: "阈值 1",
+    info: "信息",
   };
   return labels[severity];
 }

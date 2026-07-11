@@ -565,7 +565,7 @@ export function CredentialsSection({
                       <div className="grid gap-2 text-sm">
                         <div className="flex items-center gap-2">
                           <span className="shrink-0 text-muted-foreground">
-                            凭据健康度：
+                            用量采样：
                           </span>
                           {credential.usageHealth ? (
                             <>
@@ -1907,17 +1907,13 @@ function UsageHealthBadge({
     : never;
 }) {
   if (status === "normal") {
-    return (
-      <WorkspaceStatusBadge tone="success">
-        正常
-      </WorkspaceStatusBadge>
-    );
+    return <WorkspaceStatusBadge tone="muted">已采样</WorkspaceStatusBadge>;
   }
   if (status === "warning") {
-    return <WorkspaceStatusBadge tone="warning">警告</WorkspaceStatusBadge>;
+    return <WorkspaceStatusBadge tone="muted">已采样</WorkspaceStatusBadge>;
   }
   if (status === "error") {
-    return <WorkspaceStatusBadge tone="danger">错误</WorkspaceStatusBadge>;
+    return <WorkspaceStatusBadge tone="muted">已采样</WorkspaceStatusBadge>;
   }
   return <WorkspaceStatusBadge tone="muted">未使用</WorkspaceStatusBadge>;
 }
@@ -2143,9 +2139,9 @@ function quotaStatusLabel(status: CodexQuotaReport["status"]) {
   const labels: Record<CodexQuotaReport["status"], string> = {
     unknown: "未知",
     exhausted: "已耗尽",
-    low: "偏低",
-    medium: "中等",
-    high: "充足",
+    low: "0–25%",
+    medium: "25–75%",
+    high: "75–99%",
     full: "满额",
     not_cached: "未缓存",
   };
