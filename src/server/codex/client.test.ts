@@ -9,6 +9,7 @@ import {
   normalizeResponsesPayload,
   normalizeUsage,
   prepareCodexPayloadForUpstream,
+  restoreOriginalToolName,
 } from "@/src/server/codex/client";
 
 describe("usage pricing categories", () => {
@@ -394,7 +395,7 @@ describe("buildCodexHeaders", () => {
 
       expect(headers).toMatchObject({
         "User-Agent": "codex_cli_rs/test (Mac OS 26.3; arm64)",
-        Originator: "profile-originator",
+        Originator: "codex_cli_rs",
         "X-Codex-Beta-Features": "wildcard-beta",
       });
       expect(headers.Session_id).toMatch(
@@ -403,5 +404,35 @@ describe("buildCodexHeaders", () => {
     } finally {
       serverConfig.codexModelHeaderOverrides = previousOverrides;
     }
+  });
+});
+
+describe("MCP tool name compatibility", () => {
+  test("flattens MCP namespaces and restores the original response name", () => {
+    const converted = chatCompletionsToCodex({
+      messages: [],
+      tools: [{ type: "function", function: { name: "mcp__github__search_code", parameters: {} } }],
+    });
+    expect(converted.payload.tools).toEqual([
+      expect.objectContaining({ name: "mcp__search_code" }),
+    ]);
+    expect(restoreOriginalToolName("mcp__search_code", converted.toolNameMaps)).toBe(
+      "mcp__github__search_code",
+    );
+  });
+
+  test("rejects namespace collisions and undeclared tool choices", () => {
+    expect(() => chatCompletionsToCodex({
+      messages: [],
+      tools: [
+        { type: "function", function: { name: "mcp__a__search", parameters: {} } },
+        { type: "function", function: { name: "mcp__b__search", parameters: {} } },
+      ],
+    })).toThrow(/same Codex tool name/);
+    expect(() => chatCompletionsToCodex({
+      messages: [],
+      tools: [{ type: "function", function: { name: "lookup", parameters: {} } }],
+      tool_choice: { type: "function", function: { name: "missing" } },
+    })).toThrow(/undeclared tool/);
   });
 });

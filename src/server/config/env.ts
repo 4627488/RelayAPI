@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { parseCodexModelHeaderOverrides } from "@/src/server/codex/headerProfiles";
+import { DEFAULT_CODEX_USER_AGENT } from "@/src/server/codex/identity";
 import type {
   CredentialProxyConfig,
   CredentialProxyType,
@@ -96,8 +97,6 @@ function resolveGlobalProxy(): CredentialProxyConfig | null {
   };
 }
 
-const DEFAULT_CODEX_USER_AGENT =
-  "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9";
 const codexUserAgentFromEnv = process.env.CODEX_USER_AGENT?.trim() || "";
 const codexUserAgentSource: "environment" | "default" = codexUserAgentFromEnv
   ? "environment"

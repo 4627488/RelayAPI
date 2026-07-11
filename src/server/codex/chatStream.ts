@@ -379,6 +379,7 @@ function handleCodexEventAsOpenAIChat(
       state.upstreamCompleted = true;
       const response = objectValue(event.response) || {};
       state.usage = normalizeUsage(response.usage);
+      hydrateToolCallsFromTerminalResponse(controller, encoder, state, response);
       flushAllBufferedOpenAIChatToolArguments(controller, encoder, state);
       writeOpenAIChatDone(
         controller,
@@ -417,6 +418,27 @@ function handleCodexEventAsOpenAIChat(
     default:
       return;
   }
+}
+
+function hydrateToolCallsFromTerminalResponse(
+  controller: ByteStreamController,
+  encoder: TextEncoder,
+  state: ChatStreamState,
+  response: Record<string, unknown>,
+) {
+  if (!Array.isArray(response.output)) return;
+  response.output.forEach((rawItem, outputIndex) => {
+    const item = objectValue(rawItem) || {};
+    if (item.type !== "function_call" && item.type !== "custom_tool_call") return;
+    const syntheticEvent = { output_index: outputIndex };
+    const toolCall = upsertToolCallFromCodexEvent(state, syntheticEvent, item);
+    announceOpenAIChatToolCall(controller, encoder, state, toolCall);
+    const fullArguments = stringValue(item.arguments ?? item.input);
+    if (fullArguments && !toolCall.argumentDeltasStreamed) {
+      toolCall.rawArguments = fullArguments;
+    }
+    flushCompletedToolArguments(controller, encoder, state, toolCall);
+  });
 }
 
 function reportFirstTokenOnce(state: ChatStreamState) {

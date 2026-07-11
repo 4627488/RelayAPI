@@ -143,6 +143,30 @@ describe("OpenAI Chat Completions stream compatibility", () => {
     });
   });
 
+  test("hydrates parallel deferred tool calls from the terminal response", async () => {
+    const text = await readSse([
+      { type: "response.output_item.added", output_index: 0, item: { type: "function_call", call_id: "call_1" } },
+      { type: "response.output_item.added", output_index: 1, item: { type: "function_call", call_id: "call_2" } },
+      {
+        type: "response.completed",
+        response: {
+          status: "completed",
+          output: [
+            { type: "function_call", call_id: "call_1", name: "first", arguments: "{\"id\":1}" },
+            { type: "function_call", call_id: "call_2", name: "second", arguments: "{\"id\":2}" },
+          ],
+          usage: {},
+        },
+      },
+    ]);
+    const frames = jsonFrames(text);
+    expect(text).toContain('"name":"first"');
+    expect(text).toContain('"arguments":"{\\"id\\":1}"');
+    expect(text).toContain('"name":"second"');
+    expect(text).toContain('"arguments":"{\\"id\\":2}"');
+    expect(frames.at(-1)).toMatchObject({ choices: [{ finish_reason: "tool_calls" }] });
+  });
+
   test("surfaces response.failed as a stream error instead of truncation", async () => {
     const text = await readSse([
       {

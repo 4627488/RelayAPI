@@ -3,11 +3,14 @@ import "server-only";
 import crypto from "node:crypto";
 import { serverConfig } from "@/src/server/config/env";
 import { applyCodexModelHeaderOverrides } from "@/src/server/codex/headerProfiles";
+import { pairCodexIdentity } from "@/src/server/codex/identity";
 import { parseCodexSseFrames } from "@/src/server/codex/sse";
 import { codexWebSocketResponse } from "@/src/server/codex/websocket";
 import { proxiedFetch } from "@/src/server/net/proxy";
+import { HttpError } from "@/src/server/http/errors";
 import {
   ensureFreshCredential,
+  refreshCodexCredentialForScheduler,
   resolveCredentialProxy,
 } from "@/src/server/services/codexCredentials";
 import { getEffectiveCodexUserAgent } from "@/src/server/services/settings";
@@ -56,6 +59,7 @@ const THINKING_SUFFIX_LEVELS = new Set([
 ]);
 
 const CODEX_REASONING_INCLUDE = ["reasoning.encrypted_content"];
+const credentialRefreshes = new Map<string, Promise<Awaited<ReturnType<typeof refreshCodexCredentialForScheduler>>>>();
 export interface ToolNameMaps {
   originalToShort: Map<string, string>;
   shortToOriginal: Map<string, string>;
@@ -90,7 +94,7 @@ export async function codexFetch(
     timing?: StageTimer;
   },
 ) {
-  const credential =
+  let credential =
     (await input.timing?.timeAsync(
       "ensure_credential",
       "获取/刷新 Codex 凭据",
@@ -133,7 +137,7 @@ export async function codexFetch(
     tenantProxy: input.tenant?.proxy || null,
   });
   const url = toCodexUrl(input.channel.baseUrl, upstreamPath);
-  const headers = buildCodexHeaders(credential, {
+  let headers = buildCodexHeaders(credential, {
     model: stringValue(upstreamPayload.model),
     stream: input.stream,
     sourceHeaders: input.sourceHeaders,
@@ -155,6 +159,19 @@ export async function codexFetch(
       },
       proxy,
     );
+  const retryUnauthorized = async (response: Response) => {
+    if (response.status !== 401) return response;
+    await response.body?.cancel().catch(() => undefined);
+    credential = await refreshCredentialSingleFlight(credential.id);
+    headers = buildCodexHeaders(credential, {
+      model: stringValue(upstreamPayload.model),
+      stream: input.stream,
+      sourceHeaders: input.sourceHeaders,
+      promptCacheKey,
+      tenant: input.tenant || null,
+    });
+    return fetchHttp();
+  };
   if (useWebSocket) {
     let response: Response;
     try {
@@ -173,22 +190,32 @@ export async function codexFetch(
         (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
           fetchHttp(),
         )) ?? (await fetchHttp());
-      return { response: fallbackResponse, credential, upstreamPayload };
+      return { response: await retryUnauthorized(fallbackResponse), credential, upstreamPayload };
     }
     if (response.status === 101 || response.status === 426) {
       const fallbackResponse =
         (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
           fetchHttp(),
         )) ?? (await fetchHttp());
-      return { response: fallbackResponse, credential, upstreamPayload };
+      return { response: await retryUnauthorized(fallbackResponse), credential, upstreamPayload };
     }
-    return { response, credential, upstreamPayload };
+    return { response: await retryUnauthorized(response), credential, upstreamPayload };
   }
   const response =
     (await input.timing?.timeAsync("upstream_fetch", "上游 Fetch", () =>
       fetchHttp(),
     )) ?? (await fetchHttp());
-  return { response, credential, upstreamPayload };
+  return { response: await retryUnauthorized(response), credential, upstreamPayload };
+}
+
+async function refreshCredentialSingleFlight(credentialId: string) {
+  const existing = credentialRefreshes.get(credentialId);
+  if (existing) return existing;
+  const refresh = refreshCodexCredentialForScheduler(credentialId).finally(() => {
+    credentialRefreshes.delete(credentialId);
+  });
+  credentialRefreshes.set(credentialId, refresh);
+  return refresh;
 }
 
 export async function codexJson(
@@ -245,18 +272,21 @@ export function buildCodexHeaders(
     userAgent: credential.userAgent,
     tenantUserAgent: input.tenant?.userAgent || null,
   });
+  const identity = pairCodexIdentity({
+    userAgent: input.tenant
+      ? userAgent
+      : input.sourceHeaders.get("user-agent") || userAgent,
+    originator: input.sourceHeaders.get("originator") || serverConfig.codexOriginator,
+    version: input.sourceHeaders.get("version"),
+  });
   let headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${credential.tokens.access_token}`,
     Accept: input.stream ? "text/event-stream" : "application/json",
-    "User-Agent": input.tenant
-      ? userAgent
-      : input.sourceHeaders.get("user-agent") || userAgent,
-    Originator:
-      input.sourceHeaders.get("originator") || serverConfig.codexOriginator,
+    "User-Agent": identity.userAgent,
+    Originator: identity.originator,
   };
   for (const name of [
-    "version",
     "thread-id",
     "x-codex-turn-metadata",
     "x-codex-turn-state",
@@ -270,6 +300,7 @@ export function buildCodexHeaders(
       headers[canonicalHeaderName(name)] = value;
     }
   }
+  if (identity.version) headers.Version = identity.version;
   if (credential.accountId) {
     headers["Chatgpt-Account-Id"] = credential.accountId;
   }
@@ -278,6 +309,14 @@ export function buildCodexHeaders(
     serverConfig.codexModelHeaderOverrides,
     input.model,
   );
+  const finalIdentity = pairCodexIdentity({
+    userAgent: headers["User-Agent"],
+    originator: headers.Originator,
+    version: headers.Version,
+  });
+  headers["User-Agent"] = finalIdentity.userAgent;
+  headers.Originator = finalIdentity.originator;
+  if (finalIdentity.version) headers.Version = finalIdentity.version;
   const promptCacheKey = stringValue(input.promptCacheKey).trim();
   const sessionId =
     promptCacheKey ||
@@ -806,6 +845,7 @@ function normalizeToolChoice(toolChoice: unknown, toolNameMaps: ToolNameMaps) {
   }
   const fn = isRecord(toolChoice.function) ? toolChoice.function : null;
   if (toolChoice.type === "function" && fn?.name) {
+    assertDeclaredToolChoice(stringValue(fn.name), toolNameMaps);
     return {
       type: "function",
       name: toCodexToolName(stringValue(fn.name), toolNameMaps),
@@ -824,6 +864,7 @@ function normalizeLegacyFunctionCall(
   if (!isRecord(functionCall)) {
     return functionCall;
   }
+  assertDeclaredToolChoice(stringValue(functionCall.name), toolNameMaps);
   return {
     type: "function",
     name: toCodexToolName(stringValue(functionCall.name), toolNameMaps),
@@ -832,20 +873,37 @@ function normalizeLegacyFunctionCall(
 
 export function buildToolNameMaps(tools: unknown): ToolNameMaps {
   const names: string[] = [];
+  let hasBuiltinToolSearch = false;
   if (Array.isArray(tools)) {
     for (const rawTool of tools) {
       const tool = isRecord(rawTool) ? rawTool : {};
       const fn = isRecord(tool.function) ? tool.function : null;
       if (tool.type === "function" && fn?.name) {
         names.push(stringValue(fn.name));
+      } else if (tool.type === "tool_search") {
+        hasBuiltinToolSearch = true;
       }
     }
+  }
+  if (hasBuiltinToolSearch && names.includes("tool_search")) {
+    throw new HttpError(
+      400,
+      "codex_tool_search_name_collision",
+      "Built-in tool_search conflicts with a function named tool_search",
+    );
   }
   const originalToShort = new Map<string, string>();
   const shortToOriginal = new Map<string, string>();
   const used = new Set<string>();
   for (const name of names) {
-    const shortName = makeUniqueToolName(shortenToolName(name), used);
+    const shortName = shortenToolName(name);
+    if (used.has(shortName) && shortToOriginal.get(shortName) !== name) {
+      throw new HttpError(
+        400,
+        "codex_tool_name_collision",
+        `Tools ${shortToOriginal.get(shortName)} and ${name} map to the same Codex tool name ${shortName}`,
+      );
+    }
     used.add(shortName);
     originalToShort.set(name, shortName);
     shortToOriginal.set(shortName, name);
@@ -868,9 +926,6 @@ function toCodexToolName(toolName: string, toolNameMaps: ToolNameMaps) {
 
 function shortenToolName(toolName: string) {
   const limit = 64;
-  if (toolName.length <= limit) {
-    return toolName;
-  }
   if (toolName.startsWith("mcp__")) {
     const lastSeparator = toolName.lastIndexOf("__");
     if (lastSeparator > 0) {
@@ -878,21 +933,19 @@ function shortenToolName(toolName: string) {
       return candidate.length > limit ? candidate.slice(0, limit) : candidate;
     }
   }
+  if (toolName.length <= limit) {
+    return toolName;
+  }
   return toolName.slice(0, limit);
 }
 
-function makeUniqueToolName(candidate: string, used: Set<string>) {
-  const limit = 64;
-  if (!used.has(candidate)) {
-    return candidate;
-  }
-  for (let i = 1; ; i += 1) {
-    const suffix = `_${i}`;
-    const prefixLimit = Math.max(0, limit - suffix.length);
-    const next = `${candidate.slice(0, prefixLimit)}${suffix}`;
-    if (!used.has(next)) {
-      return next;
-    }
+function assertDeclaredToolChoice(toolName: string, toolNameMaps: ToolNameMaps) {
+  if (!toolNameMaps.originalToShort.has(toolName)) {
+    throw new HttpError(
+      400,
+      "codex_tool_choice_not_declared",
+      `tool_choice references undeclared tool ${toolName}`,
+    );
   }
 }
 
@@ -942,12 +995,31 @@ export function parseCodexSseResponse(text: string) {
   if (!completed) {
     return output.length > 0 ? { object: "response", output } : null;
   }
-  if (!Array.isArray(completed.output) || completed.output.length === 0) {
-    if (output.length > 0) {
-      completed = { ...completed, output };
-    }
+  if (output.length > 0) {
+    completed = {
+      ...completed,
+      output: mergeTerminalOutput(completed.output, output),
+    };
   }
   return completed;
+}
+
+function mergeTerminalOutput(terminal: unknown, streamed: unknown[]) {
+  const result = Array.isArray(terminal) ? [...terminal] : [];
+  const identities = new Set(result.map(outputItemIdentity).filter(Boolean));
+  for (const item of streamed) {
+    const identity = outputItemIdentity(item);
+    if (!identity || !identities.has(identity)) {
+      result.push(item);
+      if (identity) identities.add(identity);
+    }
+  }
+  return result;
+}
+
+function outputItemIdentity(value: unknown) {
+  const item = isRecord(value) ? value : {};
+  return stringValue(item.call_id) || stringValue(item.id);
 }
 
 function orderedOutputItems(
