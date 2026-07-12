@@ -13,7 +13,7 @@ import type {
   CredentialProxyPayload,
   RequestLogDetail,
   RequestLogsPage,
-  RequestLogStatusFilter,
+  RequestLogFilters,
 } from "@/lib/admin-api";
 import { AdminApiError } from "@/lib/admin-api";
 
@@ -157,12 +157,7 @@ export function updateTenantSettings(payload: {
 }
 
 export function getTenantRequestLogsPage(
-  options: {
-    limit?: number;
-    page?: number;
-    query?: string;
-    status?: RequestLogStatusFilter;
-  } = {},
+  options: RequestLogFilters = {},
 ) {
   const params = new URLSearchParams({
     limit: String(options.limit ?? 50),
@@ -174,6 +169,10 @@ export function getTenantRequestLogsPage(
   if (options.status && options.status !== "all") {
     params.set("status", options.status);
   }
+  for (const key of ["method", "model", "from", "to"] as const) {
+    if (options[key]) params.set(key, options[key]);
+  }
+  if (options.minLatencyMs) params.set("minLatencyMs", String(options.minLatencyMs));
   return tenantRequest<RequestLogsPage>(
     `/api/tenant/request-logs?${params.toString()}`,
   );

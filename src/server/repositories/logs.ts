@@ -959,6 +959,11 @@ export interface RequestLogQueryInput {
   offset?: number;
   query?: string;
   status?: RequestLogStatusFilter;
+  method?: string;
+  model?: string;
+  from?: string;
+  to?: string;
+  minLatencyMs?: number;
   tenantId?: string | null;
   includeSummary?: boolean;
   skipTotal?: boolean;
@@ -1146,6 +1151,26 @@ function requestLogWhere(input: RequestLogQueryInput) {
     conditions.push("status_code >= 400");
   } else if (input.status === "stream") {
     conditions.push("stream = 1");
+  }
+  if (input.method) {
+    conditions.push("method = ?");
+    params.push(input.method.toUpperCase());
+  }
+  if (input.model) {
+    conditions.push("model = ?");
+    params.push(input.model);
+  }
+  if (input.from) {
+    conditions.push("started_at >= ?");
+    params.push(input.from);
+  }
+  if (input.to) {
+    conditions.push("started_at <= ?");
+    params.push(input.to);
+  }
+  if (Number.isFinite(input.minLatencyMs) && Number(input.minLatencyMs) > 0) {
+    conditions.push("latency_ms >= ?");
+    params.push(String(Math.floor(Number(input.minLatencyMs))));
   }
 
   const query = String(input.query || "").trim();

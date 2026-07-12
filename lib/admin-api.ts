@@ -120,6 +120,18 @@ export type RequestLogDetail = {
 
 export type RequestLogStatusFilter = "all" | "success" | "error" | "stream";
 
+export type RequestLogFilters = {
+  limit?: number;
+  page?: number;
+  query?: string;
+  status?: RequestLogStatusFilter;
+  method?: string;
+  model?: string;
+  from?: string;
+  to?: string;
+  minLatencyMs?: number;
+};
+
 export type RequestLogsPage = {
   object: "list";
   data: AdminDashboardRequestLogRow[];
@@ -780,12 +792,7 @@ export function pruneRequestLogs(payload: {
 }
 
 export function getRequestLogsPage(
-  options: {
-    limit?: number;
-    page?: number;
-    query?: string;
-    status?: RequestLogStatusFilter;
-  } = {},
+  options: RequestLogFilters = {},
 ) {
   const params = new URLSearchParams({
     limit: String(options.limit ?? 50),
@@ -797,6 +804,10 @@ export function getRequestLogsPage(
   if (options.status && options.status !== "all") {
     params.set("status", options.status);
   }
+  for (const key of ["method", "model", "from", "to"] as const) {
+    if (options[key]) params.set(key, options[key]);
+  }
+  if (options.minLatencyMs) params.set("minLatencyMs", String(options.minLatencyMs));
   return adminRequest<RequestLogsPage>(
     `/api/admin/request-logs?${params.toString()}`,
   );

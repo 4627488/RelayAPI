@@ -5,8 +5,10 @@ import { toast } from "sonner";
 import {
   CopyIcon,
   FileTextIcon,
+  FilterIcon,
   RefreshCwIcon,
   SearchIcon,
+  XIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -39,6 +42,7 @@ import type {
   RequestLogDetail,
   RequestLogsPage,
   RequestLogStatusFilter,
+  RequestLogFilters,
 } from "@/lib/admin-api";
 import { cn } from "@/lib/utils";
 
@@ -66,12 +70,7 @@ export function RequestLogsWorkbench({
   errorMessage: (error: unknown) => string;
   initialPage: RequestLogsPage;
   loadDetail: (id: string) => Promise<RequestLogDetail>;
-  loadPage: (options?: {
-    limit?: number;
-    page?: number;
-    query?: string;
-    status?: RequestLogStatusFilter;
-  }) => Promise<RequestLogsPage>;
+  loadPage: (options?: RequestLogFilters) => Promise<RequestLogsPage>;
   onLoaded?: (page: RequestLogsPage) => void;
 }) {
   const [logsPage, setLogsPage] = React.useState(initialPage);
@@ -79,12 +78,17 @@ export function RequestLogsWorkbench({
   const [activeQuery, setActiveQuery] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<StatusFilter>("all");
   const [pageSize, setPageSize] = React.useState(initialPage.limit);
+  const [methodFilter, setMethodFilter] = React.useState("all");
+  const [modelFilter, setModelFilter] = React.useState("");
+  const [latencyFilter, setLatencyFilter] = React.useState("0");
+  const [rangeFilter, setRangeFilter] = React.useState("24h");
   const [loading, setLoading] = React.useState(false);
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [selectedDetail, setSelectedDetail] =
     React.useState<RequestLogDetail | null>(null);
   const didAutoLoadRef = React.useRef(false);
+  const requestIdRef = React.useRef(0);
 
   const totalPages = Math.max(1, logsPage.totalPages);
   const pageStart = logsPage.total > 0 ? logsPage.offset + 1 : 0;
@@ -107,6 +111,10 @@ export function RequestLogsWorkbench({
       limit?: number;
       query?: string;
       status?: StatusFilter;
+      method?: string;
+      model?: string;
+      minLatencyMs?: number;
+      range?: string;
       successMessage?: string;
     } = {},
   ) {
@@ -114,6 +122,11 @@ export function RequestLogsWorkbench({
     const nextLimit = input.limit ?? pageSize;
     const nextQuery = input.query ?? activeQuery;
     const nextStatus = input.status ?? statusFilter;
+    const nextMethod = input.method ?? methodFilter;
+    const nextModel = input.model ?? modelFilter;
+    const nextLatency = input.minLatencyMs ?? Number(latencyFilter);
+    const nextRange = input.range ?? rangeFilter;
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     try {
       const result = await loadPage({
@@ -121,12 +134,21 @@ export function RequestLogsWorkbench({
         page: nextPage,
         query: nextQuery,
         status: nextStatus,
+        method: nextMethod === "all" ? undefined : nextMethod,
+        model: nextModel.trim() || undefined,
+        minLatencyMs: nextLatency || undefined,
+        from: rangeStart(nextRange),
       });
+      if (requestId !== requestIdRef.current) return null;
       updatePage(result);
       setActiveQuery(nextQuery);
       setQueryInput(nextQuery);
       setStatusFilter(nextStatus);
       setPageSize(nextLimit);
+      setMethodFilter(nextMethod);
+      setModelFilter(nextModel);
+      setLatencyFilter(String(nextLatency));
+      setRangeFilter(nextRange);
       if (input.successMessage) {
         toast.success(input.successMessage);
       }
@@ -135,7 +157,7 @@ export function RequestLogsWorkbench({
       toast.error(errorMessage(error));
       return null;
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }
 
@@ -172,6 +194,16 @@ export function RequestLogsWorkbench({
   function search(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void loadLogs({ page: 1, query: queryInput });
+  }
+
+  const filtered = Boolean(
+    activeQuery || statusFilter !== "all" || methodFilter !== "all" ||
+    modelFilter || Number(latencyFilter) > 0 || rangeFilter !== "all",
+  );
+
+  function resetFilters() {
+    setQueryInput("");
+    void loadLogs({ page: 1, query: "", status: "all", method: "all", model: "", minLatencyMs: 0, range: "all" });
   }
 
   async function openLogDetail(id: string) {
@@ -288,6 +320,16 @@ export function RequestLogsWorkbench({
             </form>
           </SectionToolbar>
 
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/20 p-2">
+            <FilterIcon className="text-muted-foreground" />
+            <LogFilterSelect value={rangeFilter} onChange={(value) => void loadLogs({ page: 1, range: value })} items={[["1h", "最近 1 小时"], ["24h", "最近 24 小时"], ["7d", "最近 7 天"], ["30d", "最近 30 天"], ["all", "全部时间"]]} />
+            <LogFilterSelect value={methodFilter} onChange={(value) => void loadLogs({ page: 1, method: value })} items={[["all", "全部方法"], ["POST", "POST"], ["GET", "GET"], ["PUT", "PUT"], ["PATCH", "PATCH"], ["DELETE", "DELETE"]]} />
+            <LogFilterSelect value={latencyFilter} onChange={(value) => void loadLogs({ page: 1, minLatencyMs: Number(value) })} items={[["0", "全部延迟"], ["1000", "≥ 1 秒"], ["3000", "≥ 3 秒"], ["10000", "≥ 10 秒"]]} />
+            <Input className="h-7 w-44" value={modelFilter} onChange={(event) => setModelFilter(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void loadLogs({ page: 1, model: modelFilter }); }} placeholder="精确模型名称" />
+            <Button type="button" size="sm" variant="outline" onClick={() => void loadLogs({ page: 1, model: modelFilter })} disabled={loading}>应用</Button>
+            {filtered && <Button type="button" size="sm" variant="ghost" onClick={resetFilters} disabled={loading}><XIcon data-icon="inline-start" />重置筛选</Button>}
+          </div>
+
           {loading && logsPage.data.length === 0 ? (
             <div className="flex min-h-64 items-center justify-center gap-2 rounded-lg border bg-muted/20 text-sm text-muted-foreground">
               <Spinner />
@@ -295,7 +337,7 @@ export function RequestLogsWorkbench({
             </div>
           ) : logsPage.total === 0 ? (
             <LogsEmptyState
-              filtered={Boolean(activeQuery || statusFilter !== "all")}
+              filtered={filtered}
             />
           ) : (
             <div className="grid gap-3">
@@ -318,7 +360,7 @@ export function RequestLogsWorkbench({
                   </TableHeader>
                   <TableBody>
                     {logsPage.data.map((log) => (
-                      <TableRow key={log.id}>
+                      <TableRow key={log.id} className="cursor-pointer" tabIndex={0} onClick={() => void openLogDetail(log.id)} onKeyDown={(event) => { if (event.key === "Enter") void openLogDetail(log.id); }}>
                         <TableCell className="whitespace-nowrap font-mono text-xs">
                           <LocalDateTime value={log.started_at} />
                         </TableCell>
@@ -391,7 +433,7 @@ export function RequestLogsWorkbench({
                             type="button"
                             size="sm"
                             variant="outline"
-                            onClick={() => void openLogDetail(log.id)}
+                            onClick={(event) => { event.stopPropagation(); void openLogDetail(log.id); }}
                           >
                             <FileTextIcon data-icon="inline-start" />
                             详情
@@ -409,22 +451,7 @@ export function RequestLogsWorkbench({
                   {formatNumber(logsPage.total)}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={pageSize}
-                    className="h-8 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-                    onChange={(event) =>
-                      void loadLogs({
-                        page: 1,
-                        limit: Number.parseInt(event.target.value, 10),
-                      })
-                    }
-                  >
-                    {[25, 50, 100, 200].map((size) => (
-                      <option key={size} value={size}>
-                        {size}/页
-                      </option>
-                    ))}
-                  </select>
+                  <LogFilterSelect value={String(pageSize)} onChange={(value) => void loadLogs({ page: 1, limit: Number(value) })} items={[25, 50, 100, 200].map((size) => [String(size), `${size}/页`])} />
                   <Button
                     type="button"
                     variant="outline"
@@ -459,6 +486,21 @@ export function RequestLogsWorkbench({
       />
     </div>
   );
+}
+
+function LogFilterSelect({ value, onChange, items }: { value: string; onChange: (value: string) => void; items: string[][] }) {
+  return (
+    <Select value={value} onValueChange={(next) => onChange(next || value)}>
+      <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+      <SelectContent><SelectGroup>{items.map(([itemValue, label]) => <SelectItem key={itemValue} value={itemValue}>{label}</SelectItem>)}</SelectGroup></SelectContent>
+    </Select>
+  );
+}
+
+function rangeStart(range: string) {
+  if (range === "all") return undefined;
+  const duration = range.endsWith("h") ? Number(range.slice(0, -1)) * 3_600_000 : Number(range.slice(0, -1)) * 86_400_000;
+  return new Date(Date.now() - duration).toISOString();
 }
 
 function RequestLogDetailDialog({

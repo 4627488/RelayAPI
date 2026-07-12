@@ -28,6 +28,11 @@ export async function GET(request: Request) {
       offset: (page - 1) * limit,
       query,
       status,
+      method: searchParams.get("method") || undefined,
+      model: searchParams.get("model") || undefined,
+      from: normalizeDate(searchParams.get("from")),
+      to: normalizeDate(searchParams.get("to")),
+      minLatencyMs: normalizePositiveNumber(searchParams.get("minLatencyMs")),
       includeSummary: searchParams.get("summary") === "full",
     });
     return Response.json({
@@ -49,6 +54,17 @@ export async function GET(request: Request) {
   } catch (error) {
     return errorToResponse(error);
   }
+}
+
+function normalizeDate(value: string | null) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function normalizePositiveNumber(value: string | null) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
 function normalizeLimit(value: string | null) {
