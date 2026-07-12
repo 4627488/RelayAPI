@@ -386,6 +386,9 @@ export type TenantSubscriptionRecord = {
   id: string; tenantId: string; credentialId: string; name: string;
   units: number; unitsPerCredential: number; enabled: boolean; priority: number;
   startsAt: string; expiresAt: string | null; createdAt: string; updatedAt: string;
+  quota?: Partial<Record<"5h" | "7d", {
+    limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string; resetsAt: string;
+  }>>;
 };
 
 export type TenantSubscriptionPayload = {

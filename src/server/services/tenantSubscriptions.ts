@@ -11,10 +11,23 @@ import {
   updateTenantSubscription,
 } from "@/src/server/repositories/tenantSubscriptions";
 import { randomId } from "@/src/server/services/crypto";
+import { getSubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
 import { codexPlanLabel, codexPlanShares } from "@/src/shared/codexPlans";
 
 export function listSubscriptions(tenantId?: string) {
-  return listTenantSubscriptions(tenantId);
+  return listTenantSubscriptions(tenantId).map((subscription) => ({
+    ...subscription,
+    quota: Object.fromEntries(
+      Object.entries(getSubscriptionQuotaState(subscription.id).windows).map(
+        ([kind, window]) => [kind, {
+          limitNanoUsd: String(window.limitNanoUsd),
+          settledNanoUsd: String(window.settledNanoUsd),
+          reservedNanoUsd: String(window.reservedNanoUsd),
+          resetsAt: window.resetsAt,
+        }],
+      ),
+    ),
+  }));
 }
 
 export function createSubscription(input: Record<string, unknown>) {
