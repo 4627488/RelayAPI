@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
@@ -39,6 +40,7 @@ import type {
   RequestLogsPage,
   RequestLogStatusFilter,
 } from "@/lib/admin-api";
+import { cn } from "@/lib/utils";
 
 type StatusFilter = Extract<
   RequestLogStatusFilter,
@@ -634,47 +636,76 @@ function StageTimingsBlock({
     "bg-chart-4",
     "bg-chart-5",
   ];
+  const longestDuration = Math.max(...timings.map((item) => item.durationMs), 0);
+  const longestStage = timings.find((item) => item.durationMs === longestDuration);
   return (
     <DataPanel title="阶段耗时">
-      <div className="flex flex-col gap-3">
-        <div className="grid grid-cols-[minmax(8rem,0.75fr)_minmax(12rem,1.5fr)_auto] items-end gap-3 px-2 text-[10px] text-muted-foreground">
-          <span>阶段</span>
-          <div className="flex justify-between font-mono">
-            {ticks.map((tick) => (
-              <span key={tick}>{formatDuration(total * tick)}</span>
-            ))}
-          </div>
-          <span className="text-right">耗时</span>
-        </div>
-        {timings.map((item, index) => (
-          <div
-            key={`${item.name}:${index}`}
-            className="grid grid-cols-[minmax(8rem,0.75fr)_minmax(12rem,1.5fr)_auto] items-center gap-3 rounded-md px-2 py-1.5 text-xs hover:bg-muted/40"
-          >
-            <span className="truncate font-medium" title={item.label || item.name}>
-              {item.label || item.name}
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="secondary">总耗时 {formatDuration(total)}</Badge>
+          <span>{timings.length} 个阶段</span>
+          {longestStage ? (
+            <span className="truncate">
+              主要耗时：{longestStage.label || longestStage.name}（{formatDuration(longestDuration)}）
             </span>
-            <div className="relative h-5 overflow-hidden rounded-sm bg-muted/55">
-              <div className="absolute inset-y-0 left-1/4 border-l border-background/70" />
-              <div className="absolute inset-y-0 left-1/2 border-l border-background/70" />
-              <div className="absolute inset-y-0 left-3/4 border-l border-background/70" />
-              <div
-                className={`absolute inset-y-1 rounded-sm ${colors[index % colors.length]}`}
-                style={{
-                  left: `${Math.min(100, (item.startedAtMs / total) * 100)}%`,
-                  width: `${Math.max(0.8, Math.min(100 - (item.startedAtMs / total) * 100, (item.durationMs / total) * 100))}%`,
-                }}
-                title={`${formatDuration(item.durationMs)} · ${formatNumber(item.startedAtMs)}-${formatNumber(item.endedAtMs)}ms`}
-              />
+          ) : null}
+        </div>
+
+        <div className="overflow-x-auto">
+          <div className="min-w-[42rem]">
+            <div className="grid grid-cols-[minmax(10rem,0.85fr)_minmax(22rem,2fr)_6.5rem] items-end gap-4 border-b bg-muted/20 px-2 py-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              <span>阶段</span>
+              <div className="flex justify-between font-mono font-normal normal-case tracking-normal">
+                {ticks.map((tick) => (
+                  <span key={tick}>{formatDuration(total * tick)}</span>
+                ))}
+              </div>
+              <span className="text-right">耗时</span>
             </div>
-            <div className="text-right">
-              <div className="font-mono font-medium">{formatDuration(item.durationMs)}</div>
-              <span className="font-mono text-[10px] text-muted-foreground">
-                {formatNumber(item.startedAtMs)}-{formatNumber(item.endedAtMs)}ms
-              </span>
+
+            <div className="divide-y divide-border/60">
+              {timings.map((item, index) => {
+                const left = Math.min(100, (item.startedAtMs / total) * 100);
+                const availableWidth = Math.max(0, 100 - left);
+                const width = Math.min(availableWidth, (item.durationMs / total) * 100);
+                const isInstant = width < 1;
+
+                return (
+                  <div
+                    key={`${item.name}:${index}`}
+                    className="grid grid-cols-[minmax(10rem,0.85fr)_minmax(22rem,2fr)_6.5rem] items-center gap-4 rounded-md px-2 py-2.5 text-xs transition-colors hover:bg-muted/40"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium" title={item.label || item.name}>
+                        {item.label || item.name}
+                      </div>
+                      <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">
+                        {formatNumber(item.startedAtMs)} → {formatNumber(item.endedAtMs)} ms
+                      </div>
+                    </div>
+                    <div className="relative h-7 overflow-hidden rounded-md border bg-muted/70 shadow-inner">
+                      <div className="absolute inset-y-0 left-1/4 border-l border-border" />
+                      <div className="absolute inset-y-0 left-1/2 border-l border-border" />
+                      <div className="absolute inset-y-0 left-3/4 border-l border-border" />
+                      <div
+                        className={cn(
+                          "absolute inset-y-1 rounded-sm shadow-sm ring-1 ring-background/80",
+                          colors[index % colors.length],
+                          isInstant && "min-w-1.5",
+                        )}
+                        style={{ left: `${left}%`, width: `${width}%` }}
+                        title={`${formatDuration(item.durationMs)} · ${formatNumber(item.startedAtMs)}-${formatNumber(item.endedAtMs)}ms`}
+                      />
+                    </div>
+                    <div className="text-right font-mono font-semibold tabular-nums">
+                      {formatDuration(item.durationMs)}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
-        ))}
+        </div>
       </div>
     </DataPanel>
   );

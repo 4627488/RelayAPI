@@ -18,8 +18,15 @@ export default function RootLayout({
     <html
       lang="zh-CN"
       suppressHydrationWarning
-      className="h-full antialiased dark"
+      className="h-full antialiased"
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('relayapi-theme');t=t==='light'||t==='dark'?t:'dark';document.documentElement.classList.add(t);document.documentElement.style.colorScheme=t}catch(e){document.documentElement.classList.add('dark')}})()`,
+          }}
+        />
+      </head>
       <body className="flex min-h-full flex-col">
         <ThemeProvider
           attribute="class"

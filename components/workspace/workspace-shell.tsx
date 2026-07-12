@@ -4,6 +4,7 @@ import * as React from "react";
 import { MenuIcon, type LucideIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Sheet,
   SheetContent,
@@ -80,6 +81,7 @@ export function WorkspaceShell<TId extends string>({
               </div>
               <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
             </div>
+            <ThemeToggle />
             <div className="hidden items-center gap-1.5 lg:flex">{actions}</div>
           </header>
           <section className="min-w-0 p-2.5 sm:p-4 xl:p-5">{children}</section>
