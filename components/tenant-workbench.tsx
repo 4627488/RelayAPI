@@ -301,7 +301,6 @@ export function TenantWorkbench({
             tenant={tenant}
             onApiKeyCreated={(created) => {
               setApiKeys((current) => [created, ...current]);
-              setCreatedKey(created);
             }}
           />
         )}

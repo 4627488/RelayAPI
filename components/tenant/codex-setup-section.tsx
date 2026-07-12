@@ -5,6 +5,7 @@ import {
   CheckIcon,
   ClipboardCopyIcon,
   KeyRoundIcon,
+  RefreshCwIcon,
   SparklesIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -40,7 +41,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { WorkspaceStatusBadge } from "@/components/workspace/status-badge";
 import { createTenantApiKey, tenantErrorMessage } from "@/lib/tenant-api";
 import type {
@@ -52,6 +52,10 @@ import type {
 const DEFAULT_BASE_URL = "https://ai.cafebabe.top/v1";
 const PROVIDER_NAME = "cliproxyapi";
 const DEFAULT_MODEL = "gpt-5.5";
+
+type ModelCatalogResponse = {
+  data?: string[];
+};
 
 type CodexSetupSectionProps = {
   apiKeys: PublicApiKey[];
@@ -70,7 +74,49 @@ export function TenantCodexSetupSection({
   );
   const [createdSecret, setCreatedSecret] = React.useState("");
   const [creating, setCreating] = React.useState(false);
-  const [model, setModel] = React.useState([DEFAULT_MODEL]);
+  const [model, setModel] = React.useState(DEFAULT_MODEL);
+  const [models, setModels] = React.useState<string[]>([DEFAULT_MODEL]);
+  const [modelsLoading, setModelsLoading] = React.useState(true);
+
+  const loadModels = React.useCallback(async (notify = false) => {
+    setModelsLoading(true);
+    try {
+      const response = await fetch("/api/model-catalog", {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        throw new Error("模型目录暂时不可用");
+      }
+      const result = (await response.json()) as ModelCatalogResponse;
+      const nextModels = Array.isArray(result.data)
+        ? [...new Set(result.data.map(cleanModelId).filter(Boolean))]
+        : [];
+      if (nextModels.length === 0) {
+        throw new Error("上游没有返回可用模型");
+      }
+      setModels(nextModels);
+      setModel((current) =>
+        nextModels.includes(current) ? current : nextModels[0],
+      );
+      if (notify) {
+        toast.success(`已同步 ${nextModels.length} 个模型`);
+      }
+    } catch (error) {
+      if (notify) {
+        toast.error(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadModels();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadModels]);
 
   const effectiveSelectedKeyId = apiKeys.some(
     (apiKey) => apiKey.id === selectedKeyId,
@@ -81,7 +127,7 @@ export function TenantCodexSetupSection({
     (apiKey) => apiKey.id === effectiveSelectedKeyId,
   );
   const apiKeyForAuth = createdSecret || "sk-填入你的租户 API Key";
-  const selectedModel = model[0] || DEFAULT_MODEL;
+  const selectedModel = model || DEFAULT_MODEL;
   const keyReady = Boolean(createdSecret);
   const configToml = buildCodexConfigToml(selectedModel);
   const authJson = buildCodexAuthJson(apiKeyForAuth);
@@ -136,20 +182,45 @@ export function TenantCodexSetupSection({
         <CardContent className="grid gap-4">
           <FieldGroup>
             <Field>
-              <FieldLabel>模型</FieldLabel>
-              <ToggleGroup
+              <div className="flex items-center justify-between gap-3">
+                <FieldLabel>模型</FieldLabel>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={modelsLoading}
+                  onClick={() => void loadModels(true)}
+                >
+                  {modelsLoading ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : (
+                    <RefreshCwIcon data-icon="inline-start" />
+                  )}
+                  同步模型
+                </Button>
+              </div>
+              <Select
                 value={model}
-                onValueChange={(value) => {
-                  if (value[0]) {
-                    setModel([value[0]]);
-                  }
-                }}
-                size="sm"
-                variant="outline"
+                onValueChange={(value) => value && setModel(value)}
               >
-                <ToggleGroupItem value="gpt-5.5">gpt-5.5</ToggleGroupItem>
-                <ToggleGroupItem value="gpt-5.4">gpt-5.4</ToggleGroupItem>
-              </ToggleGroup>
+                <SelectTrigger className="w-full sm:max-w-md">
+                  <SelectValue placeholder="选择模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {models.map((modelId) => (
+                      <SelectItem key={modelId} value={modelId}>
+                        {modelId}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {modelsLoading
+                  ? "正在同步上游模型目录…"
+                  : `已同步 ${models.length} 个模型。`}
+              </p>
             </Field>
 
             <Field>
@@ -197,6 +268,37 @@ export function TenantCodexSetupSection({
               )}
             </Field>
           </FieldGroup>
+
+          {createdSecret && (
+            <div className="flex flex-col gap-3 rounded-lg border bg-muted/50 p-4">
+              <div className="flex flex-col gap-1">
+                <div className="font-medium">请立即保存新 Key</div>
+                <p className="text-sm text-muted-foreground">
+                  明文只保存在当前页面内存中；刷新页面或离开此板块后将无法再次查看。
+                </p>
+              </div>
+              <code className="break-all rounded-md bg-background p-3 text-sm">
+                {createdSecret}
+              </code>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void copyText(createdSecret, "Key 已复制")}
+                >
+                  <ClipboardCopyIcon data-icon="inline-start" />
+                  复制 Key
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setCreatedSecret("")}
+                >
+                  已保存，隐藏明文
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="grid gap-3 md:grid-cols-3">
             <SetupStep
@@ -262,8 +364,7 @@ function ConfigPanel({
   value: string;
 }) {
   async function copy() {
-    await navigator.clipboard.writeText(value);
-    toast.success(`${filename} 已复制`);
+    await copyText(value, `${filename} 已复制`);
   }
 
   return (
@@ -287,6 +388,15 @@ function ConfigPanel({
       </CardContent>
     </Card>
   );
+}
+
+async function copyText(value: string, message: string) {
+  await navigator.clipboard.writeText(value);
+  toast.success(message);
+}
+
+function cleanModelId(value: unknown) {
+  return String(value || "").trim();
 }
 
 function buildCodexConfigToml(model: string) {
