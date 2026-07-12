@@ -66,25 +66,67 @@ export function deriveQuotaBaseline(samples: AcceptedCalibrationSample[]) {
   if (samples.length === 0) {
     return { valueNanoUsd: null, sampleCount: 0, confidence: 0 };
   }
-  const center = median(samples.map((sample) => sample.perShareNanoUsd));
-  const deviations = samples.map((sample) => absolute(sample.perShareNanoUsd - center));
+  // Upstream percentages are quantized, so a capacity calculated from one
+  // small movement is inherently noisy. Collapse all movements from the same
+  // credential first: weighting by percent span is equivalent to estimating
+  // capacity from its cumulative priced cost / cumulative percentage movement.
+  // It also prevents one frequently-polled credential from dominating merely
+  // because it produced more adjacent samples.
+  const credentialSamples = aggregateCredentialSamples(samples);
+  const center = median(credentialSamples.map((sample) => sample.perShareNanoUsd));
+  const deviations = credentialSamples.map((sample) => absolute(sample.perShareNanoUsd - center));
   const mad = median(deviations);
   const threshold = mad === BigInt(0) ? center / BigInt(10) : mad * BigInt(3);
-  const filtered = samples.filter(
+  const filtered = credentialSamples.filter(
     (sample) => absolute(sample.perShareNanoUsd - center) <= threshold,
   );
   const valueNanoUsd = weightedMedian(filtered);
-  const credentials = new Set(filtered.map((sample) => sample.credentialId)).size;
+  const credentials = filtered.length;
   const span = filtered.reduce((total, sample) => total + sample.percentSpan, 0);
+  const contributingSamples = filtered.reduce((total, sample) => total + sample.sampleCount, 0);
   const confidence = Math.min(
     1,
-    filtered.length / 4 + credentials / 12 + Math.min(span, 50) / 200,
+    contributingSamples / 12 + credentials / 8 + Math.min(span, 100) / 400,
   );
   return {
     valueNanoUsd,
-    sampleCount: filtered.length,
+    sampleCount: contributingSamples,
     confidence: Math.round(confidence * 1000) / 1000,
   };
+}
+
+type AggregatedCalibrationSample = AcceptedCalibrationSample & { sampleCount: number };
+
+function aggregateCredentialSamples(samples: AcceptedCalibrationSample[]): AggregatedCalibrationSample[] {
+  const groups = new Map<string, AcceptedCalibrationSample[]>();
+  for (const sample of samples) {
+    const group = groups.get(sample.credentialId) || [];
+    group.push(sample);
+    groups.set(sample.credentialId, group);
+  }
+  return [...groups.entries()].map(([credentialId, group]) => {
+    const span = group.reduce((total, sample) => total + Math.max(sample.percentSpan, 0.001), 0);
+    const scale = 1_000;
+    const weightedTotal = group.reduce(
+      (total, sample) =>
+        total + sample.perShareNanoUsd * BigInt(Math.max(1, Math.round(sample.percentSpan * scale))),
+      BigInt(0),
+    );
+    const weight = group.reduce(
+      (total, sample) => total + BigInt(Math.max(1, Math.round(sample.percentSpan * scale))),
+      BigInt(0),
+    );
+    return {
+      credentialId,
+      perShareNanoUsd: weightedTotal / weight,
+      percentSpan: span,
+      observedAt: group.reduce(
+        (latest, sample) => (sample.observedAt > latest ? sample.observedAt : latest),
+        group[0].observedAt,
+      ),
+      sampleCount: group.length,
+    };
+  });
 }
 
 export function quotaSharesForPlan(planType: string, overrides?: Record<string, number>) {
@@ -96,17 +138,18 @@ export function quotaSharesForPlan(planType: string, overrides?: Record<string, 
   return codexPlanShares(planType);
 }
 
-function weightedMedian(samples: AcceptedCalibrationSample[]) {
+function weightedMedian(samples: AggregatedCalibrationSample[]) {
   const sorted = [...samples].sort((left, right) =>
     left.perShareNanoUsd < right.perShareNanoUsd ? -1 : 1,
   );
-  const totalWeight = sorted.reduce(
-    (total, sample) => total + Math.max(sample.percentSpan, 0.001),
-    0,
-  );
+  // Cap each credential's influence: larger spans are better evidence, but no
+  // single account should be able to define the global baseline on its own.
+  const weightOf = (sample: AggregatedCalibrationSample) =>
+    Math.sqrt(Math.min(Math.max(sample.percentSpan, 0.001), 100));
+  const totalWeight = sorted.reduce((total, sample) => total + weightOf(sample), 0);
   let cursor = 0;
   for (const sample of sorted) {
-    cursor += Math.max(sample.percentSpan, 0.001);
+    cursor += weightOf(sample);
     if (cursor >= totalWeight / 2) return sample.perShareNanoUsd;
   }
   return sorted.at(-1)!.perShareNanoUsd;

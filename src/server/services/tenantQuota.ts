@@ -11,25 +11,34 @@ import { getEffectiveQuotaBaselines, getQuotaOversellRatios, quotaSharesForPlan 
 
 export interface TenantQuotaAdmission { requestId: string; tenantId: string; subscriptionId: string | null; units: number | null; unitsPerCredential: number | null; price: ModelPriceSnapshot | null; state: SubscriptionQuotaState | null; }
 
-export function eligibleCredentialIdsForTenant(tenantId: string) { return [...new Set(listActiveTenantSubscriptions(tenantId).filter((item) => hasLocalCapacity(item.id)).map((item) => item.credentialId))]; }
+export function eligibleCredentialIdsForTenant(tenantId: string) { return [...new Set(listActiveTenantSubscriptions(tenantId).filter((item) => hasLocalCapacity(item)).map((item) => item.credentialId))]; }
+
+export function subscriptionQuotaLimits(subscription: { units: number; unitsPerCredential: number; credentialId: string }) {
+  const baselines = getEffectiveQuotaBaselines();
+  const oversellRatios = getQuotaOversellRatios();
+  const credential = getCodexCredentialById(subscription.credentialId);
+  if (!credential || !baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) return null;
+  const parentCapacityMultiplier = BigInt(quotaSharesForPlan(credential.planType));
+  const fractionMilli = BigInt(Math.floor(subscription.units * 1_000_000 / subscription.unitsPerCredential));
+  return Object.fromEntries((["5h", "7d"] as const).map((kind) => {
+    const oversellMilli = BigInt(Math.round(oversellRatios[kind] * 1000));
+    return [kind, baselines[kind].effectiveNanoUsd! * parentCapacityMultiplier * fractionMilli * oversellMilli / 1_000_000_000n];
+  })) as Record<"5h" | "7d", bigint>;
+}
 
 export function admitTenantRequest(input: { tenantId: string; credentialId: string; requestId: string; model: string; now?: Date }): TenantQuotaAdmission {
   const price = resolveConfiguredModelPrice(input.model);
   if (!price) throw new HttpError(503, "model_price_unavailable", `No price is configured for model ${input.model}`, { model: input.model });
   const baselines = getEffectiveQuotaBaselines();
-  const oversellRatios = getQuotaOversellRatios();
   if (!baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) throw new HttpError(503, "quota_baseline_unavailable", "Subscription capacity has not been calibrated or configured");
   const resetTimes = credentialResetTimes(input.credentialId);
   const credential = getCodexCredentialById(input.credentialId);
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
-  const parentCapacityMultiplier = BigInt(quotaSharesForPlan(credential.planType));
   const candidates = listActiveTenantSubscriptions(input.tenantId, input.now).filter((item) => item.credentialId === input.credentialId).sort((a, b) => b.priority - a.priority || availableRatio(b.id) - availableRatio(a.id));
   if (!candidates.length) throw new HttpError(403, "subscription_not_available", "No active subscription is assigned for the selected credential");
   let capacityError: SubscriptionQuotaCapacityError | null = null;
   for (const subscription of candidates) {
-    const fractionMilli = BigInt(Math.floor(subscription.units * 1_000_000 / subscription.unitsPerCredential));
-    const oversellMilli = { "5h": BigInt(Math.round(oversellRatios["5h"] * 1000)), "7d": BigInt(Math.round(oversellRatios["7d"] * 1000)) };
-    const limits = { "5h": baselines["5h"].effectiveNanoUsd! * parentCapacityMultiplier * fractionMilli * oversellMilli["5h"] / 1_000_000_000n, "7d": baselines["7d"].effectiveNanoUsd! * parentCapacityMultiplier * fractionMilli * oversellMilli["7d"] / 1_000_000_000n };
+    const limits = subscriptionQuotaLimits(subscription)!;
     const reserve = max(1n, min(10_000_000n, min(limits["5h"], limits["7d"]) / 100n));
     const now = input.now || new Date();
     try {
@@ -47,5 +56,5 @@ export function tenantQuotaHeaders(state: SubscriptionQuotaState) { const subscr
 
 function credentialResetTimes(credentialId: string) { const cache = getCodexQuotaCacheByCredentialId(credentialId); const windows = cache?.cache && typeof cache.cache === "object" ? (cache.cache as { windows?: Array<{ id?: string; resets_at?: string | null }> }).windows || [] : []; const five = windows.find((item) => item.id === "code-5h")?.resets_at; const seven = windows.find((item) => item.id === "code-7d")?.resets_at; if (!five || !seven) throw new HttpError(503, "credential_quota_not_cached", "Credential quota must be refreshed before its subscriptions can be used"); return { "5h": five, "7d": seven }; }
 function availableRatio(id: string) { const state = getSubscriptionQuotaState(id); const values = ["5h", "7d"].map((kind) => state.windows[kind as "5h" | "7d"]).filter(Boolean).map((window) => Number(window.limitNanoUsd - window.settledNanoUsd - window.reservedNanoUsd) / Math.max(1, Number(window.limitNanoUsd))); return values.length ? Math.min(...values) : 1; }
-function hasLocalCapacity(id: string) { const state = getSubscriptionQuotaState(id); const windows = [state.windows["5h"], state.windows["7d"]].filter(Boolean); return windows.length < 2 || windows.every((window) => window.resetsAt <= new Date().toISOString() || window.settledNanoUsd + window.reservedNanoUsd < window.limitNanoUsd); }
+function hasLocalCapacity(subscription: { id: string; units: number; unitsPerCredential: number; credentialId: string }) { const state = getSubscriptionQuotaState(subscription.id); const limits = subscriptionQuotaLimits(subscription); const windows = (["5h", "7d"] as const).map((kind) => ({ window: state.windows[kind], limit: limits?.[kind] })).filter((item) => item.window); return windows.length < 2 || windows.every(({ window, limit }) => window.resetsAt <= new Date().toISOString() || window.settledNanoUsd + window.reservedNanoUsd < (limit ?? window.limitNanoUsd)); }
 function min(a: bigint, b: bigint) { return a < b ? a : b; } function max(a: bigint, b: bigint) { return a > b ? a : b; }

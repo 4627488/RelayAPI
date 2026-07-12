@@ -47,4 +47,15 @@ describe("quota calibration", () => {
     expect(result.sampleCount).toBe(3);
     expect(result.confidence).toBeGreaterThan(0.5);
   });
+
+  test("aggregates quantized movements per credential before combining accounts", () => {
+    const result = deriveQuotaBaseline([
+      { perShareNanoUsd: BigInt(8_000), credentialId: "a", percentSpan: 1, observedAt: "2026-07-10T00:00:00Z" },
+      { perShareNanoUsd: BigInt(12_000), credentialId: "a", percentSpan: 1, observedAt: "2026-07-10T01:00:00Z" },
+      { perShareNanoUsd: BigInt(10_000), credentialId: "b", percentSpan: 10, observedAt: "2026-07-10T02:00:00Z" },
+      { perShareNanoUsd: BigInt(10_000), credentialId: "c", percentSpan: 10, observedAt: "2026-07-10T03:00:00Z" },
+    ]);
+    expect(result.valueNanoUsd).toBe(BigInt(10_000));
+    expect(result.sampleCount).toBe(4);
+  });
 });
