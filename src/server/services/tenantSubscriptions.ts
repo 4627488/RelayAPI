@@ -103,7 +103,7 @@ export function createSubscription(input: Record<string, unknown>) {
   if (!credential.enabled) throw new HttpError(400, "codex_credential_disabled", "Disabled credential cannot receive new allocations");
   const tenant = getTenantById(tenantId);
   if (!tenant?.enabled) throw new HttpError(400, "tenant_disabled", "Disabled tenant cannot receive new allocations");
-  const units = positiveInt(input.units, 1);
+  const units = positiveNumber(input.units, 1);
   const unitsPerCredential = codexPlanShares(credential.planType);
   return insertTenantSubscription({
     id: randomId("sub"), tenantId, credentialId,
@@ -121,7 +121,7 @@ export function patchSubscription(id: string, input: Record<string, unknown>) {
   const credentialId = input.credentialId === undefined ? current.credentialId : clean(input.credentialId);
   const credential = getCodexCredentialById(credentialId);
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
-  const units = input.units === undefined ? current.units : positiveInt(input.units, current.units);
+  const units = input.units === undefined ? current.units : positiveNumber(input.units, current.units);
   const unitsPerCredential = codexPlanShares(credential.planType);
   return updateTenantSubscription(id, {
     ...(input.name !== undefined ? { name: clean(input.name) || current.name } : {}),
@@ -139,5 +139,5 @@ export function removeSubscription(id: string) {
 
 function clean(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
 function integer(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) ? Math.floor(n) : fallback; }
-function positiveInt(value: unknown, fallback: number) { return Math.max(1, integer(value, fallback)); }
+function positiveNumber(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) && n > 0 ? n : fallback; }
 function date(value: unknown) { const text = clean(value); return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null; }

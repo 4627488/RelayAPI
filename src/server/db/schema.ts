@@ -167,7 +167,7 @@ export const tenantSubscriptions = sqliteTable(
     tenantId: text("tenant_id").notNull(),
     credentialId: text("credential_id").notNull(),
     name: text("name").notNull(),
-    units: integer("units").notNull().default(1),
+    units: real("units").notNull().default(1),
     unitsPerCredential: integer("units_per_credential").notNull().default(20),
     enabled: integer("enabled").notNull().default(1),
     priority: integer("priority").notNull().default(100),
