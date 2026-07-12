@@ -22,10 +22,10 @@ import { adminErrorMessage, createTenantSubscription, deleteTenantSubscription, 
 import { codexPlanLabel } from "@/src/shared/codexPlans";
 import type { PublicTenant } from "@/src/shared/types/entities";
 
-type AllocationDraft = { tenantId: string; units: number; priority: number };
-type EditDraft = { units: number; priority: number; enabled: boolean };
+type AllocationDraft = { tenantId: string; units: string; priority: number };
+type EditDraft = { units: string; priority: number; enabled: boolean };
 
-const EMPTY_DRAFT: AllocationDraft = { tenantId: "", units: 1, priority: 100 };
+const EMPTY_DRAFT: AllocationDraft = { tenantId: "", units: "1", priority: 100 };
 
 export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTenant[] }) {
   const [overview, setOverview] = React.useState<SubscriptionAllocationOverview | null>(null);
@@ -76,7 +76,7 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
         tenantId: draft.tenantId,
         credentialId: selectedPool.id,
         name: `${codexPlanLabel(selectedPool.planType)} · ${tenant?.name || "子订阅"}`,
-        units: draft.units,
+        units: parsePositiveUnits(draft.units),
         priority: draft.priority,
       });
       setCreateOpen(false);
@@ -94,7 +94,7 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
     if (!edit) return;
     setSavingId(item.id);
     try {
-      await updateTenantSubscription(item.id, edit);
+      await updateTenantSubscription(item.id, { ...edit, units: parsePositiveUnits(edit.units) });
       await load();
       toast.success("分配已更新");
     } catch (error) {
@@ -336,7 +336,7 @@ function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { 
       <TableBody>
         {pool.subscriptions.map((item) => {
           const edit = edits[item.id] || editFrom(item);
-          const dirty = edit.units !== item.units || edit.priority !== item.priority || edit.enabled !== item.enabled;
+          const dirty = Number(edit.units) !== item.units || edit.priority !== item.priority || edit.enabled !== item.enabled;
           return (
             <TableRow key={item.id}>
               <TableCell>
@@ -359,10 +359,7 @@ function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { 
                   step="any"
                   value={edit.units}
                   onChange={(event) =>
-                    onEdit(item.id, {
-                      ...edit,
-                      units: positiveInput(event.target.value, edit.units),
-                    })
+                    onEdit(item.id, { ...edit, units: event.target.value })
                   }
                 />
               </TableCell>
@@ -436,7 +433,7 @@ function CreateAllocationDialog({ open, pool, tenants, draft, pending, onDraftCh
               onChange={(event) =>
                 onDraftChange({
                   ...draft,
-                  units: positiveInput(event.target.value, draft.units),
+                  units: event.target.value,
                 })
               }
             />
@@ -529,11 +526,12 @@ function LifecycleBadge({ lifecycle }: { lifecycle?: TenantSubscriptionRecord["l
 }
 
 function editFrom(item: TenantSubscriptionRecord): EditDraft {
-  return { units: item.units, priority: item.priority, enabled: item.enabled };
+  return { units: String(item.units), priority: item.priority, enabled: item.enabled };
 }
-function positiveInput(value: string, fallback: number) {
-  const next = Number(value);
-  return Number.isFinite(next) && next > 0 ? next : fallback;
+function parsePositiveUnits(value: string) {
+  const units = Number(value);
+  if (!Number.isFinite(units) || units <= 0) throw new Error("份数必须是大于 0 的数字");
+  return units;
 }
 function equalUnits(capacity: number, count: number) {
   const scale = 1_000_000;

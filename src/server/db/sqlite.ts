@@ -631,6 +631,39 @@ function migrateMainDb(db: SqliteDatabase) {
       CREATE INDEX idx_quota_reservations_subscription_status ON quota_reservations(subscription_id, status);
     `);
   });
+
+  applyMigration(db, "014_fractional_subscription_units", (database) => {
+    database.exec(`
+      DROP INDEX IF EXISTS idx_tenant_subscriptions_tenant;
+      DROP INDEX IF EXISTS idx_tenant_subscriptions_credential;
+      ALTER TABLE tenant_subscriptions RENAME TO tenant_subscriptions_integer_units;
+      CREATE TABLE tenant_subscriptions (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        credential_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        units REAL NOT NULL DEFAULT 1 CHECK (units > 0),
+        units_per_credential INTEGER NOT NULL DEFAULT 20 CHECK (units_per_credential > 0),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        priority INTEGER NOT NULL DEFAULT 100,
+        starts_at TEXT NOT NULL,
+        expires_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO tenant_subscriptions (
+        id, tenant_id, credential_id, name, units, units_per_credential,
+        enabled, priority, starts_at, expires_at, created_at, updated_at
+      )
+      SELECT
+        id, tenant_id, credential_id, name, CAST(units AS REAL), units_per_credential,
+        enabled, priority, starts_at, expires_at, created_at, updated_at
+      FROM tenant_subscriptions_integer_units;
+      DROP TABLE tenant_subscriptions_integer_units;
+      CREATE INDEX idx_tenant_subscriptions_tenant ON tenant_subscriptions(tenant_id, enabled);
+      CREATE INDEX idx_tenant_subscriptions_credential ON tenant_subscriptions(credential_id, enabled);
+    `);
+  });
 }
 
 export function setSqliteTimeZone(timeZone: string) {
