@@ -389,6 +389,22 @@ export type TenantSubscriptionRecord = {
   quota?: Partial<Record<"5h" | "7d", {
     limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string; resetsAt: string;
   }>>;
+  tenant?: { id: string; name: string; enabled: boolean; ownerEmail: string | null } | null;
+  lifecycle?: "active" | "disabled" | "scheduled" | "expired";
+};
+
+export type SubscriptionCapacityPool = {
+  id: string; email: string; accountId: string; planType: string; enabled: boolean;
+  expiresAt: string | null; cooldownUntil: string | null; lastError: string | null;
+  capacityUnits: number; allocatedUnits: number; remainingUnits: number;
+  allocationCount: number; activeAllocationCount: number;
+  subscriptions: TenantSubscriptionRecord[];
+};
+
+export type SubscriptionAllocationOverview = {
+  generatedAt: string;
+  summary: { credentialCount: number; usableCredentialCount: number; capacityUnits: number; allocatedUnits: number; oversoldCredentialCount: number };
+  pools: SubscriptionCapacityPool[];
 };
 
 export type TenantSubscriptionPayload = {
@@ -483,9 +499,13 @@ export function updateTenant(id: string, payload: TenantPayload) {
 }
 
 export async function listTenantSubscriptions(tenantId?: string) {
-  const suffix = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : "";
+  const suffix = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : "?view=list";
   const result = await adminRequest<{ object: "list"; data: TenantSubscriptionRecord[] }>(`/api/admin/subscriptions${suffix}`);
   return result.data;
+}
+
+export function getSubscriptionAllocationOverview() {
+  return adminRequest<SubscriptionAllocationOverview>("/api/admin/subscriptions");
 }
 
 export function createTenantSubscription(payload: TenantSubscriptionPayload) {

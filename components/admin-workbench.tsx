@@ -641,7 +641,6 @@ export function AdminWorkbench({
             {activeSection === "routing" && (
               <div className="grid gap-3">
                 <SubscriptionAllocationSection
-                  credentials={credentials}
                   tenants={tenants}
                 />
                 <CredentialsSection
