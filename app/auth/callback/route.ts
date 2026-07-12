@@ -26,10 +26,10 @@ function renderCallbackPastePage(callbackUrl: string) {
   <style>
     :root { color-scheme: light dark; --background: #ffffff; --foreground: #18181b; --card: #ffffff; --border: #e4e4e7; --muted: #52525b; --input: #fafafa; }
     @media (prefers-color-scheme: dark) { :root { --background: #09090b; --foreground: #f4f4f5; --card: #18181b; --border: #3f3f46; --muted: #d4d4d8; --input: #09090b; } }
-    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--background); color: var(--foreground); }
+    body { margin: 0; font-family: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-synthesis: none; text-rendering: optimizeLegibility; background: var(--background); color: var(--foreground); }
     main { max-width: 760px; margin: 0 auto; padding: 48px 20px; }
     section { border: 1px solid var(--border); background: var(--card); border-radius: 24px; padding: 28px; }
-    textarea { box-sizing: border-box; width: 100%; min-height: 112px; margin-top: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--input); color: var(--foreground); padding: 12px; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 112px; margin-top: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--input); color: var(--foreground); padding: 12px; font-family: "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, "PingFang SC", "Microsoft YaHei UI", monospace; }
     button { margin-top: 12px; padding: 10px 14px; border-radius: 999px; border: 0; background: #3b82f6; color: white; font-weight: 700; }
     p { line-height: 1.7; color: var(--muted); }
   </style>

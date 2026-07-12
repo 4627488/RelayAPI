@@ -153,7 +153,7 @@ function defaultTitle(stats: ActivityHeatmapStats) {
 function themeCss(theme: ActivityHeatmapTheme) {
   const common = `    svg {
       color-scheme: light dark;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
     }
     .title {
       fill: var(--text);
