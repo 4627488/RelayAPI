@@ -59,6 +59,10 @@ function resolvePathList(value: string | undefined) {
     .map((item) => (path.isAbsolute(item) ? item : projectPath(item)));
 }
 
+function commaList(value: string | undefined) {
+  return (value || "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 function resolveGlobalProxy(): CredentialProxyConfig | null {
   const raw =
     process.env.RELAY_GLOBAL_SOCKS_PROXY ||
@@ -166,4 +170,8 @@ export const serverConfig = {
     path.join(dataDir, "auths"),
     ...resolvePathList(process.env.RELAY_LEGACY_CREDENTIAL_DIRS),
   ],
+  publicUrl: (process.env.RELAY_PUBLIC_URL || `http://localhost:${port}`).replace(/\/+$/, ""),
+  oidcClientId: process.env.RELAY_OIDC_CLIENT_ID || "librechat",
+  oidcClientSecret: process.env.RELAY_OIDC_CLIENT_SECRET || "",
+  oidcRedirectUris: commaList(process.env.RELAY_OIDC_REDIRECT_URIS),
 };

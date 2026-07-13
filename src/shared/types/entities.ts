@@ -283,6 +283,11 @@ export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
 
 export interface GlobalSettingsRecord {
   publicBaseUrl: string;
+  oidcClientId: string;
+  oidcClientSecretSet: boolean;
+  oidcRedirectUris: string[];
+  oidcIssuer: string;
+  oidcConfigured: boolean;
   proxy: PublicCredentialProxyConfig | null;
   proxySource: "database" | "environment" | "none";
   userAgent: string;
@@ -328,6 +333,7 @@ export interface ChannelRecord {
 export interface RelayApiKeyContext {
   id: string;
   tenantId: string | null;
+  tenantUserId: string | null;
   tenant: TenantRuntimeContext | null;
   name: string;
   prefix: string;

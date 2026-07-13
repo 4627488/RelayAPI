@@ -664,6 +664,23 @@ function migrateMainDb(db: SqliteDatabase) {
       CREATE INDEX idx_tenant_subscriptions_credential ON tenant_subscriptions(credential_id, enabled);
     `);
   });
+
+  applyMigration(db, "015_oidc_provider", `
+    CREATE TABLE oidc_authorization_codes (
+      code_hash TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      nonce TEXT,
+      code_challenge TEXT,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT,
+      created_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX idx_oidc_authorization_codes_expiry
+      ON oidc_authorization_codes(expires_at);
+  `);
 }
 
 export function setSqliteTimeZone(timeZone: string) {

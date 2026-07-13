@@ -107,6 +107,7 @@ import {
   listTenants,
   logoutWebSession,
   pruneRequestLogs,
+  rotateOidcClientSecret,
   updateGlobalSettings,
   WEB_AUTH_EXPIRED_EVENT,
   type ApiKeyTransferResponse,
@@ -682,7 +683,7 @@ export function AdminWorkbench({
             )}
             {activeSection === "settings" && (
               <SettingsSection
-                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.userAgentSource}:${globalSettings.userAgent}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.codexAutoDisableRefreshExhausted}:${globalSettings.requestLogRetentionDays}:${globalSettings.requestLogDetailRetentionDays}:${globalSettings.updatedAt}`}
+                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.userAgentSource}:${globalSettings.userAgent}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.codexAutoDisableRefreshExhausted}:${globalSettings.requestLogRetentionDays}:${globalSettings.requestLogDetailRetentionDays}:${globalSettings.oidcClientId}:${globalSettings.oidcClientSecretSet}:${globalSettings.oidcRedirectUris.join(",")}:${globalSettings.updatedAt}`}
                 settings={globalSettings}
                 onSaved={setGlobalSettings}
               />
@@ -716,6 +717,13 @@ function SettingsSection({
   const [pruning, setPruning] = React.useState(false);
   const [publicBaseUrl, setPublicBaseUrl] = React.useState(settings.publicBaseUrl);
   const [publicBaseUrlSaving, setPublicBaseUrlSaving] = React.useState(false);
+  const [oidcForm, setOidcForm] = React.useState(() => ({
+    clientId: settings.oidcClientId,
+    clientSecret: "",
+    redirectUris: settings.oidcRedirectUris.join("\n"),
+  }));
+  const [oidcSaving, setOidcSaving] = React.useState(false);
+  const [oidcRotating, setOidcRotating] = React.useState(false);
   const [adminPasswords, setAdminPasswords] = React.useState({ current: "", next: "", confirm: "" });
   const [adminPasswordSaving, setAdminPasswordSaving] = React.useState(false);
   const [retentionForm, setRetentionForm] = React.useState(() => ({
@@ -797,6 +805,53 @@ function SettingsSection({
       toast.success("公开网站地址已保存");
     } catch (error) { toast.error(adminErrorMessage(error)); }
     finally { setPublicBaseUrlSaving(false); }
+  }
+
+  async function saveOidcSettings() {
+    const redirectUris = oidcForm.redirectUris
+      .split(/[\r\n,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (!publicBaseUrl.trim()) return toast.error("请先保存公开网站地址，OIDC 将使用它作为 Issuer");
+    if (!oidcForm.clientId.trim()) return toast.error("请输入 OIDC Client ID");
+    if (!redirectUris.length) return toast.error("请至少填写一个 LibreChat 回调地址");
+    setOidcSaving(true);
+    try {
+      const updated = await updateGlobalSettings({
+        oidcClientId: oidcForm.clientId.trim(),
+        oidcRedirectUris: redirectUris,
+        ...(oidcForm.clientSecret.trim()
+          ? { oidcClientSecret: oidcForm.clientSecret.trim() }
+          : {}),
+      });
+      onSaved(updated);
+      setOidcForm({
+        clientId: updated.oidcClientId,
+        clientSecret: "",
+        redirectUris: updated.oidcRedirectUris.join("\n"),
+      });
+      toast.success("LibreChat OIDC 配置已保存");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setOidcSaving(false);
+    }
+  }
+
+  async function generateOidcSecret() {
+    setOidcRotating(true);
+    try {
+      const result = await rotateOidcClientSecret();
+      setOidcForm((current) => ({
+        ...current,
+        clientSecret: result.clientSecret,
+      }));
+      toast.success("已生成并保存新 Client Secret，请复制到 LibreChat");
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setOidcRotating(false);
+    }
   }
 
   async function saveAdminPassword(event: React.FormEvent<HTMLFormElement>) {
@@ -1405,6 +1460,105 @@ function SettingsSection({
               </div>
             </div>
           </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>LibreChat 身份认证</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="oidc-issuer">OIDC Issuer</FieldLabel>
+              <Input id="oidc-issuer" readOnly value={settings.oidcIssuer} />
+              <FieldDescription>
+                来自上方“公开网站地址”，LibreChat 的 OPENID_ISSUER 填写此值。
+              </FieldDescription>
+            </Field>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="oidc-client-id">Client ID</FieldLabel>
+                <Input
+                  id="oidc-client-id"
+                  value={oidcForm.clientId}
+                  disabled={oidcSaving || oidcRotating}
+                  onChange={(event) =>
+                    setOidcForm((current) => ({
+                      ...current,
+                      clientId: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="oidc-client-secret">Client Secret</FieldLabel>
+                <Input
+                  id="oidc-client-secret"
+                  value={oidcForm.clientSecret}
+                  disabled={oidcSaving || oidcRotating}
+                  placeholder={
+                    settings.oidcClientSecretSet
+                      ? "已设置；留空保持不变"
+                      : "输入或点击生成"
+                  }
+                  onChange={(event) =>
+                    setOidcForm((current) => ({
+                      ...current,
+                      clientSecret: event.target.value,
+                    }))
+                  }
+                />
+                <FieldDescription>
+                  生成后的 Secret 只在当前页面显示，刷新后不再回显。
+                </FieldDescription>
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="oidc-redirect-uris">LibreChat 回调地址</FieldLabel>
+              <Textarea
+                id="oidc-redirect-uris"
+                className="min-h-24 font-mono text-xs"
+                value={oidcForm.redirectUris}
+                disabled={oidcSaving || oidcRotating}
+                placeholder="https://chat.example.com/oauth/openid/callback"
+                onChange={(event) =>
+                  setOidcForm((current) => ({
+                    ...current,
+                    redirectUris: event.target.value,
+                  }))
+                }
+              />
+              <FieldDescription>
+                每行一个地址，必须与 LibreChat 实际回调地址完全一致。
+              </FieldDescription>
+            </Field>
+            <Field orientation="horizontal">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={oidcSaving || oidcRotating}
+                onClick={generateOidcSecret}
+              >
+                {oidcRotating ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <RefreshCwIcon data-icon="inline-start" />
+                )}
+                生成新 Secret
+              </Button>
+              <Button
+                type="button"
+                disabled={oidcSaving || oidcRotating}
+                onClick={saveOidcSettings}
+              >
+                {oidcSaving && <Spinner data-icon="inline-start" />}
+                保存 OIDC 配置
+              </Button>
+              <Badge variant={settings.oidcConfigured ? "secondary" : "outline"}>
+                {settings.oidcConfigured ? "已配置" : "未完成"}
+              </Badge>
+            </Field>
+          </FieldGroup>
         </CardContent>
       </Card>
     </div>

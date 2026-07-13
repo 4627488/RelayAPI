@@ -237,6 +237,19 @@ export const tenantUsers = sqliteTable(
   ],
 );
 
+export const oidcAuthorizationCodes = sqliteTable("oidc_authorization_codes", {
+  codeHash: text("code_hash").primaryKey(),
+  clientId: text("client_id").notNull(),
+  userId: text("user_id").notNull(),
+  redirectUri: text("redirect_uri").notNull(),
+  scope: text("scope").notNull(),
+  nonce: text("nonce"),
+  codeChallenge: text("code_challenge"),
+  expiresAt: text("expires_at").notNull(),
+  consumedAt: text("consumed_at"),
+  createdAt: text("created_at").notNull(),
+});
+
 export const tenantPasswordResets = sqliteTable(
   "tenant_password_resets",
   {
@@ -464,6 +477,7 @@ export const mainSchema = {
   quotaReservations,
   tenants,
   tenantUsers,
+  oidcAuthorizationCodes,
 };
 
 export const logSchema = {

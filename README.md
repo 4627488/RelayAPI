@@ -129,6 +129,35 @@ CODEX_MODEL_HEADER_OVERRIDES='{"*":{"x-codex-beta-features":"responses_websocket
 
 子订阅严格继承其上游凭据的 5 小时和 7 天 `resets_at`，不会创建租户自己的滚动窗口。请求只会路由到租户持有的子订阅对应凭据，并发请求先在选中的子订阅预留额度，完成后按实际模型成本结算；一个子订阅耗尽后自动切换到该租户的其他可用子订阅。
 
+## LibreChat OIDC 与租户额度
+
+RelayAPI 可以作为 LibreChat 的 OpenID Connect 身份提供方。管理员可直接在“全局设置 → LibreChat 身份认证”中填写 Client ID、回调地址并生成 Client Secret，无需修改服务配置文件。以下环境变量仅作为无人值守部署时的可选回退：
+
+```env
+RELAY_PUBLIC_URL=https://relay.example.com
+RELAY_OIDC_CLIENT_ID=librechat
+RELAY_OIDC_CLIENT_SECRET=replace-with-a-long-random-secret
+RELAY_OIDC_REDIRECT_URIS=https://chat.example.com/oauth/openid/callback
+```
+
+LibreChat 的环境变量使用同一个 issuer、client id 和 secret，并在自定义 endpoint 中配置一把无租户的 RelayAPI 管理员 API Key。该 Key 必须显式包含 `librechat:identity` scope：
+
+```yaml
+endpoints:
+  custom:
+    - name: RelayAPI
+      apiKey: '${RELAY_LIBRECHAT_INTEGRATION_KEY}'
+      baseURL: 'https://relay.example.com/v1'
+      headers:
+        X-LibreChat-OpenID-ID: '{{LIBRECHAT_USER_OPENIDID}}'
+        X-LibreChat-User-Email: '{{LIBRECHAT_USER_EMAIL}}'
+      models:
+        default: ['gpt-5.3-codex']
+        fetch: true
+```
+
+RelayAPI 只信任 `X-LibreChat-OpenID-ID`，并要求它与专用 scope 同时出现。该值对应 OIDC `sub`（即 `tenant_users.id`）；验证用户和租户可用后，请求会消耗该用户所属租户的子订阅额度。普通 API Key 和租户 API Key不能通过伪造此请求头切换租户。
+
 ## 路由与冷却
 
 凭据级冷却时间可通过环境变量配置，单位为毫秒。默认只对 `429` 做 5 分钟冷却，`401` / `403` 不再固定长时间摘除凭据，避免上游或代理短暂波动导致长期无可用通道。

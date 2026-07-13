@@ -21,7 +21,7 @@ import {
   transferApiKeyTenant,
   updateApiKey,
 } from "@/src/server/repositories/apiKeys";
-import { getTenantById } from "@/src/server/repositories/tenants";
+import { getTenantById, getTenantUserById } from "@/src/server/repositories/tenants";
 import {
   appendAuditLog,
   getApiKeyDailyUsage,
@@ -285,9 +285,33 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
     throw new HttpError(403, "api_key_expired", "API key is expired");
   }
   let tenant: TenantWithSecrets | null = null;
+  let tenantUserId: string | null = null;
   if (record.tenantId) {
     tenant = getTenantById(record.tenantId);
     assertTenantUsable(tenant);
+  }
+  const libreChatUserId = cleanString(
+    request.headers.get("x-librechat-openid-id"),
+  );
+  if (libreChatUserId) {
+    if (record.tenantId || !record.scopes.includes("librechat:identity")) {
+      throw new HttpError(
+        403,
+        "librechat_identity_not_allowed",
+        "This API key cannot select a LibreChat user identity",
+      );
+    }
+    const user = getTenantUserById(libreChatUserId);
+    if (!user || !user.enabled) {
+      throw new HttpError(
+        403,
+        "librechat_user_not_available",
+        "LibreChat user is not available",
+      );
+    }
+    tenant = getTenantById(user.tenantId);
+    assertTenantUsable(tenant);
+    tenantUserId = user.id;
   }
   if (
     record.tokenLimitDaily !== null &&
@@ -323,7 +347,8 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
   markApiKeyUsed(record.id);
   return {
     id: record.id,
-    tenantId: record.tenantId,
+    tenantId: tenant?.id || null,
+    tenantUserId,
     tenant: tenant
       ? {
           id: tenant.id,

@@ -8,7 +8,7 @@ import {
   getSettingValue,
   upsertSettingValue,
 } from "@/src/server/repositories/settings";
-import { decryptJson, encryptJson } from "@/src/server/services/crypto";
+import { base64Url, decryptJson, encryptJson, safeJsonParse } from "@/src/server/services/crypto";
 import {
   DEFAULT_TIME_ZONE,
   isValidTimeZone,
@@ -34,6 +34,9 @@ const TIME_ZONE_PENDING_SETTING_KEY = "time_zone_pending";
 const TIME_ZONE_REBUILD_STATUS_SETTING_KEY = "time_zone_rebuild_status";
 const TIME_ZONE_REBUILD_ERROR_SETTING_KEY = "time_zone_rebuild_error";
 const PUBLIC_BASE_URL_SETTING_KEY = "public_base_url";
+const OIDC_CLIENT_ID_SETTING_KEY = "oidc_client_id";
+const OIDC_CLIENT_SECRET_SETTING_KEY = "oidc_client_secret";
+const OIDC_REDIRECT_URIS_SETTING_KEY = "oidc_redirect_uris";
 
 const DEFAULT_REQUEST_LOG_RETENTION_DAYS = 90;
 const DEFAULT_REQUEST_LOG_DETAIL_RETENTION_DAYS = 14;
@@ -81,11 +84,16 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
     getSettingUpdatedAt(TIME_ZONE_PENDING_SETTING_KEY),
     getSettingUpdatedAt(TIME_ZONE_REBUILD_STATUS_SETTING_KEY),
     getSettingUpdatedAt(TIME_ZONE_REBUILD_ERROR_SETTING_KEY),
+    getSettingUpdatedAt(OIDC_CLIENT_ID_SETTING_KEY),
+    getSettingUpdatedAt(OIDC_CLIENT_SECRET_SETTING_KEY),
+    getSettingUpdatedAt(OIDC_REDIRECT_URIS_SETTING_KEY),
   );
   const publicBaseUrl = getSettingValue(PUBLIC_BASE_URL_SETTING_KEY) || "";
+  const oidc = getOidcProviderSettings();
   if (stored) {
     return {
       publicBaseUrl,
+      ...publicOidcSettings(oidc),
       proxy: publicProxy(stored),
       proxySource: "database",
       userAgent: storedUserAgent || serverConfig.userAgent,
@@ -102,6 +110,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
   if (serverConfig.globalProxy) {
     return {
       publicBaseUrl,
+      ...publicOidcSettings(oidc),
       proxy: publicProxy(serverConfig.globalProxy),
       proxySource: "environment",
       userAgent: storedUserAgent || serverConfig.userAgent,
@@ -117,6 +126,7 @@ export function getPublicGlobalSettings(): GlobalSettingsRecord {
   }
   return {
     publicBaseUrl,
+    ...publicOidcSettings(oidc),
     proxy: null,
     proxySource: "none",
     userAgent: storedUserAgent || serverConfig.userAgent,
@@ -140,11 +150,27 @@ export function patchGlobalSettings(input: {
   requestLogRetentionDays?: unknown;
   requestLogDetailRetentionDays?: unknown;
   timeZone?: unknown;
+  oidcClientId?: unknown;
+  oidcClientSecret?: unknown;
+  oidcRedirectUris?: unknown;
 }) {
   if (Object.hasOwn(input, "publicBaseUrl")) {
     const value = normalizePublicBaseUrl(input.publicBaseUrl);
     if (value) upsertSettingValue(PUBLIC_BASE_URL_SETTING_KEY, value);
     else deleteSettingValue(PUBLIC_BASE_URL_SETTING_KEY);
+  }
+  if (Object.hasOwn(input, "oidcClientId")) {
+    const value = normalizeOidcClientId(input.oidcClientId);
+    if (value) upsertSettingValue(OIDC_CLIENT_ID_SETTING_KEY, value);
+    else deleteSettingValue(OIDC_CLIENT_ID_SETTING_KEY);
+  }
+  if (Object.hasOwn(input, "oidcClientSecret")) {
+    const value = stringValue(input.oidcClientSecret);
+    if (value.length < 24) throw new HttpError(400, "weak_oidc_client_secret", "OIDC client secret must be at least 24 characters");
+    upsertSettingValue(OIDC_CLIENT_SECRET_SETTING_KEY, encryptJson({ value }));
+  }
+  if (Object.hasOwn(input, "oidcRedirectUris")) {
+    upsertSettingValue(OIDC_REDIRECT_URIS_SETTING_KEY, JSON.stringify(normalizeOidcRedirectUris(input.oidcRedirectUris)));
   }
   if (Object.hasOwn(input, "proxy")) {
     const proxy = normalizeProxyInput(input.proxy, readStoredGlobalProxy());
@@ -190,6 +216,55 @@ export function patchGlobalSettings(input: {
     requestGlobalTimeZoneChange(input.timeZone);
   }
   return getPublicGlobalSettings();
+}
+
+export function getOidcProviderSettings() {
+  const issuer = getSettingValue(PUBLIC_BASE_URL_SETTING_KEY) || serverConfig.publicUrl;
+  const clientId = getSettingValue(OIDC_CLIENT_ID_SETTING_KEY) || serverConfig.oidcClientId;
+  const clientSecret = readOidcClientSecret() || serverConfig.oidcClientSecret;
+  const storedRedirects = getSettingValue(OIDC_REDIRECT_URIS_SETTING_KEY);
+  const redirectUris = storedRedirects
+    ? safeJsonParse<string[]>(storedRedirects, [])
+    : serverConfig.oidcRedirectUris;
+  return { issuer, clientId, clientSecret, redirectUris };
+}
+
+export function rotateOidcClientSecret() {
+  const clientSecret = base64Url(36);
+  upsertSettingValue(OIDC_CLIENT_SECRET_SETTING_KEY, encryptJson({ value: clientSecret }));
+  return { clientSecret, settings: getPublicGlobalSettings() };
+}
+
+function publicOidcSettings(settings: ReturnType<typeof getOidcProviderSettings>) {
+  return {
+    oidcClientId: settings.clientId,
+    oidcClientSecretSet: Boolean(settings.clientSecret),
+    oidcRedirectUris: settings.redirectUris,
+    oidcIssuer: settings.issuer,
+    oidcConfigured: Boolean(settings.issuer && settings.clientId && settings.clientSecret && settings.redirectUris.length),
+  };
+}
+
+function readOidcClientSecret() {
+  const value = getSettingValue(OIDC_CLIENT_SECRET_SETTING_KEY);
+  if (!value) return "";
+  try { return decryptJson<{ value?: string }>(value).value?.trim() || ""; }
+  catch { return ""; }
+}
+
+function normalizeOidcClientId(input: unknown) {
+  const value = stringValue(input);
+  if (value.length > 128 || !/^[A-Za-z0-9._~-]*$/.test(value)) throw new HttpError(400, "invalid_oidc_client_id", "OIDC client ID contains unsupported characters");
+  return value;
+}
+
+function normalizeOidcRedirectUris(input: unknown) {
+  const values = Array.isArray(input) ? input : stringValue(input).split(/[\r\n,]+/);
+  return [...new Set(values.map(stringValue).filter(Boolean).map((value) => {
+    let url: URL; try { url = new URL(value); } catch { throw new HttpError(400, "invalid_oidc_redirect_uri", "OIDC redirect URI must be an absolute URL"); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) throw new HttpError(400, "invalid_oidc_redirect_uri", "OIDC redirect URI must be an HTTP URL without credentials or fragment");
+    return url.toString();
+  }))];
 }
 
 export function normalizePublicBaseUrl(input: unknown) {

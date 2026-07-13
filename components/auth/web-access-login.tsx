@@ -40,7 +40,9 @@ export function WebAccessLogin() {
           parsed?.error?.message || parsed?.message || "登录失败",
         );
       }
-      window.location.assign(parsed?.role === "tenant" ? "/tenant" : "/");
+      const returnTo = new URLSearchParams(window.location.search).get("returnTo");
+      const safeReturnTo = returnTo?.startsWith("/api/oidc/authorize?") ? returnTo : null;
+      window.location.assign(parsed?.role === "tenant" && safeReturnTo ? safeReturnTo : parsed?.role === "tenant" ? "/tenant" : "/");
     } catch (loginError) {
       setError(
         loginError instanceof Error ? loginError.message : String(loginError),

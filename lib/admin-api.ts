@@ -768,11 +768,21 @@ export function updateGlobalSettings(payload: {
   requestLogRetentionDays?: number;
   requestLogDetailRetentionDays?: number;
   timeZone?: string;
+  oidcClientId?: string;
+  oidcClientSecret?: string;
+  oidcRedirectUris?: string[];
 }) {
   return adminRequest<GlobalSettingsRecord>("/api/admin/settings", {
     method: "PATCH",
     body: payload,
   });
+}
+
+export function rotateOidcClientSecret() {
+  return adminRequest<{ clientSecret: string; settings: GlobalSettingsRecord }>(
+    "/api/admin/settings/oidc-secret",
+    { method: "POST" },
+  );
 }
 
 export function getRequestLogDetail(id: string) {
