@@ -63,7 +63,7 @@ export function TenantActivate({ token }: { token: string }) {
   }
 
   return (
-    <AuthPanel eyebrow="INVITE" meta="tenant activation" title="激活账号">
+      <AuthPanel meta="租户邀请" title="激活账号">
       <form className="flex flex-col gap-4" onSubmit={submit}>
         {error && (
           <Alert variant="destructive">

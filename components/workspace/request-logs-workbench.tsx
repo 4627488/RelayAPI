@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
@@ -688,10 +687,10 @@ function StageTimingsBlock({
   return (
     <DataPanel title="阶段耗时">
       <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="secondary">总耗时 {formatDuration(total)}</Badge>
-          <Badge variant="outline">{periods.length} 个时间段</Badge>
-          {instants.length ? <Badge variant="outline">{instants.length} 个时间点</Badge> : null}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">总耗时 {formatDuration(total)}</span>
+          <span>{periods.length} 个时间段</span>
+          {instants.length ? <span>{instants.length} 个时间点</span> : null}
           {longestStage ? (
             <span className="truncate">
               主要耗时：{longestStage.label || longestStage.name}（{formatDuration(longestDuration)}）
@@ -699,9 +698,9 @@ function StageTimingsBlock({
           ) : null}
         </div>
 
-        <div className="rounded-lg border bg-muted/20 px-3 py-3">
+        <div className="rounded-md border px-3 py-3">
           <div className="relative pt-3">
-            <div className="relative h-5 overflow-hidden rounded-full bg-muted shadow-inner ring-1 ring-border">
+            <div className="relative h-4 overflow-hidden rounded-sm bg-muted">
               {ticks.slice(1, -1).map((tick) => (
                 <div
                   key={tick}

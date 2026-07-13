@@ -16,7 +16,7 @@ export function SectionToolbar({
   return (
     <div
       className={cn(
-        "sticky top-14 z-10 flex flex-col gap-2 border-b bg-background/95 py-2 backdrop-blur sm:flex-row sm:items-center sm:justify-between",
+        "sticky top-14 z-10 flex flex-col gap-2 border-b bg-background py-2 sm:flex-row sm:items-center sm:justify-between",
         className,
       )}
     >

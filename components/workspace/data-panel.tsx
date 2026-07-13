@@ -28,7 +28,7 @@ export function DataPanel({
     <Card className={cn("rounded-md py-0 shadow-none", className)}>
       {(title || action) && (
         <CardHeader className="min-h-10 border-b px-3 py-2">
-          {title && <CardTitle className="text-xs font-semibold tracking-wide uppercase">{title}</CardTitle>}
+          {title && <CardTitle>{title}</CardTitle>}
           {action && <CardAction>{action}</CardAction>}
         </CardHeader>
       )}

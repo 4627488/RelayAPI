@@ -43,7 +43,7 @@ export function LegacyTenantLogin() {
   }
 
   return (
-    <AuthPanel eyebrow="TENANT" meta="email" title="租户登录">
+    <AuthPanel meta="使用邮箱登录" title="租户登录">
       <form className="flex flex-col gap-4" onSubmit={submit}>
         {error && (
           <Alert variant="destructive">

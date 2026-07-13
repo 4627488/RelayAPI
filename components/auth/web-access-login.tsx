@@ -51,7 +51,7 @@ export function WebAccessLogin() {
   }
 
   return (
-    <AuthPanel eyebrow="AUTH" meta="admin / tenant" title="登录">
+    <AuthPanel meta="管理员或租户" title="登录">
       <form className="flex flex-col gap-4" onSubmit={submit}>
         {error && (
           <Alert variant="destructive">

@@ -28,9 +28,9 @@ function renderCallbackPastePage(callbackUrl: string) {
     @media (prefers-color-scheme: dark) { :root { --background: #09090b; --foreground: #f4f4f5; --card: #18181b; --border: #3f3f46; --muted: #d4d4d8; --input: #09090b; } }
     body { margin: 0; font-family: "Segoe UI Variable", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-synthesis: none; text-rendering: optimizeLegibility; background: var(--background); color: var(--foreground); }
     main { max-width: 760px; margin: 0 auto; padding: 48px 20px; }
-    section { border: 1px solid var(--border); background: var(--card); border-radius: 24px; padding: 28px; }
-    textarea { box-sizing: border-box; width: 100%; min-height: 112px; margin-top: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--input); color: var(--foreground); padding: 12px; font-family: "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, "PingFang SC", "Microsoft YaHei UI", monospace; }
-    button { margin-top: 12px; padding: 10px 14px; border-radius: 999px; border: 0; background: #3b82f6; color: white; font-weight: 700; }
+    section { border: 1px solid var(--border); background: var(--card); border-radius: 8px; padding: 28px; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 112px; margin-top: 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--input); color: var(--foreground); padding: 12px; font-family: "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, "PingFang SC", "Microsoft YaHei UI", monospace; }
+    button { margin-top: 12px; padding: 10px 14px; border-radius: 6px; border: 0; background: #2563eb; color: white; font-weight: 600; }
     p { line-height: 1.7; color: var(--muted); }
   </style>
 </head>

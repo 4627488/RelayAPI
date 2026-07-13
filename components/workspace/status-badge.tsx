@@ -12,10 +12,8 @@ export type WorkspaceStatusTone =
 
 const toneClasses: Record<WorkspaceStatusTone, string> = {
   neutral: "",
-  success:
-    "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  warning:
-    "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  success: "text-foreground",
+  warning: "text-foreground",
   danger: "",
   muted: "text-muted-foreground",
 };
@@ -32,7 +30,7 @@ export function WorkspaceStatusBadge({
   return (
     <Badge
       variant={tone === "danger" ? "destructive" : "outline"}
-      className={cn("font-mono uppercase tracking-normal", toneClasses[tone], className)}
+      className={cn("tabular-nums", toneClasses[tone], className)}
     >
       {children}
     </Badge>

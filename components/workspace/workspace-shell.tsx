@@ -68,7 +68,7 @@ export function WorkspaceShell<TId extends string>({
         </aside>
 
         <div className="min-w-0">
-          <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b bg-background/95 px-3 backdrop-blur sm:px-5">
+          <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b bg-background px-3 sm:px-5">
             <MobileNavigation
               activeId={activeId}
               groups={groups}
@@ -76,10 +76,10 @@ export function WorkspaceShell<TId extends string>({
               status={status}
             />
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[0.68rem] font-medium tracking-[0.14em] text-muted-foreground uppercase">
+              <div className="truncate text-xs text-muted-foreground">
                 {activeItem?.group ?? "控制台"}
               </div>
-              <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
+              <h1 className="truncate text-xl font-semibold leading-tight tracking-tight">{title}</h1>
             </div>
             <ThemeToggle />
             <div className="hidden items-center gap-1.5 lg:flex">{actions}</div>
@@ -155,7 +155,7 @@ function NavigationGroups<TId extends string>({ activeId, groups, onNavChange }:
 }) {
   return groups.map(([group, items]) => (
     <div className="flex flex-col gap-1" key={group}>
-      <div className="px-2 text-[0.65rem] font-semibold tracking-[0.14em] text-muted-foreground/75 uppercase">
+      <div className="px-2 text-xs font-medium text-muted-foreground">
         {group}
       </div>
       {items.map((item) => (
@@ -183,7 +183,7 @@ function WorkspaceNavButton<TId extends string>({ active, item, onClick }: {
       className={cn(
         "group relative flex h-8 w-full items-center gap-2 rounded-md px-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
         active
-          ? "bg-accent font-medium text-accent-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-primary"
+          ? "bg-accent font-medium text-accent-foreground before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:bg-primary"
           : "text-muted-foreground hover:bg-muted hover:text-foreground",
       )}
       aria-current={active ? "page" : undefined}

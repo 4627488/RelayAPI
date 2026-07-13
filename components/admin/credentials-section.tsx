@@ -596,7 +596,7 @@ export function CredentialsSection({
                           </div>
                         )}
                         {credential.cooldownUntil && (
-                          <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-300">
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <WorkspaceStatusBadge tone="warning">
                               cooldown
                             </WorkspaceStatusBadge>
@@ -608,7 +608,7 @@ export function CredentialsSection({
                             className={
                               refreshStatus.exhausted
                                 ? "text-xs text-destructive"
-                                : "text-xs text-amber-600 dark:text-amber-300"
+                                : "text-xs text-muted-foreground"
                             }
                           >
                             {refreshStatus.exhausted ? (
@@ -679,8 +679,8 @@ export function CredentialsSection({
                       </div>
                     </CardContent>
                     {refreshingAllQuotas && quotaLoading && (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/70 backdrop-blur-[1px]">
-                        <div className="flex items-center gap-2 rounded-full border bg-background/90 px-3 py-1.5 text-sm font-medium shadow-sm">
+                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/90">
+                        <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm font-medium">
                           <Spinner data-icon="inline-start" />
                           刷新额度中
                         </div>
@@ -1292,7 +1292,7 @@ function OAuthDialog({
             </Field>
 
             {session && (
-              <div className="grid gap-3 rounded-xl border bg-muted/40 p-3">
+              <div className="grid gap-3 rounded-md border bg-muted/40 p-3">
                 <div className="grid gap-1">
                   <div className="text-sm font-medium">Auth URL</div>
                   <Textarea
@@ -1523,7 +1523,7 @@ function ResetCreditsLine({
   }
   if (errorMessage) {
     return (
-      <div className="text-xs text-amber-600 dark:text-amber-300">
+      <div className="text-xs text-muted-foreground">
         重置次数读取失败
       </div>
     );
@@ -1745,7 +1745,7 @@ function CredentialProxyBadge({
     return (
       <Badge
         variant="outline"
-        className="border-emerald-500/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+        className="text-foreground"
         title={credentialProxyText(credential)}
       >
         已启用 · {proxy.type}
@@ -1778,7 +1778,7 @@ function CredentialProxyBadge({
       return (
         <Badge
           variant="outline"
-          className="border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+          className="text-foreground"
           title="已开启全局代理回退，但当前未配置全局代理"
         >
           全局代理 · 未配置
@@ -2120,16 +2120,16 @@ function codexPlanBadgeTone(planType: string) {
     normalized === "pro-lite" ||
     normalized === "pro_lite"
   ) {
-    return "border-amber-400/70 bg-amber-300/25 text-amber-700 shadow-sm dark:border-amber-300/60 dark:bg-amber-300/20 dark:text-amber-200";
+    return "border-foreground/30 bg-muted text-foreground";
   }
   if (normalized === "team") {
-    return "border-violet-500/45 bg-violet-500/10 text-violet-700 dark:text-violet-300";
+    return "border-border bg-muted text-foreground";
   }
   if (normalized === "plus") {
     return "border-primary/45 bg-primary/10 text-primary";
   }
   if (normalized === "free") {
-    return "border-emerald-500/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    return "border-border bg-muted text-foreground";
   }
   return "border-border bg-muted/60 text-foreground";
 }

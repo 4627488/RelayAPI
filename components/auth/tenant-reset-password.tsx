@@ -26,7 +26,7 @@ export function TenantResetPassword({ token }: { token: string }) {
     finally { setPending(false); }
   }
   return (
-    <AuthPanel eyebrow="SECURITY" meta="tenant account" title="重置密码">
+    <AuthPanel meta="租户账号" title="重置密码">
       <form className="flex flex-col gap-4" onSubmit={submit}>
         {error && <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>无法重置密码</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
         <FieldGroup>
