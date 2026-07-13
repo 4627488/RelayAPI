@@ -714,12 +714,7 @@ function buildWindow(
 function resetInstant(window: RawObject) {
   const resetAt = numberFromAny(firstValue(window.reset_at, window.resetAt));
   if (resetAt > 0) return new Date(resetAt * 1000).toISOString();
-  const resetAfterSeconds = numberFromAny(
-    firstValue(window.reset_after_seconds, window.resetAfterSeconds),
-  );
-  return resetAfterSeconds > 0
-    ? new Date(Date.now() + resetAfterSeconds * 1000).toISOString()
-    : null;
+  return null;
 }
 
 function deduceUsedPercent(
@@ -765,12 +760,6 @@ function formatResetLabel(window: RawObject) {
   const resetAt = numberFromAny(firstValue(window.reset_at, window.resetAt));
   if (resetAt > 0) {
     return formatLocalMinute(new Date(resetAt * 1000));
-  }
-  const resetAfterSeconds = numberFromAny(
-    firstValue(window.reset_after_seconds, window.resetAfterSeconds),
-  );
-  if (resetAfterSeconds > 0) {
-    return formatLocalMinute(new Date(Date.now() + resetAfterSeconds * 1000));
   }
   return "-";
 }
