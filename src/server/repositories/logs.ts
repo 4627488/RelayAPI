@@ -2668,7 +2668,7 @@ function parseStageTimings(value: unknown): StageTimingEntry[] {
     return [];
   }
   return parsed
-    .map((item) => {
+    .map((item): StageTimingEntry | null => {
       if (!item || typeof item !== "object" || Array.isArray(item)) {
         return null;
       }
@@ -2676,6 +2676,7 @@ function parseStageTimings(value: unknown): StageTimingEntry[] {
       return {
         name: String(row.name || ""),
         label: String(row.label || row.name || ""),
+        kind: row.kind === "point" ? "point" : row.kind === "period" ? "period" : undefined,
         startedAtMs: numberValue(row.startedAtMs),
         endedAtMs: numberValue(row.endedAtMs),
         durationMs: numberValue(row.durationMs),

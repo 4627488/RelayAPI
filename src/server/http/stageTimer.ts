@@ -3,6 +3,7 @@ import "server-only";
 export interface StageTimingEntry {
   name: string;
   label: string;
+  kind?: "period" | "point";
   startedAtMs: number;
   endedAtMs: number;
   durationMs: number;
@@ -33,6 +34,7 @@ export function createStageTimer(): StageTimer {
     entries.push({
       name,
       label,
+      kind: "period",
       startedAtMs,
       endedAtMs,
       durationMs: Math.max(0, endedAtMs - startedAtMs),
@@ -74,6 +76,7 @@ export function createStageTimer(): StageTimer {
       entries.push({
         name,
         label,
+        kind: "point",
         startedAtMs: at,
         endedAtMs: at,
         durationMs: 0,

@@ -109,6 +109,7 @@ export type RequestLogDetail = {
     stage_timings: Array<{
       name: string;
       label: string;
+      kind?: "period" | "point";
       startedAtMs: number;
       endedAtMs: number;
       durationMs: number;
