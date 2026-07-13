@@ -49,6 +49,16 @@ export function settleSubscriptionQuota(input: { requestId: string; actualNanoUs
 }
 export function releaseSubscriptionQuota(requestId: string) { return getMainOrm().transaction((tx) => { const row = tx.select().from(quotaReservations).where(eq(quotaReservations.requestId, requestId)).get(); if (row?.status === "active") release(tx, row, "released"); }); }
 export function getSubscriptionQuotaState(subscriptionId: string) { return readState(getMainOrm(), subscriptionId); }
+export function calibrateSubscriptionQuota(subscriptionId: string, values: Record<QuotaWindowKind, { startedAt: string; settledNanoUsd: bigint }>) {
+  return getMainOrm().transaction((tx) => {
+    const now = new Date().toISOString();
+    for (const kind of ["5h", "7d"] as const) {
+      const result = tx.update(subscriptionQuotaWindows).set({ startedAt: values[kind].startedAt, settledNanoUsd: String(values[kind].settledNanoUsd), updatedAt: now }).where(and(eq(subscriptionQuotaWindows.subscriptionId, subscriptionId), eq(subscriptionQuotaWindows.windowKind, kind))).run();
+      if (!result.changes) throw new Error(`Subscription ${kind} quota window has not been initialized`);
+    }
+    return readState(tx, subscriptionId);
+  });
+}
 export function reclaimExpiredQuotaReservations(now = new Date()) { return getMainOrm().transaction((tx) => { const rows = tx.select().from(quotaReservations).where(and(eq(quotaReservations.status, "active"), lt(quotaReservations.expiresAt, now.toISOString()))).all(); for (const row of rows) release(tx, row, "expired"); return rows.length; }); }
 
 type Tx = Parameters<Parameters<ReturnType<typeof getMainOrm>["transaction"]>[0]>[0];

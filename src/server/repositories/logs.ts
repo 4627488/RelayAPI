@@ -306,6 +306,17 @@ export function getCostAnalysis(scope: { tenantId?: string | null; subscriptionI
   };
 }
 
+export function getSubscriptionCalibrationCost(input: { subscriptionId: string; tenantId: string; credentialId: string; startedAt: string; endedAt: string }) {
+  const row = logGet(
+    `SELECT COALESCE(SUM(CAST(cost_nano_usd AS INTEGER)), 0) AS cost, COUNT(*) AS requests
+       FROM request_logs
+      WHERE cost_nano_usd IS NOT NULL AND started_at >= ? AND started_at < ?
+        AND (subscription_id = ? OR (subscription_id IS NULL AND tenant_id = ? AND credential_id = ?))`,
+    [input.startedAt, input.endedAt, input.subscriptionId, input.tenantId, input.credentialId],
+  );
+  return { costNanoUsd: BigInt(String(row?.cost || 0)), requestCount: numberValue(row?.requests) };
+}
+
 function insertRequestLog(
   id: string,
   input: RequestLogInput,

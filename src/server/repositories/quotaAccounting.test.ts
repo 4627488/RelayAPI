@@ -21,4 +21,11 @@ describe("subscription quota accounting", () => {
     quota.reserveSubscriptionQuota({ ...base, requestId: "r2" });
     expect(() => quota.reserveSubscriptionQuota({ ...base, requestId: "r3" })).toThrow(quota.SubscriptionQuotaCapacityError);
   });
+  test("calibrates settled usage without changing reset boundaries or reservations", () => {
+    const now = new Date("2026-07-11T00:00:00Z");
+    quota.reserveSubscriptionQuota({ requestId: "r4", subscriptionId: "sub3", reserveNanoUsd: 10n, windows: { "5h": { limitNanoUsd: 100n, resetsAt: "2026-07-11T05:00:00Z" }, "7d": { limitNanoUsd: 1000n, resetsAt: "2026-07-18T00:00:00Z" } }, now, expiresAt: new Date(now.getTime() + 1000) });
+    const state = quota.calibrateSubscriptionQuota("sub3", { "5h": { startedAt: "2026-07-10T19:00:00Z", settledNanoUsd: 20n }, "7d": { startedAt: "2026-07-04T00:00:00Z", settledNanoUsd: 70n } });
+    expect(state.windows["5h"]).toMatchObject({ settledNanoUsd: 20n, reservedNanoUsd: 10n, resetsAt: "2026-07-11T05:00:00Z" });
+    expect(state.windows["7d"]).toMatchObject({ settledNanoUsd: 70n, reservedNanoUsd: 10n, resetsAt: "2026-07-18T00:00:00Z" });
+  });
 });

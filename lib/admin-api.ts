@@ -424,6 +424,9 @@ export type TenantSubscriptionPayload = {
   unitsPerCredential?: number; enabled?: boolean; priority?: number;
   startsAt?: string; expiresAt?: string | null;
 };
+export type SubscriptionCalibrationTask = { subscriptionId: string; status: "idle" | "pending" | "running" | "completed" | "failed"; startedAt: string | null; completedAt: string | null; error: string | null; windows?: Record<"5h" | "7d", { startedAt: string; costNanoUsd: string; requestCount: number }> };
+export function startSubscriptionCalibration(id: string) { return adminRequest<SubscriptionCalibrationTask>(`/api/admin/subscriptions/${encodePath(id)}/calibration`, { method: "POST" }); }
+export function getSubscriptionCalibration(id: string) { return adminRequest<SubscriptionCalibrationTask>(`/api/admin/subscriptions/${encodePath(id)}/calibration`); }
 
 export type ModelPricingSnapshot = {
   inputNanoUsdPerToken: string;

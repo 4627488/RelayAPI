@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { adminErrorMessage, createTenantSubscription, deleteTenantSubscription, getSubscriptionAllocationOverview, updateTenantSubscription, type SubscriptionAllocationOverview, type SubscriptionCapacityPool, type TenantSubscriptionRecord } from "@/lib/admin-api";
+import { adminErrorMessage, createTenantSubscription, deleteTenantSubscription, getSubscriptionAllocationOverview, getSubscriptionCalibration, startSubscriptionCalibration, updateTenantSubscription, type SubscriptionAllocationOverview, type SubscriptionCapacityPool, type TenantSubscriptionRecord } from "@/lib/admin-api";
 import { codexPlanLabel } from "@/src/shared/codexPlans";
 import type { PublicTenant } from "@/src/shared/types/entities";
 
@@ -39,6 +39,7 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
   const [draft, setDraft] = React.useState(EMPTY_DRAFT);
   const [pendingDelete, setPendingDelete] = React.useState<TenantSubscriptionRecord | null>(null);
   const [deleting, setDeleting] = React.useState(false);
+  const [calibratingIds, setCalibratingIds] = React.useState<Set<string>>(new Set());
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -142,6 +143,20 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
     }
   }
 
+  async function calibrate(item: TenantSubscriptionRecord) {
+    setCalibratingIds((current) => new Set(current).add(item.id));
+    try {
+      await startSubscriptionCalibration(item.id);
+      for (;;) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        const task = await getSubscriptionCalibration(item.id);
+        if (task.status === "completed") { await load(); toast.success(`校准完成：5h ${task.windows?.["5h"].requestCount || 0} 个请求，7d ${task.windows?.["7d"].requestCount || 0} 个请求`); break; }
+        if (task.status === "failed") throw new Error(task.error || "校准失败");
+      }
+    } catch (error) { toast.error(adminErrorMessage(error)); }
+    finally { setCalibratingIds((current) => { const next = new Set(current); next.delete(item.id); return next; }); }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Card>
@@ -192,7 +207,7 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
             </CardContent>
           </Card>
 
-          {selectedPool ? <PoolWorkspace pool={selectedPool} edits={edits} savingId={savingId} equalizing={equalizing} onEdit={(id, edit) => setEdits((current) => ({ ...current, [id]: edit }))} onSave={saveAllocation} onDelete={setPendingDelete} onCreate={openCreate} onEqualize={equalizeAllocations} /> : null}
+          {selectedPool ? <PoolWorkspace pool={selectedPool} edits={edits} savingId={savingId} calibratingIds={calibratingIds} equalizing={equalizing} onEdit={(id, edit) => setEdits((current) => ({ ...current, [id]: edit }))} onSave={saveAllocation} onCalibrate={calibrate} onDelete={setPendingDelete} onCreate={openCreate} onEqualize={equalizeAllocations} /> : null}
         </div>
       )}
 
@@ -264,7 +279,7 @@ function PoolButton({ pool, active, onClick }: { pool: SubscriptionCapacityPool;
   );
 }
 
-function PoolWorkspace({ pool, edits, savingId, equalizing, onEdit, onSave, onDelete, onCreate, onEqualize }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; equalizing: boolean; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void; onCreate: () => void; onEqualize: (pool: SubscriptionCapacityPool) => void }) {
+function PoolWorkspace({ pool, edits, savingId, calibratingIds, equalizing, onEdit, onSave, onCalibrate, onDelete, onCreate, onEqualize }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; calibratingIds: Set<string>; equalizing: boolean; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onCalibrate: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void; onCreate: () => void; onEqualize: (pool: SubscriptionCapacityPool) => void }) {
   const enabledCount = pool.subscriptions.filter((item) => item.enabled).length;
   return (
     <Card>
@@ -313,14 +328,14 @@ function PoolWorkspace({ pool, edits, savingId, equalizing, onEdit, onSave, onDe
             </EmptyHeader>
           </Empty>
         ) : (
-          <AllocationTable pool={pool} edits={edits} savingId={savingId} onEdit={onEdit} onSave={onSave} onDelete={onDelete} />
+          <AllocationTable pool={pool} edits={edits} savingId={savingId} calibratingIds={calibratingIds} onEdit={onEdit} onSave={onSave} onCalibrate={onCalibrate} onDelete={onDelete} />
         )}
       </CardContent>
     </Card>
   );
 }
 
-function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void }) {
+function AllocationTable({ pool, edits, savingId, calibratingIds, onEdit, onSave, onCalibrate, onDelete }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; calibratingIds: Set<string>; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onCalibrate: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void }) {
   return (
     <Table>
       <TableHeader>
@@ -382,6 +397,9 @@ function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { 
                 <div className="flex justify-end gap-1">
                   <Button type="button" variant={dirty ? "default" : "ghost"} size="icon" disabled={!dirty || savingId === item.id} aria-label="保存分配" onClick={() => onSave(item)}>
                     {savingId === item.id ? <Spinner /> : dirty ? <SaveIcon /> : <CheckIcon />}
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon" disabled={calibratingIds.has(item.id) || !item.quota?.["5h"] || !item.quota?.["7d"]} aria-label="按最近 5 小时和 7 天请求校准额度" onClick={() => onCalibrate(item)}>
+                    {calibratingIds.has(item.id) ? <Spinner /> : <RefreshCwIcon />}
                   </Button>
                   <Button type="button" variant="ghost" size="icon" aria-label="回收分配" onClick={() => onDelete(item)}>
                     <Trash2Icon />
