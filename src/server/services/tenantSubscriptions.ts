@@ -79,7 +79,6 @@ export function getSubscriptionAllocationOverview() {
       lastError: credential.lastError,
       capacityUnits,
       allocatedUnits,
-      remainingUnits: capacityUnits - allocatedUnits,
       allocationCount: allocations.length,
       activeAllocationCount: allocations.filter((item) => item.lifecycle === "active").length,
       subscriptions: allocations,
@@ -92,7 +91,7 @@ export function getSubscriptionAllocationOverview() {
       usableCredentialCount: pools.filter((pool) => pool.enabled).length,
       capacityUnits: pools.reduce((sum, pool) => sum + pool.capacityUnits, 0),
       allocatedUnits: pools.reduce((sum, pool) => sum + pool.allocatedUnits, 0),
-      oversoldCredentialCount: pools.filter((pool) => pool.remainingUnits < 0).length,
+      oversoldCredentialCount: pools.filter((pool) => pool.allocatedUnits > pool.capacityUnits).length,
     },
     pools,
   };

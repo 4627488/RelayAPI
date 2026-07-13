@@ -257,7 +257,7 @@ function PoolButton({ pool, active, onClick }: { pool: SubscriptionCapacityPool;
           <span>
             {pool.allocatedUnits}/{pool.capacityUnits} 份
           </span>
-          <span>{pool.remainingUnits >= 0 ? `剩余 ${pool.remainingUnits}` : `超卖 ${Math.abs(pool.remainingUnits)}`}</span>
+          <span>已分配 {percent(ratio)}</span>
         </div>
       </div>
     </Button>
@@ -288,10 +288,10 @@ function PoolWorkspace({ pool, edits, savingId, equalizing, onEdit, onSave, onDe
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {pool.remainingUnits < 0 ? (
+        {pool.allocatedUnits > pool.capacityUnits ? (
           <Alert variant="destructive">
             <AlertTriangleIcon />
-            <AlertTitle>当前超卖 {Math.abs(pool.remainingUnits)} 份</AlertTitle>
+            <AlertTitle>当前超卖 {pool.allocatedUnits - pool.capacityUnits} 份</AlertTitle>
             <AlertDescription>允许继续运行，但这些租户会竞争同一个上游账号的实际额度。</AlertDescription>
           </Alert>
         ) : null}
@@ -513,7 +513,7 @@ function Metric({ icon, label, value, hint, danger = false }: { icon: React.Reac
 
 function PoolStatus({ pool }: { pool: SubscriptionCapacityPool }) {
   if (!pool.enabled) return <Badge variant="outline">停用</Badge>;
-  if (pool.remainingUnits < 0) return <Badge variant="destructive">超卖</Badge>;
+  if (pool.allocatedUnits > pool.capacityUnits) return <Badge variant="destructive">超卖</Badge>;
   if (pool.cooldownUntil && pool.cooldownUntil > new Date().toISOString()) return <Badge variant="outline">冷却</Badge>;
   return <Badge variant="secondary">可用</Badge>;
 }

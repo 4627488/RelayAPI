@@ -26,10 +26,9 @@ function QuotaLine({ kind, window }: { kind: "5h" | "7d"; window?: TenantQuotaRe
   const settled = Number(window?.settledNanoUsd || 0);
   const reserved = Number(window?.reservedNanoUsd || 0);
   const used = settled + reserved;
-  const remaining = Math.max(0, limit - used);
   const percent = limit > 0 ? Math.min(100, used / limit * 100) : 0;
   return <div className="flex flex-col gap-3">
-    <div className="flex items-end justify-between gap-3"><div><div className="text-xs text-muted-foreground">{kind === "5h" ? "5 小时窗口" : "7 天窗口"}</div><div className="mt-0.5 text-xl font-semibold tracking-tight">{window ? formatUsd(String(remaining)) : "--"}<span className="ml-1 text-xs font-normal text-muted-foreground">剩余</span></div></div><Badge variant="outline">剩余 {Math.round(100 - percent)}%</Badge></div>
+    <div className="flex items-end justify-between gap-3"><div><div className="text-xs text-muted-foreground">{kind === "5h" ? "5 小时窗口" : "7 天窗口"}</div><div className="mt-0.5 text-xl font-semibold tracking-tight">{window ? formatUsd(String(used)) : "--"}<span className="ml-1 text-xs font-normal text-muted-foreground">已用</span></div></div><Badge variant="outline">已用 {Math.round(percent)}%</Badge></div>
     <QuotaSegments percent={percent} />
     <div className="grid grid-cols-3 gap-2 text-xs"><QuotaMetric label="已结算" value={formatUsd(String(settled))} /><QuotaMetric label="预留中" value={formatUsd(String(reserved))} /><QuotaMetric label="总额度" value={formatUsd(String(limit))} /></div>
     <span className="text-xs text-muted-foreground">{window ? `重置 ${new Date(window.resetsAt).toLocaleString("zh-CN")} · 已使用 ${Math.round(percent)}%` : "等待首次使用或上游额度刷新"}</span>

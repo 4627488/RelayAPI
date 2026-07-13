@@ -408,7 +408,7 @@ export type TenantSubscriptionRecord = {
 export type SubscriptionCapacityPool = {
   id: string; email: string; accountId: string; planType: string; enabled: boolean;
   expiresAt: string | null; cooldownUntil: string | null; lastError: string | null;
-  capacityUnits: number; allocatedUnits: number; remainingUnits: number;
+  capacityUnits: number; allocatedUnits: number;
   allocationCount: number; activeAllocationCount: number;
   subscriptions: TenantSubscriptionRecord[];
 };
