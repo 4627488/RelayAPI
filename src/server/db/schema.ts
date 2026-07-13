@@ -301,6 +301,7 @@ export const requestLogs = sqliteTable(
     latencyMs: integer("latency_ms").notNull().default(0),
     tenantId: text("tenant_id"),
     tenantName: text("tenant_name"),
+    subscriptionId: text("subscription_id"),
     apiKeyId: text("api_key_id"),
     apiKeyPrefix: text("api_key_prefix"),
     apiKeyName: text("api_key_name"),
@@ -335,6 +336,7 @@ export const requestLogs = sqliteTable(
       table.startedAt,
     ),
     index("idx_request_logs_tenant").on(table.tenantId, table.startedAt),
+    index("idx_request_logs_subscription").on(table.subscriptionId, table.startedAt),
   ],
 );
 

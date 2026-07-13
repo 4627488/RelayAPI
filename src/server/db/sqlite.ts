@@ -1062,6 +1062,11 @@ function migrateLogDb(db: SqliteDatabase) {
     addColumnIfMissing(database, "request_logs", "cache_write_nano_usd_per_token", "TEXT");
     addColumnIfMissing(database, "request_logs", "reasoning_nano_usd_per_token", "TEXT");
   });
+
+  applyMigration(db, "013_request_subscription_scope", (database) => {
+    addColumnIfMissing(database, "request_logs", "subscription_id", "TEXT");
+    database.exec("CREATE INDEX IF NOT EXISTS idx_request_logs_subscription ON request_logs(subscription_id, started_at)");
+  });
 }
 
 function recreateRequestLogDetailsForeignKey(db: SqliteDatabase) {

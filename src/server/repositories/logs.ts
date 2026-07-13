@@ -173,6 +173,7 @@ export interface RequestLogInput {
   latencyMs: number;
   tenantId?: string | null;
   tenantName?: string | null;
+  subscriptionId?: string | null;
   apiKeyId?: string | null;
   apiKeyPrefix?: string | null;
   apiKeyName?: string | null;
@@ -251,7 +252,7 @@ export function appendRequestLog(input: RequestLogInput) {
   return id;
 }
 
-export function getCostAnalysis(scope: { tenantId?: string | null } = {}) {
+export function getCostAnalysis(scope: { tenantId?: string | null; subscriptionId?: string; startedAt?: string; endedAt?: string } = {}) {
   const clauses = ["cost_nano_usd IS NOT NULL"];
   const params: unknown[] = [];
   if (scope.tenantId !== undefined) {
@@ -262,6 +263,9 @@ export function getCostAnalysis(scope: { tenantId?: string | null } = {}) {
       params.push(scope.tenantId);
     }
   }
+  if (scope.subscriptionId) { clauses.push("subscription_id = ?"); params.push(scope.subscriptionId); }
+  if (scope.startedAt) { clauses.push("started_at >= ?"); params.push(scope.startedAt); }
+  if (scope.endedAt) { clauses.push("started_at < ?"); params.push(scope.endedAt); }
   const where = `WHERE ${clauses.join(" AND ")}`;
   const total = logGet(
     `SELECT COALESCE(SUM(CAST(cost_nano_usd AS INTEGER)), 0) AS cost,
@@ -323,6 +327,7 @@ function insertRequestLog(
       latencyMs: input.latencyMs,
       tenantId: input.tenantId || null,
       tenantName: input.tenantName || null,
+      subscriptionId: input.subscriptionId || null,
       apiKeyId: input.apiKeyId || null,
       apiKeyPrefix: input.apiKeyPrefix || null,
       apiKeyName: input.apiKeyName || null,

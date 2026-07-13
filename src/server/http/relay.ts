@@ -244,6 +244,7 @@ export async function handleOpenAIResponses(request: Request) {
     }
     appendSuccessLog({
       request,
+      subscriptionId: quotaState?.subscriptionId,
       startedAt,
       start,
       apiKey,
@@ -534,6 +535,7 @@ async function handleImagesProxy(
     recordChannelSuccess(channel);
     appendSuccessLog({
       request,
+      subscriptionId: quotaState?.subscriptionId,
       startedAt,
       start,
       apiKey,
@@ -681,6 +683,7 @@ async function forwardImagesStream(input: {
             recordChannelSuccess(input.channel);
             appendSuccessLog({
               request: input.request,
+              subscriptionId: input.quotaAdmission?.subscriptionId,
               startedAt: input.startedAt,
               start: input.start,
               apiKey: input.apiKey,
@@ -839,11 +842,13 @@ export async function handleChatCompletions(request: Request) {
                 timing.mark("stream_first_token", "收到首字输出");
               },
               onCompleted: (usage) => {
+                const subscriptionId = quotaAdmission?.subscriptionId;
                 settleRelayQuota(quotaAdmission, usage, credential.id);
                 quotaAdmission = null;
                 recordChannelSuccess(channel!);
                 appendSuccessLog({
                   request,
+                  subscriptionId,
                   startedAt,
                   start,
                   apiKey: apiKey!,
@@ -862,6 +867,7 @@ export async function handleChatCompletions(request: Request) {
                 });
               },
               onError: (error, usage) => {
+                const subscriptionId = quotaAdmission?.subscriptionId;
                 if (usage.totalTokens > 0) {
                   settleRelayQuota(quotaAdmission, usage, credential.id);
                 } else {
@@ -876,6 +882,7 @@ export async function handleChatCompletions(request: Request) {
                 });
                 appendSuccessLog({
                   request,
+                  subscriptionId,
                   startedAt,
                   start,
                   apiKey: apiKey!,
@@ -964,6 +971,7 @@ export async function handleChatCompletions(request: Request) {
     recordChannelSuccess(channel);
     appendSuccessLog({
       request,
+      subscriptionId: quotaState?.subscriptionId,
       startedAt,
       start,
       apiKey,
@@ -1111,6 +1119,7 @@ async function handleRawCodexProxy(
     }
     appendSuccessLog({
       request,
+      subscriptionId: quotaState?.subscriptionId,
       startedAt,
       start,
       apiKey,
@@ -1282,6 +1291,7 @@ async function forwardCodexStream(input: {
             recordChannelSuccess(input.channel);
             appendSuccessLog({
               request: input.request,
+              subscriptionId: quotaState?.subscriptionId,
               startedAt: input.startedAt,
               start: input.start,
               apiKey: input.apiKey,
@@ -1322,6 +1332,7 @@ async function forwardCodexStream(input: {
             });
             appendSuccessLog({
               request: input.request,
+              subscriptionId: input.quotaAdmission?.subscriptionId,
               startedAt: input.startedAt,
               start: input.start,
               apiKey: input.apiKey,
@@ -1597,6 +1608,7 @@ function appendSuccessLog(input: {
   apiKey: RelayApiKeyContext;
   channel: ChannelRecord;
   credentialEmail?: string;
+  subscriptionId?: string | null;
   requestType: string;
   stream: boolean;
   model: string;
@@ -1622,6 +1634,7 @@ function appendSuccessLog(input: {
     latencyMs: Date.now() - input.start,
     tenantId: input.apiKey.tenantId,
     tenantName: input.apiKey.tenant?.name,
+    subscriptionId: input.subscriptionId,
     apiKeyId: input.apiKey.id,
     apiKeyPrefix: input.apiKey.prefix,
     apiKeyName: input.apiKey.name,

@@ -132,9 +132,9 @@ export function getTenantQuota() {
   return tenantRequest<TenantQuotaReport>("/api/tenant/quota");
 }
 
-export function getTenantCostAnalysis() {
+export function getTenantCostAnalysis(subscriptionId: string) {
   return tenantRequest<import("@/lib/admin-api").CostAnalysis>(
-    "/api/tenant/cost-analysis",
+    `/api/tenant/cost-analysis?subscriptionId=${encodeURIComponent(subscriptionId)}`,
   );
 }
 
