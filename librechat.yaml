@@ -1,0 +1,67 @@
+version: 1.3.13
+cache: true
+
+# Required LibreChat environment variables:
+# RELAY_API_BASE_URL=https://your-relay-domain.example/v1
+# RELAY_LIBRECHAT_INTEGRATION_KEY=relay_sk_...
+# OIDC login itself is configured through LibreChat's OPENID_* environment variables.
+
+interface:
+  customWelcome: "欢迎使用 CafeBabe Chat"
+  endpointsMenu: true
+  modelSelect: true
+  parameters: true
+  presets: true
+  prompts:
+    use: true
+    create: true
+    share: false
+    public: false
+  bookmarks: true
+  multiConvo: true
+  agents:
+    use: false
+    create: false
+    share: false
+    public: false
+
+registration:
+  socialLogins:
+    - "openid"
+
+endpoints:
+  custom:
+    - name: "RelayAPI"
+      apiKey: "${RELAY_LIBRECHAT_INTEGRATION_KEY}"
+      baseURL: "${RELAY_API_BASE_URL}"
+      iconURL: "openAI"
+
+      models:
+        default:
+          - "gpt-5.3-codex"
+          - "gpt-5.3-codex-spark"
+        fetch: true
+
+      headers:
+        X-LibreChat-OpenID-ID: "{{LIBRECHAT_USER_OPENIDID}}"
+        X-LibreChat-User-ID: "{{LIBRECHAT_USER_ID}}"
+        X-LibreChat-User-Email: "{{LIBRECHAT_USER_EMAIL}}"
+        X-LibreChat-User-Name: "{{LIBRECHAT_USER_NAME}}"
+        X-LibreChat-User-Role: "{{LIBRECHAT_USER_ROLE}}"
+        X-LibreChat-Auth-Provider: "{{LIBRECHAT_USER_PROVIDER}}"
+        X-LibreChat-Conversation-ID: "{{LIBRECHAT_BODY_CONVERSATIONID}}"
+
+      userIdQuery: true
+      titleConvo: true
+      titleTiming: "final"
+      titleModel: "current_model"
+      modelDisplayLabel: "RelayAPI"
+
+      customParams:
+        reasoningFormat: "reasoning_object"
+        reasoningKey: "reasoning_content"
+        includeReasoningContent: true
+        includeReasoningHistory: true
+
+      dropParams:
+        - "user"

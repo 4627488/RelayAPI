@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { isHttpError } from "@/src/server/http/errors";
 import { createAuthorizationRedirect, validateAuthorizationRequest } from "@/src/server/services/oidcProvider";
+import { getOidcProviderSettings } from "@/src/server/services/settings";
 import { getTenantSessionFromCookieValue, TENANT_SESSION_COOKIE } from "@/src/server/services/tenants";
 
 export const runtime = "nodejs";
@@ -13,7 +14,8 @@ export async function GET(request: Request) {
     const session = getTenantSessionFromCookieValue(cookieStore.get(TENANT_SESSION_COOKIE)?.value);
     if (!session) {
       const requestUrl = new URL(request.url);
-      return Response.redirect(new URL(`/?returnTo=${encodeURIComponent(requestUrl.pathname + requestUrl.search)}`, request.url), 302);
+      const issuer = getOidcProviderSettings().issuer;
+      return Response.redirect(new URL(`/?returnTo=${encodeURIComponent(requestUrl.pathname + requestUrl.search)}`, issuer), 302);
     }
     return Response.redirect(createAuthorizationRedirect(input, session.user.id), 302);
   } catch (error) {

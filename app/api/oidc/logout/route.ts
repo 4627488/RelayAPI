@@ -8,7 +8,10 @@ export function GET(request: Request) {
   const url = new URL(request.url);
   const requestedTarget = url.searchParams.get("post_logout_redirect_uri");
   const target = safeLogoutTarget(requestedTarget) || "/";
-  const response = Response.redirect(new URL(target, request.url), 302);
+  const response = Response.redirect(
+    new URL(target, getOidcProviderSettings().issuer),
+    302,
+  );
   response.headers.append("Set-Cookie", `${TENANT_SESSION_COOKIE}=; Max-Age=0; Path=${expiredTenantSessionCookieOptions(request).path || "/"}; HttpOnly; SameSite=Lax`);
   return response;
 }
