@@ -165,9 +165,9 @@ describe("queryRequestLogs", () => {
   });
   test("calibration includes matching legacy unscoped requests but excludes other subscriptions", () => {
     const base = { startedAt: "2026-07-05T01:00:00.000Z", method: "POST", path: "/v1/responses", requestType: "responses", stream: false, model: "gpt-test", statusCode: 200, latencyMs: 10, tenantId: "tenant-cal", credentialId: "cred-cal" };
-    logs.appendRequestLog({ ...base, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, costNanoUsd: "100", pricingComplete: true } });
-    logs.appendRequestLog({ ...base, subscriptionId: "sub-cal", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, costNanoUsd: "200", pricingComplete: true } });
-    logs.appendRequestLog({ ...base, subscriptionId: "sub-other", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, costNanoUsd: "400", pricingComplete: true } });
+    logs.appendRequestLog({ ...base, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0, costNanoUsd: "100", pricingComplete: true } });
+    logs.appendRequestLog({ ...base, subscriptionId: "sub-cal", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0, costNanoUsd: "200", pricingComplete: true } });
+    logs.appendRequestLog({ ...base, subscriptionId: "sub-other", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0, costNanoUsd: "400", pricingComplete: true } });
     expect(logs.getSubscriptionCalibrationCost({ subscriptionId: "sub-cal", tenantId: "tenant-cal", credentialId: "cred-cal", startedAt: "2026-07-05T00:00:00.000Z", endedAt: "2026-07-06T00:00:00.000Z" })).toEqual({ costNanoUsd: 300n, requestCount: 2 });
   });
 });

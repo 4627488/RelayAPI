@@ -28,4 +28,19 @@ describe("subscription quota accounting", () => {
     expect(state.windows["5h"]).toMatchObject({ settledNanoUsd: 20n, reservedNanoUsd: 10n, resetsAt: "2026-07-11T05:00:00Z" });
     expect(state.windows["7d"]).toMatchObject({ settledNanoUsd: 70n, reservedNanoUsd: 10n, resetsAt: "2026-07-18T00:00:00Z" });
   });
+  test("does not reset usage when a stale upstream boundary moves backwards", () => {
+    const now = new Date("2026-07-11T00:00:00Z");
+    quota.reserveSubscriptionQuota({ requestId: "r5", subscriptionId: "sub4", reserveNanoUsd: 10n, windows: { "5h": { limitNanoUsd: 100n, resetsAt: "2026-07-11T05:00:00Z" }, "7d": { limitNanoUsd: 1000n, resetsAt: "2026-07-18T00:00:00Z" } }, now, expiresAt: new Date(now.getTime() + 1000) });
+    quota.settleSubscriptionQuota({ requestId: "r5", actualNanoUsd: 7n });
+    quota.reserveSubscriptionQuota({ requestId: "r6", subscriptionId: "sub4", reserveNanoUsd: 10n, windows: { "5h": { limitNanoUsd: 100n, resetsAt: "2026-07-11T04:00:00Z" }, "7d": { limitNanoUsd: 1000n, resetsAt: "2026-07-17T00:00:00Z" } }, now, expiresAt: new Date(now.getTime() + 1000) });
+    expect(quota.getSubscriptionQuotaState("sub4").windows["5h"]).toMatchObject({ resetsAt: "2026-07-11T05:00:00Z", settledNanoUsd: 7n, reservedNanoUsd: 10n });
+    expect(quota.getSubscriptionQuotaState("sub4").windows["7d"]).toMatchObject({ resetsAt: "2026-07-18T00:00:00Z", settledNanoUsd: 7n, reservedNanoUsd: 10n });
+  });
+  test("treats equivalent reset timestamps as the same window", () => {
+    const now = new Date("2026-07-11T00:00:00Z");
+    quota.reserveSubscriptionQuota({ requestId: "r7", subscriptionId: "sub5", reserveNanoUsd: 10n, windows: { "5h": { limitNanoUsd: 100n, resetsAt: "2026-07-11T05:00:00.000Z" }, "7d": { limitNanoUsd: 1000n, resetsAt: "2026-07-18T00:00:00.000Z" } }, now, expiresAt: new Date(now.getTime() + 1000) });
+    quota.settleSubscriptionQuota({ requestId: "r7", actualNanoUsd: 7n });
+    quota.reserveSubscriptionQuota({ requestId: "r8", subscriptionId: "sub5", reserveNanoUsd: 10n, windows: { "5h": { limitNanoUsd: 100n, resetsAt: "2026-07-11T05:00:00Z" }, "7d": { limitNanoUsd: 1000n, resetsAt: "2026-07-18T00:00:00Z" } }, now, expiresAt: new Date(now.getTime() + 1000) });
+    expect(quota.getSubscriptionQuotaState("sub5").windows["5h"]).toMatchObject({ settledNanoUsd: 7n, reservedNanoUsd: 10n });
+  });
 });
