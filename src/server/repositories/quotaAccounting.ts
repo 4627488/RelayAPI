@@ -6,6 +6,7 @@ import { quotaReservations, subscriptionQuotaWindows } from "@/src/server/db/sch
 import { appendAuditLog } from "@/src/server/repositories/logs";
 
 export type QuotaWindowKind = "5h" | "7d";
+const QUOTA_RESET_DRIFT_TOLERANCE_MS = 10 * 60 * 1000;
 export interface SubscriptionQuotaWindowState { kind: QuotaWindowKind; startedAt: string; resetsAt: string; limitNanoUsd: bigint; settledNanoUsd: bigint; reservedNanoUsd: bigint; }
 export interface SubscriptionQuotaState { subscriptionId: string; windows: Record<QuotaWindowKind, SubscriptionQuotaWindowState>; }
 export class SubscriptionQuotaCapacityError extends Error {
@@ -21,7 +22,10 @@ export function reserveSubscriptionQuota(input: { requestId: string; subscriptio
     for (const kind of ["5h", "7d"] as const) {
       const desired = input.windows[kind];
       let row = tx.select().from(subscriptionQuotaWindows).where(and(eq(subscriptionQuotaWindows.subscriptionId, input.subscriptionId), eq(subscriptionQuotaWindows.windowKind, kind))).get();
-      if (row && resetInstant(desired.resetsAt) < resetInstant(row.resetsAt)) {
+      const resetDeltaMs = row
+        ? resetInstant(desired.resetsAt) - resetInstant(row.resetsAt)
+        : null;
+      if (row && resetDeltaMs! < -QUOTA_RESET_DRIFT_TOLERANCE_MS) {
         events.push({
           action: "subscription.quota_window_regression_ignored",
           subscriptionId: input.subscriptionId,
@@ -32,7 +36,7 @@ export function reserveSubscriptionQuota(input: { requestId: string; subscriptio
           reservedNanoUsd: row.reservedNanoUsd,
           requestId: input.requestId,
         });
-      } else if (!row || resetInstant(row.resetsAt) !== resetInstant(desired.resetsAt)) {
+      } else if (!row || resetDeltaMs! > QUOTA_RESET_DRIFT_TOLERANCE_MS) {
         if (row) {
           events.push({
             action: "subscription.quota_window_advanced",
@@ -92,7 +96,11 @@ export function synchronizeSubscriptionQuotaWindows(
         if (!incomingResetsAt) continue;
         const incomingReset = resetInstant(incomingResetsAt);
         const row = tx.select().from(subscriptionQuotaWindows).where(and(eq(subscriptionQuotaWindows.subscriptionId, subscriptionId), eq(subscriptionQuotaWindows.windowKind, kind))).get();
-        if (!row || incomingReset <= resetInstant(row.resetsAt)) continue;
+        if (
+          !row ||
+          incomingReset - resetInstant(row.resetsAt) <=
+            QUOTA_RESET_DRIFT_TOLERANCE_MS
+        ) continue;
         tx.update(subscriptionQuotaWindows).set({
           startedAt: new Date(incomingReset - windowDurationMs(kind)).toISOString(),
           resetsAt: incomingResetsAt,

@@ -8,6 +8,7 @@ import {
   normalizeRawCodexResponsesPayload,
   normalizeResponsesPayload,
   normalizeUsage,
+  parseCodexSseResponse,
   prepareCodexPayloadForUpstream,
   restoreOriginalToolName,
 } from "@/src/server/codex/client";
@@ -253,6 +254,19 @@ describe("Chat Completions non-stream response compatibility", () => {
     );
 
     expect(response.choices[0].finish_reason).toBe("length");
+  });
+
+  test("parses response.incomplete as a terminal SSE response", () => {
+    const response = parseCodexSseResponse(
+      'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_1"}}\n\n' +
+        'data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":2,"output_tokens":3}}}\n\n',
+    );
+
+    expect(response).toMatchObject({
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+      output: [{ type: "message", id: "msg_1" }],
+    });
   });
 
   test("preserves custom tool calls and generated images", () => {

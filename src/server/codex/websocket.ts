@@ -134,7 +134,7 @@ async function singleUseCodexWebSocketResponse(input: {
         const normalized = normalizeCodexWebSocketEvent(text);
         controller.enqueue(encoder.encode(`data: ${normalized}\n\n`));
         const type = eventType(normalized);
-        if (type === "response.completed" || type === "error") {
+        if (isCodexTerminalResponseEvent(type) || type === "error") {
           closed = true;
           controller.close();
           cleanup();
@@ -389,7 +389,7 @@ export class CodexWebSocketSessionManager {
           const normalized = normalizeCodexWebSocketEvent(text);
           controller.enqueue(encoder.encode(`data: ${normalized}\n\n`));
           const type = eventType(normalized);
-          if (type === "response.completed" || type === "response.failed") {
+          if (isCodexTerminalResponseEvent(type)) {
             finish(false);
           } else if (type === "error") {
             finish(true);
@@ -490,6 +490,17 @@ export class CodexWebSocketSessionManager {
       session.socket.terminate();
     }
   }
+}
+
+function isCodexTerminalResponseEvent(type: string) {
+  return (
+    type === "response.completed" ||
+    type === "response.done" ||
+    type === "response.failed" ||
+    type === "response.incomplete" ||
+    type === "response.cancelled" ||
+    type === "response.canceled"
+  );
 }
 
 function waitForOpenOrRejection(

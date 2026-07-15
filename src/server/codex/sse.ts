@@ -83,7 +83,11 @@ export class CodexResponsesSseFramer {
       return { frame: ensureSseFrameTerminator(frame), data, event };
     }
 
-    if (eventType !== "response.completed") {
+    if (
+      eventType !== "response.completed" &&
+      eventType !== "response.done" &&
+      eventType !== "response.incomplete"
+    ) {
       return { frame: ensureSseFrameTerminator(frame), data, event };
     }
 

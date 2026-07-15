@@ -12,6 +12,7 @@ import {
   type CodexImagesRequest,
 } from "@/src/server/codex/images";
 import { CodexResponsesSseFramer } from "@/src/server/codex/sse";
+import { codexCompactSseResponse, resolveCodexCompactionMode } from "@/src/server/codex/compaction";
 import {
   chatCompletionsToCodex,
   chatCompletionsPromptCacheKey,
@@ -165,9 +166,12 @@ export async function handleOpenAIResponses(request: Request) {
     input = await timing.timeAsync("read_request_body", "读取请求 Body", () =>
       readJsonObject(request),
     );
-    const stream = input.stream !== false;
+    const compaction = resolveCodexCompactionMode({ upstreamPath: "/responses", payload: input, headers: request.headers });
+    const stream = !compaction.compact && input.stream !== false;
     const payload = timing.time("normalize_payload", "规范化请求 Payload", () =>
-      normalizeResponsesPayload(input!, { stream: true }),
+      compaction.compact
+        ? normalizeCompactPayload(input!)
+        : normalizeResponsesPayload(input!, { stream: true }),
     );
     const model = stringValue(payload.model) || serverConfig.codexDefaultModel;
     const selected = timing.time("select_channel", "选择通道", () =>
@@ -194,7 +198,7 @@ export async function handleOpenAIResponses(request: Request) {
       });
     }
 
-    const result = await codexJson("/responses", payload, {
+    const result = await codexJson(compaction.upstreamPath, payload, {
       stream: true,
       sourceHeaders: request.headers,
       channel,
@@ -217,7 +221,10 @@ export async function handleOpenAIResponses(request: Request) {
       : releaseRelayQuota(quotaAdmission);
     quotaAdmission = null;
     let responseErrorInfo: CodexUpstreamErrorInfo | null = null;
-    if (result.response.ok) {
+    if (result.response.ok && compaction.compact) {
+      clearReplayAfterCompaction({ model, request, payload: result.upstreamPayload });
+      recordChannelSuccess(channel);
+    } else if (result.response.ok) {
       captureReplayForResponse({
         model,
         request,
@@ -270,6 +277,12 @@ export async function handleOpenAIResponses(request: Request) {
     if (!result.response.ok) {
       return upstreamErrorResponse(result.response.status);
     }
+    if (compaction.clientWantsStream) {
+      return new Response(codexCompactSseResponse(raw), {
+        status: result.response.status,
+        headers: withStreamingHeaders(new Headers({ "Content-Type": "text/event-stream; charset=utf-8" })),
+      });
+    }
     return Response.json(raw, {
       status: result.response.status,
       headers: quotaResponseHeaders(quotaState),
@@ -314,6 +327,7 @@ export async function handleRawCodexResponses(request: Request) {
     streamFromPayload: true,
     exposeUpstreamErrors: true,
     normalizePayload: normalizeRawCodexResponsesPayload,
+    compactNormalizePayload: normalizeRawCodexCompactPayload,
   });
 }
 
@@ -1030,6 +1044,7 @@ async function handleRawCodexProxy(
     normalizePayload: (
       payload: Record<string, unknown>,
     ) => Record<string, unknown>;
+    compactNormalizePayload?: (payload: Record<string, unknown>) => Record<string, unknown>;
   },
 ) {
   const startedAt = new Date().toISOString();
@@ -1048,10 +1063,13 @@ async function handleRawCodexProxy(
       "读取请求 Body",
       () => readJsonObject(request),
     );
+    const compaction = resolveCodexCompactionMode({ upstreamPath: input.upstreamPath, payload: rawPayload, headers: request.headers });
     const payload = timing.time("normalize_payload", "规范化请求 Payload", () =>
-      input.normalizePayload(rawPayload!),
+      compaction.promoted && input.compactNormalizePayload
+        ? input.compactNormalizePayload(rawPayload!)
+        : input.normalizePayload(rawPayload!),
     );
-    const stream = input.streamFromPayload ? payload.stream !== false : false;
+    const stream = !compaction.compact && input.streamFromPayload ? payload.stream !== false : false;
     const model = stringValue(payload.model) || serverConfig.codexDefaultModel;
     const selected = timing.time("select_channel", "选择通道", () =>
       selectChannel({ model, apiKey: apiKey! }),
@@ -1066,7 +1084,7 @@ async function handleRawCodexProxy(
         apiKey,
         channel,
         payload,
-        upstreamPath: input.upstreamPath,
+        upstreamPath: compaction.upstreamPath,
         requestType: input.requestType,
         fallbackContentType: "text/event-stream; charset=utf-8",
         requestBody: rawPayload,
@@ -1076,7 +1094,7 @@ async function handleRawCodexProxy(
         quotaAdmission,
       });
     }
-    const result = await codexJson(input.upstreamPath, payload, {
+    const result = await codexJson(compaction.upstreamPath, payload, {
       stream: false,
       sourceHeaders: request.headers,
       channel,
@@ -1092,7 +1110,10 @@ async function handleRawCodexProxy(
       : releaseRelayQuota(quotaAdmission);
     quotaAdmission = null;
     let responseErrorInfo: CodexUpstreamErrorInfo | null = null;
-    if (result.response.ok) {
+    if (result.response.ok && compaction.compact) {
+      clearReplayAfterCompaction({ model, request, payload: result.upstreamPayload });
+      recordChannelSuccess(channel);
+    } else if (result.response.ok) {
       captureReplayForResponse({
         model,
         request,
@@ -1144,6 +1165,12 @@ async function handleRawCodexProxy(
     });
     if (!result.response.ok && !input.exposeUpstreamErrors) {
       return upstreamErrorResponse(result.response.status);
+    }
+    if (compaction.clientWantsStream) {
+      return new Response(codexCompactSseResponse(result.json), {
+        status: result.response.status,
+        headers: withStreamingHeaders(new Headers({ "Content-Type": "text/event-stream; charset=utf-8" })),
+      });
     }
     return new Response(result.text, {
       status: result.response.status,
@@ -1487,12 +1514,21 @@ function handleCodexStreamFrame(
   ) {
     onFirstToken();
   }
-  if (event.type === "response.completed") {
+  if (
+    event.type === "response.completed" ||
+    event.type === "response.done" ||
+    event.type === "response.incomplete"
+  ) {
     onUsage(extractUsageFromCodexResponse(event.response || event), event.response);
     onCompleted();
     return;
   }
-  if (event.type === "error" || event.type === "response.failed") {
+  if (
+    event.type === "error" ||
+    event.type === "response.failed" ||
+    event.type === "response.cancelled" ||
+    event.type === "response.canceled"
+  ) {
     onError(codexUpstreamStreamError(event));
   }
 }
@@ -1570,6 +1606,15 @@ function clearReplayForRequest(input: {
     return;
   }
   clearCodexReasoningReplay({ model: input.model, sessionKey });
+}
+
+function clearReplayAfterCompaction(input: {
+  model: string;
+  request: Request;
+  payload: unknown;
+}) {
+  const sessionKey = getCodexReplaySessionKey({ payload: input.payload, headers: input.request.headers });
+  if (sessionKey) clearCodexReasoningReplay({ model: input.model, sessionKey });
 }
 
 function codexErrorInfoFromError(error: unknown) {

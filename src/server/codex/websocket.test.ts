@@ -123,6 +123,39 @@ describe("CodexWebSocketSessionManager", () => {
     manager.closeAll();
   });
 
+  it("finishes and reuses the session after response.incomplete", async () => {
+    const sockets: FakeSocket[] = [];
+    const manager = new CodexWebSocketSessionManager({
+      idleTimeoutMs: 60_000,
+      factory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        queueMicrotask(() => socket.emit("open"));
+        return { socket };
+      },
+    });
+
+    const first = await manager.request(requestInput("one"));
+    queueMicrotask(() =>
+      sockets[0].emit(
+        "message",
+        JSON.stringify({
+          type: "response.incomplete",
+          response: { incomplete_details: { reason: "max_output_tokens" } },
+        }),
+      ),
+    );
+    await expect(first.text()).resolves.toContain("response.incomplete");
+
+    const second = await manager.request(requestInput("two"));
+    queueMicrotask(() =>
+      sockets[0].emit("message", JSON.stringify({ type: "response.done" })),
+    );
+    await expect(second.text()).resolves.toContain("response.completed");
+    expect(sockets).toHaveLength(1);
+    manager.closeAll();
+  });
+
   it("does not reuse a socket across credential-scoped session keys", async () => {
     const sockets: FakeSocket[] = [];
     const manager = new CodexWebSocketSessionManager({

@@ -986,7 +986,11 @@ export function parseCodexSseResponse(text: string) {
       }
       continue;
     }
-    if (event.type === "response.completed") {
+    if (
+      event.type === "response.completed" ||
+      event.type === "response.done" ||
+      event.type === "response.incomplete"
+    ) {
       completed = isRecord(event.response) ? event.response : event;
     }
   }
