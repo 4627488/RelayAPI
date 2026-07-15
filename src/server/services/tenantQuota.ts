@@ -28,14 +28,19 @@ export function subscriptionQuotaLimits(subscription: { units: number; unitsPerC
 
 export function admitTenantRequest(input: { tenantId: string; credentialId: string; requestId: string; model: string; now?: Date }): TenantQuotaAdmission {
   const price = resolveConfiguredModelPrice(input.model);
-  if (!price) throw new HttpError(503, "model_price_unavailable", `No price is configured for model ${input.model}`, { model: input.model });
-  const baselines = getEffectiveQuotaBaselines();
-  if (!baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) throw new HttpError(503, "quota_baseline_unavailable", "Subscription capacity has not been calibrated or configured");
-  const resetTimes = credentialResetTimes(input.credentialId);
   const credential = getCodexCredentialById(input.credentialId);
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
   const candidates = listActiveTenantSubscriptions(input.tenantId, input.now).filter((item) => item.credentialId === input.credentialId).sort((a, b) => b.priority - a.priority || availableRatio(b.id) - availableRatio(a.id));
   if (!candidates.length) throw new HttpError(403, "subscription_not_available", "No active subscription is assigned for the selected credential");
+  // Unknown prices must not turn into an outage. Keep the subscription association
+  // for the request log, but defer monetary accounting until an admin sets a price.
+  if (!price) {
+    const subscription = candidates[0];
+    return { requestId: input.requestId, tenantId: input.tenantId, subscriptionId: subscription.id, units: subscription.units, unitsPerCredential: subscription.unitsPerCredential, price: null, state: null };
+  }
+  const baselines = getEffectiveQuotaBaselines();
+  if (!baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) throw new HttpError(503, "quota_baseline_unavailable", "Subscription capacity has not been calibrated or configured");
+  const resetTimes = credentialResetTimes(input.credentialId);
   let capacityError: SubscriptionQuotaCapacityError | null = null;
   for (const subscription of candidates) {
     const limits = subscriptionQuotaLimits(subscription)!;

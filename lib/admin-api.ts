@@ -453,6 +453,8 @@ export type QuotaAdministration = {
     catalogVersion: string | null;
     catalogUpdatedAt: string | null;
     catalogError: string | null;
+    pendingModels: Array<{ model: string; requestCount: number; latestStartedAt: string }>;
+    backfill: { status: "idle" | "pending" | "running" | "completed" | "failed"; updatedRequests: number; startedAt: string | null; completedAt: string | null; error: string | null };
   };
 };
 

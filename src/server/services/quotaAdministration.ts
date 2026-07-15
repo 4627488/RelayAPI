@@ -7,6 +7,7 @@ import {
   getSettingValue,
   upsertSettingValue,
 } from "@/src/server/repositories/settings";
+import { appendAuditLog, backfillPendingRequestPricing, getPendingPricingSummary } from "@/src/server/repositories/logs";
 import {
   normalizeLiteLlmCatalog,
   resolveModelPrice,
@@ -42,6 +43,17 @@ type PricingConfig = {
   catalogUpdatedAt: string | null;
   catalogError: string | null;
 };
+
+type PricingBackfillState = {
+  status: "idle" | "pending" | "running" | "completed" | "failed";
+  updatedRequests: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+};
+
+let pricingBackfill: PricingBackfillState = { status: "idle", updatedRequests: 0, startedAt: null, completedAt: null, error: null };
+let pricingBackfillRequested = false;
 
 export function resolveConfiguredModelPrice(model: string) {
   const config = readPricingConfig();
@@ -102,6 +114,8 @@ export function getQuotaAdministration() {
       catalogVersion: config.catalogVersion,
       catalogUpdatedAt: config.catalogUpdatedAt,
       catalogError: config.catalogError,
+      pendingModels: getPendingPricingSummary(),
+      backfill: pricingBackfill,
     },
   };
 }
@@ -129,14 +143,39 @@ export function patchQuotaAdministration(input: unknown) {
       Object.entries(aliases).map(([alias, model]) => [clean(alias), clean(model)]),
     );
   }
-  if (Object.hasOwn(body, "overrides")) {
+  const overridesChanged = Object.hasOwn(body, "overrides");
+  if (overridesChanged) {
     const overrides = objectValue(body.overrides);
     config.overrides = Object.entries(overrides).map(([model, raw]) =>
       toStoredPrice(normalizeAdminPrice(model, raw)),
     );
   }
   writePricingConfig(config);
+  if (overridesChanged) schedulePricingBackfill();
   return getQuotaAdministration();
+}
+
+function schedulePricingBackfill() {
+  pricingBackfillRequested = true;
+  if (pricingBackfill.status === "pending" || pricingBackfill.status === "running") return;
+  pricingBackfill = { status: "pending", updatedRequests: 0, startedAt: null, completedAt: null, error: null };
+  setImmediate(() => {
+    const startedAt = new Date().toISOString();
+    pricingBackfill = { ...pricingBackfill, status: "running", startedAt };
+    try {
+      let updatedRequests = 0;
+      do {
+        pricingBackfillRequested = false;
+        updatedRequests += backfillPendingRequestPricing(resolveConfiguredModelPrice);
+      } while (pricingBackfillRequested);
+      pricingBackfill = { status: "completed", updatedRequests, startedAt, completedAt: new Date().toISOString(), error: null };
+      appendAuditLog({ action: "pricing.pending_requests_backfilled", targetType: "model_pricing", detail: { updatedRequests } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pricingBackfill = { status: "failed", updatedRequests: 0, startedAt, completedAt: new Date().toISOString(), error: message };
+      console.error("[RelayAPI][pricing.backfill] error", error);
+    }
+  });
 }
 
 export async function refreshLiteLlmPricing() {

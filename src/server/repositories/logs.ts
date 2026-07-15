@@ -44,6 +44,7 @@ import type {
 import { addDateKeyDays, instantToDateKey } from "@/src/shared/time";
 import { getGlobalTimeZoneSetting } from "@/src/server/services/settings";
 import { LogWriteQueue } from "@/src/server/services/logWriteQueue";
+import { calculateRequestCost, type ModelPriceSnapshot } from "@/src/server/services/modelPricing";
 
 const ADMIN_OVERVIEW_CACHE_TTL_MS = 15_000;
 const OVERVIEW_GROUP_LIMIT = 100;
@@ -304,6 +305,58 @@ export function getCostAnalysis(scope: { tenantId?: string | null; subscriptionI
       pricing: priceSnapshot(row),
     })),
   };
+}
+
+export function getPendingPricingSummary() {
+  const rows = logAll(
+    `SELECT model, COUNT(*) AS request_count, MAX(started_at) AS latest_started_at
+       FROM request_logs
+      WHERE pricing_complete = 0 AND model <> '' AND status_code >= 200 AND status_code < 400
+      GROUP BY model ORDER BY request_count DESC, model ASC`,
+  );
+  return rows.map((row) => ({
+    model: String(row.model || ""),
+    requestCount: numberValue(row.request_count),
+    latestStartedAt: String(row.latest_started_at || ""),
+  }));
+}
+
+export function backfillPendingRequestPricing(
+  resolvePrice: (model: string) => ModelPriceSnapshot | null,
+) {
+  flushRequestLogWrites();
+  const rows = logAll(
+    `SELECT id, model, prompt_tokens, completion_tokens, cached_tokens,
+            cache_write_tokens, reasoning_tokens
+       FROM request_logs
+      WHERE pricing_complete = 0 AND model <> '' AND status_code >= 200 AND status_code < 400`,
+  );
+  let updated = 0;
+  getLogOrm().transaction((tx) => {
+    for (const row of rows) {
+      const price = resolvePrice(String(row.model || ""));
+      if (!price) continue;
+      const cost = calculateRequestCost(price, {
+        inputTokens: numberValue(row.prompt_tokens),
+        outputTokens: numberValue(row.completion_tokens),
+        cachedInputTokens: numberValue(row.cached_tokens),
+        cacheWriteTokens: numberValue(row.cache_write_tokens),
+        reasoningTokens: numberValue(row.reasoning_tokens),
+      });
+      tx.update(requestLogsTable).set({
+        costNanoUsd: String(cost.totalNanoUsd), priceModel: price.pricedModel,
+        priceVersion: price.version,
+        inputNanoUsdPerToken: String(price.inputNanoUsdPerToken),
+        outputNanoUsdPerToken: String(price.outputNanoUsdPerToken),
+        cachedInputNanoUsdPerToken: String(price.cachedInputNanoUsdPerToken),
+        cacheWriteNanoUsdPerToken: String(price.cacheWriteNanoUsdPerToken),
+        reasoningNanoUsdPerToken: String(price.reasoningNanoUsdPerToken),
+        pricingComplete: 1,
+      }).where(eq(requestLogsTable.id, String(row.id))).run();
+      updated += 1;
+    }
+  });
+  return updated;
 }
 
 export function getSubscriptionCalibrationCost(input: { subscriptionId: string; tenantId: string; credentialId: string; startedAt: string; endedAt: string }) {

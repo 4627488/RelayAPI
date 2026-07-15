@@ -170,4 +170,26 @@ describe("queryRequestLogs", () => {
     logs.appendRequestLog({ ...base, subscriptionId: "sub-other", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0, costNanoUsd: "400", pricingComplete: true } });
     expect(logs.getSubscriptionCalibrationCost({ subscriptionId: "sub-cal", tenantId: "tenant-cal", credentialId: "cred-cal", startedAt: "2026-07-05T00:00:00.000Z", endedAt: "2026-07-06T00:00:00.000Z" })).toEqual({ costNanoUsd: 300n, requestCount: 2 });
   });
+  test("records and backfills successful requests with a previously unknown price", () => {
+    logs.appendRequestLog({
+      startedAt: "2026-07-04T01:00:00.000Z", method: "POST", path: "/v1/responses",
+      requestType: "responses", stream: false, model: "pending-price-model", statusCode: 200,
+      latencyMs: 10, tenantId: "tenant-pending",
+      usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12, cachedTokens: 4, pricingComplete: false },
+    });
+    expect(logs.getPendingPricingSummary()).toContainEqual({
+      model: "pending-price-model", requestCount: 1, latestStartedAt: "2026-07-04T01:00:00.000Z",
+    });
+    const updated = logs.backfillPendingRequestPricing((model) => model === "pending-price-model" ? {
+      model, requestedModel: model, pricedModel: model, source: "admin", version: "admin:test",
+      inputNanoUsdPerToken: 1000n, outputNanoUsdPerToken: 2000n,
+      cachedInputNanoUsdPerToken: 100n, cacheWriteNanoUsdPerToken: 1000n,
+      reasoningNanoUsdPerToken: 2000n,
+    } : null);
+    expect(updated).toBe(1);
+    expect(logs.getPendingPricingSummary().some((row) => row.model === "pending-price-model")).toBe(false);
+    expect(logs.getCostAnalysis({ tenantId: "tenant-pending" })).toMatchObject({
+      totalCostNanoUsd: "10400", pricedRequests: 1,
+    });
+  });
 });
