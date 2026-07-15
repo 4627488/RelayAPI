@@ -2,7 +2,7 @@ import "server-only";
 
 import { HttpError } from "@/src/server/http/errors";
 import { getSubscriptionCalibrationCost } from "@/src/server/repositories/logs";
-import { calibrateSubscriptionQuota } from "@/src/server/repositories/quotaAccounting";
+import { calibrateSubscriptionQuota, getSubscriptionQuotaState, type QuotaWindowKind } from "@/src/server/repositories/quotaAccounting";
 import { getTenantSubscription } from "@/src/server/repositories/tenantSubscriptions";
 
 export type SubscriptionCalibrationTask = { subscriptionId: string; status: "idle" | "pending" | "running" | "completed" | "failed"; startedAt: string | null; completedAt: string | null; error: string | null; windows?: Record<"5h" | "7d", { startedAt: string; costNanoUsd: string; requestCount: number }> };
@@ -26,13 +26,23 @@ async function run(subscriptionId: string) {
   try {
     await Promise.resolve();
     const now = new Date();
+    const quotaState = getSubscriptionQuotaState(subscriptionId);
     const windows = Object.fromEntries((["5h", "7d"] as const).map((kind) => {
-      const duration = kind === "5h" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
-      const windowStartedAt = new Date(now.getTime() - duration).toISOString();
+      const quotaWindow = quotaState.windows[kind];
+      if (!quotaWindow) throw new Error(`Subscription ${kind} quota window has not been initialized`);
+      const windowStartedAt = calibrationWindowStartedAt(kind, quotaWindow.resetsAt, now);
       const result = getSubscriptionCalibrationCost({ subscriptionId, tenantId: subscription.tenantId, credentialId: subscription.credentialId, startedAt: windowStartedAt, endedAt: now.toISOString() });
       return [kind, { startedAt: windowStartedAt, costNanoUsd: String(result.costNanoUsd), requestCount: result.requestCount }];
     })) as Record<"5h" | "7d", { startedAt: string; costNanoUsd: string; requestCount: number }>;
     calibrateSubscriptionQuota(subscriptionId, { "5h": { startedAt: windows["5h"].startedAt, settledNanoUsd: BigInt(windows["5h"].costNanoUsd) }, "7d": { startedAt: windows["7d"].startedAt, settledNanoUsd: BigInt(windows["7d"].costNanoUsd) } });
     tasks.set(subscriptionId, { subscriptionId, status: "completed", startedAt, completedAt: new Date().toISOString(), error: null, windows });
   } catch (error) { tasks.set(subscriptionId, { subscriptionId, status: "failed", startedAt, completedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) }); }
+}
+
+export function calibrationWindowStartedAt(kind: QuotaWindowKind, resetsAt: string, now: Date) {
+  const resetAtMs = Date.parse(resetsAt);
+  if (!Number.isFinite(resetAtMs)) throw new Error(`Subscription ${kind} quota window has an invalid reset time`);
+  if (resetAtMs <= now.getTime()) throw new Error(`Subscription ${kind} quota window is stale; refresh credential quota before calibrating`);
+  const duration = kind === "5h" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  return new Date(resetAtMs - duration).toISOString();
 }
