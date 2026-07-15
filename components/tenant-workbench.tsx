@@ -99,6 +99,7 @@ export function TenantWorkbench({
   const [createdKey, setCreatedKey] = React.useState<CreatedApiKey | null>(
     null,
   );
+  const [codexSetupSecret, setCodexSetupSecret] = React.useState("");
   const [editingKey, setEditingKey] = React.useState<PublicApiKey | null>(null);
   const [creatingKey, setCreatingKey] = React.useState(false);
 
@@ -298,6 +299,7 @@ export function TenantWorkbench({
         {activeSection === "setup" && (
           <TenantCodexSetupSection
             apiKeys={apiKeys}
+            initialSecret={codexSetupSecret}
             tenant={tenant}
             onApiKeyCreated={(created) => {
               setApiKeys((current) => [created, ...current]);
@@ -352,6 +354,11 @@ export function TenantWorkbench({
       />
       <CreatedApiKeyDialog
         apiKey={createdKey}
+        onContinue={(apiKey) => {
+          setCodexSetupSecret(apiKey.key);
+          setCreatedKey(null);
+          setActiveSection("setup");
+        }}
         onOpenChange={(open) => {
           if (!open) {
             setCreatedKey(null);

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { CopyIcon } from "lucide-react";
+import { ArrowRightIcon, CopyIcon, KeyRoundIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -131,9 +131,11 @@ export function TenantApiKeyDialog({
 
 export function CreatedApiKeyDialog({
   apiKey,
+  onContinue,
   onOpenChange,
 }: {
   apiKey: CreatedApiKey | null;
+  onContinue: (apiKey: CreatedApiKey) => void;
   onOpenChange: (open: boolean) => void;
 }) {
   async function copyKey() {
@@ -146,21 +148,28 @@ export function CreatedApiKeyDialog({
 
   return (
     <Dialog open={Boolean(apiKey)} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>保存 API 密钥明文</DialogTitle>
-          <DialogDescription>密钥明文只会显示这一次。</DialogDescription>
+          <DialogTitle>API Key 已创建</DialogTitle>
+          <DialogDescription>
+            这是唯一一次查看完整 Key 的机会。复制保存后，可以直接继续配置 Codex。
+          </DialogDescription>
         </DialogHeader>
-        <div className="rounded-lg border bg-muted/50 p-3 font-mono text-sm break-all">
-          {apiKey?.key}
+        <div className="flex items-start gap-3 rounded-md bg-muted p-3 ring-1 ring-foreground/10">
+          <KeyRoundIcon className="mt-0.5 shrink-0" />
+          <code className="break-all text-sm">{apiKey?.key}</code>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={copyKey}>
             <CopyIcon data-icon="inline-start" />
             复制
           </Button>
-          <Button type="button" onClick={() => onOpenChange(false)}>
-            完成
+          <Button
+            type="button"
+            onClick={() => apiKey && onContinue(apiKey)}
+          >
+            前往 Codex 接入
+            <ArrowRightIcon data-icon="inline-end" />
           </Button>
         </DialogFooter>
       </DialogContent>
