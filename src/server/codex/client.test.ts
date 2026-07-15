@@ -5,6 +5,7 @@ import {
   chatCompletionsToCodex,
   chatCompletionsPromptCacheKey,
   codexResponseToChatCompletion,
+  extractImageGenerationUsage,
   normalizeRawCodexResponsesPayload,
   normalizeResponsesPayload,
   normalizeUsage,
@@ -27,6 +28,41 @@ describe("usage pricing categories", () => {
       cacheWriteTokens: 5,
       reasoningTokens: 7,
     });
+  });
+
+  test("extracts image generation tokens as a separate requested model usage", () => {
+    expect(extractImageGenerationUsage({
+      response: {
+        usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 },
+        tool_usage: {
+          image_gen: {
+            input_tokens: 50,
+            output_tokens: 1756,
+            total_tokens: 1806,
+            input_tokens_details: { cached_tokens: 8 },
+          },
+        },
+      },
+    }, {
+      model: "gpt-5.4",
+      tools: [{ type: "image_generation", model: "gpt-image-2" }],
+    })).toEqual({
+      model: "gpt-image-2",
+      usage: {
+        promptTokens: 50,
+        completionTokens: 1756,
+        totalTokens: 1806,
+        cachedTokens: 8,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+      },
+    });
+  });
+
+  test("does not create an image billing usage without image tokens", () => {
+    expect(extractImageGenerationUsage({ response: { usage: { total_tokens: 12 } } }, {
+      tools: [{ type: "image_generation" }],
+    })).toBeNull();
   });
 });
 import { parseCodexModelHeaderOverrides } from "@/src/server/codex/headerProfiles";

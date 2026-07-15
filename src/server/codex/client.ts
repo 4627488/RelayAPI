@@ -1043,6 +1043,29 @@ export function extractUsageFromCodexResponse(raw: unknown): UsageSnapshot {
   return normalizeUsage(usage);
 }
 
+export function extractImageGenerationUsage(
+  raw: unknown,
+  requestPayload?: unknown,
+): { model: string; usage: UsageSnapshot } | null {
+  const root = isRecord(raw) && isRecord(raw.response) ? raw.response : raw;
+  const toolUsage = isRecord(root) && isRecord(root.tool_usage)
+    ? root.tool_usage.image_gen
+    : null;
+  const usage = normalizeUsage(toolUsage);
+  if (usage.totalTokens <= 0) return null;
+  const payload = isRecord(requestPayload) ? requestPayload : {};
+  const tools = Array.isArray(payload.tools) ? payload.tools : [];
+  for (const value of tools) {
+    if (!isRecord(value) || value.type !== "image_generation") continue;
+    return { model: stringValue(value.model) || "gpt-image-2", usage };
+  }
+  const requestedModel = stringValue(payload.model);
+  return {
+    model: requestedModel.startsWith("gpt-image-") ? requestedModel : "gpt-image-2",
+    usage,
+  };
+}
+
 export function normalizeUsage(usage: unknown): UsageSnapshot {
   const object = isRecord(usage) ? usage : {};
   const promptTokens = numberValue(object.input_tokens ?? object.prompt_tokens);

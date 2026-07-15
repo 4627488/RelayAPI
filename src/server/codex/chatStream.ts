@@ -41,6 +41,7 @@ interface ChatStreamState {
   firstTokenReported: boolean;
   done: boolean;
   usage: UsageSnapshot;
+  terminalResponse: Record<string, unknown> | null;
   onFirstToken?: () => void;
 }
 
@@ -51,7 +52,7 @@ export function createOpenAIChatSseStream(
     toolNameMaps: ToolNameMaps | null;
     includeUsage?: boolean;
     onFirstToken?: () => void;
-    onCompleted?: (usage: UsageSnapshot) => void;
+    onCompleted?: (usage: UsageSnapshot, response?: unknown) => void;
     onError?: (error: unknown, usage: UsageSnapshot) => void;
   },
 ) {
@@ -79,6 +80,7 @@ export function createOpenAIChatSseStream(
       totalTokens: 0,
       cachedTokens: 0,
     },
+    terminalResponse: null,
     onFirstToken: input.onFirstToken,
   };
   let buffer = "";
@@ -97,7 +99,7 @@ export function createOpenAIChatSseStream(
   function reportCompletedOnce() {
     if (!completionReported) {
       completionReported = true;
-      input.onCompleted?.(state.usage);
+      input.onCompleted?.(state.usage, state.terminalResponse);
     }
   }
 
@@ -378,6 +380,7 @@ function handleCodexEventAsOpenAIChat(
     case "response.done": {
       state.upstreamCompleted = true;
       const response = objectValue(event.response) || {};
+      state.terminalResponse = response;
       state.usage = normalizeUsage(response.usage);
       hydrateToolCallsFromTerminalResponse(controller, encoder, state, response);
       flushAllBufferedOpenAIChatToolArguments(controller, encoder, state);
@@ -393,6 +396,7 @@ function handleCodexEventAsOpenAIChat(
     case "response.incomplete": {
       state.upstreamCompleted = true;
       const response = objectValue(event.response) || {};
+      state.terminalResponse = response;
       state.usage = normalizeUsage(response.usage);
       const details = objectValue(response.incomplete_details);
       writeOpenAIChatDone(

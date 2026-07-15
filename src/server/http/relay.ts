@@ -21,6 +21,7 @@ import {
   codexResponseToChatCompletion,
   copyUpstreamHeaders,
   extractUsageFromCodexResponse,
+  extractImageGenerationUsage,
   normalizeCompactPayload,
   normalizeRawCodexCompactPayload,
   normalizeRawCodexResponsesPayload,
@@ -73,6 +74,8 @@ import type {
   RelayApiKeyContext,
   UsageSnapshot,
 } from "@/src/shared/types/entities";
+
+type ImageGenerationUsage = NonNullable<ReturnType<typeof extractImageGenerationUsage>>;
 
 const DETAIL_TEXT_LIMIT = 512 * 1024;
 const JSON_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
@@ -217,8 +220,9 @@ export async function handleOpenAIResponses(request: Request) {
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(raw),
     );
+    const imageGeneration = extractImageGenerationUsage(raw, result.upstreamPayload);
     const quotaState = result.response.ok
-      ? settleRelayQuota(quotaAdmission, usage, result.credential.id)
+      ? settleRelayQuota(quotaAdmission, usage, result.credential.id, imageGeneration)
       : releaseRelayQuota(quotaAdmission);
     quotaAdmission = null;
     let responseErrorInfo: CodexUpstreamErrorInfo | null = null;
@@ -263,6 +267,7 @@ export async function handleOpenAIResponses(request: Request) {
       model,
       statusCode: result.response.status,
       usage,
+      imageGeneration,
       ...(responseErrorInfo
         ? {
             errorCode: responseErrorInfo.code,
@@ -434,7 +439,11 @@ async function handleImagesProxy(
         "Image generation is not available for Free Codex credentials",
       );
     }
-    quotaAdmission = admitRelayQuota(apiKey, imageRequest.model, selected.credential.id);
+    quotaAdmission = admitRelayQuota(
+      apiKey,
+      stringValue(imageRequest.payload.model) || imageRequest.model,
+      selected.credential.id,
+    );
 
     if (imageRequest.stream) {
       return await forwardImagesStream({
@@ -465,7 +474,7 @@ async function handleImagesProxy(
         bodyText: result.text,
       });
       clearReplayForRequest({
-        model: imageRequest.model,
+        model: stringValue(imageRequest.payload.model) || imageRequest.model,
         request,
         payload: result.upstreamPayload,
         info: errorInfo,
@@ -484,7 +493,7 @@ async function handleImagesProxy(
         credentialEmail: result.credential.email,
         requestType: input.requestType,
         stream: false,
-        model: imageRequest.model,
+        model: stringValue(imageRequest.payload.model) || imageRequest.model,
         statusCode: result.response.status,
         usage: emptyUsage(),
         errorCode: errorInfo.code || "upstream_error",
@@ -501,10 +510,15 @@ async function handleImagesProxy(
     const usage = extractUsageFromCodexResponse(
       parseCodexSseResponse(result.text) || result.json,
     );
+    const imageGeneration = extractImageGenerationUsage(
+      parseCodexSseResponse(result.text) || result.json,
+      result.upstreamPayload,
+    );
     const quotaState = settleRelayQuota(
       quotaAdmission,
       usage,
       result.credential.id,
+      imageGeneration,
     );
     quotaAdmission = null;
     let responsePayload: Record<string, unknown>;
@@ -536,6 +550,7 @@ async function handleImagesProxy(
         model: imageRequest.model,
         statusCode,
         usage,
+        imageGeneration,
         errorCode,
         errorMessage: message.slice(0, 500),
         requestBody: imageRequest.requestBody,
@@ -558,9 +573,10 @@ async function handleImagesProxy(
       credentialEmail: result.credential.email,
       requestType: input.requestType,
       stream: false,
-      model: imageRequest.model,
+      model: stringValue(imageRequest.payload.model) || imageRequest.model,
       statusCode: 200,
       usage,
+      imageGeneration,
       requestBody: imageRequest.requestBody,
       forwardedBody: result.upstreamPayload,
       upstreamHeaders: result.response.headers,
@@ -644,7 +660,7 @@ async function forwardImagesStream(input: {
       bodyText: errorText,
     });
     clearReplayForRequest({
-      model: input.imageRequest.model,
+      model: stringValue(input.imageRequest.payload.model) || input.imageRequest.model,
       request: input.request,
       payload: upstreamPayload,
       info: errorInfo,
@@ -694,7 +710,8 @@ async function forwardImagesStream(input: {
           },
           onCompleted: (responsePayload) => {
             const usage = extractUsageFromCodexResponse(responsePayload);
-            settleRelayQuota(input.quotaAdmission, usage, credential.id);
+            const imageGeneration = extractImageGenerationUsage(responsePayload, upstreamPayload);
+            settleRelayQuota(input.quotaAdmission, usage, credential.id, imageGeneration);
             recordChannelSuccess(input.channel);
             appendSuccessLog({
               request: input.request,
@@ -706,9 +723,10 @@ async function forwardImagesStream(input: {
               credentialEmail: credential.email,
               requestType: input.requestType,
               stream: true,
-              model: input.imageRequest.model,
+              model: stringValue(input.imageRequest.payload.model) || input.imageRequest.model,
               statusCode: response.status,
               usage,
+              imageGeneration,
               requestBody: input.imageRequest.requestBody,
               forwardedBody: upstreamPayload,
               upstreamHeaders: response.headers,
@@ -733,7 +751,7 @@ async function forwardImagesStream(input: {
               credentialEmail: credential.email,
               requestType: input.requestType,
               stream: true,
-              model: input.imageRequest.model,
+              model: stringValue(input.imageRequest.payload.model) || input.imageRequest.model,
               statusCode: 502,
               usage: emptyUsage(),
               errorCode: "stream_error",
@@ -856,9 +874,10 @@ export async function handleChatCompletions(request: Request) {
               onFirstToken: () => {
                 timing.mark("stream_first_token", "收到首字输出");
               },
-              onCompleted: (usage) => {
+              onCompleted: (usage, responsePayload) => {
                 const subscriptionId = quotaAdmission?.subscriptionId;
-                settleRelayQuota(quotaAdmission, usage, credential.id);
+                const imageGeneration = extractImageGenerationUsage(responsePayload, upstreamPayload);
+                settleRelayQuota(quotaAdmission, usage, credential.id, imageGeneration);
                 quotaAdmission = null;
                 recordChannelSuccess(channel!);
                 appendSuccessLog({
@@ -874,6 +893,7 @@ export async function handleChatCompletions(request: Request) {
                   model,
                   statusCode: 200,
                   usage,
+                  imageGeneration,
                   requestBody: input,
                   forwardedBody: upstreamPayload,
                   upstreamHeaders: response.headers,
@@ -971,10 +991,12 @@ export async function handleChatCompletions(request: Request) {
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(raw),
     );
+    const imageGeneration = extractImageGenerationUsage(raw, result.upstreamPayload);
     const quotaState = settleRelayQuota(
       quotaAdmission,
       usage,
       result.credential.id,
+      imageGeneration,
     );
     quotaAdmission = null;
     captureReplayForResponse({
@@ -997,6 +1019,7 @@ export async function handleChatCompletions(request: Request) {
       model,
       statusCode: 200,
       usage,
+      imageGeneration,
       requestBody: input,
       forwardedBody: result.upstreamPayload,
       upstreamHeaders: result.response.headers,
@@ -1106,8 +1129,9 @@ async function handleRawCodexProxy(
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(result.json),
     );
+    const imageGeneration = extractImageGenerationUsage(result.json, result.upstreamPayload);
     const quotaState = result.response.ok
-      ? settleRelayQuota(quotaAdmission, usage, result.credential.id)
+      ? settleRelayQuota(quotaAdmission, usage, result.credential.id, imageGeneration)
       : releaseRelayQuota(quotaAdmission);
     quotaAdmission = null;
     let responseErrorInfo: CodexUpstreamErrorInfo | null = null;
@@ -1152,6 +1176,7 @@ async function handleRawCodexProxy(
       model,
       statusCode: result.response.status,
       usage,
+      imageGeneration,
       ...(responseErrorInfo
         ? {
             errorCode: responseErrorInfo.code,
@@ -1299,10 +1324,12 @@ async function forwardCodexStream(input: {
         ),
         {
           onCompleted: (usage, responsePayload) => {
+            const imageGeneration = extractImageGenerationUsage(responsePayload, upstreamPayload);
             const quotaState = settleRelayQuota(
               input.quotaAdmission,
               usage,
               credential.id,
+              imageGeneration,
             );
             if (quotaState) {
               mergeHeaders(
@@ -1330,6 +1357,7 @@ async function forwardCodexStream(input: {
               model,
               statusCode: response.status,
               usage,
+              imageGeneration,
               requestBody: input.requestBody,
               forwardedBody: upstreamPayload,
               upstreamHeaders: response.headers,
@@ -1660,6 +1688,7 @@ function appendSuccessLog(input: {
   model: string;
   statusCode: number;
   usage: UsageSnapshot;
+  imageGeneration?: ImageGenerationUsage | null;
   errorCode?: string;
   errorMessage?: string;
   requestBody?: unknown;
@@ -1697,6 +1726,14 @@ function appendSuccessLog(input: {
         appendRequestLogWithAutoPrune(logPayload),
       )
     : appendRequestLogWithAutoPrune(logPayload);
+  if (input.imageGeneration) {
+    appendRequestLogWithAutoPrune({
+      ...logPayload,
+      requestType: `${input.requestType}.image_generation.billing`,
+      model: input.imageGeneration.model,
+      usage: input.imageGeneration.usage,
+    });
+  }
   appendOptionalRequestDetail(logId, {
     request: input.request,
     full: getFullRequestLoggingSetting(),
@@ -2101,16 +2138,42 @@ function settleRelayQuota(
   admission: TenantQuotaAdmission | null | undefined,
   usage: UsageSnapshot,
   credentialId: string,
+  imageGeneration?: ImageGenerationUsage | null,
 ) {
   if (!admission) return null;
-  if (!admission.price) {
-    usage.costNanoUsd = null;
-    usage.pricingComplete = false;
-    recordCredentialPricedUsage(credentialId, BigInt(0), false);
+  const mainCost = applyUsagePrice(usage, admission.price);
+  const imageCost = imageGeneration
+    ? applyUsagePrice(
+        imageGeneration.usage,
+        resolveConfiguredModelPrice(imageGeneration.model),
+      )
+    : BigInt(0);
+  const pricingComplete = usage.pricingComplete === true &&
+    (!imageGeneration || imageGeneration.usage.pricingComplete === true);
+  const totalCost = mainCost + imageCost;
+  recordCredentialPricedUsage(credentialId, totalCost, pricingComplete);
+  if (!pricingComplete) {
     releaseTenantRequest(admission.requestId);
     return null;
   }
-  const cost = calculateRequestCost(admission.price, {
+  return admission.state
+    ? settleTenantRequest({
+        requestId: admission.requestId,
+        actualNanoUsd: totalCost,
+      })
+    : null;
+}
+
+function applyUsagePrice(
+  usage: UsageSnapshot,
+  price: ReturnType<typeof resolveConfiguredModelPrice>,
+) {
+  if (!price) {
+    usage.costNanoUsd = null;
+    usage.pricingComplete = false;
+    return BigInt(0);
+  }
+  const cost = calculateRequestCost(price, {
     inputTokens: usage.promptTokens,
     outputTokens: usage.completionTokens,
     cachedInputTokens: usage.cachedTokens,
@@ -2118,21 +2181,15 @@ function settleRelayQuota(
     reasoningTokens: usage.reasoningTokens,
   });
   usage.costNanoUsd = String(cost.totalNanoUsd);
-  usage.priceModel = admission.price.pricedModel;
-  usage.priceVersion = admission.price.version;
-  usage.inputNanoUsdPerToken = String(admission.price.inputNanoUsdPerToken);
-  usage.outputNanoUsdPerToken = String(admission.price.outputNanoUsdPerToken);
-  usage.cachedInputNanoUsdPerToken = String(admission.price.cachedInputNanoUsdPerToken);
-  usage.cacheWriteNanoUsdPerToken = String(admission.price.cacheWriteNanoUsdPerToken);
-  usage.reasoningNanoUsdPerToken = String(admission.price.reasoningNanoUsdPerToken);
+  usage.priceModel = price.pricedModel;
+  usage.priceVersion = price.version;
+  usage.inputNanoUsdPerToken = String(price.inputNanoUsdPerToken);
+  usage.outputNanoUsdPerToken = String(price.outputNanoUsdPerToken);
+  usage.cachedInputNanoUsdPerToken = String(price.cachedInputNanoUsdPerToken);
+  usage.cacheWriteNanoUsdPerToken = String(price.cacheWriteNanoUsdPerToken);
+  usage.reasoningNanoUsdPerToken = String(price.reasoningNanoUsdPerToken);
   usage.pricingComplete = true;
-  recordCredentialPricedUsage(credentialId, cost.totalNanoUsd, true);
-  return admission.state
-    ? settleTenantRequest({
-        requestId: admission.requestId,
-        actualNanoUsd: cost.totalNanoUsd,
-      })
-    : null;
+  return cost.totalNanoUsd;
 }
 
 function releaseRelayQuota(admission: TenantQuotaAdmission | null | undefined) {
