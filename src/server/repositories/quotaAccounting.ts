@@ -76,6 +76,47 @@ export function settleSubscriptionQuota(input: { requestId: string; actualNanoUs
 }
 export function releaseSubscriptionQuota(requestId: string) { return getMainOrm().transaction((tx) => { const row = tx.select().from(quotaReservations).where(eq(quotaReservations.requestId, requestId)).get(); if (row?.status === "active") release(tx, row, "released"); }); }
 export function getSubscriptionQuotaState(subscriptionId: string) { return readState(getMainOrm(), subscriptionId); }
+export function synchronizeSubscriptionQuotaWindows(
+  subscriptionIds: string[],
+  resetsAt: Partial<Record<QuotaWindowKind, string>>,
+  now = new Date(),
+) {
+  if (!subscriptionIds.length) return 0;
+  const events: QuotaWindowAuditEvent[] = [];
+  const updatedAt = now.toISOString();
+  const advanced = getMainOrm().transaction((tx) => {
+    let count = 0;
+    for (const subscriptionId of subscriptionIds) {
+      for (const kind of ["5h", "7d"] as const) {
+        const incomingResetsAt = resetsAt[kind];
+        if (!incomingResetsAt) continue;
+        const incomingReset = resetInstant(incomingResetsAt);
+        const row = tx.select().from(subscriptionQuotaWindows).where(and(eq(subscriptionQuotaWindows.subscriptionId, subscriptionId), eq(subscriptionQuotaWindows.windowKind, kind))).get();
+        if (!row || incomingReset <= resetInstant(row.resetsAt)) continue;
+        tx.update(subscriptionQuotaWindows).set({
+          startedAt: new Date(incomingReset - windowDurationMs(kind)).toISOString(),
+          resetsAt: incomingResetsAt,
+          settledNanoUsd: "0",
+          reservedNanoUsd: "0",
+          updatedAt,
+        }).where(and(eq(subscriptionQuotaWindows.subscriptionId, subscriptionId), eq(subscriptionQuotaWindows.windowKind, kind))).run();
+        events.push({
+          action: "subscription.quota_window_synchronized",
+          subscriptionId,
+          kind,
+          previousResetsAt: row.resetsAt,
+          incomingResetsAt,
+          settledNanoUsd: row.settledNanoUsd,
+          reservedNanoUsd: row.reservedNanoUsd,
+        });
+        count += 1;
+      }
+    }
+    return count;
+  });
+  for (const event of events) appendQuotaWindowAuditEvent(event);
+  return advanced;
+}
 export function calibrateSubscriptionQuota(subscriptionId: string, values: Record<QuotaWindowKind, { startedAt: string; settledNanoUsd: bigint }>) {
   return getMainOrm().transaction((tx) => {
     const now = new Date().toISOString();
@@ -96,14 +137,14 @@ function toState(row: typeof subscriptionQuotaWindows.$inferSelect): Subscriptio
 function max(a: bigint, b: bigint) { return a > b ? a : b; }
 
 type QuotaWindowAuditEvent = {
-  action: "subscription.quota_window_advanced" | "subscription.quota_window_regression_ignored";
+  action: "subscription.quota_window_advanced" | "subscription.quota_window_regression_ignored" | "subscription.quota_window_synchronized";
   subscriptionId: string;
   kind: QuotaWindowKind;
   previousResetsAt: string;
   incomingResetsAt: string;
   settledNanoUsd: string;
   reservedNanoUsd: string;
-  requestId: string;
+  requestId?: string;
 };
 
 function appendQuotaWindowAuditEvent(event: QuotaWindowAuditEvent) {
@@ -124,6 +165,10 @@ function appendQuotaWindowAuditEvent(event: QuotaWindowAuditEvent) {
   } catch (error) {
     console.error("[RelayAPI][subscription.quota_window.audit] error", error);
   }
+}
+
+function windowDurationMs(kind: QuotaWindowKind) {
+  return kind === "5h" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
 }
 
 function resetInstant(value: string) {

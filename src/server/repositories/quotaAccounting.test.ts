@@ -43,4 +43,23 @@ describe("subscription quota accounting", () => {
     quota.reserveSubscriptionQuota({ requestId: "r8", subscriptionId: "sub5", reserveNanoUsd: 10n, windows: { "5h": { limitNanoUsd: 100n, resetsAt: "2026-07-11T05:00:00Z" }, "7d": { limitNanoUsd: 1000n, resetsAt: "2026-07-18T00:00:00Z" } }, now, expiresAt: new Date(now.getTime() + 1000) });
     expect(quota.getSubscriptionQuotaState("sub5").windows["5h"]).toMatchObject({ settledNanoUsd: 7n, reservedNanoUsd: 10n });
   });
+  test("synchronizes a new upstream boundary to every initialized subscription", () => {
+    const now = new Date("2026-07-15T00:00:00Z");
+    const windows = { "5h": { limitNanoUsd: 100n, resetsAt: "2026-07-15T05:00:00Z" }, "7d": { limitNanoUsd: 1000n, resetsAt: "2026-07-15T00:00:00Z" } };
+    for (const [index, subscriptionId] of ["sub6", "sub7"].entries()) {
+      quota.reserveSubscriptionQuota({ requestId: `sync-${index}`, subscriptionId, reserveNanoUsd: 10n, windows, now: new Date("2026-07-14T23:00:00Z"), expiresAt: new Date("2026-07-15T01:00:00Z") });
+      quota.settleSubscriptionQuota({ requestId: `sync-${index}`, actualNanoUsd: 7n });
+    }
+
+    expect(quota.synchronizeSubscriptionQuotaWindows(["sub6", "sub7"], { "7d": "2026-07-22T00:00:00Z" }, now)).toBe(2);
+    for (const subscriptionId of ["sub6", "sub7"]) {
+      expect(quota.getSubscriptionQuotaState(subscriptionId).windows["7d"]).toMatchObject({
+        startedAt: "2026-07-15T00:00:00.000Z",
+        resetsAt: "2026-07-22T00:00:00Z",
+        settledNanoUsd: 0n,
+        reservedNanoUsd: 0n,
+      });
+    }
+    expect(quota.synchronizeSubscriptionQuotaWindows(["sub6", "sub7"], { "7d": "2026-07-21T00:00:00Z" }, now)).toBe(0);
+  });
 });

@@ -13,6 +13,8 @@ import {
   getCodexQuotaCacheByCredentialId,
   upsertCodexQuotaCache,
 } from "@/src/server/repositories/quota";
+import { synchronizeSubscriptionQuotaWindows } from "@/src/server/repositories/quotaAccounting";
+import { listTenantSubscriptions } from "@/src/server/repositories/tenantSubscriptions";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
 import {
   getEffectiveCodexUserAgent,
@@ -219,6 +221,16 @@ export async function getCodexQuota({
       cache: reportToRecord(report),
       retrievedAt: report.retrieved_at,
     });
+    const refreshedCredentialId = credential.id;
+    synchronizeSubscriptionQuotaWindows(
+      listTenantSubscriptions().filter((subscription) => subscription.credentialId === refreshedCredentialId).map((subscription) => subscription.id),
+      Object.fromEntries(report.windows.flatMap((window) => {
+        if (!window.resets_at) return [];
+        if (window.id === "code-5h") return [["5h", window.resets_at]];
+        if (window.id === "code-7d") return [["7d", window.resets_at]];
+        return [];
+      })),
+    );
     recordCodexQuotaObservation({
       credentialId: credential.id,
       planType: report.plan_type,
