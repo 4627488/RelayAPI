@@ -37,6 +37,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 const SENSITIVE_UPSTREAM_RESPONSE_HEADERS = new Set([
+  "api-key",
   "authorization",
   "chatgpt-account-id",
   "cookie",

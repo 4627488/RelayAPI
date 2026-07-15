@@ -3,7 +3,7 @@ import "server-only";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type, X-API-Key, OpenAI-API-Key, X-Requested-With",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, API-Key, X-API-Key, OpenAI-API-Key, X-Requested-With",
   "Access-Control-Max-Age": "86400",
 } as const;
 

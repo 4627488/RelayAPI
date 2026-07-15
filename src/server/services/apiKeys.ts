@@ -384,7 +384,12 @@ function extractApiKey(request: Request) {
   if (bearerMatch) {
     return bearerMatch[1].trim();
   }
-  return (request.headers.get("x-api-key") || "").trim();
+  return (
+    request.headers.get("x-api-key") ||
+    request.headers.get("api-key") ||
+    request.headers.get("openai-api-key") ||
+    ""
+  ).trim();
 }
 
 function hashApiKey(key: string) {

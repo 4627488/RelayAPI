@@ -32,6 +32,7 @@ const loggedErrors = new WeakSet<object>();
 const REDACTED = "[REDACTED]";
 const SENSITIVE_LOG_KEYS = new Set([
   "access_token",
+  "api-key",
   "api_key",
   "apikey",
   "authorization",

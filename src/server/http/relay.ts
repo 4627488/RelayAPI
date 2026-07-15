@@ -78,6 +78,7 @@ const DETAIL_TEXT_LIMIT = 512 * 1024;
 const JSON_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 const MULTIPART_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
 const SENSITIVE_HEADER_NAMES = new Set([
+  "api-key",
   "authorization",
   "cookie",
   "set-cookie",
