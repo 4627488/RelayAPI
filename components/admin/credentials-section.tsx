@@ -70,6 +70,7 @@ import {
   downloadCredentialsExport,
   finishCodexOAuth,
   getCredentialQuota,
+  getCredentialResetEvents,
   getCredentialResetCredits,
   importCredentialJson,
   refreshCredential,
@@ -79,6 +80,7 @@ import {
   type CodexResetCreditsReport,
   type OAuthStartResponse,
 } from "@/lib/admin-api";
+import { QuotaResetHistorySheet } from "@/components/quota-reset-history-sheet";
 import type {
   ChannelRecord,
   CodexCredentialRecord,
@@ -660,9 +662,13 @@ export function CredentialsSection({
                       </div>
 
                       <div className="grid gap-2 text-sm">
-                        <span className="text-muted-foreground">
-                          剩余额度：
-                        </span>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-muted-foreground">剩余额度：</span>
+                          <QuotaResetHistorySheet
+                            description={`${credential.email || credential.accountId || credential.id} · ${codexPlanLabel(credential.planType)}`}
+                            load={() => getCredentialResetEvents(credential.id).then((result) => result.events)}
+                          />
+                        </div>
                         <div className="rounded-lg border border-border/60 bg-muted/35 p-3">
                           <QuotaProgressCell
                             errorMessage={quotaErrors[credential.id]}

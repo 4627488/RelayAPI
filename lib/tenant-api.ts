@@ -132,6 +132,13 @@ export function getTenantQuota() {
   return tenantRequest<TenantQuotaReport>("/api/tenant/quota");
 }
 
+export function getTenantSubscriptionResetEvents(id: string) {
+  return tenantRequest<{
+    subscription: { id: string; name: string };
+    events: import("@/lib/admin-api").CredentialQuotaResetEvent[];
+  }>(`/api/tenant/subscriptions/${encodeURIComponent(id)}/reset-events`);
+}
+
 export function getTenantCostAnalysis(subscriptionId: string) {
   return tenantRequest<import("@/lib/admin-api").CostAnalysis>(
     `/api/tenant/cost-analysis?subscriptionId=${encodeURIComponent(subscriptionId)}`,

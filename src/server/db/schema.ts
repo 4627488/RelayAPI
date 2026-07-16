@@ -200,6 +200,28 @@ export const subscriptionQuotaWindows = sqliteTable(
   ],
 );
 
+export const credentialQuotaResetEvents = sqliteTable(
+  "credential_quota_reset_events",
+  {
+    id: text("id").primaryKey(),
+    credentialId: text("credential_id").notNull(),
+    windowKind: text("window_kind").notNull(),
+    source: text("source").notNull(),
+    previousResetsAt: text("previous_resets_at"),
+    nextResetsAt: text("next_resets_at"),
+    previousUsedPercent: real("previous_used_percent"),
+    windowsReset: integer("windows_reset"),
+    occurredAt: text("occurred_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_credential_quota_reset_events_credential").on(
+      table.credentialId,
+      table.occurredAt,
+    ),
+  ],
+);
+
 export const quotaReservations = sqliteTable(
   "quota_reservations",
   {

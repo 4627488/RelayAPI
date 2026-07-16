@@ -458,6 +458,23 @@ export type QuotaAdministration = {
   };
 };
 
+export type CredentialQuotaResetEvent = {
+  id: string;
+  credentialId?: string;
+  windowKind: "5h" | "7d" | "all";
+  source: "natural" | "reset_credit";
+  previousResetsAt: string | null;
+  nextResetsAt: string | null;
+  previousUsedPercent: number | null;
+  windowsReset: number | null;
+  occurredAt: string;
+};
+
+export type CredentialQuotaResetHistory = {
+  credential: { id: string; email: string; accountId: string; planType: string };
+  events: CredentialQuotaResetEvent[];
+};
+
 export function getQuotaAdministration() {
   return adminRequest<QuotaAdministration>("/api/admin/quota");
 }
@@ -675,6 +692,12 @@ export function getCredentialResetCredits(
   const suffix = params.size ? `?${params.toString()}` : "";
   return adminRequest<CodexResetCreditsReport>(
     `/api/admin/codex/credentials/${encodePath(id)}/quota/reset-credits${suffix}`,
+  );
+}
+
+export function getCredentialResetEvents(id: string) {
+  return adminRequest<CredentialQuotaResetHistory>(
+    `/api/admin/codex/credentials/${encodePath(id)}/quota/reset-events`,
   );
 }
 

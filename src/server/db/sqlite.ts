@@ -681,6 +681,23 @@ function migrateMainDb(db: SqliteDatabase) {
     CREATE INDEX idx_oidc_authorization_codes_expiry
       ON oidc_authorization_codes(expires_at);
   `);
+
+  applyMigration(db, "016_credential_quota_reset_events", `
+    CREATE TABLE credential_quota_reset_events (
+      id TEXT PRIMARY KEY,
+      credential_id TEXT NOT NULL,
+      window_kind TEXT NOT NULL,
+      source TEXT NOT NULL,
+      previous_resets_at TEXT,
+      next_resets_at TEXT,
+      previous_used_percent REAL,
+      windows_reset INTEGER,
+      occurred_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX idx_credential_quota_reset_events_credential
+      ON credential_quota_reset_events(credential_id, occurred_at);
+  `);
 }
 
 export function setSqliteTimeZone(timeZone: string) {

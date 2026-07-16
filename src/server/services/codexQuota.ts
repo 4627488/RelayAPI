@@ -15,6 +15,10 @@ import {
 } from "@/src/server/repositories/quota";
 import { synchronizeSubscriptionQuotaWindows } from "@/src/server/repositories/quotaAccounting";
 import { listTenantSubscriptions } from "@/src/server/repositories/tenantSubscriptions";
+import {
+  hasRecentResetCreditEvent,
+  insertCredentialQuotaResetEvent,
+} from "@/src/server/repositories/credentialQuotaResetEvents";
 import { ensureFreshCredential } from "@/src/server/services/codexCredentials";
 import {
   getEffectiveCodexUserAgent,
@@ -215,6 +219,11 @@ export async function getCodexQuota({
     }
     // Quota cache belongs to the main DB because automatic channel routing may
     // use current quota state in a later routing slice.
+    recordNaturalQuotaResets(
+      credential.id,
+      getCodexQuotaCacheByCredentialId(credential.id)?.cache,
+      report,
+    );
     upsertCodexQuotaCache({
       credentialId: credential.id,
       status: report.status,
@@ -343,6 +352,20 @@ export async function consumeCodexResetCredit({
     });
 
     const root = objectFrom(body) || {};
+    const consumedAt = new Date().toISOString();
+    const windowsReset = numberPtr(
+      firstValue(root.windows_reset, root.windowsReset),
+    );
+    insertCredentialQuotaResetEvent({
+      credentialId: credential.id,
+      windowKind: "all",
+      source: "reset_credit",
+      previousResetsAt: null,
+      nextResetsAt: null,
+      previousUsedPercent: null,
+      windowsReset,
+      occurredAt: consumedAt,
+    });
     return {
       provider: "codex",
       credential_id: credential.id,
@@ -352,10 +375,8 @@ export async function consumeCodexResetCredit({
       credit_id: selectedCreditId,
       redeem_request_id: requestId,
       code: cleanString(root.code),
-      windows_reset: numberPtr(
-        firstValue(root.windows_reset, root.windowsReset),
-      ),
-      consumed_at: new Date().toISOString(),
+      windows_reset: windowsReset,
+      consumed_at: consumedAt,
       ...(includeRaw ? { raw: body } : {}),
     };
   } catch (error) {
@@ -369,6 +390,37 @@ export async function consumeCodexResetCredit({
       },
     });
     throw error;
+  }
+}
+
+function recordNaturalQuotaResets(
+  credentialId: string,
+  previousCache: Record<string, unknown> | undefined,
+  report: CodexQuotaReport,
+) {
+  if (!previousCache) return;
+  const previousWindows = arrayFrom((previousCache as { windows?: unknown }).windows);
+  const recentRedemption = hasRecentResetCreditEvent(
+    credentialId,
+    new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+  );
+  for (const window of report.windows) {
+    if (window.id !== "code-5h" && window.id !== "code-7d" || !window.resets_at) continue;
+    const previous = previousWindows.map(objectFrom).find((item) => item?.id === window.id);
+    const previousResetsAt = cleanString(previous?.resets_at);
+    if (!previousResetsAt) continue;
+    const advanceMs = Date.parse(window.resets_at) - Date.parse(previousResetsAt);
+    if (!Number.isFinite(advanceMs) || advanceMs <= 60_000 || recentRedemption) continue;
+    insertCredentialQuotaResetEvent({
+      credentialId,
+      windowKind: window.id === "code-5h" ? "5h" : "7d",
+      source: "natural",
+      previousResetsAt,
+      nextResetsAt: window.resets_at,
+      previousUsedPercent: numberPtr(previous?.used_percent),
+      windowsReset: 1,
+      occurredAt: report.retrieved_at,
+    });
   }
 }
 
