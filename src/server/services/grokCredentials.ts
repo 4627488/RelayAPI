@@ -1,0 +1,21 @@
+import "server-only";
+
+import { HttpError } from "@/src/server/http/errors";
+import { deleteGrokCredential, getGrokCredentialWithTokens, listGrokCredentials, saveGrokCredential, updateGrokCredential } from "@/src/server/repositories/grokCredentials";
+import { grokJwtIdentity, pollGrokDeviceFlow, refreshGrokTokens, startGrokDeviceFlow, type GrokDeviceSession } from "@/src/server/grok/auth";
+import { randomId } from "@/src/server/services/crypto";
+
+const sessions = new Map<string, GrokDeviceSession>();
+const refreshes = new Map<string, Promise<ReturnType<typeof saveGrokCredential>>>();
+
+export function listPublicGrokCredentials() { return listGrokCredentials(); }
+export async function startGrokOAuth() { const session = await startGrokDeviceFlow(randomId("grok_oauth")); sessions.set(session.id, session); return { sessionId: session.id, userCode: session.userCode, verificationUri: session.verificationUri, verificationUriComplete: session.verificationUriComplete, expiresAt: new Date(session.expiresAt).toISOString(), interval: session.interval }; }
+export async function finishGrokOAuth(sessionId: string) { const session = sessions.get(sessionId); if (!session) throw new HttpError(404, "grok_oauth_session_not_found", "Grok OAuth session was not found"); const tokens = await pollGrokDeviceFlow(session); if (!tokens) return null; sessions.delete(sessionId); const identity = grokJwtIdentity(tokens.id_token); return saveGrokCredential({ id: randomId("grok"), authType: "oauth", email: identity.email, subject: identity.subject, tokens }); }
+export function importGrokApiKey(apiKey: string, name = "") { const key = apiKey.trim(); if (!key) throw new HttpError(400, "grok_api_key_required", "Grok API key is required"); return saveGrokCredential({ id: randomId("grok"), authType: "api_key", email: name.trim(), tokens: { access_token: "", refresh_token: "", id_token: "", token_type: "Bearer", expired: "", token_endpoint: "", api_key: key }, planType: "api-key" }); }
+export async function ensureFreshGrokCredential(id: string) { const credential = getGrokCredentialWithTokens(id); if (!credential) throw new HttpError(404, "grok_credential_not_found", "Grok credential not found"); if (credential.authType === "api_key" || !needsRefresh(credential.expiresAt)) return credential; const existing = refreshes.get(id); if (existing) return await existing; const task = refreshCredential(credential).finally(() => refreshes.delete(id)); refreshes.set(id, task); return await task; }
+export async function forceRefreshGrokCredential(id: string) { const credential = getGrokCredentialWithTokens(id); if (!credential) throw new HttpError(404, "grok_credential_not_found", "Grok credential not found"); return await refreshCredential(credential); }
+export function patchGrokCredential(id: string, input: Record<string, unknown>) { const updated = updateGrokCredential(id, { ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}), ...(input.priority !== undefined ? { priority: integer(input.priority, 100) } : {}), ...(input.weight !== undefined ? { weight: integer(input.weight, 1) } : {}) }); if (!updated) throw new HttpError(404, "grok_credential_not_found", "Grok credential not found"); return updated; }
+export function removeGrokCredential(id: string) { if (!deleteGrokCredential(id)) throw new HttpError(404, "grok_credential_not_found", "Grok credential not found"); }
+async function refreshCredential(credential: NonNullable<ReturnType<typeof getGrokCredentialWithTokens>>) { if (!credential.tokens.refresh_token) throw new HttpError(401, "grok_refresh_token_missing", "Grok credential has no refresh token"); const fresh = await refreshGrokTokens(credential.tokens.refresh_token, credential.tokens.token_endpoint); return saveGrokCredential({ id: credential.id, authType: "oauth", email: credential.email, subject: credential.subject, planType: credential.planType, tokens: { ...fresh, refresh_token: fresh.refresh_token || credential.tokens.refresh_token } }); }
+function needsRefresh(value: string | null) { return !value || Date.parse(value) <= Date.now() + 5 * 60_000; }
+function integer(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : fallback; }

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 
 import { getMainOrm } from "@/src/server/db/sqlite";
 import { codexCredentials } from "@/src/server/db/schema";
@@ -38,6 +38,7 @@ export function listCodexCredentials(): CodexCredentialRecord[] {
   const rows = getMainOrm()
     .select()
     .from(codexCredentials)
+    .where(eq(codexCredentials.provider, "codex"))
     .orderBy(desc(codexCredentials.createdAt))
     .all();
   return rows.map((row: CodexCredentialRow) => toCodexCredentialRecord(row));
@@ -47,6 +48,7 @@ export function listCodexCredentialsWithTokens(): CodexCredentialWithTokens[] {
   const rows = getMainOrm()
     .select()
     .from(codexCredentials)
+    .where(eq(codexCredentials.provider, "codex"))
     .orderBy(desc(codexCredentials.createdAt))
     .all();
   return rows.map((row: CodexCredentialRow) =>
@@ -60,7 +62,7 @@ export function getCodexCredentialById(
   const row = getMainOrm()
     .select()
     .from(codexCredentials)
-    .where(eq(codexCredentials.id, id))
+    .where(and(eq(codexCredentials.id, id), eq(codexCredentials.provider, "codex")))
     .get();
   return row ? toCodexCredentialRecord(row) : null;
 }
@@ -69,7 +71,7 @@ export function getCodexCredentialWithTokens(id: string) {
   const row = getMainOrm()
     .select()
     .from(codexCredentials)
-    .where(eq(codexCredentials.id, id))
+    .where(and(eq(codexCredentials.id, id), eq(codexCredentials.provider, "codex")))
     .get();
   return row ? toCodexCredentialWithTokens(row) : null;
 }
@@ -78,6 +80,7 @@ export function getFirstCodexCredential() {
   const row = getMainOrm()
     .select()
     .from(codexCredentials)
+    .where(eq(codexCredentials.provider, "codex"))
     .orderBy(asc(codexCredentials.createdAt))
     .limit(1)
     .get();

@@ -8,6 +8,7 @@ import type {
 } from "@/src/shared/types/entities";
 import {
   deleteChannel,
+  getChannelById,
   insertChannel,
   listChannels,
   markChannelUsed,
@@ -19,6 +20,7 @@ import {
   markCodexCredentialUsed,
   updateCodexCredential,
 } from "@/src/server/repositories/codexCredentials";
+import { getGrokCredentialWithTokens } from "@/src/server/repositories/grokCredentials";
 import {
   appendChannelHealthEvent,
   channelUsageHealth,
@@ -40,6 +42,7 @@ const THINKING_SUFFIX_LEVELS = new Set([
 ]);
 
 export interface CreateChannelInput {
+  provider?: "codex" | "grok";
   name?: string;
   baseUrl?: string;
   credentialId?: string;
@@ -61,16 +64,18 @@ export function listChannelRecords() {
 }
 
 export function createChannel(input: CreateChannelInput) {
-  const credentials = assertChannelCredentials(input);
+  const provider = input.provider === "grok" ? "grok" : "codex";
+  const credentials = assertChannelCredentials(input, provider);
   const primaryCredential = credentials[0];
   const channel = insertChannel({
     id: randomId("ch"),
     name:
       cleanString(input.name) ||
       (primaryCredential.email
-        ? `Codex · ${primaryCredential.email}`
-        : `Codex · ${primaryCredential.id}`),
-    baseUrl: cleanString(input.baseUrl) || serverConfig.codexBaseUrl,
+        ? `${provider === "grok" ? "Grok" : "Codex"} · ${primaryCredential.email}`
+        : `${provider === "grok" ? "Grok" : "Codex"} · ${primaryCredential.id}`),
+    provider,
+    baseUrl: cleanString(input.baseUrl) || (provider === "grok" ? "https://cli-chat-proxy.grok.com/v1" : serverConfig.codexBaseUrl),
     credentialIds: credentials.map((credential) => credential.id),
     enabled: input.enabled ?? true,
     priority: normalizeInteger(input.priority, 100),
@@ -95,7 +100,7 @@ export function patchChannel(
   const credentialPatch =
     input.credentialIds !== undefined || input.credentialId !== undefined
       ? {
-          credentialIds: assertChannelCredentials(input).map(
+          credentialIds: assertChannelCredentials(input, getChannelById(id)?.provider || "codex").map(
             (credential) => credential.id,
           ),
         }
@@ -412,6 +417,9 @@ function isChannelAvailable(
   baseModel: string,
   now: number,
 ) {
+  if (channel.provider !== "codex") {
+    return false;
+  }
   if (!channel.enabled || channel.status === "disabled") {
     return false;
   }
@@ -434,7 +442,7 @@ function isChannelAvailable(
   return channel.credentialIds.length > 0;
 }
 
-function assertChannelCredentials(input: CreateChannelInput) {
+function assertChannelCredentials(input: CreateChannelInput, provider: "codex" | "grok" = "codex") {
   const credentialIds = cleanStringArray([
     ...(Array.isArray(input.credentialIds) ? input.credentialIds : []),
     ...(input.credentialId ? [input.credentialId] : []),
@@ -447,7 +455,9 @@ function assertChannelCredentials(input: CreateChannelInput) {
     );
   }
   return credentialIds.map((credentialId) => {
-    const credential = getCodexCredentialWithTokens(credentialId);
+    const credential = provider === "grok"
+      ? getGrokCredentialWithTokens(credentialId)
+      : getCodexCredentialWithTokens(credentialId);
     if (!credential) {
       throw new HttpError(
         400,

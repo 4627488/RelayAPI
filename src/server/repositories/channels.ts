@@ -14,6 +14,7 @@ type ChannelRow = typeof channelsTable.$inferSelect;
 
 export interface SaveChannelInput {
   id: string;
+  provider?: ChannelRecord["provider"];
   name: string;
   baseUrl: string;
   credentialId?: string;
@@ -77,7 +78,7 @@ export function insertChannel(input: SaveChannelInput) {
     .values({
       id: input.id,
       name: input.name,
-      provider: "codex",
+      provider: input.provider || "codex",
       baseUrl: input.baseUrl,
       credentialId: primaryCredentialId,
       enabled: input.enabled ? 1 : 0,
@@ -255,7 +256,7 @@ function toChannelRecord(
   return {
     id: row.id,
     name: row.name,
-    provider: "codex",
+    provider: row.provider === "grok" ? "grok" : "codex",
     baseUrl: row.baseUrl,
     credentialId: row.credentialId,
     credentialIds:

@@ -1,6 +1,7 @@
 import "server-only";
 
 import crypto from "node:crypto";
+import { handleGrokChatCompletions, handleGrokResponses, isGrokModel } from "@/src/server/http/grokRelay";
 
 import { createModelsResponse } from "@/src/server/codex/models";
 import {
@@ -51,6 +52,7 @@ import {
   type RequestLogInput,
 } from "@/src/server/repositories/logs";
 import { authenticateRelayRequest } from "@/src/server/services/apiKeys";
+import { listChannels } from "@/src/server/repositories/channels";
 import {
   recordChannelFailure,
   recordChannelSuccess,
@@ -107,7 +109,7 @@ export async function handleModels(request: Request) {
       new URL(request.url).searchParams.get("plan") ||
       credentials[0]?.planType ||
       "";
-    const payload = await timing.timeAsync(
+    let payload = await timing.timeAsync(
       "create_models",
       "生成模型列表",
       () =>
@@ -117,6 +119,12 @@ export async function handleModels(request: Request) {
           modelAllowlist: apiKey.modelAllowlist,
         }),
     );
+    if (listChannels().some((channel) => channel.provider === "grok" && channel.enabled)) {
+      const grokModels = ["grok-4.5", "grok-4.3"]
+        .filter((id) => apiKey.modelAllowlist.length === 0 || apiKey.modelAllowlist.includes(id))
+        .map((id) => ({ id, object: "model", owned_by: "xai" }));
+      payload = { ...payload, data: [...payload.data, ...grokModels] };
+    }
     const logId = appendRequestLogWithAutoPrune({
       startedAt,
       method: request.method,
@@ -156,6 +164,8 @@ export async function handleModels(request: Request) {
 }
 
 export async function handleOpenAIResponses(request: Request) {
+  const probe = await request.clone().json().catch(() => null) as Record<string, unknown> | null;
+  if (isGrokModel(probe?.model)) return handleGrokResponses(request);
   const startedAt = new Date().toISOString();
   const start = Date.now();
   const timing = createStageTimer();
@@ -771,6 +781,8 @@ async function forwardImagesStream(input: {
 }
 
 export async function handleChatCompletions(request: Request) {
+  const probe = await request.clone().json().catch(() => null) as Record<string, unknown> | null;
+  if (isGrokModel(probe?.model)) return handleGrokChatCompletions(request);
   const startedAt = new Date().toISOString();
   const start = Date.now();
   const timing = createStageTimer();

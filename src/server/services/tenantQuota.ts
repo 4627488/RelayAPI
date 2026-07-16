@@ -3,6 +3,7 @@ import "server-only";
 import { HttpError } from "@/src/server/http/errors";
 import { getCodexQuotaCacheByCredentialId } from "@/src/server/repositories/quota";
 import { getCodexCredentialById } from "@/src/server/repositories/codexCredentials";
+import { getGrokCredentialWithTokens } from "@/src/server/repositories/grokCredentials";
 import { getTenantSubscription, listActiveTenantSubscriptions } from "@/src/server/repositories/tenantSubscriptions";
 import { getSubscriptionQuotaState, releaseSubscriptionQuota, reserveSubscriptionQuota, settleSubscriptionQuota, SubscriptionQuotaCapacityError, type SubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
 import type { ModelPriceSnapshot } from "@/src/server/services/modelPricing";
@@ -29,9 +30,11 @@ export function subscriptionQuotaLimits(subscription: { units: number; unitsPerC
 export function admitTenantRequest(input: { tenantId: string; credentialId: string; requestId: string; model: string; now?: Date }): TenantQuotaAdmission {
   const price = resolveConfiguredModelPrice(input.model);
   const credential = getCodexCredentialById(input.credentialId);
-  if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
+  const grokCredential = credential ? null : getGrokCredentialWithTokens(input.credentialId);
+  if (!credential && !grokCredential) throw new HttpError(404, "credential_not_found", "Credential not found");
   const candidates = listActiveTenantSubscriptions(input.tenantId, input.now).filter((item) => item.credentialId === input.credentialId).sort((a, b) => b.priority - a.priority || availableRatio(b.id) - availableRatio(a.id));
   if (!candidates.length) throw new HttpError(403, "subscription_not_available", "No active subscription is assigned for the selected credential");
+  if (grokCredential) { const subscription = candidates[0]; return { requestId: input.requestId, tenantId: input.tenantId, subscriptionId: subscription.id, units: subscription.units, unitsPerCredential: subscription.unitsPerCredential, price, state: null }; }
   // Unknown prices must not turn into an outage. Keep the subscription association
   // for the request log, but defer monetary accounting until an admin sets a price.
   if (!price) {

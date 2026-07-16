@@ -241,6 +241,46 @@ export interface ProxyPoolRecordWithSecret extends Omit<
 }
 
 export type CodexUpstreamTransport = "http" | "websocket";
+export type ProviderId = "codex" | "grok";
+export type ProviderAuthType = "oauth" | "api_key";
+
+export interface GrokTokenBundle {
+  access_token: string;
+  refresh_token: string;
+  id_token: string;
+  token_type: string;
+  expired: string;
+  token_endpoint: string;
+  api_key: string;
+}
+
+export interface GrokCredentialRecord {
+  id: string;
+  provider: "grok";
+  authType: ProviderAuthType;
+  email: string;
+  subject: string;
+  planType: string;
+  enabled: boolean;
+  priority: number;
+  weight: number;
+  useGlobalProxy: boolean;
+  proxyPoolId: string | null;
+  proxy: PublicCredentialProxyConfig | null;
+  expiresAt: string | null;
+  lastRefreshAt: string | null;
+  lastUsedAt: string | null;
+  cooldownUntil: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export type GrokCredentialWithTokens = Omit<GrokCredentialRecord, "proxy"> & {
+  proxy: CredentialProxyConfig | null;
+  tokens: GrokTokenBundle;
+};
 
 export interface CodexTokenBundle {
   access_token: string;
@@ -312,7 +352,7 @@ export type TimeZoneRebuildStatus =
 export interface ChannelRecord {
   id: string;
   name: string;
-  provider: "codex";
+  provider: ProviderId;
   baseUrl: string;
   credentialId: string;
   credentialIds: string[];

@@ -94,6 +94,7 @@ import { LogsSection } from "@/components/admin/logs-section";
 import { ProxyPoolSection } from "@/components/admin/proxy-pool-section";
 import { AdminQuotaSection } from "@/components/admin/quota-section";
 import { SubscriptionAllocationSection } from "@/components/admin/subscription-allocation-section";
+import { GrokSection } from "@/components/admin/grok-section";
 import {
   adminErrorMessage,
   changeAdminPassword,
@@ -652,6 +653,7 @@ export function AdminWorkbench({
                   onRefreshData={refreshCredentialAndChannelData}
                   onUpdated={handleCredentialUpdated}
                 />
+                <GrokSection />
                 <div className="grid gap-3 xl:grid-cols-2">
                   <ChannelsSection
                     channels={channels}

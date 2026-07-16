@@ -16,6 +16,7 @@ import {
 import { randomId } from "@/src/server/services/crypto";
 import { getSubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
 import { codexPlanLabel, codexPlanShares } from "@/src/shared/codexPlans";
+import { getGrokCredentialWithTokens, listGrokCredentials } from "@/src/server/repositories/grokCredentials";
 import { subscriptionQuotaLimits } from "@/src/server/services/tenantQuota";
 
 export function listSubscriptions(tenantId?: string) {
@@ -62,16 +63,16 @@ export function getSubscriptionAllocationOverview() {
     items.push(subscription);
     byCredential.set(subscription.credentialId, items);
   }
-  const pools = listCodexCredentials().map((credential) => {
+  const pools = [...listCodexCredentials(), ...listGrokCredentials()].map((credential) => {
     const allocations = byCredential.get(credential.id) || [];
-    const capacityUnits = codexPlanShares(credential.planType);
+    const capacityUnits = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);
     const allocatedUnits = allocations
       .filter((item) => item.lifecycle === "active")
       .reduce((sum, item) => sum + item.units, 0);
     return {
       id: credential.id,
       email: credential.email,
-      accountId: credential.accountId,
+      accountId: credential.provider === "grok" ? credential.subject : credential.accountId,
       planType: credential.planType,
       enabled: credential.enabled,
       expiresAt: credential.expiresAt,
@@ -101,16 +102,16 @@ export function createSubscription(input: Record<string, unknown>) {
   const tenantId = clean(input.tenantId);
   const credentialId = clean(input.credentialId);
   if (!getTenantById(tenantId)) throw new HttpError(404, "tenant_not_found", "Tenant not found");
-  const credential = getCodexCredentialById(credentialId);
+  const credential = getCodexCredentialById(credentialId) || getGrokCredentialWithTokens(credentialId);
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
   if (!credential.enabled) throw new HttpError(400, "codex_credential_disabled", "Disabled credential cannot receive new allocations");
   const tenant = getTenantById(tenantId);
   if (!tenant?.enabled) throw new HttpError(400, "tenant_disabled", "Disabled tenant cannot receive new allocations");
   const units = positiveNumber(input.units, 1);
-  const unitsPerCredential = codexPlanShares(credential.planType);
+  const unitsPerCredential = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);
   return insertTenantSubscription({
     id: randomId("sub"), tenantId, credentialId,
-    name: clean(input.name) || `${codexPlanLabel(credential.planType)} ${units}/${unitsPerCredential}`,
+    name: clean(input.name) || `${credential.provider === "grok" ? "Grok" : codexPlanLabel(credential.planType)} ${units}/${unitsPerCredential}`,
     units, unitsPerCredential, enabled: input.enabled !== false,
     priority: integer(input.priority, 100),
     startsAt: date(input.startsAt) || new Date().toISOString(),
@@ -122,10 +123,10 @@ export function patchSubscription(id: string, input: Record<string, unknown>) {
   const current = getTenantSubscription(id);
   if (!current) throw new HttpError(404, "subscription_not_found", "Subscription not found");
   const credentialId = input.credentialId === undefined ? current.credentialId : clean(input.credentialId);
-  const credential = getCodexCredentialById(credentialId);
+  const credential = getCodexCredentialById(credentialId) || getGrokCredentialWithTokens(credentialId);
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
   const units = input.units === undefined ? current.units : positiveNumber(input.units, current.units);
-  const unitsPerCredential = codexPlanShares(credential.planType);
+  const unitsPerCredential = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);
   return updateTenantSubscription(id, {
     ...(input.name !== undefined ? { name: clean(input.name) || current.name } : {}),
     credentialId, units, unitsPerCredential,
