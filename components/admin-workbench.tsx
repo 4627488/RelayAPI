@@ -558,7 +558,6 @@ export function AdminWorkbench({
     <WorkspaceShell
       activeId={activeSection}
       navItems={navigationItems}
-      width="admin"
       title={navigationItems.find((item) => item.id === activeSection)?.label ?? "运行总览"}
       status={
         <Badge variant={hasOperationalData ? "secondary" : "outline"}>

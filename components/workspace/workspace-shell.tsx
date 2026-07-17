@@ -31,7 +31,6 @@ export function WorkspaceShell<TId extends string>({
   onNavChange,
   status,
   title,
-  width = "tenant",
 }: {
   activeId: TId;
   actions: React.ReactNode;
@@ -41,7 +40,6 @@ export function WorkspaceShell<TId extends string>({
   onNavChange: (id: TId) => void;
   status?: React.ReactNode;
   title: React.ReactNode;
-  width?: "admin" | "tenant";
 }) {
   const activeItem = navItems.find((item) => item.id === activeId);
   const groups = groupItems(navItems);
@@ -50,8 +48,7 @@ export function WorkspaceShell<TId extends string>({
     <main className="min-h-screen bg-muted/30 text-sm">
       <div
         className={cn(
-          "mx-auto grid min-h-screen w-full lg:grid-cols-[13.5rem_minmax(0,1fr)]",
-          width === "admin" ? "max-w-[1920px]" : "max-w-[1680px]",
+          "grid min-h-screen w-full lg:grid-cols-[clamp(12.5rem,14vw,15rem)_minmax(0,1fr)]",
           className,
         )}
       >
@@ -84,7 +81,9 @@ export function WorkspaceShell<TId extends string>({
             <ThemeToggle />
             <div className="hidden items-center gap-1.5 lg:flex">{actions}</div>
           </header>
-          <section className="min-w-0 p-2.5 sm:p-4 xl:p-5">{children}</section>
+          <section className="min-w-0 p-2.5 sm:p-[clamp(1rem,1.5vw,1.75rem)]">
+            {children}
+          </section>
         </div>
       </div>
     </main>
