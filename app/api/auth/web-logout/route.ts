@@ -1,24 +1,9 @@
-import { cookies } from "next/headers";
-
-import { errorToResponse } from "@/src/server/http/errors";
-import {
-  expiredWebSessionCookieOptions,
-  WEB_SESSION_COOKIE,
-} from "@/src/server/services/webAccess";
+import { POST as logout } from "@/app/api/auth/logout/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Compatibility alias. New clients should use /api/auth/logout.
 export async function POST(request: Request) {
-  try {
-    const cookieStore = await cookies();
-    cookieStore.set(
-      WEB_SESSION_COOKIE,
-      "",
-      expiredWebSessionCookieOptions(request),
-    );
-    return Response.json({ authenticated: false });
-  } catch (error) {
-    return errorToResponse(error);
-  }
+  return logout(request);
 }

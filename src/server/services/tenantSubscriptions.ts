@@ -2,9 +2,10 @@ import "server-only";
 
 import { HttpError } from "@/src/server/http/errors";
 import {
-  getCodexCredentialById,
-  listCodexCredentials,
-} from "@/src/server/repositories/codexCredentials";
+  getProviderCredential,
+  listProviderCredentials,
+  providerCredentialIdentity,
+} from "@/src/server/repositories/providerCredentials";
 import { getTenantById, listTenants } from "@/src/server/repositories/tenants";
 import {
   deleteTenantSubscription,
@@ -16,7 +17,6 @@ import {
 import { randomId } from "@/src/server/services/crypto";
 import { getSubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
 import { codexPlanLabel, codexPlanShares } from "@/src/shared/codexPlans";
-import { getGrokCredentialWithTokens, listGrokCredentials } from "@/src/server/repositories/grokCredentials";
 import { subscriptionQuotaLimits } from "@/src/server/services/tenantQuota";
 
 export function listSubscriptions(tenantId?: string) {
@@ -63,7 +63,7 @@ export function getSubscriptionAllocationOverview() {
     items.push(subscription);
     byCredential.set(subscription.credentialId, items);
   }
-  const pools = [...listCodexCredentials(), ...listGrokCredentials()].map((credential) => {
+  const pools = listProviderCredentials().map((credential) => {
     const allocations = byCredential.get(credential.id) || [];
     const capacityUnits = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);
     const allocatedUnits = allocations
@@ -72,7 +72,7 @@ export function getSubscriptionAllocationOverview() {
     return {
       id: credential.id,
       email: credential.email,
-      accountId: credential.provider === "grok" ? credential.subject : credential.accountId,
+      accountId: providerCredentialIdentity(credential),
       planType: credential.planType,
       enabled: credential.enabled,
       expiresAt: credential.expiresAt,
@@ -102,7 +102,7 @@ export function createSubscription(input: Record<string, unknown>) {
   const tenantId = clean(input.tenantId);
   const credentialId = clean(input.credentialId);
   if (!getTenantById(tenantId)) throw new HttpError(404, "tenant_not_found", "Tenant not found");
-  const credential = getCodexCredentialById(credentialId) || getGrokCredentialWithTokens(credentialId);
+  const credential = getProviderCredential(credentialId);
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
   if (!credential.enabled) throw new HttpError(400, "codex_credential_disabled", "Disabled credential cannot receive new allocations");
   const tenant = getTenantById(tenantId);
@@ -123,7 +123,7 @@ export function patchSubscription(id: string, input: Record<string, unknown>) {
   const current = getTenantSubscription(id);
   if (!current) throw new HttpError(404, "subscription_not_found", "Subscription not found");
   const credentialId = input.credentialId === undefined ? current.credentialId : clean(input.credentialId);
-  const credential = getCodexCredentialById(credentialId) || getGrokCredentialWithTokens(credentialId);
+  const credential = getProviderCredential(credentialId);
   if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
   const units = input.units === undefined ? current.units : positiveNumber(input.units, current.units);
   const unitsPerCredential = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);

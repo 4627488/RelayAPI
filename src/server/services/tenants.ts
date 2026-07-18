@@ -5,9 +5,7 @@ import crypto from "node:crypto";
 import { getEncryptionSecret } from "@/src/server/config/env";
 import { HttpError } from "@/src/server/http/errors";
 import { countApiKeysByTenant } from "@/src/server/repositories/apiKeys";
-import {
-  getTenantDailyUsage,
-} from "@/src/server/repositories/logs";
+import { getTenantDailyUsage } from "@/src/server/repositories/quotaUsage";
 import {
   getTenantById,
   getTenantInviteByTokenHash,

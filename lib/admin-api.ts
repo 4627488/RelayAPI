@@ -762,7 +762,7 @@ export function deleteProxyPoolItem(id: string) {
 }
 
 export function logoutWebSession() {
-  return adminRequest<{ authenticated: false }>("/api/auth/web-logout", {
+  return adminRequest<{ authenticated: false }>("/api/auth/logout", {
     method: "POST",
   });
 }

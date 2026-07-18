@@ -1,4 +1,4 @@
-import { getActivityHeatmapStats } from "@/src/server/repositories/logs";
+import { getActivityHeatmapStats } from "@/src/server/repositories/activityHeatmap";
 import {
   renderActivityHeatmapMessageSvg,
   renderActivityHeatmapSvg,

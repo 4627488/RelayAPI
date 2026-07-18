@@ -60,7 +60,6 @@ export const channels = sqliteTable(
     name: text("name").notNull(),
     provider: text("provider").notNull().default("codex"),
     baseUrl: text("base_url").notNull(),
-    credentialId: text("credential_id").notNull(),
     enabled: integer("enabled").notNull().default(1),
     priority: integer("priority").notNull().default(100),
     weight: integer("weight").notNull().default(1),
@@ -74,7 +73,6 @@ export const channels = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    index("idx_channels_credential").on(table.credentialId),
     index("idx_channels_routing").on(
       table.enabled,
       table.status,

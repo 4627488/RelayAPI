@@ -23,19 +23,13 @@ import {
 } from "@/src/server/repositories/apiKeys";
 import { getTenantById, getTenantUserById } from "@/src/server/repositories/tenants";
 import {
-  appendAuditLog,
-  getApiKeyDailyUsage,
-  getApiKeyRequestCountSince,
-  getTenantDailyUsage,
-  getTenantRequestCountSince,
   transferApiKeyLogScope,
 } from "@/src/server/repositories/logs";
+import { appendAuditLog } from "@/src/server/repositories/operationalEvents";
 import { toPublicTenant } from "@/src/server/services/tenants";
 import { base64Url, randomId, sha256 } from "@/src/server/services/crypto";
 import { HttpError } from "@/src/server/http/errors";
-
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const inFlightRateLimitBuckets = new Map<string, number[]>();
+import { enforceRequestQuotaPolicies } from "@/src/server/services/quotaPolicy";
 
 export interface CreateApiKeyInput {
   name?: string;
@@ -313,37 +307,14 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
     assertTenantUsable(tenant);
     tenantUserId = user.id;
   }
-  if (
-    record.tokenLimitDaily !== null &&
-    getApiKeyDailyUsage(record.id) >= record.tokenLimitDaily
-  ) {
-    throw new HttpError(
-      429,
-      "daily_token_limit_exceeded",
-      "API key daily token limit has been reached",
-    );
-  }
-  if (
-    tenant?.tokenLimitDaily !== null &&
-    tenant?.tokenLimitDaily !== undefined &&
-    getTenantDailyUsage(tenant.id) >= tenant.tokenLimitDaily
-  ) {
-    throw new HttpError(
-      429,
-      "tenant_daily_token_limit_exceeded",
-      "Tenant daily token limit has been reached",
-    );
-  }
-  enforceRateLimit(`key:${record.id}`, record.rateLimitPerMinute, (since) =>
-    getApiKeyRequestCountSince(record.id, since),
-  );
-  if (tenant) {
-    enforceRateLimit(
-      `tenant:${tenant.id}`,
-      tenant.rateLimitPerMinute,
-      (since) => getTenantRequestCountSince(tenant.id, since),
-    );
-  }
+  enforceRequestQuotaPolicies({
+    apiKeyId: record.id,
+    apiKeyTokenLimitDaily: record.tokenLimitDaily,
+    apiKeyRateLimitPerMinute: record.rateLimitPerMinute,
+    tenantId: tenant?.id,
+    tenantTokenLimitDaily: tenant?.tokenLimitDaily,
+    tenantRateLimitPerMinute: tenant?.rateLimitPerMinute,
+  });
   markApiKeyUsed(record.id);
   return {
     id: record.id,
@@ -394,32 +365,6 @@ function extractApiKey(request: Request) {
 
 function hashApiKey(key: string) {
   return sha256(key.trim());
-}
-
-function enforceRateLimit(
-  bucketId: string,
-  limit: number | null,
-  persistedCounter: (since: Date) => number,
-) {
-  if (!limit) {
-    return;
-  }
-  const now = Date.now();
-  const windowStart = now - RATE_LIMIT_WINDOW_MS;
-  const recentInFlight = (inFlightRateLimitBuckets.get(bucketId) || []).filter(
-    (timestamp) => timestamp >= windowStart,
-  );
-  const persistedCount = persistedCounter(new Date(windowStart));
-  if (persistedCount + recentInFlight.length >= limit) {
-    inFlightRateLimitBuckets.set(bucketId, recentInFlight);
-    throw new HttpError(
-      429,
-      "rate_limit_exceeded",
-      "Rate limit has been reached",
-    );
-  }
-  recentInFlight.push(now);
-  inFlightRateLimitBuckets.set(bucketId, recentInFlight);
 }
 
 function assertTenantUsable(tenant: TenantWithSecrets | null): asserts tenant {

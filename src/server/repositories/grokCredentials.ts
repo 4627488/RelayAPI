@@ -1,28 +1,28 @@
 import "server-only";
 
-import { and, desc, eq } from "drizzle-orm";
-import { getMainOrm } from "@/src/server/db/sqlite";
-import { codexCredentials } from "@/src/server/db/schema";
+import {
+  deleteProviderCredentialRow,
+  getProviderCredentialRow,
+  listProviderCredentialRows,
+  patchProviderCredentialRow,
+  upsertProviderCredentialRow,
+  type ProviderCredentialRow,
+} from "@/src/server/repositories/providerCredentialStore";
 import { decryptJson, encryptJson, jsonStringify, safeJsonParse } from "@/src/server/services/crypto";
 import type { CredentialProxyConfig, GrokCredentialRecord, GrokCredentialWithTokens, GrokTokenBundle, ProviderAuthType, PublicCredentialProxyConfig } from "@/src/shared/types/entities";
 
-type Row = typeof codexCredentials.$inferSelect;
+type Row = ProviderCredentialRow;
 
 export function listGrokCredentials(): GrokCredentialRecord[] {
-  return getMainOrm().select().from(codexCredentials)
-    .where(eq(codexCredentials.provider, "grok"))
-    .orderBy(desc(codexCredentials.createdAt)).all().map(toPublic);
+  return listProviderCredentialRows("grok").map(toPublic);
 }
 
 export function listGrokCredentialsWithTokens(): GrokCredentialWithTokens[] {
-  return getMainOrm().select().from(codexCredentials)
-    .where(eq(codexCredentials.provider, "grok"))
-    .orderBy(desc(codexCredentials.createdAt)).all().map(toSecret);
+  return listProviderCredentialRows("grok").map(toSecret);
 }
 
 export function getGrokCredentialWithTokens(id: string) {
-  const row = getMainOrm().select().from(codexCredentials)
-    .where(and(eq(codexCredentials.id, id), eq(codexCredentials.provider, "grok"))).get();
+  const row = getProviderCredentialRow(id, "grok");
   return row ? toSecret(row) : null;
 }
 
@@ -43,7 +43,7 @@ export function saveGrokCredential(input: {
     expiresAt: input.tokens.expired || null, lastRefreshAt: now, lastUsedAt: existing?.lastUsedAt || null,
     metadataJson: jsonStringify(metadata), createdAt: existing?.createdAt || now, updatedAt: now,
   };
-  getMainOrm().insert(codexCredentials).values(values).onConflictDoUpdate({ target: codexCredentials.id, set: values }).run();
+  upsertProviderCredentialRow(values);
   return getGrokCredentialWithTokens(input.id)!;
 }
 
@@ -51,13 +51,12 @@ export function updateGrokCredential(id: string, patch: Partial<Pick<GrokCredent
   const existing = getGrokCredentialWithTokens(id); if (!existing) return null;
   const next = { ...existing, ...patch };
   const metadata = { ...next.metadata, auth_type: next.authType, cooldown_until: next.cooldownUntil, last_error: next.lastError };
-  getMainOrm().update(codexCredentials).set({ enabled: next.enabled ? 1 : 0, priority: next.priority, weight: Math.max(1, next.weight), lastUsedAt: next.lastUsedAt, metadataJson: jsonStringify(metadata), updatedAt: new Date().toISOString() })
-    .where(and(eq(codexCredentials.id, id), eq(codexCredentials.provider, "grok"))).run();
+  patchProviderCredentialRow(id, "grok", { enabled: next.enabled ? 1 : 0, priority: next.priority, weight: Math.max(1, next.weight), lastUsedAt: next.lastUsedAt, metadataJson: jsonStringify(metadata), updatedAt: new Date().toISOString() });
   return getGrokCredentialWithTokens(id);
 }
 
 export function deleteGrokCredential(id: string) {
-  return getMainOrm().delete(codexCredentials).where(and(eq(codexCredentials.id, id), eq(codexCredentials.provider, "grok"))).run().changes > 0;
+  return deleteProviderCredentialRow(id, "grok");
 }
 
 function toPublic(row: Row): GrokCredentialRecord {

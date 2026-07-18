@@ -49,7 +49,7 @@ export async function tenantRequest<T>(
 }
 
 export function loginTenant(payload: { email: string; password: string }) {
-  return tenantRequest<{ authenticated: true }>("/api/tenant/auth/login", {
+  return tenantRequest<{ authenticated: true; role: "tenant" }>("/api/auth/login", {
     method: "POST",
     body: payload,
   });
@@ -68,7 +68,7 @@ export function activateTenant(payload: {
 }
 
 export function logoutTenantSession() {
-  return tenantRequest<{ authenticated: false }>("/api/tenant/auth/logout", {
+  return tenantRequest<{ authenticated: false }>("/api/auth/logout", {
     method: "POST",
   });
 }

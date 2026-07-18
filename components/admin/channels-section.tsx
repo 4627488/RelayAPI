@@ -139,7 +139,7 @@ export function ChannelsSection({
     try {
       const updated = await updateChannel(channel.id, { enabled });
       onUpdated(updated);
-      toast.success(enabled ? "通道已启用" : "通道已禁用");
+      toast.success(enabled ? "路由池已启用" : "路由池已禁用");
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -156,7 +156,7 @@ export function ChannelsSection({
         cooldownUntil: null,
       });
       onUpdated(updated);
-      toast.success("通道状态已重置");
+      toast.success("路由池状态已重置");
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -169,7 +169,7 @@ export function ChannelsSection({
     try {
       await deleteChannel(channel.id);
       onDeleted(channel.id);
-      toast.success("通道已删除");
+      toast.success("路由池已删除");
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -463,7 +463,7 @@ function ChannelFormDialogBody({
           ? await createChannel(payload)
           : await updateChannel(assertChannel(channel).id, payload);
       onSaved(saved);
-      toast.success(mode === "create" ? "通道已创建" : "通道已保存");
+      toast.success(mode === "create" ? "路由池已创建" : "路由池已保存");
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -767,7 +767,7 @@ function channelFormToPayload(form: ChannelFormState): ChannelPayload {
 
 function assertChannel(channel: ChannelRecord | null | undefined) {
   if (!channel) {
-    throw new Error("缺少通道");
+    throw new Error("缺少路由池");
   }
   return channel;
 }

@@ -1,9 +1,13 @@
 import "server-only";
 
-import { and, asc, desc, eq } from "drizzle-orm";
-
-import { getMainOrm } from "@/src/server/db/sqlite";
-import { codexCredentials } from "@/src/server/db/schema";
+import {
+  deleteProviderCredentialRow,
+  getProviderCredentialRow,
+  listProviderCredentialRows,
+  patchProviderCredentialRow,
+  upsertProviderCredentialRow,
+  type ProviderCredentialRow,
+} from "@/src/server/repositories/providerCredentialStore";
 import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
@@ -19,7 +23,7 @@ import {
   safeJsonParse,
 } from "@/src/server/services/crypto";
 
-type CodexCredentialRow = typeof codexCredentials.$inferSelect;
+type CodexCredentialRow = ProviderCredentialRow;
 
 export interface SaveCodexCredentialInput {
   id: string;
@@ -35,22 +39,12 @@ export interface SaveCodexCredentialInput {
 }
 
 export function listCodexCredentials(): CodexCredentialRecord[] {
-  const rows = getMainOrm()
-    .select()
-    .from(codexCredentials)
-    .where(eq(codexCredentials.provider, "codex"))
-    .orderBy(desc(codexCredentials.createdAt))
-    .all();
+  const rows = listProviderCredentialRows("codex");
   return rows.map((row: CodexCredentialRow) => toCodexCredentialRecord(row));
 }
 
 export function listCodexCredentialsWithTokens(): CodexCredentialWithTokens[] {
-  const rows = getMainOrm()
-    .select()
-    .from(codexCredentials)
-    .where(eq(codexCredentials.provider, "codex"))
-    .orderBy(desc(codexCredentials.createdAt))
-    .all();
+  const rows = listProviderCredentialRows("codex");
   return rows.map((row: CodexCredentialRow) =>
     toCodexCredentialWithTokens(row),
   );
@@ -59,31 +53,17 @@ export function listCodexCredentialsWithTokens(): CodexCredentialWithTokens[] {
 export function getCodexCredentialById(
   id: string,
 ): CodexCredentialRecord | null {
-  const row = getMainOrm()
-    .select()
-    .from(codexCredentials)
-    .where(and(eq(codexCredentials.id, id), eq(codexCredentials.provider, "codex")))
-    .get();
+  const row = getProviderCredentialRow(id, "codex");
   return row ? toCodexCredentialRecord(row) : null;
 }
 
 export function getCodexCredentialWithTokens(id: string) {
-  const row = getMainOrm()
-    .select()
-    .from(codexCredentials)
-    .where(and(eq(codexCredentials.id, id), eq(codexCredentials.provider, "codex")))
-    .get();
+  const row = getProviderCredentialRow(id, "codex");
   return row ? toCodexCredentialWithTokens(row) : null;
 }
 
 export function getFirstCodexCredential() {
-  const row = getMainOrm()
-    .select()
-    .from(codexCredentials)
-    .where(eq(codexCredentials.provider, "codex"))
-    .orderBy(asc(codexCredentials.createdAt))
-    .limit(1)
-    .get();
+  const row = listProviderCredentialRows("codex").at(-1);
   return row ? toCodexCredentialRecord(row) : null;
 }
 
@@ -112,27 +92,7 @@ export function upsertCodexCredential(input: SaveCodexCredentialInput) {
     createdAt,
     updatedAt: now,
   };
-  getMainOrm()
-    .insert(codexCredentials)
-    .values(values)
-    .onConflictDoUpdate({
-      target: codexCredentials.id,
-      set: {
-        email: values.email,
-        accountId: values.accountId,
-        planType: values.planType,
-        tokenEnvelope: values.tokenEnvelope,
-        proxyEnvelope: values.proxyEnvelope,
-        enabled: values.enabled,
-        priority: values.priority,
-        weight: values.weight,
-        expiresAt: values.expiresAt,
-        lastRefreshAt: values.lastRefreshAt,
-        metadataJson: values.metadataJson,
-        updatedAt: values.updatedAt,
-      },
-    })
-    .run();
+  upsertProviderCredentialRow(values);
   return getCodexCredentialWithTokens(input.id);
 }
 
@@ -174,9 +134,7 @@ export function updateCodexCredential(
     cooldown_until: next.cooldownUntil,
     last_error: next.lastError,
   };
-  getMainOrm()
-    .update(codexCredentials)
-    .set({
+  patchProviderCredentialRow(id, "codex", {
       enabled: next.enabled ? 1 : 0,
       planType: next.planType,
       priority: next.priority,
@@ -185,19 +143,13 @@ export function updateCodexCredential(
       lastUsedAt: next.lastUsedAt,
       metadataJson: jsonStringify(metadata),
       updatedAt: new Date().toISOString(),
-    })
-    .where(eq(codexCredentials.id, id))
-    .run();
+    });
   return getCodexCredentialWithTokens(id);
 }
 
 export function markCodexCredentialUsed(id: string) {
   const now = new Date().toISOString();
-  getMainOrm()
-    .update(codexCredentials)
-    .set({ lastUsedAt: now, updatedAt: now })
-    .where(eq(codexCredentials.id, id))
-    .run();
+  patchProviderCredentialRow(id, "codex", { lastUsedAt: now, updatedAt: now });
 }
 
 export function deleteCodexCredential(id: string) {
@@ -205,11 +157,7 @@ export function deleteCodexCredential(id: string) {
   if (!existing) {
     return false;
   }
-  getMainOrm()
-    .delete(codexCredentials)
-    .where(eq(codexCredentials.id, id))
-    .run();
-  return true;
+  return deleteProviderCredentialRow(id, "codex");
 }
 
 function toCodexCredentialRecord(

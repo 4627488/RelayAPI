@@ -22,10 +22,10 @@ import {
 } from "@/src/server/repositories/codexCredentials";
 import { getGrokCredentialWithTokens } from "@/src/server/repositories/grokCredentials";
 import {
-  appendChannelHealthEvent,
   channelUsageHealth,
   credentialUsageHealth,
 } from "@/src/server/repositories/logs";
+import { appendChannelHealthEvent } from "@/src/server/repositories/operationalEvents";
 import { serverConfig } from "@/src/server/config/env";
 import { randomId } from "@/src/server/services/crypto";
 import { HttpError } from "@/src/server/http/errors";

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { asc, desc, eq, inArray, or } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 
 import { getMainOrm } from "@/src/server/db/sqlite";
 import {
@@ -57,12 +57,7 @@ export function getChannelByCredentialId(credentialId: string) {
       channelCredentials,
       eq(channelCredentials.channelId, channelsTable.id),
     )
-    .where(
-      or(
-        eq(channelsTable.credentialId, credentialId),
-        eq(channelCredentials.credentialId, credentialId),
-      ),
-    )
+    .where(eq(channelCredentials.credentialId, credentialId))
     .orderBy(asc(channelsTable.createdAt))
     .limit(1)
     .get()?.channel;
@@ -72,7 +67,6 @@ export function getChannelByCredentialId(credentialId: string) {
 export function insertChannel(input: SaveChannelInput) {
   const now = new Date().toISOString();
   const credentialIds = normalizeCredentialIds(input);
-  const primaryCredentialId = credentialIds[0] || "";
   getMainOrm()
     .insert(channelsTable)
     .values({
@@ -80,7 +74,6 @@ export function insertChannel(input: SaveChannelInput) {
       name: input.name,
       provider: input.provider || "codex",
       baseUrl: input.baseUrl,
-      credentialId: primaryCredentialId,
       enabled: input.enabled ? 1 : 0,
       priority: input.priority,
       weight: input.weight,
@@ -138,7 +131,6 @@ export function updateChannel(
     .set({
       name: next.name,
       baseUrl: next.baseUrl,
-      credentialId: next.credentialId,
       enabled: next.enabled ? 1 : 0,
       priority: next.priority,
       weight: next.weight,
@@ -251,18 +243,18 @@ export function setChannelCredentialIds(
 
 function toChannelRecord(
   row: ChannelRow,
-  credentialIds = getChannelCredentialIds(row.id, row.credentialId),
+  credentialIds = getChannelCredentialIds(row.id),
 ): ChannelRecord {
   return {
     id: row.id,
     name: row.name,
     provider: row.provider === "grok" ? "grok" : "codex",
     baseUrl: row.baseUrl,
-    credentialId: row.credentialId,
+    credentialId: credentialIds[0] || "",
     credentialIds:
       credentialIds.length > 0
         ? credentialIds
-        : [row.credentialId].filter(Boolean),
+        : [],
     enabled: row.enabled === 1,
     priority: row.priority,
     weight: row.weight,

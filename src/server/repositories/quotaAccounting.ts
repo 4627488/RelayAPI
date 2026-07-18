@@ -3,7 +3,7 @@ import "server-only";
 import { and, eq, lt } from "drizzle-orm";
 import { getMainOrm } from "@/src/server/db/sqlite";
 import { quotaReservations, subscriptionQuotaWindows } from "@/src/server/db/schema";
-import { appendAuditLog } from "@/src/server/repositories/logs";
+import { appendAuditLog } from "@/src/server/repositories/operationalEvents";
 
 export type QuotaWindowKind = "5h" | "7d";
 const QUOTA_RESET_DRIFT_TOLERANCE_MS = 10 * 60 * 1000;

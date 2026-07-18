@@ -7,7 +7,8 @@ import {
   getSettingValue,
   upsertSettingValue,
 } from "@/src/server/repositories/settings";
-import { appendAuditLog, backfillPendingRequestPricing, getPendingPricingSummary } from "@/src/server/repositories/logs";
+import { backfillPendingRequestPricing, getPendingPricingSummary } from "@/src/server/repositories/logs";
+import { appendAuditLog } from "@/src/server/repositories/operationalEvents";
 import {
   normalizeLiteLlmCatalog,
   resolveModelPrice,

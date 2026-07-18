@@ -321,6 +321,14 @@ export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
   tokens: CodexTokenBundle;
 };
 
+export type ProviderCredentialRecord =
+  | CodexCredentialRecord
+  | GrokCredentialRecord;
+
+export type ProviderCredentialWithTokens =
+  | CodexCredentialWithTokens
+  | GrokCredentialWithTokens;
+
 export interface GlobalSettingsRecord {
   publicBaseUrl: string;
   oidcClientId: string;

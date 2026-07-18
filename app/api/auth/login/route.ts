@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const body = objectValue(await request.json().catch(() => null));
-    const username = body?.username;
+    const username = body?.username ?? body?.email;
     const password = body?.password;
     const cookieStore = await cookies();
 

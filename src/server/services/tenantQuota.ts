@@ -2,10 +2,10 @@ import "server-only";
 
 import { HttpError } from "@/src/server/http/errors";
 import { getCodexQuotaCacheByCredentialId } from "@/src/server/repositories/quota";
-import { getCodexCredentialById } from "@/src/server/repositories/codexCredentials";
-import { getGrokCredentialWithTokens } from "@/src/server/repositories/grokCredentials";
+import { getProviderCredential } from "@/src/server/repositories/providerCredentials";
 import { getTenantSubscription, listActiveTenantSubscriptions } from "@/src/server/repositories/tenantSubscriptions";
-import { getSubscriptionQuotaState, releaseSubscriptionQuota, reserveSubscriptionQuota, settleSubscriptionQuota, SubscriptionQuotaCapacityError, type SubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
+import { getSubscriptionQuotaState, releaseSubscriptionQuota, settleSubscriptionQuota, SubscriptionQuotaCapacityError, type SubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
+import { reserveCostQuotaPolicies, subscriptionCostQuotaPolicies } from "@/src/server/services/quotaPolicy";
 import type { ModelPriceSnapshot } from "@/src/server/services/modelPricing";
 import { resolveConfiguredModelPrice } from "@/src/server/services/quotaAdministration";
 import { getEffectiveQuotaBaselines, getQuotaOversellRatios, quotaSharesForPlan } from "@/src/server/services/quotaCalibration";
@@ -17,8 +17,8 @@ export function eligibleCredentialIdsForTenant(tenantId: string) { return [...ne
 export function subscriptionQuotaLimits(subscription: { units: number; unitsPerCredential: number; credentialId: string }) {
   const baselines = getEffectiveQuotaBaselines();
   const oversellRatios = getQuotaOversellRatios();
-  const credential = getCodexCredentialById(subscription.credentialId);
-  if (!credential || !baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) return null;
+  const credential = getProviderCredential(subscription.credentialId);
+  if (!credential || credential.provider !== "codex" || !baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) return null;
   const parentCapacityMultiplier = BigInt(quotaSharesForPlan(credential.planType));
   const fractionMilli = BigInt(Math.floor(subscription.units * 1_000_000 / subscription.unitsPerCredential));
   return Object.fromEntries((["5h", "7d"] as const).map((kind) => {
@@ -29,12 +29,11 @@ export function subscriptionQuotaLimits(subscription: { units: number; unitsPerC
 
 export function admitTenantRequest(input: { tenantId: string; credentialId: string; requestId: string; model: string; now?: Date }): TenantQuotaAdmission {
   const price = resolveConfiguredModelPrice(input.model);
-  const credential = getCodexCredentialById(input.credentialId);
-  const grokCredential = credential ? null : getGrokCredentialWithTokens(input.credentialId);
-  if (!credential && !grokCredential) throw new HttpError(404, "credential_not_found", "Credential not found");
+  const providerCredential = getProviderCredential(input.credentialId);
+  if (!providerCredential) throw new HttpError(404, "credential_not_found", "Credential not found");
   const candidates = listActiveTenantSubscriptions(input.tenantId, input.now).filter((item) => item.credentialId === input.credentialId).sort((a, b) => b.priority - a.priority || availableRatio(b.id) - availableRatio(a.id));
   if (!candidates.length) throw new HttpError(403, "subscription_not_available", "No active subscription is assigned for the selected credential");
-  if (grokCredential) { const subscription = candidates[0]; return { requestId: input.requestId, tenantId: input.tenantId, subscriptionId: subscription.id, units: subscription.units, unitsPerCredential: subscription.unitsPerCredential, price, state: null }; }
+  if (providerCredential.provider === "grok") { const subscription = candidates[0]; return { requestId: input.requestId, tenantId: input.tenantId, subscriptionId: subscription.id, units: subscription.units, unitsPerCredential: subscription.unitsPerCredential, price, state: null }; }
   // Unknown prices must not turn into an outage. Keep the subscription association
   // for the request log, but defer monetary accounting until an admin sets a price.
   if (!price) {
@@ -50,7 +49,17 @@ export function admitTenantRequest(input: { tenantId: string; credentialId: stri
     const reserve = max(1n, min(10_000_000n, min(limits["5h"], limits["7d"]) / 100n));
     const now = input.now || new Date();
     try {
-      const state = reserveSubscriptionQuota({ requestId: input.requestId, subscriptionId: subscription.id, reserveNanoUsd: reserve, windows: { "5h": { limitNanoUsd: limits["5h"], resetsAt: resetTimes["5h"] }, "7d": { limitNanoUsd: limits["7d"], resetsAt: resetTimes["7d"] } }, now, expiresAt: new Date(now.getTime() + 30 * 60 * 1000) });
+      const state = reserveCostQuotaPolicies({
+        requestId: input.requestId,
+        reserveNanoUsd: reserve,
+        policies: subscriptionCostQuotaPolicies({
+          subscriptionId: subscription.id,
+          limits,
+          resetsAt: resetTimes,
+        }),
+        now,
+        expiresAt: new Date(now.getTime() + 30 * 60 * 1000),
+      });
       return { requestId: input.requestId, tenantId: input.tenantId, subscriptionId: subscription.id, units: subscription.units, unitsPerCredential: subscription.unitsPerCredential, price, state };
     } catch (error) { if (!(error instanceof SubscriptionQuotaCapacityError)) throw error; capacityError = error; }
   }

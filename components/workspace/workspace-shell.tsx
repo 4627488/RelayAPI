@@ -3,6 +3,7 @@
 import * as React from "react";
 import { MenuIcon, type LucideIcon } from "lucide-react";
 
+import { BrandMark } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
@@ -93,9 +94,7 @@ export function WorkspaceShell<TId extends string>({
 function Brand({ status }: { status?: React.ReactNode }) {
   return (
     <div className="flex h-14 items-center gap-2.5 border-b px-3">
-      <div className="grid size-7 place-items-center rounded-md bg-primary font-mono text-xs font-bold text-primary-foreground">
-        R
-      </div>
+      <BrandMark className="text-primary" />
       <div className="min-w-0 flex-1">
         <div className="truncate font-semibold tracking-tight">RelayAPI</div>
         <div className="text-[0.68rem] text-muted-foreground">Operations</div>
