@@ -10,6 +10,8 @@ import {
   Cell,
   Pie,
   PieChart,
+  Line,
+  LineChart,
   XAxis,
   YAxis,
 } from "recharts";
@@ -23,7 +25,7 @@ import {
   formatRatioPercent,
   formatTokenNumber,
 } from "@/components/workspace/format";
-import { MetricStrip, MetricStripItem } from "@/components/workspace/metric-strip";
+import type { HourlyTrendPoint } from "@/components/workspace/hourly-trends";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -72,6 +74,7 @@ import type {
   UsageStatsRow,
 } from "@/src/shared/types/entities";
 
+type RangeDays = "7" | "14" | "30" | "90";
 type SpendPeriod = "day" | "week" | "month";
 type KeyFilter = "all" | string;
 
@@ -102,15 +105,23 @@ const pieColors = [
 ];
 
 export function TenantOverviewSection({
+  hourlyTrends,
+  onRangeChange,
+  personalCostNanoUsd,
   stats,
   tenant,
 }: {
+  hourlyTrends: HourlyTrendPoint[];
+  onRangeChange: (days?: number) => Promise<AdminOverviewStats>;
+  personalCostNanoUsd: string | null;
   stats: AdminOverviewStats;
   tenant: PublicTenant;
 }) {
-  const [periodValue, setPeriodValue] = React.useState<SpendPeriod[]>(["day"]);
+  const [rangeDays, setRangeDays] = React.useState<RangeDays>(
+    String(stats.range.days || 30) as RangeDays,
+  );
+  const [rangeLoading, setRangeLoading] = React.useState(false);
   const [keyFilter, setKeyFilter] = React.useState<KeyFilter>("all");
-  const period = periodValue[0] || "day";
   const totals = stats.totals;
   const today = stats.byDay[0] || totals;
   const filteredStats = React.useMemo(
@@ -118,8 +129,8 @@ export function TenantOverviewSection({
     [stats, keyFilter],
   );
   const spendRows = React.useMemo(
-    () => aggregateSpendRows(filteredStats.byDay, period),
-    [filteredStats.byDay, period],
+    () => aggregateSpendRows(filteredStats.byDay, "day"),
+    [filteredStats.byDay],
   );
   const topKeys = stats.byApiKey.slice(0, 8);
   const topModels = filteredStats.byModel.slice(0, 6);
@@ -132,40 +143,76 @@ export function TenantOverviewSection({
     ? Math.round((tenant.todayTokens / tenant.tokenLimitDaily) * 100)
     : 0;
 
+  const currentHour = hourlyTrends.at(-1);
+  const previousHour = hourlyTrends.at(-2) || currentHour;
+  const hourlyCards = [
+    {
+      label: "过去 24h 请求",
+      value: formatNumber(hourlyTrends.reduce((sum, row) => sum + row.requestCount, 0)),
+      detail: `当前小时 ${formatNumber(currentHour?.requestCount || 0)} 次`,
+      values: hourlyTrends.map((row) => row.requestCount),
+    },
+    {
+      label: "当前小时成功率",
+      value: formatPercent(currentHour?.successRate ?? 0),
+      detail: hourlyDelta(currentHour?.successRate, previousHour?.successRate),
+      values: hourlyTrends.map((row) => row.successRate),
+    },
+    {
+      label: "过去 24h Token",
+      value: formatTokenNumber(hourlyTrends.reduce((sum, row) => sum + row.totalTokens, 0)),
+      detail: `当前小时 ${formatTokenNumber(currentHour?.totalTokens || 0)}`,
+      values: hourlyTrends.map((row) => row.totalTokens),
+    },
+    {
+      label: "当前小时 P95 首 Token",
+      value: formatDuration(currentHour?.p95FirstTokenLatencyMs || 0),
+      detail: hourlyDelta(currentHour?.p95FirstTokenLatencyMs, previousHour?.p95FirstTokenLatencyMs, "ms"),
+      values: hourlyTrends.map((row) => row.p95FirstTokenLatencyMs),
+    },
+  ];
+
+  async function changeRange(value: string) {
+    if (!value || value === rangeDays) return;
+    setRangeDays(value as RangeDays);
+    setRangeLoading(true);
+    try {
+      await onRangeChange(Number(value));
+    } finally {
+      setRangeLoading(false);
+    }
+  }
+
   return (
     <div className="grid gap-3">
-      <MetricStrip>
-        <MetricStripItem
-          label="剩余额度"
-          value={tenant.tokenLimitDaily ? formatTokenNumber(Math.max(tenant.tokenLimitDaily - tenant.todayTokens, 0)) : "不限"}
-          detail={
-            tenant.tokenLimitDaily
-              ? `已用 ${formatTokenNumber(tenant.todayTokens)} / ${formatTokenNumber(tenant.tokenLimitDaily)}`
-              : `今日已用 ${formatTokenNumber(tenant.todayTokens)}`
-          }
-        />
-        <MetricStripItem
-          label="今日请求"
-          value={formatNumber(today.requestCount)}
-          detail={`${formatNumber(today.errorCount)} 次失败`}
-        />
-        <MetricStripItem
-          label="成功率"
-          value={formatRatioPercent(today.successCount, today.requestCount)}
-          detail={`${formatNumber(today.errorCount)} 次失败`}
-        />
-        <MetricStripItem
-          label="P95 首 Token"
-          value={formatDuration(today.p95FirstTokenLatencyMs)}
-          detail={`P95 总延迟 ${formatDuration(today.p95LatencyMs)}`}
-        />
-      </MetricStrip>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {hourlyCards.map((card) => (
+          <HourlyMetricCard key={card.label} {...card} />
+        ))}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <Card size="sm"><CardHeader><div className="text-xs text-muted-foreground">剩余额度</div><CardTitle className="text-2xl tabular-nums">{tenant.tokenLimitDaily ? formatTokenNumber(Math.max(tenant.tokenLimitDaily - tenant.todayTokens, 0)) : "不限"}</CardTitle><p className="text-xs text-muted-foreground">今日已用 {formatTokenNumber(tenant.todayTokens)}</p></CardHeader></Card>
+        <Card size="sm"><CardHeader><div className="text-xs text-muted-foreground">个人费用</div><CardTitle className="text-2xl tabular-nums">{formatUsd(personalCostNanoUsd)}</CardTitle><p className="text-xs text-muted-foreground">当前账号累计模型费用</p></CardHeader></Card>
+        <Card size="sm"><CardHeader><div className="text-xs text-muted-foreground">今日状态</div><CardTitle className="text-2xl tabular-nums">{formatRatioPercent(today.successCount, today.requestCount)}</CardTitle><p className="text-xs text-muted-foreground">{formatNumber(today.requestCount)} 请求 · {formatNumber(today.errorCount)} 失败</p></CardHeader></Card>
+      </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,0.85fr)]">
         <Card>
           <CardHeader>
-            <CardTitle>Token 开销趋势</CardTitle>
+            <CardTitle>用量趋势</CardTitle>
             <CardAction className="flex flex-wrap items-center gap-2">
+              <ToggleGroup
+                value={[rangeDays]}
+                onValueChange={(value) => value[0] && void changeRange(String(value[0]))}
+                size="sm"
+                variant="outline"
+                disabled={rangeLoading}
+              >
+                {["7", "14", "30", "90"].map((days) => (
+                  <ToggleGroupItem key={days} value={days}>{days} 天</ToggleGroupItem>
+                ))}
+              </ToggleGroup>
               <Select
                 value={keyFilter}
                 onValueChange={(value) => setKeyFilter(value || "all")}
@@ -186,20 +233,6 @@ export function TenantOverviewSection({
                   </SelectGroup>
                 </SelectContent>
               </Select>
-              <ToggleGroup
-                value={periodValue}
-                onValueChange={(value) => {
-                  if (value[0]) {
-                    setPeriodValue([value[0] as SpendPeriod]);
-                  }
-                }}
-                size="sm"
-                variant="outline"
-              >
-                <ToggleGroupItem value="day">日</ToggleGroupItem>
-                <ToggleGroupItem value="week">周</ToggleGroupItem>
-                <ToggleGroupItem value="month">月</ToggleGroupItem>
-              </ToggleGroup>
             </CardAction>
           </CardHeader>
           <CardContent>
@@ -266,7 +299,7 @@ export function TenantOverviewSection({
 
         <Card>
           <CardHeader>
-            <CardTitle>额度与效率</CardTitle>
+            <CardTitle>当前状态</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-5">
             <div className="grid gap-3">
@@ -321,9 +354,9 @@ export function TenantOverviewSection({
                   label="Token"
                   value={formatTokenNumber(filteredStats.totals.totalTokens)}
                 />
-                <MetricLine
-                  label="平均延迟"
-                  value={formatDuration(filteredStats.totals.avgLatencyMs)}
+              <MetricLine
+                  label="P95 首 Token"
+                  value={formatDuration(filteredStats.totals.p95FirstTokenLatencyMs)}
                 />
               </div>
             </div>
@@ -343,7 +376,7 @@ export function TenantOverviewSection({
         </summary>
         <div className="grid gap-4 border-t p-3 xl:grid-cols-2">
           <CacheBreakdownCard stats={filteredStats} />
-          <RecentSpendTable rows={spendRows} period={period} />
+          <RecentSpendTable rows={spendRows} period="day" />
         </div>
       </details>
     </div>
@@ -851,6 +884,59 @@ function formatDuration(value: number) {
     return "-";
   }
   return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`;
+}
+
+function HourlyMetricCard({
+  detail,
+  label,
+  value,
+  values,
+}: {
+  detail: string;
+  label: string;
+  value: string;
+  values: number[];
+}) {
+  const data = values.map((point, index) => ({ index, value: point }));
+  return (
+    <Card className="gap-1 overflow-hidden py-3">
+      <CardHeader className="pb-0">
+        <div className="text-sm text-muted-foreground">{label}</div>
+        <CardTitle className="text-3xl leading-none tabular-nums">{value}</CardTitle>
+        <p className="truncate text-xs text-muted-foreground">{detail}</p>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <LineChart width={320} height={40} data={data} className="h-10 w-full">
+          <Line
+            dataKey="value"
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+            stroke="var(--primary)"
+            strokeWidth={2.2}
+            type="monotone"
+          />
+        </LineChart>
+      </CardContent>
+    </Card>
+  );
+}
+
+function hourlyDelta(current = 0, previous = 0, unit = "pct") {
+  const delta = current - previous;
+  const prefix = delta > 0 ? "+" : "";
+  return `较上一小时 ${prefix}${delta.toFixed(unit === "ms" ? 0 : 1)}${unit}`;
+}
+
+function formatUsd(value: string | null) {
+  if (!value) return "$0.00";
+  const amount = Number(BigInt(value)) / 1_000_000_000;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: amount < 1 ? 4 : 2,
+    maximumFractionDigits: amount < 1 ? 4 : 2,
+  }).format(amount);
 }
 
 function clamp(value: number, min: number, max: number) {

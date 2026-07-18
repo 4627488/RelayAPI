@@ -112,8 +112,11 @@ export function deleteTenantApiKey(id: string) {
   );
 }
 
-export function getTenantOverview() {
-  return tenantRequest<AdminOverviewStats>("/api/tenant/overview");
+export function getTenantOverview(options: { days?: number } = {}) {
+  const params = new URLSearchParams();
+  if (options.days) params.set("days", String(options.days));
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return tenantRequest<AdminOverviewStats>(`/api/tenant/overview${suffix}`);
 }
 
 export type TenantQuotaReport = {

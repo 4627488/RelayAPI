@@ -40,9 +40,13 @@ import type {
   TenantResources,
 } from "@/src/shared/types/entities";
 import type { RequestLogsPage } from "@/lib/admin-api";
+import type { AdminDashboardRequestLogRow } from "@/lib/admin-api";
+import { aggregateHourlyTrends } from "@/components/workspace/hourly-trends";
 import {
   deleteTenantApiKey,
   getTenantOverview,
+  getTenantCostAnalysis,
+  getTenantQuota,
   getTenantRequestLogsPage,
   getTenantResources,
   getTenantSettings,
@@ -88,6 +92,8 @@ export function TenantWorkbench({
   const [resources, setResources] = React.useState(initialResources);
   const [overviewStats, setOverviewStats] =
     React.useState(initialOverviewStats);
+  const [personalCostNanoUsd, setPersonalCostNanoUsd] = React.useState<string | null>(null);
+  const [overview24hLogs, setOverview24hLogs] = React.useState<AdminDashboardRequestLogRow[]>([]);
   const [requestLogsPage, setRequestLogsPage] = React.useState(
     initialRequestLogsPage,
   );
@@ -117,9 +123,11 @@ export function TenantWorkbench({
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
-      getTenantOverview()
-        .then((stats) => {
+      loadTenantOverview()
+        .then(({ stats, cost, logs }) => {
           setOverviewStats(stats);
+          setPersonalCostNanoUsd(cost);
+          setOverview24hLogs(logs);
           setSnapshotTime(Date.now());
         })
         .catch((error) => {
@@ -129,11 +137,20 @@ export function TenantWorkbench({
     return () => window.clearTimeout(timer);
   }, []);
 
+  const refreshTenantOverview = React.useCallback(async (days?: number) => {
+    const { stats, cost, logs } = await loadTenantOverview(days);
+    setOverviewStats(stats);
+    setPersonalCostNanoUsd(cost);
+    setOverview24hLogs(logs);
+    setSnapshotTime(Date.now());
+    return stats;
+  }, []);
+
   async function refreshCurrentSection() {
     setRefreshing(true);
     try {
       if (activeSection === "overview") {
-        setOverviewStats(await getTenantOverview());
+        await refreshTenantOverview();
       } else if (activeSection === "apiKeys") {
         setApiKeys(await listTenantApiKeys());
       } else if (activeSection === "setup") {
@@ -284,7 +301,13 @@ export function TenantWorkbench({
           </Alert>
         )}
         {activeSection === "overview" && (
-          <TenantOverviewSection stats={overviewStats} tenant={tenant} />
+          <TenantOverviewSection
+            hourlyTrends={aggregateHourlyTrends(overview24hLogs)}
+            onRangeChange={refreshTenantOverview}
+            personalCostNanoUsd={personalCostNanoUsd}
+            stats={overviewStats}
+            tenant={tenant}
+          />
         )}
         {activeSection === "quota" && <TenantQuotaSection />}
         {activeSection === "apiKeys" && (
@@ -367,4 +390,33 @@ export function TenantWorkbench({
       />
     </>
   );
+}
+
+async function loadTenantOverview(days?: number) {
+  const [stats, cost, logsPage] = await Promise.all([
+    getTenantOverview({ days }),
+    loadPersonalCost(),
+    getTenantRequestLogsPage({
+      limit: 500,
+      page: 1,
+      from: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      to: new Date().toISOString(),
+    }),
+  ]);
+  return { stats, cost, logs: logsPage.data };
+}
+
+async function loadPersonalCost() {
+  const quota = await getTenantQuota();
+  const costs = await Promise.all(
+    quota.subscriptions.map((subscription) =>
+      getTenantCostAnalysis(subscription.id),
+    ),
+  );
+  return costs
+    .reduce(
+      (total, item) => total + BigInt(item.totalCostNanoUsd || "0"),
+      0n,
+    )
+    .toString();
 }

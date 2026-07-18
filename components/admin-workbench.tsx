@@ -74,7 +74,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { DataPanel } from "@/components/workspace/data-panel";
+import { aggregateHourlyTrends, type HourlyTrendPoint } from "@/components/workspace/hourly-trends";
 import {
   formatDateTime,
   getDisplayTimeZone,
@@ -99,6 +99,7 @@ import {
   adminErrorMessage,
   changeAdminPassword,
   getGlobalSettings,
+  getAdminCostAnalysis,
   getOverview,
   getRequestLogsPage,
   listApiKeys,
@@ -112,6 +113,8 @@ import {
   updateGlobalSettings,
   WEB_AUTH_EXPIRED_EVENT,
   type ApiKeyTransferResponse,
+  type AdminDashboardRequestLogRow,
+  type CostAnalysis,
   type RequestLogsPage,
 } from "@/lib/admin-api";
 import { AdminTenantsSection } from "@/components/admin-tenants-section";
@@ -248,6 +251,8 @@ export function AdminWorkbench({
   });
   const [overviewStats, setOverviewStats] =
     React.useState(initialOverviewStats);
+  const [costAnalysis, setCostAnalysis] = React.useState<CostAnalysis | null>(null);
+  const [overview24hLogs, setOverview24hLogs] = React.useState<AdminDashboardRequestLogRow[]>([]);
   const [, setSnapshotTime] = React.useState(initialNow);
   const [refreshing, setRefreshing] = React.useState(false);
   const [loggingOut, setLoggingOut] = React.useState(false);
@@ -291,8 +296,19 @@ export function AdminWorkbench({
   }, [returnToLogin]);
 
   const refreshOverviewStats = React.useCallback(async (days?: number) => {
-    const stats = await getOverview({ days });
+    const [stats, costs, hourlyLogs] = await Promise.all([
+      getOverview({ days }),
+      getAdminCostAnalysis(),
+      getRequestLogsPage({
+        limit: 500,
+        page: 1,
+        from: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        to: new Date().toISOString(),
+      }),
+    ]);
     setOverviewStats(stats);
+    setCostAnalysis(costs);
+    setOverview24hLogs(hourlyLogs.data);
     setSnapshotTime(Date.now());
     return stats;
   }, []);
@@ -628,6 +644,8 @@ export function AdminWorkbench({
                 enabledChannelCount={enabledChannelCount}
                 hasOperationalData={hasOperationalData}
                 overviewStats={overviewStats}
+                costAnalysis={costAnalysis}
+                hourlyTrends={aggregateHourlyTrends(overview24hLogs)}
                 tenantCount={tenantCount}
                 onRefresh={refreshOverviewStats}
               />
@@ -1573,6 +1591,8 @@ function OverviewSection({
   enabledChannelCount,
   hasOperationalData,
   overviewStats,
+  costAnalysis,
+  hourlyTrends,
   tenantCount,
   onRefresh,
 }: {
@@ -1582,6 +1602,8 @@ function OverviewSection({
   enabledChannelCount: number;
   hasOperationalData: boolean;
   overviewStats: AdminOverviewStats;
+  costAnalysis: CostAnalysis | null;
+  hourlyTrends: HourlyTrendPoint[];
   tenantCount: number;
   onRefresh: (days?: number) => Promise<AdminOverviewStats>;
 }) {
@@ -1589,31 +1611,10 @@ function OverviewSection({
   const [overviewDays, setOverviewDays] = React.useState(
     String(overviewStats.range?.days || 30),
   );
-  const [selectedDate, setSelectedDate] = React.useState(
-    overviewStats.byDay[0]?.date || todayDateKey(),
-  );
-  const trendMetrics = buildOverviewTrendMetrics(overviewStats.byDay);
+  const trendMetrics = buildOverviewTrendMetrics(hourlyTrends);
   const topTenants = overviewStats.byTenant.slice(0, 5);
   const topModels = overviewStats.byModel.slice(0, 5);
   const recentDays = usageDateWindow(overviewStats.byDay, Number(overviewDays));
-  const effectiveSelectedDate = overviewStats.byDay.some(
-    (row) => row.date === selectedDate,
-  )
-    ? selectedDate
-    : overviewStats.byDay[0]?.date || todayDateKey();
-
-  async function refresh() {
-    setRefreshing(true);
-    try {
-      await onRefresh(Number(overviewDays));
-      toast.success("总览已刷新");
-    } catch (error) {
-      toast.error(adminErrorMessage(error));
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
   async function changeOverviewDays(value: string) {
     if (!value || value === overviewDays) {
       return;
@@ -1621,8 +1622,7 @@ function OverviewSection({
     setOverviewDays(value);
     setRefreshing(true);
     try {
-      const stats = await onRefresh(Number(value));
-      setSelectedDate(stats.byDay[0]?.date || todayDateKey());
+      await onRefresh(Number(value));
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -1632,48 +1632,6 @@ function OverviewSection({
 
   return (
     <div className="grid gap-6">
-      <DataPanel
-        title="运行观测"
-        action={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={refreshing}
-            onClick={refresh}
-          >
-            {refreshing ? (
-              <Spinner data-icon="inline-start" />
-            ) : (
-              <RefreshCwIcon data-icon="inline-start" />
-            )}
-            刷新
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="grid gap-1">
-            <div className="text-xs text-muted-foreground">观察窗口</div>
-            <div className="font-mono text-sm tabular-nums">
-              {overviewStats.range.from} / {overviewStats.range.to} /{" "}
-              {formatNumber(overviewStats.range.days)}d
-            </div>
-          </div>
-          <ToggleGroup
-            value={[overviewDays]}
-            variant="outline"
-            size="sm"
-            onValueChange={(value) => void changeOverviewDays(String(value[0] || ""))}
-          >
-            {["7", "14", "30", "90"].map((days) => (
-              <ToggleGroupItem key={days} value={days}>
-                {days} 天
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </div>
-      </DataPanel>
-
       {!hasOperationalData && (
         <Alert>
           <WorkflowIcon />
@@ -1689,11 +1647,20 @@ function OverviewSection({
       </div>
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.65fr)_minmax(20rem,0.7fr)]">
-        <DailyOperationsCard rows={recentDays} />
+        <DailyOperationsCard
+          days={overviewDays}
+          onDaysChange={changeOverviewDays}
+          refreshing={refreshing}
+          rows={recentDays}
+        />
         <AnomalyRadarCard anomalies={overviewStats.anomalies} />
       </div>
 
-      <OperationsStatusStrip stats={overviewStats} />
+      <BusinessStatusStrip
+        costAnalysis={costAnalysis}
+        stats={overviewStats}
+        tenantCount={tenantCount}
+      />
 
       <details className="group rounded-md border bg-card">
         <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium marker:hidden">
@@ -1708,18 +1675,10 @@ function OverviewSection({
             <MetricStripItem label="Codex 凭据" value={formatNumber(credentialCount)} detail="已授权" />
             <MetricStripItem label="通道" value={formatNumber(channelCount)} detail={`${formatNumber(enabledChannelCount)} 启用`} />
           </MetricStrip>
-          <DailyBreakdownCard rows={recentDays} selectedDate={effectiveSelectedDate} tenantRows={overviewStats.byTenantDay} modelRows={overviewStats.byModelDay} onSelectDate={setSelectedDate} />
-          <DailyDimensionTabs selectedDate={effectiveSelectedDate} tenantRows={overviewStats.byTenantDay} modelRows={overviewStats.byModelDay} channelRows={overviewStats.byChannelDay} credentialRows={overviewStats.byCredentialDay} requestTypeRows={overviewStats.byRequestTypeDay} errorRows={overviewStats.byErrorCodeDay} />
           <div className="grid gap-4 xl:grid-cols-3">
             <UsageListCard title="租户消耗排行" emptyTitle="暂无租户使用数据" rows={topTenants} />
             <UsageListCard title="模型排行" emptyTitle="暂无模型使用数据" rows={topModels} />
             <DailyUsageCard rows={recentDays} />
-          </div>
-          <div className="grid gap-4 xl:grid-cols-2">
-            <TenantUsageCard rows={overviewStats.byTenant} />
-            <UsageStatsTableCard title="通道用量" rows={overviewStats.byChannel} emptyTitle="暂无通道使用数据" />
-            <UsageStatsTableCard title="凭据用量" rows={overviewStats.byCredential} emptyTitle="暂无凭据使用数据" />
-            <UsageStatsTableCard title="请求类型用量" rows={overviewStats.byRequestType} emptyTitle="暂无请求类型统计" />
           </div>
         </div>
       </details>
@@ -1754,34 +1713,45 @@ const dailyChartConfig = {
   streamRate: { label: "流式占比", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
-function OperationsStatusStrip({ stats }: { stats: AdminOverviewStats }) {
+function BusinessStatusStrip({
+  costAnalysis,
+  stats,
+  tenantCount,
+}: {
+  costAnalysis: CostAnalysis | null;
+  stats: AdminOverviewStats;
+  tenantCount: number;
+}) {
   const latest = usageDateWindow(stats.byDay, 2).at(-1);
   const errorRate = latest ? ratio(latest.errorCount, latest.requestCount) : null;
-  const streamRate = latest ? ratio(latest.streamCount, latest.requestCount) : null;
-  const status = latest?.requestCount ? `${formatNumber(latest.requestCount)} 次请求` : "暂无请求";
+  const totalCost = costAnalysis?.totalCostNanoUsd ?? null;
+  const perPersonCost = totalCost
+    ? divideNanoUsd(totalCost, Math.max(tenantCount, 1))
+    : null;
+  const topCostModel = costAnalysis?.models[0];
 
   return (
     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
       <SignalCard
-        label="运行状态"
-        value={status}
-        detail={`最近请求 ${stats.totals.lastRequestAt ? formatDateTime(stats.totals.lastRequestAt) : "-"}`}
-        badge={<Badge variant="outline">{status}</Badge>}
+        label="累计模型费用"
+        value={formatUsd(totalCost)}
+        detail={`${formatNumber(costAnalysis?.pricedRequests || 0)} 个已计价请求`}
+        badge={<Badge variant="outline">USD</Badge>}
       />
       <SignalCard
-        label="今日错误率"
-        value={formatPercent(errorRate)}
-        detail={`${formatNumber(latest?.errorCount || 0)} 个错误 / ${formatNumber(latest?.requestCount || 0)} 次请求`}
+        label="每人费用"
+        value={formatUsd(perPersonCost)}
+        detail={`按 ${formatNumber(Math.max(tenantCount, 1))} 个租户均摊`}
       />
       <SignalCard
-        label="今日流式占比"
-        value={formatPercent(streamRate)}
-        detail={`${formatNumber(latest?.streamCount || 0)} 个流式请求`}
+        label="今日可用性"
+        value={formatPercent(errorRate === null ? null : 100 - errorRate)}
+        detail={`${formatNumber(latest?.errorCount || 0)} 个失败 / ${formatNumber(latest?.requestCount || 0)} 次请求`}
       />
       <SignalCard
-        label="缓存命中"
-        value={formatPercent(latest?.cacheHitRate ?? null)}
-        detail={`缓存 ${formatTokenNumber(latest?.cachedTokens || 0)} token`}
+        label="主要成本模型"
+        value={topCostModel?.model || "-"}
+        detail={topCostModel ? `${formatUsd(topCostModel.costNanoUsd)} · ${formatNumber(topCostModel.requestCount)} 次请求` : "暂无计价数据"}
       />
     </div>
   );
@@ -1810,7 +1780,17 @@ function SignalCard({
   );
 }
 
-function DailyOperationsCard({ rows }: { rows: DailyUsageStatsRow[] }) {
+function DailyOperationsCard({
+  days,
+  onDaysChange,
+  refreshing,
+  rows,
+}: {
+  days: string;
+  onDaysChange: (value: string) => Promise<void>;
+  refreshing: boolean;
+  rows: DailyUsageStatsRow[];
+}) {
   const [metric, setMetric] = React.useState<DailyTrendMetric>("requests");
   const data = rows.map((row) => ({
     ...row,
@@ -1821,8 +1801,26 @@ function DailyOperationsCard({ rows }: { rows: DailyUsageStatsRow[] }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>每日运行趋势</CardTitle>
-        <CardAction>
+        <div>
+          <CardTitle>区间运行趋势</CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {days} 天聚合，仅此区域受时间范围影响
+          </p>
+        </div>
+        <CardAction className="flex flex-wrap items-center gap-2">
+          <ToggleGroup
+            value={[days]}
+            variant="outline"
+            size="sm"
+            disabled={refreshing}
+            onValueChange={(value) => value[0] && void onDaysChange(String(value[0]))}
+          >
+            {["7", "14", "30", "90"].map((item) => (
+              <ToggleGroupItem key={item} value={item}>
+                {item} 天
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           <ToggleGroup
             value={[metric]}
             variant="outline"
@@ -2496,66 +2494,61 @@ const OVERVIEW_TREND_DAYS = 7;
 type DailyUsageRow = AdminOverviewStats["byDay"][number];
 
 function buildOverviewTrendMetrics(
-  rows: AdminOverviewStats["byDay"],
+  rows: HourlyTrendPoint[],
 ): TrendMetricCardProps[] {
-  const days = usageDateWindow(rows, OVERVIEW_TREND_DAYS);
-  const today = days[days.length - 1] ?? emptyDailyUsageRow(todayDateKey());
-  const yesterday =
-    days[days.length - 2] ?? emptyDailyUsageRow(addUtcDays(today.date, -1));
-  const requestChange = percentChange(
-    today.requestCount,
-    yesterday.requestCount,
-  );
-  const tokenChange = percentChange(today.avgTokensPerRequest, yesterday.avgTokensPerRequest);
-  const latencyChange = percentChange(today.p95FirstTokenLatencyMs, yesterday.p95FirstTokenLatencyMs);
-  const todaySuccessRate = dailySuccessRate(today);
-  const yesterdaySuccessRate = dailySuccessRate(yesterday);
-  const successPointChange = todaySuccessRate - yesterdaySuccessRate;
+  const current = rows.at(-1) ?? { hour: "-", requestCount: 0, successRate: 0, totalTokens: 0, p95FirstTokenLatencyMs: 0 };
+  const previous = rows.at(-2) ?? current;
+  const requestChange = percentChange(current.requestCount, previous.requestCount);
+  const tokenChange = percentChange(current.totalTokens, previous.totalTokens);
+  const latencyChange = percentChange(current.p95FirstTokenLatencyMs, previous.p95FirstTokenLatencyMs);
+  const successPointChange = current.successRate - previous.successRate;
   const successDirection = directionFromDelta(successPointChange);
+  const totalRequests = rows.reduce((sum, row) => sum + row.requestCount, 0);
+  const totalTokens = rows.reduce((sum, row) => sum + row.totalTokens, 0);
 
   return [
     {
-      title: "今日请求数",
-      value: formatCompactNumber(today.requestCount),
-      description: `${formatNumber(today.streamCount)} 个流式 · ${formatNumber(today.errorCount)} 个错误`,
+      title: "过去 24h 请求",
+      value: formatCompactNumber(totalRequests),
+      description: `当前小时 ${formatNumber(current.requestCount)} 次`,
       changeLabel: formatChangePercent(requestChange.value),
       direction: requestChange.direction,
       tone: directionTone(requestChange.direction),
-      data: days.map((row) => ({ date: row.date, value: row.requestCount })),
+      data: rows.map((row) => ({ date: row.hour, value: row.requestCount })),
       icon: ActivityIcon,
     },
     {
-      title: "今日成功率",
-      value: formatPercent(todaySuccessRate),
-      description: `${formatNumber(today.successCount)} 成功 / ${formatNumber(today.requestCount)} 总计`,
+      title: "当前小时可用性",
+      value: formatPercent(current.successRate),
+      description: "折线展示过去 24 小时成功率",
       changeLabel: formatPointChange(successPointChange),
       direction: successDirection,
       tone: directionTone(successDirection),
-      data: days.map((row) => ({
-        date: row.date,
-        value: dailySuccessRate(row),
+      data: rows.map((row) => ({
+        date: row.hour,
+        value: row.successRate,
       })),
       icon: ShieldCheckIcon,
     },
     {
-      title: "每请求 Token",
-      value: formatTokenNumber(today.avgTokensPerRequest),
-      description: `缓存节省 ${formatTokenNumber(today.cachedTokens)} · 命中 ${formatPercent(today.cacheHitRate)}`,
+      title: "过去 24h Token",
+      value: formatTokenNumber(totalTokens),
+      description: `当前小时 ${formatTokenNumber(current.totalTokens)}`,
       changeLabel: formatChangePercent(tokenChange.value),
       direction: tokenChange.direction,
       tone: directionTone(tokenChange.direction),
-      data: days.map((row) => ({ date: row.date, value: row.avgTokensPerRequest })),
+      data: rows.map((row) => ({ date: row.hour, value: row.totalTokens })),
       icon: DatabaseIcon,
     },
     {
-      title: "P95 首 Token",
-      value: formatDuration(today.p95FirstTokenLatencyMs),
-      description: `P95 总延迟 ${formatDuration(today.p95LatencyMs)} · ${formatTokenNumber(Math.round(today.tokensPerSecond))} token/秒`,
+      title: "当前小时 P95 首 Token",
+      value: formatDuration(current.p95FirstTokenLatencyMs),
+      description: "折线展示过去 24 小时首 Token 延迟",
       changeLabel: formatChangePercent(latencyChange.value),
       direction: latencyChange.direction,
       tone: directionTone(latencyChange.direction, { lowerIsBetter: true }),
-      data: days.map((row) => ({
-        date: row.date,
+      data: rows.map((row) => ({
+        date: row.hour,
         value: row.p95FirstTokenLatencyMs,
       })),
       icon: Clock3Icon,
@@ -3029,6 +3022,22 @@ function formatPercent(value: number | null) {
     return "-";
   }
   return `${value.toFixed(1)}%`;
+}
+
+function divideNanoUsd(value: string, divisor: number) {
+  if (!divisor) return value;
+  return (BigInt(value) / BigInt(divisor)).toString();
+}
+
+function formatUsd(value: string | null) {
+  if (!value) return "$0.00";
+  const amount = Number(BigInt(value)) / 1_000_000_000;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: amount < 1 ? 4 : 2,
+    maximumFractionDigits: amount < 1 ? 4 : 2,
+  }).format(amount);
 }
 
 function ratio(numerator: number, denominator: number) {
