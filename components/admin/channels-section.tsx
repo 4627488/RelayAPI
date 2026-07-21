@@ -64,6 +64,7 @@ import { Progress } from "@/components/ui/progress";
 import { ModelSelector, stripThinkingLevel } from "@/components/workspace/model-selector";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -83,9 +84,12 @@ import type {
   ChannelRecord,
   ChannelStatus,
   CodexCredentialRecord,
+  GrokCredentialRecord,
+  ProviderCredentialRecord,
 } from "@/src/shared/types/entities";
 
 type ChannelFormState = {
+  provider: "codex" | "grok";
   name: string;
   credentialIds: string;
   enabled: boolean;
@@ -96,6 +100,7 @@ type ChannelFormState = {
 };
 
 const EMPTY_CHANNEL_FORM: ChannelFormState = {
+  provider: "codex",
   name: "",
   credentialIds: "",
   enabled: true,
@@ -125,12 +130,21 @@ export function ChannelsSection({
   onDeleted: (id: string) => void;
   onUpdated: (channel: ChannelRecord) => void;
 }) {
+  const [grokCredentials, setGrokCredentials] = React.useState<GrokCredentialRecord[]>([]);
+  React.useEffect(() => {
+    let active = true;
+    void fetch("/api/admin/grok/credentials").then(async (response) => {
+      if (active && response.ok) setGrokCredentials(await response.json());
+    });
+    return () => { active = false; };
+  }, []);
+  const allCredentials: ProviderCredentialRecord[] = [...credentials, ...grokCredentials];
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editingChannel, setEditingChannel] =
     React.useState<ChannelRecord | null>(null);
   const [pendingId, setPendingId] = React.useState<string | null>(null);
   const credentialsById = new Map(
-    credentials.map((credential) => [credential.id, credential]),
+    allCredentials.map((credential) => [credential.id, credential]),
   );
   const uniqueChannels = uniqueChannelsById(channels);
 
@@ -236,7 +250,7 @@ export function ChannelsSection({
                   {uniqueChannels.map((channel, index) => {
                     const channelCredentials = channel.credentialIds
                       .map((credentialId) => credentialsById.get(credentialId))
-                      .filter(Boolean) as CodexCredentialRecord[];
+                      .filter(Boolean) as ProviderCredentialRecord[];
                     return (
                       <TableRow key={`${channel.id}:${index}`}>
                         <TableCell>
@@ -276,9 +290,7 @@ export function ChannelsSection({
                                     key={`${credential.id}:${index}`}
                                     className="truncate"
                                   >
-                                    {credential.email ||
-                                      credential.accountId ||
-                                      credential.id}
+                                    {credentialIdentity(credential)}
                                   </div>
                                 ))}
                               {channelCredentials.length > 2 && (
@@ -361,7 +373,7 @@ export function ChannelsSection({
       </div>
 
       <ChannelFormDialog
-        credentials={credentials}
+        credentials={allCredentials}
         mode="create"
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -369,7 +381,7 @@ export function ChannelsSection({
       />
       <ChannelFormDialog
         channel={editingChannel}
-        credentials={credentials}
+        credentials={allCredentials}
         mode="edit"
         open={Boolean(editingChannel)}
         onOpenChange={(open) => {
@@ -395,7 +407,7 @@ function ChannelFormDialog({
   open,
 }: {
   channel?: ChannelRecord | null;
-  credentials: CodexCredentialRecord[];
+  credentials: ProviderCredentialRecord[];
   mode: "create" | "edit";
   onOpenChange: (open: boolean) => void;
   onSaved: (channel: ChannelRecord) => void;
@@ -406,7 +418,7 @@ function ChannelFormDialog({
       ? channelToForm(channel)
       : {
           ...EMPTY_CHANNEL_FORM,
-          credentialIds: credentials[0]?.id || "",
+          credentialIds: credentials.find((item) => item.provider === "codex")?.id || credentials[0]?.id || "",
         };
 
   return (
@@ -440,7 +452,7 @@ function ChannelFormDialogBody({
   onSaved,
 }: {
   channel?: ChannelRecord | null;
-  credentials: CodexCredentialRecord[];
+  credentials: ProviderCredentialRecord[];
   initialForm: ChannelFormState;
   mode: "create" | "edit";
   onCancel: () => void;
@@ -452,7 +464,7 @@ function ChannelFormDialogBody({
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (parseList(form.credentialIds).length === 0) {
-      toast.error("请至少选择一个 Codex 凭据");
+      toast.error(`请至少选择一个 ${form.provider === "grok" ? "Grok" : "Codex"} 凭据`);
       return;
     }
     setPending(true);
@@ -503,7 +515,7 @@ function ChannelFields({
   form,
   onChange,
 }: {
-  credentials: CodexCredentialRecord[];
+  credentials: ProviderCredentialRecord[];
   form: ChannelFormState;
   onChange: React.Dispatch<React.SetStateAction<ChannelFormState>>;
 }) {
@@ -518,6 +530,14 @@ function ChannelFields({
     <FieldSet>
       <FieldLegend>路由池配置</FieldLegend>
       <FieldGroup>
+        <Field>
+          <FieldLabel>服务商</FieldLabel>
+          <Select value={form.provider} onValueChange={(value) => onChange((current) => ({ ...current, provider: value === "grok" ? "grok" : "codex", credentialIds: "" }))}>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup><SelectItem value="codex">Codex</SelectItem><SelectItem value="grok">Grok</SelectItem></SelectGroup></SelectContent>
+          </Select>
+          <FieldDescription>一个路由池只绑定同一服务商的凭据。</FieldDescription>
+        </Field>
         {credentials.length === 0 && (
           <Alert>
             <UserRoundIcon />
@@ -541,7 +561,7 @@ function ChannelFields({
         <Field>
           <FieldLabel>绑定凭据</FieldLabel>
           <CredentialVisualSelector
-            credentials={credentials}
+            credentials={credentials.filter((credential) => credential.provider === form.provider)}
             selectedIds={parseList(form.credentialIds)}
             onSelectedIdsChange={(ids) =>
               update("credentialIds", ids.join("\n"))
@@ -613,7 +633,7 @@ function CredentialVisualSelector({
   onSelectedIdsChange,
   selectedIds,
 }: {
-  credentials: CodexCredentialRecord[];
+  credentials: ProviderCredentialRecord[];
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
 }) {
@@ -641,7 +661,7 @@ function CredentialVisualSelector({
     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
       {credentials.map((credential) => {
         const selected = selectedIdSet.has(credential.id);
-        const name = credential.email || credential.accountId || credential.id;
+        const name = credentialIdentity(credential);
         return (
           <Button
             key={credential.id}
@@ -661,7 +681,7 @@ function CredentialVisualSelector({
                   <span className="truncate font-medium">{name}</span>
                 </div>
                 <Badge variant="outline" className="shrink-0">
-                  {codexPlanLabel(credential.planType)}
+                  {credential.provider === "grok" ? "Grok" : codexPlanLabel(credential.planType)}
                 </Badge>
               </div>
               <div className="grid gap-1 text-xs text-muted-foreground">
@@ -669,7 +689,7 @@ function CredentialVisualSelector({
                 <div>
                   优先级 {formatNumber(credential.priority)} · 权重{" "}
                   {formatNumber(credential.weight)} · 采样分数{" "}
-                  {formatNumber(usageHealthScore(credential.usageHealth))}%
+                  {formatNumber(credential.provider === "codex" ? usageHealthScore(credential.usageHealth) : 100)}%
                 </div>
               </div>
             </div>
@@ -741,6 +761,7 @@ function ChannelDeleteDialog({
 
 function channelToForm(channel: ChannelRecord): ChannelFormState {
   return {
+    provider: channel.provider,
     name: channel.name,
     credentialIds: channel.credentialIds.join("\n"),
     enabled: channel.enabled,
@@ -754,6 +775,7 @@ function channelToForm(channel: ChannelRecord): ChannelFormState {
 function channelFormToPayload(form: ChannelFormState): ChannelPayload {
   const credentialIds = parseList(form.credentialIds);
   return {
+    provider: form.provider,
     name: form.name.trim(),
     credentialId: credentialIds[0],
     credentialIds,
@@ -877,3 +899,4 @@ function codexPlanLabel(planType: string) {
 function usageHealthScore(health: CodexCredentialRecord["usageHealth"]) {
   return clamp(health?.score ?? 100, 0, 100);
 }
+function credentialIdentity(credential: ProviderCredentialRecord) { return credential.email || (credential.provider === "codex" ? credential.accountId : credential.subject) || credential.id; }

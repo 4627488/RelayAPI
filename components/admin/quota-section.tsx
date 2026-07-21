@@ -25,10 +25,6 @@ import {
 export function AdminQuotaSection() {
   const [quota, setQuota] = React.useState<QuotaAdministration | null>(null);
   const [costs, setCosts] = React.useState<CostAnalysis | null>(null);
-  const [fiveHour, setFiveHour] = React.useState("");
-  const [weekly, setWeekly] = React.useState("");
-  const [fiveHourOversell, setFiveHourOversell] = React.useState("1");
-  const [weeklyOversell, setWeeklyOversell] = React.useState("1");
   const [priceModel, setPriceModel] = React.useState("");
   const [inputPrice, setInputPrice] = React.useState("");
   const [outputPrice, setOutputPrice] = React.useState("");
@@ -47,10 +43,6 @@ export function AdminQuotaSection() {
       ]);
       setQuota(nextQuota);
       setCosts(nextCosts);
-      setFiveHour(nanoUsdToUsd(nextQuota.baselines["5h"].overrideNanoUsd));
-      setWeekly(nanoUsdToUsd(nextQuota.baselines["7d"].overrideNanoUsd));
-      setFiveHourOversell(String(nextQuota.baselines["5h"].oversellRatio));
-      setWeeklyOversell(String(nextQuota.baselines["7d"].oversellRatio));
       setPriceModel((current) => current || nextQuota.pricing.pendingModels[0]?.model || "");
     } catch (error) {
       toast.error(adminErrorMessage(error));
@@ -70,16 +62,6 @@ export function AdminQuotaSection() {
     const timer = window.setTimeout(() => void load(), 1_000);
     return () => window.clearTimeout(timer);
   }, [load, quota?.pricing.backfill.status]);
-
-  async function saveBaselines() {
-    try {
-      setQuota(await updateQuotaAdministration({
-        baselines: { "5h": usdToNanoUsd(fiveHour), "7d": usdToNanoUsd(weekly) },
-        oversellRatios: { "5h": positiveDecimal(fiveHourOversell), "7d": positiveDecimal(weeklyOversell) },
-      }));
-      toast.success("份额额度基线与超卖比例已保存");
-    } catch (error) { toast.error(adminErrorMessage(error)); }
-  }
 
   async function refreshCatalog() {
     setLoading(true);
@@ -120,22 +102,7 @@ export function AdminQuotaSection() {
       {quota?.pricing.catalogError && (
         <Alert variant="destructive"><AlertTitle>定价目录同步失败</AlertTitle><AlertDescription>{quota.pricing.catalogError}</AlertDescription></Alert>
       )}
-      <div className="grid gap-3 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>份额额度基线</CardTitle>
-            <CardDescription>Plus 为 1 份，Pro 为 20 份；基线留空即使用自动校准结果。超卖比例 1 表示不超卖，2 表示发放两倍额度。</CardDescription>
-            <CardAction><Button size="sm" onClick={saveBaselines}><SaveIcon data-icon="inline-start" />保存</Button></CardAction>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup>
-              <Field><FieldLabel htmlFor="quota-5h">每份 5 小时额度（USD）</FieldLabel><Input id="quota-5h" inputMode="decimal" value={fiveHour} placeholder={nanoUsdToUsd(quota?.baselines["5h"].automaticNanoUsd)} onChange={(event) => setFiveHour(event.target.value)} /><FieldDescription>置信度 {formatPercent(quota?.baselines["5h"].confidence)} · {quota?.baselines["5h"].sampleCount ?? 0} 个有效样本</FieldDescription></Field>
-              <Field><FieldLabel htmlFor="quota-5h-oversell">5 小时超卖比例</FieldLabel><Input id="quota-5h-oversell" inputMode="decimal" value={fiveHourOversell} onChange={(event) => setFiveHourOversell(event.target.value)} /><FieldDescription>当前向用户发放基线容量的 {fiveHourOversell || "-"} 倍。</FieldDescription></Field>
-              <Field><FieldLabel htmlFor="quota-7d">每份 7 天额度（USD）</FieldLabel><Input id="quota-7d" inputMode="decimal" value={weekly} placeholder={nanoUsdToUsd(quota?.baselines["7d"].automaticNanoUsd)} onChange={(event) => setWeekly(event.target.value)} /><FieldDescription>置信度 {formatPercent(quota?.baselines["7d"].confidence)} · {quota?.baselines["7d"].sampleCount ?? 0} 个有效样本</FieldDescription></Field>
-              <Field><FieldLabel htmlFor="quota-7d-oversell">7 天超卖比例</FieldLabel><Input id="quota-7d-oversell" inputMode="decimal" value={weeklyOversell} onChange={(event) => setWeeklyOversell(event.target.value)} /><FieldDescription>当前向用户发放基线容量的 {weeklyOversell || "-"} 倍。</FieldDescription></Field>
-            </FieldGroup>
-          </CardContent>
-        </Card>
+      <div className="grid gap-3">
         <Card>
           <CardHeader><CardTitle>模型定价目录</CardTitle><CardDescription>请求使用发生时的价格版本，历史成本不会被重算。</CardDescription><CardAction><Button variant="outline" size="sm" disabled={loading} onClick={refreshCatalog}>{loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}同步 LiteLLM</Button></CardAction></CardHeader>
           <CardContent className="flex flex-col gap-2"><div className="flex items-center justify-between"><span>已定价模型</span><Badge variant="secondary">{quota?.pricing.catalogModelCount ?? 0}</Badge></div><div className="flex items-center justify-between"><span>目录版本</span><span className="max-w-72 truncate text-muted-foreground">{quota?.pricing.catalogVersion || "内置快照"}</span></div><div className="flex items-center justify-between"><span>更新时间</span><span className="text-muted-foreground">{formatDate(quota?.pricing.catalogUpdatedAt)}</span></div></CardContent>
@@ -173,11 +140,7 @@ export function AdminQuotaSection() {
   );
 }
 
-function usdToNanoUsd(value: string) { const clean = value.trim(); return clean ? String(Math.round(Number(clean) * 1_000_000_000)) : null; }
-function positiveDecimal(value: string) { const parsed = Number(value.trim()); return Number.isFinite(parsed) && parsed > 0 ? parsed : 1; }
-function nanoUsdToUsd(value?: string | null) { return value ? (Number(value) / 1_000_000_000).toFixed(4) : ""; }
 function formatUsd(value?: string | null) { return `$${(Number(value || 0) / 1_000_000_000).toFixed(4)}`; }
-function formatPercent(value?: number) { return `${Math.round((value || 0) * 100)}%`; }
 function formatDate(value?: string | null) { return value ? new Date(value).toLocaleString("zh-CN") : "尚未同步"; }
 function ModelPrice({ value }: { value: CostAnalysis["models"][number]["pricing"] }) { return value ? <div className="flex flex-col gap-1 font-mono text-xs"><span>输入 {formatUnitPrice(value.inputNanoUsdPerToken)} · 输出 {formatUnitPrice(value.outputNanoUsdPerToken)}</span><span className="text-muted-foreground">缓存读 {formatUnitPrice(value.cachedInputNanoUsdPerToken)} · 写 {formatUnitPrice(value.cacheWriteNanoUsdPerToken)} · 推理 {formatUnitPrice(value.reasoningNanoUsdPerToken)}</span></div> : <span className="text-muted-foreground">当前目录未定价</span>; }
 function formatUnitPrice(value: string) { return `$${(Number(value) / 1_000).toFixed(4)}`; }

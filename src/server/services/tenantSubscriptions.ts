@@ -71,6 +71,7 @@ export function getSubscriptionAllocationOverview() {
       .reduce((sum, item) => sum + item.units, 0);
     return {
       id: credential.id,
+      provider: credential.provider,
       email: credential.email,
       accountId: providerCredentialIdentity(credential),
       planType: credential.planType,
@@ -114,6 +115,8 @@ export function createSubscription(input: Record<string, unknown>) {
     name: clean(input.name) || `${credential.provider === "grok" ? "Grok" : codexPlanLabel(credential.planType)} ${units}/${unitsPerCredential}`,
     units, unitsPerCredential, enabled: input.enabled !== false,
     priority: integer(input.priority, 100),
+    estimatedFiveHourNanoUsd: nullableNanoUsd(input.estimatedFiveHourNanoUsd),
+    estimatedSevenDayNanoUsd: nullableNanoUsd(input.estimatedSevenDayNanoUsd),
     startsAt: date(input.startsAt) || new Date().toISOString(),
     expiresAt: date(input.expiresAt),
   });
@@ -132,6 +135,8 @@ export function patchSubscription(id: string, input: Record<string, unknown>) {
     credentialId, units, unitsPerCredential,
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
     ...(input.priority !== undefined ? { priority: integer(input.priority, 100) } : {}),
+    ...(input.estimatedFiveHourNanoUsd !== undefined ? { estimatedFiveHourNanoUsd: nullableNanoUsd(input.estimatedFiveHourNanoUsd) } : {}),
+    ...(input.estimatedSevenDayNanoUsd !== undefined ? { estimatedSevenDayNanoUsd: nullableNanoUsd(input.estimatedSevenDayNanoUsd) } : {}),
     ...(input.startsAt !== undefined ? { startsAt: date(input.startsAt) || current.startsAt } : {}),
     ...(input.expiresAt !== undefined ? { expiresAt: date(input.expiresAt) } : {}),
   })!;
@@ -145,3 +150,11 @@ function clean(value: unknown) { return typeof value === "string" ? value.trim()
 function integer(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) ? Math.floor(n) : fallback; }
 function positiveNumber(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) && n > 0 ? n : fallback; }
 function date(value: unknown) { const text = clean(value); return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null; }
+function nullableNanoUsd(value: unknown) {
+  if (value === null || value === "") return null;
+  let parsed: bigint;
+  try { parsed = typeof value === "bigint" ? value : BigInt(String(value)); }
+  catch { throw new HttpError(400, "invalid_estimated_quota", "Estimated quota must be a whole nano-USD amount"); }
+  if (parsed <= 0n) throw new HttpError(400, "invalid_estimated_quota", "Estimated quota must be greater than zero");
+  return String(parsed);
+}

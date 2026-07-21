@@ -602,8 +602,8 @@ export function AdminWorkbench({
                   onDeleted={handleCredentialDeleted}
                   onRefreshData={refreshCredentialAndChannelData}
                   onUpdated={handleCredentialUpdated}
+                  providerControls={<GrokSection />}
                 />
-                <GrokSection />
                 <div className="grid gap-3 xl:grid-cols-2">
                   <ChannelsSection
                     channels={channels}

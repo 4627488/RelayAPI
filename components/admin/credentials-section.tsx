@@ -106,6 +106,7 @@ export function CredentialsSection({
   onDeleted,
   onRefreshData,
   onUpdated,
+  providerControls,
 }: {
   credentials: CodexCredentialRecord[];
   globalSettings: GlobalSettingsRecord;
@@ -116,6 +117,7 @@ export function CredentialsSection({
     channels: ChannelRecord[];
   }>;
   onUpdated: (credential: CodexCredentialRecord) => void;
+  providerControls?: React.ReactNode;
 }) {
   const [oauthOpen, setOauthOpen] = React.useState(false);
   const [pendingId, setPendingId] = React.useState<string | null>(null);
@@ -420,7 +422,7 @@ export function CredentialsSection({
 
       <Card>
         <CardHeader>
-          <CardTitle>Codex 凭据</CardTitle>
+          <CardTitle>上游凭据</CardTitle>
           <CardAction>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
@@ -697,6 +699,7 @@ export function CredentialsSection({
               })}
             </div>
           )}
+          {providerControls}
         </CardContent>
       </Card>
 

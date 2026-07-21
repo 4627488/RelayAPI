@@ -196,6 +196,7 @@ export type ProxyPoolPayload = {
 };
 
 export type ChannelPayload = {
+  provider?: "codex" | "grok";
   name?: string;
   baseUrl?: string;
   credentialId?: string;
@@ -398,6 +399,7 @@ export type TenantPayload = {
 export type TenantSubscriptionRecord = {
   id: string; tenantId: string; credentialId: string; name: string;
   units: number; unitsPerCredential: number; enabled: boolean; priority: number;
+  estimatedFiveHourNanoUsd: string | null; estimatedSevenDayNanoUsd: string | null;
   startsAt: string; expiresAt: string | null; createdAt: string; updatedAt: string;
   quota?: Partial<Record<"5h" | "7d", {
     limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string; resetsAt: string;
@@ -407,7 +409,7 @@ export type TenantSubscriptionRecord = {
 };
 
 export type SubscriptionCapacityPool = {
-  id: string; email: string; accountId: string; planType: string; enabled: boolean;
+  id: string; provider: "codex" | "grok"; email: string; accountId: string; planType: string; enabled: boolean;
   expiresAt: string | null; cooldownUntil: string | null; lastError: string | null;
   capacityUnits: number; allocatedUnits: number;
   allocationCount: number; activeAllocationCount: number;
@@ -423,6 +425,7 @@ export type SubscriptionAllocationOverview = {
 export type TenantSubscriptionPayload = {
   tenantId?: string; credentialId?: string; name?: string; units?: number;
   unitsPerCredential?: number; enabled?: boolean; priority?: number;
+  estimatedFiveHourNanoUsd?: string | null; estimatedSevenDayNanoUsd?: string | null;
   startsAt?: string; expiresAt?: string | null;
 };
 export type SubscriptionCalibrationTask = { subscriptionId: string; status: "idle" | "pending" | "running" | "completed" | "failed"; startedAt: string | null; completedAt: string | null; error: string | null; windows?: Record<"5h" | "7d", { startedAt: string; costNanoUsd: string; requestCount: number }> };

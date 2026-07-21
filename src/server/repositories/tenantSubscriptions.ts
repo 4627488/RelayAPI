@@ -13,6 +13,8 @@ export type TenantSubscription = {
   unitsPerCredential: number;
   enabled: boolean;
   priority: number;
+  estimatedFiveHourNanoUsd: string | null;
+  estimatedSevenDayNanoUsd: string | null;
   startsAt: string;
   expiresAt: string | null;
   createdAt: string;

@@ -22,10 +22,10 @@ import { adminErrorMessage, createTenantSubscription, deleteTenantSubscription, 
 import { codexPlanLabel } from "@/src/shared/codexPlans";
 import type { PublicTenant } from "@/src/shared/types/entities";
 
-type AllocationDraft = { tenantId: string; units: string; priority: number };
-type EditDraft = { units: string; priority: number; enabled: boolean };
+type AllocationDraft = { tenantId: string; units: string; priority: number; estimatedFiveHourUsd: string; estimatedSevenDayUsd: string };
+type EditDraft = { units: string; priority: number; enabled: boolean; estimatedFiveHourUsd: string; estimatedSevenDayUsd: string };
 
-const EMPTY_DRAFT: AllocationDraft = { tenantId: "", units: "1", priority: 100 };
+const EMPTY_DRAFT: AllocationDraft = { tenantId: "", units: "1", priority: 100, estimatedFiveHourUsd: "", estimatedSevenDayUsd: "" };
 
 export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTenant[] }) {
   const [overview, setOverview] = React.useState<SubscriptionAllocationOverview | null>(null);
@@ -79,6 +79,8 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
         name: `${codexPlanLabel(selectedPool.planType)} · ${tenant?.name || "子订阅"}`,
         units: parsePositiveUnits(draft.units),
         priority: draft.priority,
+        estimatedFiveHourNanoUsd: usdToNanoUsd(draft.estimatedFiveHourUsd),
+        estimatedSevenDayNanoUsd: usdToNanoUsd(draft.estimatedSevenDayUsd),
       });
       setCreateOpen(false);
       await load();
@@ -95,7 +97,12 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
     if (!edit) return;
     setSavingId(item.id);
     try {
-      await updateTenantSubscription(item.id, { ...edit, units: parsePositiveUnits(edit.units) });
+      await updateTenantSubscription(item.id, {
+        ...edit,
+        units: parsePositiveUnits(edit.units),
+        estimatedFiveHourNanoUsd: usdToNanoUsd(edit.estimatedFiveHourUsd),
+        estimatedSevenDayNanoUsd: usdToNanoUsd(edit.estimatedSevenDayUsd),
+      });
       await load();
       toast.success("分配已更新");
     } catch (error) {
@@ -162,7 +169,7 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
       <Card>
         <CardHeader>
           <CardTitle>订阅容量工作台</CardTitle>
-          <CardDescription>从 Codex 凭据容量池出发，分配、调整和回收租户子订阅。</CardDescription>
+          <CardDescription>统一管理 Codex 与 Grok 的容量分发；推测额度由每条订阅独立配置。</CardDescription>
           <CardAction>
             <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load()}>
               {loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
@@ -187,7 +194,7 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
                 <EmptyMedia variant="icon">
                   <BoxesIcon />
                 </EmptyMedia>
-                <EmptyTitle>还没有 Codex 凭据</EmptyTitle>
+                <EmptyTitle>还没有可分配凭据</EmptyTitle>
                 <EmptyDescription>先导入并启用凭据，才能建立可分配的容量池。</EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -262,7 +269,7 @@ function PoolButton({ pool, active, onClick }: { pool: SubscriptionCapacityPool;
           <div className="min-w-0">
             <div className="truncate font-medium">{pool.email || pool.accountId || pool.id}</div>
             <div className="text-xs text-muted-foreground">
-              {codexPlanLabel(pool.planType)} · {pool.activeAllocationCount} 个生效分配
+            {providerLabel(pool.provider)} · {pool.provider === "codex" ? codexPlanLabel(pool.planType) : pool.planType} · {pool.activeAllocationCount} 个生效分配
             </div>
           </div>
           <PoolStatus pool={pool} />
@@ -287,7 +294,7 @@ function PoolWorkspace({ pool, edits, savingId, calibratingIds, equalizing, onEd
         <div className="flex min-w-0 flex-col gap-1">
           <CardTitle className="truncate">{pool.email || pool.accountId || pool.id}</CardTitle>
           <CardDescription>
-            {codexPlanLabel(pool.planType)} · 物理容量 {pool.capacityUnits} 份 · {pool.allocationCount} 条分配
+            {providerLabel(pool.provider)} · {pool.provider === "codex" ? codexPlanLabel(pool.planType) : pool.planType} · 物理容量 {pool.capacityUnits} 份 · {pool.allocationCount} 条分配
           </CardDescription>
         </div>
         <CardAction>
@@ -344,6 +351,8 @@ function AllocationTable({ pool, edits, savingId, calibratingIds, onEdit, onSave
           <TableHead>本地用量</TableHead>
           <TableHead className="w-24">份数</TableHead>
           <TableHead className="w-24">优先级</TableHead>
+          <TableHead className="w-32">5h 推测额度</TableHead>
+          <TableHead className="w-32">7d 推测额度</TableHead>
           <TableHead className="w-20">启用</TableHead>
           <TableHead className="w-24" />
         </TableRow>
@@ -351,7 +360,7 @@ function AllocationTable({ pool, edits, savingId, calibratingIds, onEdit, onSave
       <TableBody>
         {pool.subscriptions.map((item) => {
           const edit = edits[item.id] || editFrom(item);
-          const dirty = Number(edit.units) !== item.units || edit.priority !== item.priority || edit.enabled !== item.enabled;
+          const dirty = Number(edit.units) !== item.units || edit.priority !== item.priority || edit.enabled !== item.enabled || edit.estimatedFiveHourUsd !== nanoUsdToUsd(item.estimatedFiveHourNanoUsd) || edit.estimatedSevenDayUsd !== nanoUsdToUsd(item.estimatedSevenDayNanoUsd);
           return (
             <TableRow key={item.id}>
               <TableCell>
@@ -389,6 +398,12 @@ function AllocationTable({ pool, edits, savingId, calibratingIds, onEdit, onSave
                     })
                   }
                 />
+              </TableCell>
+              <TableCell>
+                <Input inputMode="decimal" value={edit.estimatedFiveHourUsd} placeholder="USD" aria-label="5 小时推测额度" onChange={(event) => onEdit(item.id, { ...edit, estimatedFiveHourUsd: event.target.value })} />
+              </TableCell>
+              <TableCell>
+                <Input inputMode="decimal" value={edit.estimatedSevenDayUsd} placeholder="USD" aria-label="7 天推测额度" onChange={(event) => onEdit(item.id, { ...edit, estimatedSevenDayUsd: event.target.value })} />
               </TableCell>
               <TableCell>
                 <Switch checked={edit.enabled} onCheckedChange={(checked) => onEdit(item.id, { ...edit, enabled: checked })} aria-label={`${item.tenant?.name || item.tenantId} 启用状态`} />
@@ -471,6 +486,15 @@ function CreateAllocationDialog({ open, pool, tenants, draft, pending, onDraftCh
             />
             <FieldDescription>同一租户拥有多个可用子订阅时，优先选择数值更高的项。</FieldDescription>
           </Field>
+          <Field>
+            <FieldLabel>5 小时推测额度（USD）</FieldLabel>
+            <Input inputMode="decimal" value={draft.estimatedFiveHourUsd} placeholder="留空表示暂不限制" onChange={(event) => onDraftChange({ ...draft, estimatedFiveHourUsd: event.target.value })} />
+          </Field>
+          <Field>
+            <FieldLabel>7 天推测额度（USD）</FieldLabel>
+            <Input inputMode="decimal" value={draft.estimatedSevenDayUsd} placeholder="留空表示暂不限制" onChange={(event) => onDraftChange({ ...draft, estimatedSevenDayUsd: event.target.value })} />
+            <FieldDescription>额度属于这条租户订阅，不会影响同一父凭据下的其他分配。</FieldDescription>
+          </Field>
         </FieldGroup>
         <DialogFooter>
           <Button type="button" variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>
@@ -544,7 +568,7 @@ function LifecycleBadge({ lifecycle }: { lifecycle?: TenantSubscriptionRecord["l
 }
 
 function editFrom(item: TenantSubscriptionRecord): EditDraft {
-  return { units: String(item.units), priority: item.priority, enabled: item.enabled };
+  return { units: String(item.units), priority: item.priority, enabled: item.enabled, estimatedFiveHourUsd: nanoUsdToUsd(item.estimatedFiveHourNanoUsd), estimatedSevenDayUsd: nanoUsdToUsd(item.estimatedSevenDayNanoUsd) };
 }
 function parsePositiveUnits(value: string) {
   const units = Number(value);
@@ -561,3 +585,6 @@ function equalUnits(capacity: number, count: number) {
 function percent(value: number) {
   return `${Math.round(value * 1000) / 10}%`;
 }
+function usdToNanoUsd(value: string) { const parsed = Number(value.trim()); if (!value.trim()) return null; if (!Number.isFinite(parsed) || parsed <= 0) throw new Error("推测额度必须是大于 0 的数字"); return String(Math.round(parsed * 1_000_000_000)); }
+function nanoUsdToUsd(value?: string | null) { return value ? String(Number(value) / 1_000_000_000) : ""; }
+function providerLabel(provider: SubscriptionCapacityPool["provider"]) { return provider === "grok" ? "Grok" : "Codex"; }

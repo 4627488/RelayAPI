@@ -569,6 +569,11 @@ export function migrateMainDb(db: SqliteDatabase) {
   `);
 
   applyMigration(db, "017_channel_credential_relation", migrateChannelCredentialRelation);
+
+  applyMigration(db, "018_subscription_estimated_quota", (database) => {
+    addColumnIfMissing(database, "tenant_subscriptions", "estimated_5h_nano_usd", "TEXT");
+    addColumnIfMissing(database, "tenant_subscriptions", "estimated_7d_nano_usd", "TEXT");
+  });
 }
 
 function applyMigration(
