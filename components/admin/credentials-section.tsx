@@ -63,6 +63,7 @@ import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   adminErrorMessage,
   consumeCredentialResetCredit,
@@ -472,7 +473,7 @@ export function CredentialsSection({
           </CardAction>
         </CardHeader>
         <CardContent>
-          {credentials.length === 0 ? (
+          {credentials.length === 0 && !providerControls ? (
             <Empty className="min-h-64">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
@@ -697,9 +698,9 @@ export function CredentialsSection({
                   </Card>
                 );
               })}
+              {providerControls}
             </div>
           )}
-          {providerControls}
         </CardContent>
       </Card>
 
@@ -1226,8 +1227,12 @@ function OAuthDialog({
   open: boolean;
 }) {
   const [pending, setPending] = React.useState(false);
+  const [provider, setProvider] = React.useState<"codex" | "grok">("codex");
   const [session, setSession] = React.useState<OAuthStartResponse | null>(null);
   const [callbackUrl, setCallbackUrl] = React.useState("");
+  const [grokSession, setGrokSession] = React.useState<{ sessionId: string; userCode: string; verificationUri: string; verificationUriComplete: string } | null>(null);
+  const [grokKey, setGrokKey] = React.useState("");
+  const [grokName, setGrokName] = React.useState("");
 
   async function startOAuth() {
     setPending(true);
@@ -1264,17 +1269,63 @@ function OAuthDialog({
     }
   }
 
+  async function startGrokOAuth() {
+    setPending(true);
+    try {
+      const response = await fetch("/api/admin/grok/credentials/oauth/start", { method: "POST" });
+      if (!response.ok) throw new Error(await responseErrorText(response));
+      const started = await response.json();
+      setGrokSession(started);
+      window.open(started.verificationUriComplete || started.verificationUri, "_blank", "noopener,noreferrer");
+    } catch (error) { toast.error(adminErrorMessage(error)); }
+    finally { setPending(false); }
+  }
+
+  async function finishGrokOAuth() {
+    if (!grokSession) return;
+    setPending(true);
+    try {
+      const response = await fetch("/api/admin/grok/credentials/oauth/poll", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: grokSession.sessionId }) });
+      if (response.status === 202) { toast.info("仍在等待 Grok 授权"); return; }
+      if (!response.ok) throw new Error(await responseErrorText(response));
+      setGrokSession(null);
+      window.dispatchEvent(new Event("grok-credentials-changed"));
+      onOpenChange(false);
+      toast.success("Grok 凭据已连接");
+    } catch (error) { toast.error(adminErrorMessage(error)); }
+    finally { setPending(false); }
+  }
+
+  async function addGrokApiKey(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!grokKey.trim()) return;
+    setPending(true);
+    try {
+      const response = await fetch("/api/admin/grok/credentials", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: grokKey, name: grokName }) });
+      if (!response.ok) throw new Error(await responseErrorText(response));
+      setGrokKey(""); setGrokName("");
+      window.dispatchEvent(new Event("grok-credentials-changed"));
+      onOpenChange(false);
+      toast.success("Grok API Key 已添加");
+    } catch (error) { toast.error(adminErrorMessage(error)); }
+    finally { setPending(false); }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-3xl">
-        <form className="grid gap-4" onSubmit={finishOAuth}>
-          <DialogHeader>
-            <DialogTitle>连接 Codex 账号</DialogTitle>
-            <DialogDescription>
-              先生成 OAuth 链接并在浏览器打开，授权完成后把 callback URL 或
-              query string 粘贴回来完成保存。
-            </DialogDescription>
-          </DialogHeader>
+        <DialogHeader>
+          <DialogTitle>连接上游凭据</DialogTitle>
+          <DialogDescription>Codex 与 Grok 使用同一个入口；选择服务商后完成 OAuth 或 API Key 录入。</DialogDescription>
+        </DialogHeader>
+        <Field>
+          <FieldLabel>服务商</FieldLabel>
+          <Select value={provider} onValueChange={(value) => setProvider(value === "grok" ? "grok" : "codex")}>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup><SelectItem value="codex">Codex</SelectItem><SelectItem value="grok">Grok</SelectItem></SelectGroup></SelectContent>
+          </Select>
+        </Field>
+        {provider === "codex" ? <form className="grid gap-4" onSubmit={finishOAuth}>
 
           <FieldGroup>
             <Field orientation="horizontal">
@@ -1367,11 +1418,28 @@ function OAuthDialog({
               完成连接
             </Button>
           </DialogFooter>
-        </form>
+        </form> : <div className="flex flex-col gap-4">
+          <FieldGroup>
+            <Field orientation="horizontal">
+              <FieldContent><FieldLabel>Grok OAuth</FieldLabel><FieldDescription>打开 xAI 设备授权页，完成后回到这里确认。</FieldDescription></FieldContent>
+              <Button type="button" variant="outline" disabled={pending} onClick={startGrokOAuth}>{pending ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}开始授权</Button>
+            </Field>
+            {grokSession && <Field orientation="horizontal"><FieldContent><FieldLabel>验证码 {grokSession.userCode}</FieldLabel><FieldDescription>授权完成后点击确认。</FieldDescription></FieldContent><Button type="button" disabled={pending} onClick={finishGrokOAuth}>我已授权</Button></Field>}
+          </FieldGroup>
+          <form className="flex flex-col gap-4" onSubmit={addGrokApiKey}>
+            <FieldGroup className="grid md:grid-cols-2">
+              <Field><FieldLabel htmlFor="connect-grok-name">名称</FieldLabel><Input id="connect-grok-name" value={grokName} placeholder="可选" onChange={(event) => setGrokName(event.target.value)} /></Field>
+              <Field><FieldLabel htmlFor="connect-grok-key">xAI API Key</FieldLabel><Input id="connect-grok-key" type="password" value={grokKey} onChange={(event) => setGrokKey(event.target.value)} /></Field>
+            </FieldGroup>
+            <DialogFooter><Button type="button" variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={pending || !grokKey.trim()}>{pending && <Spinner data-icon="inline-start" />}添加 API Key</Button></DialogFooter>
+          </form>
+        </div>}
       </DialogContent>
     </Dialog>
   );
 }
+
+async function responseErrorText(response: Response) { try { const body = await response.json(); return body?.error?.message || body?.message || `请求失败 (${response.status})`; } catch { return `请求失败 (${response.status})`; } }
 
 function QuotaSummaryBadge({ quota }: { quota: CodexQuotaReport }) {
   if (quota.status === "not_cached" || quota.status === "unknown") {

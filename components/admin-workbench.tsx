@@ -51,7 +51,7 @@ import { LogsSection } from "@/components/admin/logs-section";
 import { ProxyPoolSection } from "@/components/admin/proxy-pool-section";
 import { AdminQuotaSection } from "@/components/admin/quota-section";
 import { SubscriptionAllocationSection } from "@/components/admin/subscription-allocation-section";
-import { GrokSection } from "@/components/admin/grok-section";
+import { GrokCredentialCards } from "@/components/admin/grok-section";
 import { OverviewSection } from "@/components/admin/overview-section";
 import {
   adminErrorMessage,
@@ -602,7 +602,7 @@ export function AdminWorkbench({
                   onDeleted={handleCredentialDeleted}
                   onRefreshData={refreshCredentialAndChannelData}
                   onUpdated={handleCredentialUpdated}
-                  providerControls={<GrokSection />}
+                  providerControls={<GrokCredentialCards />}
                 />
                 <div className="grid gap-3 xl:grid-cols-2">
                   <ChannelsSection
