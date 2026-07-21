@@ -264,6 +264,13 @@ export interface GrokCredentialRecord {
   enabled: boolean;
   priority: number;
   weight: number;
+  upstreamTransport: "auto" | "http" | "websocket";
+  grokBaseUrl: string | null;
+  grokNativeXSearch: boolean;
+  grokClientToolCache: boolean;
+  grokHeaders: Record<string, string>;
+  grokModelAliases: Record<string, string>;
+  grokExcludedModels: string[];
   useGlobalProxy: boolean;
   proxyPoolId: string | null;
   proxy: PublicCredentialProxyConfig | null;

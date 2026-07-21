@@ -123,6 +123,10 @@ describe("CodexWebSocketSessionManager", () => {
     manager.closeAll();
   });
 
+  it("can omit the Codex beta header for xAI", () => {
+    expect(codexWebSocketHeaders({ Authorization: "Bearer token", "Content-Type": "application/json" }, false)).toEqual({ authorization: "Bearer token" });
+  });
+
   it("finishes and reuses the session after response.incomplete", async () => {
     const sockets: FakeSocket[] = [];
     const manager = new CodexWebSocketSessionManager({

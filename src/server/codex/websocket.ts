@@ -69,6 +69,7 @@ export async function codexWebSocketResponse(input: {
   proxy?: CredentialProxyConfig | null;
   timeoutMs?: number;
   sessionKey?: string | null;
+  includeBetaHeader?: boolean;
 }) {
   const sessionKey = stringValue(input.sessionKey).trim();
   if (sessionKey) {
@@ -83,9 +84,10 @@ async function singleUseCodexWebSocketResponse(input: {
   payload: Record<string, unknown>;
   proxy?: CredentialProxyConfig | null;
   timeoutMs?: number;
+  includeBetaHeader?: boolean;
 }) {
   const wsUrl = codexWebSocketUrl(input.httpUrl);
-  const headers = codexWebSocketHeaders(input.headers);
+  const headers = codexWebSocketHeaders(input.headers, input.includeBetaHeader);
   const agent = input.proxy?.enabled
     ? new SocksProxyAgent(proxyUrl(input.proxy))
     : undefined;
@@ -591,7 +593,7 @@ function codexWebSocketUrl(httpUrl: string) {
   return url.toString();
 }
 
-export function codexWebSocketHeaders(headers: HeadersInit) {
+export function codexWebSocketHeaders(headers: HeadersInit, includeBetaHeader = true) {
   const out: Record<string, string> = {};
   new Headers(headers).forEach((value, key) => {
     if (key.toLowerCase() === "content-type") {
@@ -599,9 +601,11 @@ export function codexWebSocketHeaders(headers: HeadersInit) {
     }
     out[key] = value;
   });
-  const openAiBeta = out["openai-beta"];
-  delete out["openai-beta"];
-  out["OpenAI-Beta"] = betaHeaderWithResponsesWebSockets(openAiBeta);
+  if (includeBetaHeader) {
+    const openAiBeta = out["openai-beta"];
+    delete out["openai-beta"];
+    out["OpenAI-Beta"] = betaHeaderWithResponsesWebSockets(openAiBeta);
+  }
   return out;
 }
 

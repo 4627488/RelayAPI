@@ -47,10 +47,10 @@ export function saveGrokCredential(input: {
   return getGrokCredentialWithTokens(input.id)!;
 }
 
-export function updateGrokCredential(id: string, patch: Partial<Pick<GrokCredentialRecord, "enabled" | "priority" | "weight" | "lastUsedAt" | "cooldownUntil" | "lastError">>) {
+export function updateGrokCredential(id: string, patch: Partial<Pick<GrokCredentialRecord, "enabled" | "priority" | "weight" | "upstreamTransport" | "grokBaseUrl" | "grokNativeXSearch" | "grokClientToolCache" | "grokHeaders" | "grokModelAliases" | "grokExcludedModels" | "lastUsedAt" | "cooldownUntil" | "lastError">>) {
   const existing = getGrokCredentialWithTokens(id); if (!existing) return null;
   const next = { ...existing, ...patch };
-  const metadata = { ...next.metadata, auth_type: next.authType, cooldown_until: next.cooldownUntil, last_error: next.lastError };
+  const metadata = { ...next.metadata, auth_type: next.authType, cooldown_until: next.cooldownUntil, last_error: next.lastError, upstream_transport: next.upstreamTransport, grok_base_url: next.grokBaseUrl, grok_native_x_search: next.grokNativeXSearch, grok_client_tool_cache: next.grokClientToolCache, grok_headers: next.grokHeaders, grok_model_aliases: next.grokModelAliases, grok_excluded_models: next.grokExcludedModels };
   patchProviderCredentialRow(id, "grok", { enabled: next.enabled ? 1 : 0, priority: next.priority, weight: Math.max(1, next.weight), lastUsedAt: next.lastUsedAt, metadataJson: jsonStringify(metadata), updatedAt: new Date().toISOString() });
   return getGrokCredentialWithTokens(id);
 }
@@ -62,7 +62,7 @@ export function deleteGrokCredential(id: string) {
 function toPublic(row: Row): GrokCredentialRecord {
   const metadata = safeJsonParse<Record<string, unknown>>(row.metadataJson, {});
   return { id: row.id, provider: "grok", authType: metadata.auth_type === "api_key" ? "api_key" : "oauth", email: row.email, subject: row.accountId, planType: row.planType,
-    enabled: row.enabled === 1, priority: row.priority, weight: row.weight, useGlobalProxy: metadata.use_global_proxy === true,
+    enabled: row.enabled === 1, priority: row.priority, weight: row.weight, upstreamTransport: transport(metadata.upstream_transport), grokBaseUrl: text(metadata.grok_base_url), grokNativeXSearch: metadata.grok_native_x_search !== false, grokClientToolCache: metadata.grok_client_tool_cache !== false, grokHeaders: headers(metadata.grok_headers), grokModelAliases: headers(metadata.grok_model_aliases), grokExcludedModels: strings(metadata.grok_excluded_models), useGlobalProxy: metadata.use_global_proxy === true,
     proxyPoolId: text(metadata.proxy_pool_id), proxy: publicProxy(row.proxyEnvelope), expiresAt: row.expiresAt, lastRefreshAt: row.lastRefreshAt,
     lastUsedAt: row.lastUsedAt, cooldownUntil: text(metadata.cooldown_until), lastError: text(metadata.last_error), createdAt: row.createdAt, updatedAt: row.updatedAt, metadata };
 }
@@ -70,3 +70,6 @@ function toSecret(row: Row): GrokCredentialWithTokens { return { ...toPublic(row
 function secretProxy(value: string | null) { try { return value ? decryptJson<CredentialProxyConfig>(value) : null; } catch { return null; } }
 function publicProxy(value: string | null): PublicCredentialProxyConfig | null { const p = secretProxy(value); return p ? { enabled: p.enabled, type: p.type, host: p.host, port: p.port, username: p.username, passwordSet: Boolean(p.password) } : null; }
 function text(value: unknown) { return typeof value === "string" && value.trim() ? value : null; }
+function transport(value: unknown): GrokCredentialRecord["upstreamTransport"] { return value === "http" || value === "websocket" ? value : "auto"; }
+function headers(value: unknown) { if (!value || typeof value !== "object" || Array.isArray(value)) return {}; return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string")); }
+function strings(value: unknown) { return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : []; }

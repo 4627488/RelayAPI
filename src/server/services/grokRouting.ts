@@ -12,7 +12,7 @@ export function selectGrokChannel(input: { model: string; apiKey: RelayApiKeyCon
     (!channel.cooldownUntil || Date.parse(channel.cooldownUntil) <= now) && (!channel.modelAllowlist.length || channel.modelAllowlist.includes(input.model)) &&
     (!input.apiKey.channelAllowlist.length || input.apiKey.channelAllowlist.includes(channel.id)))
     .flatMap((channel) => channel.credentialIds.map((id) => credentials.get(id)).filter((item) => item?.enabled && (!eligible || eligible.has(item.id)) &&
-      !input.excludedCredentialIds?.has(item.id) && (!item.cooldownUntil || Date.parse(item.cooldownUntil) <= now)).map((credential) => ({ channel, credential: credential! })));
+      !input.excludedCredentialIds?.has(item.id) && !item.grokExcludedModels.some((pattern) => wildcard(pattern, input.model)) && (!item.cooldownUntil || Date.parse(item.cooldownUntil) <= now)).map((credential) => ({ channel, credential: credential! })));
   if (!candidates.length) throw new HttpError(503, "no_available_grok_channel", "No usable Grok channel is available");
   const maxPriority = Math.max(...candidates.map((item) => item.channel.priority)); const tier = candidates.filter((item) => item.channel.priority === maxPriority);
   const total = tier.reduce((sum, item) => sum + Math.max(1, item.channel.weight) * Math.max(1, item.credential.weight), 0); let cursor = Math.random() * total;
@@ -26,3 +26,4 @@ export function recordGrokCredentialFailure(id: string, status: number, message:
   updateGrokCredential(id, { cooldownUntil: cooldown, lastError: message });
 }
 export function recordGrokCredentialSuccess(id: string) { updateGrokCredential(id, { cooldownUntil: null, lastError: null }); }
+function wildcard(pattern: string, value: string) { const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*"); return new RegExp(`^${escaped}$`, "i").test(value); }

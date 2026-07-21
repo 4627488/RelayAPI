@@ -15,7 +15,8 @@ export async function getGrokQuota(id: string): Promise<GrokQuotaReport> {
   let credential = await ensureFreshGrokCredential(id);
   if (credential.authType !== "oauth") throw new HttpError(400, "grok_quota_oauth_required", "Upstream quota is only available for Grok OAuth subscriptions");
   const proxy = resolveCredentialProxy({ proxy: credential.proxy, proxyPoolId: credential.proxyPoolId, useGlobalProxy: credential.useGlobalProxy, tenantProxy: null });
-  const request = async (path: string) => proxiedFetch(`${GROK_CLI_BASE_URL}${path}`, { method: "GET", headers: billingHeaders(credential.tokens.access_token), signal: AbortSignal.timeout(20_000) }, proxy);
+  const baseUrl = text(credential.grokBaseUrl) || GROK_CLI_BASE_URL;
+  const request = async (path: string) => proxiedFetch(`${baseUrl}${path}`, { method: "GET", headers: billingHeaders(credential.tokens.access_token), signal: AbortSignal.timeout(20_000) }, proxy);
   let [weeklyResponse, monthlyResponse] = await Promise.all([request("/billing?format=credits"), request("/billing")]);
   if ((weeklyResponse.status === 401 || monthlyResponse.status === 401) && credential.tokens.refresh_token) {
     await Promise.all([weeklyResponse.body?.cancel().catch(() => undefined), monthlyResponse.body?.cancel().catch(() => undefined)]);
@@ -27,7 +28,7 @@ export async function getGrokQuota(id: string): Promise<GrokQuotaReport> {
   if (!weekly && !monthly) throw new HttpError(502, "grok_quota_upstream_error", `Grok billing request failed (${weeklyResponse.status}/${monthlyResponse.status})`);
   let rateLimit: GrokQuotaWindow | null = null;
   if (weekly?.usedPercent === null && monthly?.usedPercent === null) {
-    const probe = await proxiedFetch(`${GROK_CLI_BASE_URL}/responses`, { method: "POST", headers: { ...billingHeaders(credential.tokens.access_token), Accept: "text/event-stream" }, body: JSON.stringify({ model: "grok-4.5", input: "hi", stream: true }), signal: AbortSignal.timeout(20_000) }, proxy);
+    const probe = await proxiedFetch(`${baseUrl}/responses`, { method: "POST", headers: { ...billingHeaders(credential.tokens.access_token), Accept: "text/event-stream" }, body: JSON.stringify({ model: "grok-4.5", input: "hi", stream: true }), signal: AbortSignal.timeout(20_000) }, proxy);
     rateLimit = parseGrokRateLimitHeaders(probe.headers);
     await probe.body?.cancel().catch(() => undefined);
   }
