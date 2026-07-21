@@ -11,6 +11,8 @@ describe("provider credential workspace", () => {
     expect(credentials).toContain("连接上游凭据");
     expect(credentials).toContain("{providerControls}");
     expect(grokCards).toContain("className=\"relative shadow-sm\"");
+    expect(grokCards).toContain("剩余额度：");
+    expect(grokCards).toContain("GrokSettingsDialog");
     expect(grokCards).not.toContain("连接 Grok 订阅");
     expect(grokCards).not.toContain("Grok 凭据</div>");
     expect(workbench).not.toContain("<GrokSection");

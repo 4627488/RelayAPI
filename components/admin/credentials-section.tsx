@@ -251,6 +251,7 @@ export function CredentialsSection({
         ),
       );
       const failedCount = results.filter((success) => !success).length;
+      window.dispatchEvent(new Event("grok-quota-refresh"));
       if (failedCount > 0) {
         toast.error(`额度刷新完成，${formatNumber(failedCount)} 个账号失败`);
       } else {
