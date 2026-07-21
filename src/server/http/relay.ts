@@ -38,7 +38,7 @@ import {
   createImagesSseStream,
   type CodexImagesRequest,
 } from "@/src/server/codex/images";
-import { CodexResponsesSseFramer } from "@/src/server/codex/sse";
+import { createResponsesUsageMeterStream } from "@/src/server/http/responsesUsageStream";
 import { codexCompactSseResponse, resolveCodexCompactionMode } from "@/src/server/codex/compaction";
 import {
   chatCompletionsToCodex,
@@ -57,7 +57,6 @@ import {
 } from "@/src/server/codex/client";
 import { createOpenAIChatSseStream } from "@/src/server/codex/chatStream";
 import {
-  classifyCodexStreamEvent,
   classifyCodexUpstreamError,
   type CodexUpstreamErrorInfo,
 } from "@/src/server/codex/errors";
@@ -88,7 +87,6 @@ import {
 import type {
   ChannelRecord,
   RelayApiKeyContext,
-  UsageSnapshot,
 } from "@/src/shared/types/entities";
 
 const MULTIPART_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -1329,7 +1327,7 @@ async function forwardCodexStream(input: {
   const fullLog = getFullRequestLoggingSetting();
   const upstreamCapture = createTextCapture();
   const body = response.body
-    ? createCodexUsageMeterStream(
+    ? createResponsesUsageMeterStream(
         tapStream(
           response.body,
           fullLog ? upstreamCapture : null,
@@ -1431,171 +1429,6 @@ async function forwardCodexStream(input: {
   return new Response(body, { status: response.status, headers });
 }
 
-function createCodexUsageMeterStream(
-  upstreamBody: ReadableStream<Uint8Array>,
-  handlers: {
-    onCompleted: (usage: UsageSnapshot, response?: unknown) => void;
-    onError: (error: unknown, usage: UsageSnapshot) => void;
-    onFirstToken?: () => void;
-  },
-) {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  const framer = new CodexResponsesSseFramer();
-  let usage = emptyUsage();
-  let firstTokenReported = false;
-  let upstreamCompleted = false;
-  let upstreamErrored = false;
-  let completionReported = false;
-  let completedResponse: unknown;
-
-  function reportFirstTokenOnce() {
-    if (firstTokenReported) {
-      return;
-    }
-    firstTokenReported = true;
-    handlers.onFirstToken?.();
-  }
-
-  function reportCompletedOnce() {
-    if (completionReported) {
-      return;
-    }
-    completionReported = true;
-    handlers.onCompleted(usage, completedResponse);
-  }
-
-  function reportErrorOnce(error: unknown) {
-    if (completionReported) {
-      return;
-    }
-    completionReported = true;
-    handlers.onError(error, usage);
-  }
-
-  function processText(text: string) {
-    for (const frame of framer.push(text)) {
-      handleCodexStreamFrame(
-        frame.event,
-        (nextUsage, responsePayload) => {
-          usage = nextUsage;
-          completedResponse = responsePayload;
-        },
-        reportFirstTokenOnce,
-        () => {
-          upstreamCompleted = true;
-        },
-        (error) => {
-          upstreamErrored = true;
-          reportErrorOnce(error);
-        },
-      );
-    }
-  }
-
-  return upstreamBody.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        controller.enqueue(chunk);
-        processText(decoder.decode(chunk, { stream: true }));
-      },
-      flush(controller) {
-        const tail = decoder.decode();
-        if (tail) {
-          processText(tail);
-        }
-        for (const frame of framer.flush()) {
-          handleCodexStreamFrame(
-            frame.event,
-            (nextUsage, responsePayload) => {
-              usage = nextUsage;
-              completedResponse = responsePayload;
-            },
-            reportFirstTokenOnce,
-            () => {
-              upstreamCompleted = true;
-            },
-            (error) => {
-              upstreamErrored = true;
-              reportErrorOnce(error);
-            },
-          );
-        }
-        if (upstreamCompleted) {
-          reportCompletedOnce();
-          return;
-        }
-        if (upstreamErrored) {
-          return;
-        }
-        const error = new Error(
-          "Upstream stream ended before response.completed; refusing to mark a truncated Codex stream as successful",
-        );
-        reportErrorOnce(error);
-        controller.enqueue(encoder.encode(codexStreamErrorFrame(error)));
-      },
-    }),
-  );
-}
-
-function handleCodexStreamFrame(
-  event: Record<string, unknown> | null,
-  onUsage: (usage: UsageSnapshot, response?: unknown) => void,
-  onFirstToken: () => void,
-  onCompleted: () => void,
-  onError: (error: unknown) => void,
-) {
-  if (!event) {
-    return;
-  }
-  if (
-    (event.type === "response.output_text.delta" ||
-      event.type === "response.reasoning_summary_text.delta") &&
-    typeof event.delta === "string" &&
-    event.delta.length > 0
-  ) {
-    onFirstToken();
-  }
-  if (
-    event.type === "response.completed" ||
-    event.type === "response.done" ||
-    event.type === "response.incomplete"
-  ) {
-    onUsage(extractUsageFromCodexResponse(event.response || event), event.response);
-    onCompleted();
-    return;
-  }
-  if (
-    event.type === "error" ||
-    event.type === "response.failed" ||
-    event.type === "response.cancelled" ||
-    event.type === "response.canceled"
-  ) {
-    onError(codexUpstreamStreamError(event));
-  }
-}
-
-function codexUpstreamStreamError(event: Record<string, unknown>) {
-  const info = classifyCodexStreamEvent(event, { statusCode: 400 });
-  const error =
-    event.error && typeof event.error === "object" && !Array.isArray(event.error)
-      ? (event.error as Record<string, unknown>)
-      : event;
-  const message =
-    info?.message ||
-    stringValue(error.message) ||
-    stringValue(error.code) ||
-    "Upstream Codex stream returned an error";
-  const out = new Error(message);
-  const withDetails = out as Error & {
-    details?: unknown;
-    codexErrorInfo?: CodexUpstreamErrorInfo | null;
-  };
-  withDetails.details = event;
-  withDetails.codexErrorInfo = info;
-  return out;
-}
-
 function captureReplayForResponse(input: {
   model: string;
   request: Request;
@@ -1665,26 +1498,5 @@ function codexErrorInfoFromError(error: unknown) {
   }
   const withInfo = error as { codexErrorInfo?: CodexUpstreamErrorInfo | null };
   return withInfo.codexErrorInfo || null;
-}
-
-function codexStreamErrorFrame(error: unknown) {
-  const payload = {
-    error: {
-      message: publicCodexStreamErrorMessage(error),
-      type: "stream_error",
-      code: "upstream_stream_incomplete",
-    },
-  };
-  return `\nevent: error\ndata: ${JSON.stringify(payload)}\n\n`;
-}
-
-function publicCodexStreamErrorMessage(error: unknown) {
-  if (
-    error instanceof Error &&
-    error.message.includes("Upstream stream ended before response.completed")
-  ) {
-    return "Upstream stream ended before completion";
-  }
-  return "Upstream stream error";
 }
 
