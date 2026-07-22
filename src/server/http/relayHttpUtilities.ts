@@ -162,18 +162,20 @@ export function upstreamErrorResponse(status: number) {
   );
 }
 
-export function withDefaultContentType(headers: Headers, contentType: string) {
-  if (!headers.get("content-type")) {
-    headers.set("Content-Type", contentType);
+export function withDefaultContentType(headers: HeadersInit, contentType: string) {
+  const output = new Headers(headers);
+  if (!output.get("content-type")) {
+    output.set("Content-Type", contentType);
   }
-  return headers;
+  return output;
 }
 
-export function withStreamingHeaders(headers: Headers) {
-  headers.set("Cache-Control", "no-cache, no-transform");
-  headers.set("Connection", "keep-alive");
-  headers.set("X-Accel-Buffering", "no");
-  return headers;
+export function withStreamingHeaders(headers: HeadersInit) {
+  const output = new Headers(headers);
+  output.set("Cache-Control", "no-cache, no-transform");
+  output.set("Connection", "keep-alive");
+  output.set("X-Accel-Buffering", "no");
+  return output;
 }
 
 export function isFreeCodexPlan(planType: string) {
