@@ -42,7 +42,7 @@ export function GrokCredentialCards() {
     return () => { active = false; };
   }, []);
   React.useEffect(() => { const reload = () => void load(); window.addEventListener("grok-credentials-changed", reload); window.addEventListener("grok-quota-refresh", reload); return () => { window.removeEventListener("grok-credentials-changed", reload); window.removeEventListener("grok-quota-refresh", reload); }; }, [load]);
-  async function createChannel(credential: GrokCredentialRecord) { const response = await fetch("/api/admin/channels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "grok", name: `Grok · ${credential.email || credential.subject || credential.id}`, credentialIds: [credential.id], baseUrl: credential.authType === "oauth" ? "https://cli-chat-proxy.grok.com/v1" : "https://api.x.ai/v1", modelAllowlist: ["grok-4.5", "grok-4.3"] }) }); if (!response.ok) return toast.error(await errorText(response)); toast.success("Grok 通道已创建，刷新页面后可见"); }
+  async function createChannel(credential: GrokCredentialRecord) { const response = await fetch("/api/admin/channels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "grok", name: `Grok · ${credential.email || credential.subject || credential.id}`, credentialIds: [credential.id], baseUrl: credential.authType === "oauth" ? "https://cli-chat-proxy.grok.com/v1" : "https://api.x.ai/v1", modelAllowlist: [] }) }); if (!response.ok) return toast.error(await errorText(response)); toast.success("Grok 通道已创建，模型将从上游自动探测"); }
   async function remove(id: string) { const response = await fetch(`/api/admin/grok/credentials/${id}`, { method: "DELETE" }); if (!response.ok) return toast.error(await errorText(response)); await load(); }
   return <>{items.map((item) => {
     const name = item.email || item.subject || item.id;
@@ -50,7 +50,7 @@ export function GrokCredentialCards() {
       <CardContent className="grid gap-3">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
           <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-            <Badge variant="outline" className="h-6 shrink-0 px-2 text-sm font-semibold">Grok</Badge>
+            <Badge variant="outline" className="h-6 shrink-0 px-2 text-sm font-semibold">{item.planType === "api-key" ? "Grok API" : item.planType}</Badge>
             <div className="min-w-0 flex-1 truncate text-base font-medium" title={name}>{name}</div>
           </div>
           <GrokSettingsDialog credential={item} onCreateChannel={() => createChannel(item)} onDeleted={() => remove(item.id)} onSaved={load} />

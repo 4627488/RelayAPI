@@ -30,6 +30,7 @@ import {
 } from "@/src/server/http/relayHttpUtilities";
 
 import { createModelsResponse } from "@/src/server/codex/models";
+import { listGrokUpstreamModelIds } from "@/src/server/services/grokModels";
 import {
   buildImagesApiResponseFromSseText,
   buildImagesEditsJsonRequest,
@@ -119,7 +120,7 @@ export async function handleModels(request: Request) {
         }),
     );
     if (listChannels().some((channel) => channel.provider === "grok" && channel.enabled)) {
-      const grokModels = ["grok-4.5", "grok-4.3"]
+      const grokModels = (await listGrokUpstreamModelIds())
         .filter((id) => apiKey.modelAllowlist.length === 0 || apiKey.modelAllowlist.includes(id))
         .map((id) => ({ id, object: "model", owned_by: "xai" }));
       payload = { ...payload, data: [...payload.data, ...grokModels] };

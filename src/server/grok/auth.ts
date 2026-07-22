@@ -45,13 +45,40 @@ function tokenBundle(payload: Record<string, unknown>, tokenEndpoint: string) {
   const expiresIn = numberValue(payload.expires_in);
   return { access_token: accessToken, refresh_token: stringValue(payload.refresh_token), id_token: stringValue(payload.id_token),
     token_type: stringValue(payload.token_type) || "Bearer", expired: expiresIn ? new Date(Date.now() + expiresIn * 1000).toISOString() : "",
-    token_endpoint: tokenEndpoint, api_key: "" };
+    token_endpoint: tokenEndpoint, api_key: "", plan_type: grokPlanType(payload) };
 }
 
 export function grokJwtIdentity(idToken: string) {
   try { const payload = idToken.split(".")[1]; const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
     return { email: stringValue(parsed.email), subject: stringValue(parsed.sub) }; } catch { return { email: "", subject: "" }; }
 }
+
+export function grokPlanType(payload: Record<string, unknown>) {
+  const direct = [payload.plan_type, payload.planType, payload.subscription_tier, payload.subscriptionTier, payload.auth_mode]
+    .map(stringValue).find(Boolean);
+  if (direct) return normalizeGrokPlan(direct);
+  for (const token of [stringValue(payload.id_token), stringValue(payload.access_token)]) {
+    try {
+      const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")) as Record<string, unknown>;
+      const nested = findPlanClaim(claims);
+      if (nested) return normalizeGrokPlan(nested);
+    } catch { /* An opaque token carries no locally readable plan. */ }
+  }
+  return "supergrok";
+}
+
+function findPlanClaim(value: unknown, depth = 0): string {
+  if (!value || typeof value !== "object" || depth > 4) return "";
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (/^(plan|plan_type|subscription|subscription_tier|tier|auth_mode)$/i.test(key)) {
+      const found = stringValue(child); if (found) return found;
+    }
+  }
+  for (const child of Object.values(value as Record<string, unknown>)) { const found = findPlanClaim(child, depth + 1); if (found) return found; }
+  return "";
+}
+
+function normalizeGrokPlan(value: string) { return value.trim().toLowerCase().replace(/[\s_]+/g, "-"); }
 
 async function jsonFetch(url: string) { const response = await fetch(url, { headers: { Accept: "application/json" } }); if (!response.ok) throw new HttpError(502, "grok_oauth_discovery_failed", `Grok OAuth discovery failed (${response.status})`); return await response.json() as Record<string, unknown>; }
 async function formFetch(url: string, values: Record<string, string>) { const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body: new URLSearchParams(values) }); const payload = await response.json().catch(() => ({})) as Record<string, unknown>; if (!response.ok) throw new HttpError(502, "grok_oauth_request_failed", stringValue(payload.error_description) || stringValue(payload.error) || `Grok OAuth request failed (${response.status})`); return payload; }

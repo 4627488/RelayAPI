@@ -252,6 +252,7 @@ export interface GrokTokenBundle {
   expired: string;
   token_endpoint: string;
   api_key: string;
+  plan_type?: string;
 }
 
 export interface GrokCredentialRecord {

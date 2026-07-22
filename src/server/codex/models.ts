@@ -1,6 +1,7 @@
 import "server-only";
 
 import { serverConfig } from "@/src/server/config/env";
+import { listGrokUpstreamModelIds } from "@/src/server/services/grokModels";
 
 const CREATED_2024_01_01 = 1704067200;
 const REMOTE_CATALOG_CACHE_MS = 5 * 60 * 1000;
@@ -125,11 +126,11 @@ export async function createModelsResponse(
 }
 
 export async function listUpstreamModelIds() {
-  const response = await createModelsResponse({
-    planType: "pro",
-    openAICompatible: true,
-  });
-  return [...new Set(response.data.map((entry) => entry.id).filter(Boolean))];
+  const [response, grokModels] = await Promise.all([
+    createModelsResponse({ planType: "pro", openAICompatible: true }),
+    listGrokUpstreamModelIds(),
+  ]);
+  return [...new Set([...response.data.map((entry) => entry.id).filter(Boolean), ...grokModels])];
 }
 
 export function normalizePlan(planType?: string) {
