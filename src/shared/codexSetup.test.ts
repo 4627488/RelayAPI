@@ -11,11 +11,23 @@ import {
 
 describe("client setup files", () => {
   test("uses the current Codex custom-provider authentication contract", () => {
-    const config = buildCodexConfig("grok-4.5", "https://relay.example.com");
+    const config = buildCodexConfig(
+      "grok-4.5",
+      "relay_sk_test'value",
+      "https://relay.example.com",
+    );
     expect(config).toContain('model = "grok-4.5"');
+    expect(config).toContain('model_reasoning_effort = "medium"');
     expect(config).toContain('base_url = "https://relay.example.com/v1"');
-    expect(config).toContain('env_key = "RELAY_API_KEY"');
     expect(config).toContain('wire_api = "responses"');
+    expect(config).toContain('[model_providers.relayapi.auth]');
+    expect(config).toContain('command = "powershell"');
+    expect(config).toContain("[Console]::Out.Write('relay_sk_test''value')");
+    expect(config).toContain('refresh_interval_ms = 0');
+    expect(config).toContain('[windows]');
+    expect(config).toContain('sandbox = "elevated"');
+    expect(config).not.toContain("RELAY_API_KEY");
+    expect(config).not.toContain("env_key");
     expect(config).not.toContain("requires_openai_auth");
     expect(config).not.toContain("experimental_bearer_token");
     expect(config).not.toContain("model_catalog_json");

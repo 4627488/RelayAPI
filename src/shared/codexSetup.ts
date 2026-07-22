@@ -8,17 +8,32 @@ export type CodexModelManifest = {
 
 export function buildCodexConfig(
   model: string,
+  apiKey: string,
   baseUrl = RELAY_DEFAULT_BASE_URL,
 ) {
+  const tokenCommand = `[Console]::Out.Write('${powerShellSingleQuoted(apiKey)}')`;
+
   return `model = "${tomlString(model)}"
 model_provider = "${RELAY_PROVIDER_NAME}"
+model_reasoning_effort = "medium"
 
 [model_providers.${RELAY_PROVIDER_NAME}]
 name = "RelayAPI"
 base_url = "${tomlString(normalizeRelayBaseUrl(baseUrl))}"
-env_key = "RELAY_API_KEY"
-env_key_instructions = "Set RELAY_API_KEY to your tenant API key"
 wire_api = "responses"
+
+[model_providers.${RELAY_PROVIDER_NAME}.auth]
+command = "powershell"
+args = [
+  "-NoProfile",
+  "-Command",
+  "${tomlString(tokenCommand)}"
+]
+timeout_ms = 5000
+refresh_interval_ms = 0
+
+[windows]
+sandbox = "elevated"
 `;
 }
 
@@ -110,4 +125,8 @@ export function serializeCodexModelManifest(manifest: CodexModelManifest) {
 
 function tomlString(value: string) {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+function powerShellSingleQuoted(value: string) {
+  return value.replaceAll("'", "''");
 }

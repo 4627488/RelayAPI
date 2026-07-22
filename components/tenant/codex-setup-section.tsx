@@ -38,8 +38,6 @@ import {
   buildCodexConfig,
   buildOpenAIEnvironment,
   buildOpenCodeConfig,
-  buildPosixEnvironment,
-  buildPowerShellEnvironment,
   CODEX_DEFAULT_MODEL,
   type CodexModelManifest,
   normalizeRelayBaseUrl,
@@ -138,7 +136,7 @@ export function TenantCodexSetupSection({
   const models = manifest?.models.map((entry) => entry.slug) || [];
   const keyValue = secret || "sk-填入你的租户 API Key";
   const providers = providersForModel(resources, model);
-  const codexConfig = buildCodexConfig(model, relayBaseUrl);
+  const codexConfig = buildCodexConfig(model, keyValue, relayBaseUrl);
   const openCodeConfig = manifest
     ? buildOpenCodeConfig(model, manifest, keyValue, relayBaseUrl)
     : "";
@@ -240,13 +238,20 @@ export function TenantCodexSetupSection({
         <TabsContent value="codex" className="flex flex-col gap-4">
           <SetupIntro
             title="Codex CLI"
-            description="使用官方自定义 Provider 配置。Codex 会从 RelayAPI 的 /v1/models 自动加载该用户可路由的完整模型目录。"
+            description="Windows 单文件配置：Key 直接写入 config.toml，Codex 会通过命令认证从 RelayAPI 的 /v1/models 自动加载该用户可路由的完整模型目录。"
             steps={[
-              "在启动 Codex 的终端设置 RELAY_API_KEY",
-              "将 config.toml 写入 ~/.codex/config.toml",
-              "从同一终端启动或完全重启 Codex，模型目录会自动刷新",
+              "创建客户端专用 Key，页面会自动写入下方配置",
+              "将完整配置保存为 ~/.codex/config.toml",
+              "完全重启 Codex，随后可使用 /model 选择 RelayAPI 返回的模型",
             ]}
           />
+          <Alert>
+            <CircleAlertIcon />
+            <AlertTitle>Key 会以明文保存在配置文件中</AlertTitle>
+            <AlertDescription>
+              请只在自己的设备上使用，并限制 config.toml 的读取权限。复制配置前确认页面已填入真实 Key；不要把该文件提交到 Git。
+            </AlertDescription>
+          </Alert>
           {providers.includes("grok") && (
             <Alert>
               <ShieldCheckIcon />
@@ -258,8 +263,6 @@ export function TenantCodexSetupSection({
           )}
           <div className="grid gap-4 xl:grid-cols-2">
             <ConfigPanel filename="~/.codex/config.toml" value={codexConfig} />
-            <ConfigPanel filename="PowerShell：当前终端" value={buildPowerShellEnvironment(keyValue)} />
-            <ConfigPanel filename="macOS / Linux：当前终端" value={buildPosixEnvironment(keyValue)} />
             <ConfigPanel filename="Codex 远程模型目录" value={`${relayBaseUrl}/models?format=codex`} />
           </div>
         </TabsContent>
