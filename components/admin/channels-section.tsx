@@ -532,7 +532,7 @@ function ChannelFields({
       <FieldGroup>
         <Field>
           <FieldLabel>服务商</FieldLabel>
-          <Select value={form.provider} onValueChange={(value) => onChange((current) => ({ ...current, provider: value === "grok" ? "grok" : "codex", credentialIds: "" }))}>
+          <Select value={form.provider} onValueChange={(value) => onChange((current) => ({ ...current, provider: value === "grok" ? "grok" : "codex", credentialIds: "", modelAllowlist: "" }))}>
             <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent><SelectGroup><SelectItem value="codex">Codex</SelectItem><SelectItem value="grok">Grok</SelectItem></SelectGroup></SelectContent>
           </Select>
@@ -621,7 +621,7 @@ function ChannelFields({
 
         <Field>
           <FieldLabel>模型白名单</FieldLabel>
-          <ModelSelector selectedModels={parseList(form.modelAllowlist)} onSelectedModelsChange={(models) => update("modelAllowlist", models.join("\n"))} />
+          <ModelSelector key={form.provider} catalogProvider={form.provider} selectedModels={parseList(form.modelAllowlist)} onSelectedModelsChange={(models) => update("modelAllowlist", models.join("\n"))} />
         </Field>
       </FieldGroup>
     </FieldSet>

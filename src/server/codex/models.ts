@@ -1,7 +1,7 @@
 import "server-only";
 
 import { serverConfig } from "@/src/server/config/env";
-import { listGrokUpstreamModelIds, listGrokUpstreamModels } from "@/src/server/services/grokModels";
+import { listGrokUpstreamModels } from "@/src/server/services/grokModels";
 
 const CREATED_2024_01_01 = 1704067200;
 const REMOTE_CATALOG_CACHE_MS = 5 * 60 * 1000;
@@ -127,21 +127,47 @@ export async function createModelsResponse(
 
 export async function listUpstreamModelIds() {
   const [response, grokModels] = await Promise.all([
-    createModelsResponse({ planType: "pro", openAICompatible: true }),
-    listGrokUpstreamModelIds(),
+    listCodexUpstreamModelIds(),
+    listGrokCatalogModelIds(),
   ]);
-  return [...new Set([...response.data.map((entry) => entry.id).filter(Boolean), ...grokModels])];
+  return [...new Set([...response, ...grokModels])];
+}
+
+export async function listCodexUpstreamModelIds() {
+  const response = await createModelsResponse({ planType: "pro", openAICompatible: true });
+  return response.data.map((entry) => entry.id).filter(Boolean);
+}
+
+export async function listGrokCatalogModelIds() {
+  return (await listGrokCatalogModels()).map((entry) => entry.id);
+}
+
+export async function listGrokCatalogModels() {
+  const [catalog, upstream] = await Promise.all([
+    getModelsCatalog(),
+    listGrokUpstreamModels(),
+  ]);
+  const byId = new Map<string, ModelEntry>();
+  const catalogModels = Array.isArray(catalog.data.xai)
+    ? catalog.data.xai.map(normalizeModelEntry)
+    : [];
+  for (const entry of catalogModels) if (entry.id) byId.set(entry.id, entry);
+  for (const entry of upstream) {
+    byId.set(entry.id, {
+      ...(byId.get(entry.id) || fallbackGrokModel(entry.id)),
+      ...entry,
+      id: entry.id,
+      object: "model",
+    });
+  }
+  return [...byId.values()];
 }
 
 export async function createCodexModelsManifest(input: { modelAllowlist?: string[] } = {}) {
-  const [catalog, codex, upstreamGrok] = await Promise.all([
-    getModelsCatalog(),
+  const [codex, grok] = await Promise.all([
     createModelsResponse({ planType: "pro" }),
-    listGrokUpstreamModels(),
+    listGrokCatalogModels(),
   ]);
-  const grokCatalog = Array.isArray(catalog.data.xai) ? catalog.data.xai.map(normalizeModelEntry) : [];
-  const grokById = new Map(grokCatalog.map((entry) => [entry.id, entry]));
-  const grok = upstreamGrok.map((entry) => ({ ...(grokById.get(entry.id) || fallbackGrokModel(entry.id)), ...entry, id: entry.id, object: "model" }));
   const allowlist = input.modelAllowlist || [];
   const models = [...codex.data, ...grok]
     .filter((entry) => allowlist.length === 0 || modelMatchesAllowlist(entry.id, allowlist))

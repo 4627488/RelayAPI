@@ -8,7 +8,7 @@ import { createResponsesUsageMeterStream } from "@/src/server/http/responsesUsag
 import { appendErrorLog, appendSuccessLog } from "@/src/server/http/relayRequestLogging";
 import { createStageTimer, type StageTimer } from "@/src/server/http/stageTimer";
 import { createTextCapture, emptyUsage, isRecord, mergeHeaders, readJsonObject, tapStream, withDefaultContentType, withStreamingHeaders } from "@/src/server/http/relayHttpUtilities";
-import { errorToResponse } from "@/src/server/http/errors";
+import { errorToResponse, HttpError } from "@/src/server/http/errors";
 import { authenticateRelayRequest } from "@/src/server/services/apiKeys";
 import { getFullRequestLoggingSetting } from "@/src/server/services/settings";
 import { tenantQuotaHeaders, type TenantQuotaAdmission } from "@/src/server/services/tenantQuota";
@@ -23,7 +23,7 @@ export async function handleGrokResponses(request: Request) {
   try {
     apiKey = timing.time("authenticate", "认证 API Key", () => authenticateRelayRequest(request));
     input = await timing.timeAsync("read_request_body", "读取请求 Body", () => readJsonObject(request));
-    const model = String(input.model || "grok-4.5"); const stream = input.stream !== false;
+    const model = requiredModel(input.model); const stream = input.stream !== false;
     const result = await grokWithFailover(input, { model, apiKey, stream, timing }); channel = result.channel; admission = result.admission;
     if (!result.response.ok) return await logUpstreamFailure({ request, startedAt, start, apiKey, channel, input, result, admission, requestType: "responses", stream, model, timing });
     if (stream) return streamResponses({ request, startedAt, start, apiKey, channel, input, result, admission, requestType: "responses", model, timing });
@@ -46,7 +46,7 @@ export async function handleGrokChatCompletions(request: Request) {
   try {
     apiKey = timing.time("authenticate", "认证 API Key", () => authenticateRelayRequest(request));
     input = await timing.timeAsync("read_request_body", "读取请求 Body", () => readJsonObject(request));
-    const model = String(input.model || "grok-4.5"); const stream = input.stream === true;
+    const model = requiredModel(input.model); const stream = input.stream === true;
     const converted = timing.time("normalize_payload", "Chat 转换为 Responses Payload", () => chatCompletionsToCodex(input!, { stream: true, defaultModel: model }));
     const result = await grokWithFailover(converted.payload, { model, apiKey, stream: true, timing }); channel = result.channel; admission = result.admission;
     if (!result.response.ok) return await logUpstreamFailure({ request, startedAt, start, apiKey, channel, input, result, admission, requestType: "chat.completions", stream, model, timing });
@@ -88,6 +88,12 @@ async function grokWithFailover(payload: Record<string, unknown>, input: { model
     last = { ...combined, admission: { ...admission, state: null }, response: new Response(text, { status: result.response.status, headers: result.response.headers }) };
   }
   return last!;
+}
+
+function requiredModel(value: unknown) {
+  const model = typeof value === "string" ? value.trim() : "";
+  if (!model) throw new HttpError(400, "model_required", "Request model is required");
+  return model;
 }
 
 function streamResponses(input: { request: Request; startedAt: string; start: number; apiKey: RelayApiKeyContext; channel: ChannelRecord; input: Record<string, unknown>; result: Awaited<ReturnType<typeof grokFetch>>; admission: TenantQuotaAdmission; requestType: string; model: string; timing: StageTimer }) {
