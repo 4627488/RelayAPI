@@ -1,6 +1,7 @@
 import "server-only";
 
 import { serverConfig } from "@/src/server/config/env";
+import { HttpError } from "@/src/server/http/errors";
 import { listGrokUpstreamModels } from "@/src/server/services/grokModels";
 
 const CREATED_2024_01_01 = 1704067200;
@@ -9,6 +10,10 @@ const REMOTE_CATALOG_TIMEOUT_MS = 30 * 1000;
 const REMOTE_MODEL_URLS = [
   "https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
   "https://models.router-for.me/models.json",
+];
+const REMOTE_CODEX_CLIENT_MODEL_URLS = [
+  "https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/codex_client_models.json",
+  "https://models.router-for.me/codex_client_models.json",
 ];
 
 type ModelEntry = Record<string, unknown> & { id: string; object: string };
@@ -24,6 +29,11 @@ let remoteCatalogCache: {
   source: "",
   expiresAt: 0,
 };
+
+let codexClientCatalogCache: {
+  models: Record<string, unknown>[] | null;
+  expiresAt: number;
+} = { models: null, expiresAt: 0 };
 
 const FALLBACK_MODEL_BY_ID = new Map(
   [
@@ -164,15 +174,20 @@ export async function listGrokCatalogModels() {
 }
 
 export async function createCodexModelsManifest(input: { modelAllowlist?: string[] } = {}) {
-  const [codex, grok] = await Promise.all([
+  const [codex, grok, templates] = await Promise.all([
     createModelsResponse({ planType: "pro" }),
     listGrokCatalogModels(),
+    getCodexClientModelsCatalog(),
   ]);
   const allowlist = input.modelAllowlist || [];
-  const models = [...codex.data, ...grok]
+  const codexModels = codex.data
     .filter((entry) => allowlist.length === 0 || modelMatchesAllowlist(entry.id, allowlist))
     .map((entry, index) => codexManifestEntry(entry, index));
-  return { models };
+  const grokModels = buildGrokCodexClientModels(
+    grok.filter((entry) => allowlist.length === 0 || modelMatchesAllowlist(entry.id, allowlist)),
+    templates,
+  );
+  return { models: [...codexModels, ...grokModels] };
 }
 
 export function normalizePlan(planType?: string) {
@@ -302,6 +317,49 @@ function fallbackModelById(id: string): ModelEntry {
   return model(id, id, CREATED_2024_01_01);
 }
 
+async function getCodexClientModelsCatalog() {
+  const now = Date.now();
+  if (codexClientCatalogCache.models && now < codexClientCatalogCache.expiresAt) return structuredClone(codexClientCatalogCache.models);
+  for (const url of REMOTE_CODEX_CLIENT_MODEL_URLS) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(REMOTE_CATALOG_TIMEOUT_MS) });
+      if (!response.ok) continue;
+      const payload = await response.json();
+      const models = validateCodexClientModelsCatalog(payload);
+      codexClientCatalogCache = { models, expiresAt: now + REMOTE_CATALOG_CACHE_MS };
+      return structuredClone(models);
+    } catch {
+      // Try the mirrored CPA catalog, then retain the last validated snapshot.
+    }
+  }
+  if (codexClientCatalogCache.models) return structuredClone(codexClientCatalogCache.models);
+  throw new HttpError(502, "codex_model_metadata_unavailable", "Codex client model metadata catalog is unavailable");
+}
+
+export function validateCodexClientModelsCatalog(payload: unknown) {
+  const root = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : null;
+  const models = Array.isArray(root?.models) ? root.models : [];
+  if (!models.length) throw new Error("Codex client model catalog has no models");
+  const output: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  for (const raw of models) {
+    const entry = raw && typeof raw === "object" && !Array.isArray(raw) ? structuredClone(raw as Record<string, unknown>) : null;
+    const slug = entry ? text(entry.slug) : null;
+    if (!entry || !slug || seen.has(slug)) throw new Error("Codex client model catalog contains an invalid or duplicate slug");
+    for (const field of ["display_name", "description", "minimal_client_version", "visibility", "default_reasoning_level"]) {
+      if (!text(entry[field])) throw new Error(`Codex client model ${slug} is missing ${field}`);
+    }
+    const contextWindow = positiveInteger(entry.context_window);
+    const maxContextWindow = positiveInteger(entry.max_context_window);
+    const priority = nonNegativeInteger(entry.priority);
+    const levels = reasoningLevels(entry.supported_reasoning_levels);
+    if (!contextWindow || !maxContextWindow || contextWindow > maxContextWindow || priority === null || !levels.length || !levels.includes(text(entry.default_reasoning_level) || "")) throw new Error(`Codex client model ${slug} has invalid metadata`);
+    seen.add(slug); output.push(entry);
+  }
+  if (!seen.has("gpt-5.5")) throw new Error("Codex client model catalog is missing the CPA default template");
+  return output;
+}
+
 function fallbackGrokModel(id: string): ModelEntry {
   return { ...model(id, id, CREATED_2024_01_01), owned_by: "xai", type: "xai", context_length: 128000, max_completion_tokens: 65536 };
 }
@@ -335,6 +393,75 @@ export function codexManifestEntry(entry: ModelEntry, index: number) {
   };
 }
 
+export function buildGrokCodexClientModels(models: ModelEntry[], templates: Record<string, unknown>[]): Record<string, unknown>[] {
+  const templatesBySlug = new Map<string, Record<string, unknown>>();
+  for (const entry of templates) { const slug = text(entry.slug); if (slug) templatesBySlug.set(slug, entry); }
+  const defaultTemplate = templatesBySlug.get("gpt-5.5");
+  if (!defaultTemplate) throw new Error("Codex client model catalog is missing the CPA default template");
+  const maxTemplatePriority = Math.max(0, ...templates.map((entry) => nonNegativeInteger(entry.priority) || 0));
+  const output = models.map((model) => {
+    const exact = templatesBySlug.get(model.id);
+    if (exact) {
+      const entry: Record<string, unknown> = structuredClone(exact);
+      if (text(model.display_name)) entry.display_name = text(model.display_name);
+      return sanitizeReasoningMetadata(entry);
+    }
+    const entry: Record<string, unknown> = structuredClone(defaultTemplate);
+    entry.slug = model.id;
+    entry.display_name = text(model.display_name) || text(model.name) || model.id;
+    entry.description = text(model.description) || model.id;
+    entry.prefer_websockets = false;
+    entry.service_tiers = [];
+    entry.supports_search_tool = false;
+    delete entry.apply_patch_tool_type;
+    delete entry.upgrade;
+    delete entry.availability_nux;
+    const contextWindow = positiveInteger(model.context_length);
+    if (contextWindow) { entry.context_window = contextWindow; entry.max_context_window = contextWindow; }
+    const modalities = codexInputModalities(model.supported_input_modalities);
+    if (modalities.length) {
+      entry.input_modalities = modalities;
+      entry.supports_image_detail_original = modalities.includes("image");
+    }
+    applyThinkingMetadata(entry, model.thinking);
+    const type = `${text(model.type) || ""} ${text(model.object) || ""}`.toLowerCase();
+    if (type.includes("image") || type.includes("video")) entry.visibility = "hide";
+    return sanitizeReasoningMetadata(entry);
+  });
+  return output
+    .sort((left, right) => String(left.display_name || left.slug).localeCompare(String(right.display_name || right.slug)))
+    .map((entry, index) => ({ ...entry, priority: templatesBySlug.has(String(entry.slug)) ? entry.priority : maxTemplatePriority + 100 * (index + 1) }));
+}
+
+function applyThinkingMetadata(entry: Record<string, unknown>, thinking: unknown) {
+  const config = thinking && typeof thinking === "object" && !Array.isArray(thinking) ? thinking as Record<string, unknown> : null;
+  const levels = Array.isArray(config?.levels) ? config.levels.map((level) => String(level).trim().toLowerCase()).filter((level) => ALLOWED_REASONING_LEVELS.has(level)) : [];
+  if (!levels.length) return;
+  entry.supported_reasoning_levels = [...new Set(levels)].map((effort) => ({ effort, description: reasoningDescription(effort) }));
+  entry.default_reasoning_level = levels.includes("medium") ? "medium" : levels.find((level) => level !== "none") || levels[0];
+}
+
+function sanitizeReasoningMetadata(entry: Record<string, unknown>) {
+  const raw = Array.isArray(entry.supported_reasoning_levels) ? entry.supported_reasoning_levels : [];
+  const normalized: Record<string, unknown>[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const effort = text((item as Record<string, unknown>).effort)?.toLowerCase();
+    if (!effort || !ALLOWED_REASONING_LEVELS.has(effort)) continue;
+    normalized.push({ ...structuredClone(item as Record<string, unknown>), effort });
+  }
+  if (!normalized.length) { delete entry.supported_reasoning_levels; delete entry.default_reasoning_level; return entry; }
+  const allowed = normalized.map((item) => String(item.effort));
+  entry.supported_reasoning_levels = normalized;
+  const current = text(entry.default_reasoning_level);
+  entry.default_reasoning_level = current && allowed.includes(current.toLowerCase()) ? current.toLowerCase() : allowed[0];
+  return entry;
+}
+
+const ALLOWED_REASONING_LEVELS = new Set(["none", "low", "medium", "high", "xhigh", "max", "ultra"]);
+function reasoningLevels(value: unknown) { const levels = new Set<string>(); if (!Array.isArray(value)) return []; for (const item of value) { const effort = item && typeof item === "object" && !Array.isArray(item) ? text((item as Record<string, unknown>).effort) : null; if (effort && ALLOWED_REASONING_LEVELS.has(effort)) levels.add(effort); } return [...levels]; }
+function codexInputModalities(value: unknown) { return Array.isArray(value) ? [...new Set(value.map((item) => String(item).trim().toLowerCase()).filter((item) => item === "text" || item === "image"))] : []; }
+
 function reasoningDescription(level: string) {
   if (level === "none") return "No reasoning";
   if (level === "low") return "Fast responses with lighter reasoning";
@@ -343,6 +470,8 @@ function reasoningDescription(level: string) {
 }
 
 function positiveInteger(value: unknown) { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : null; }
+function nonNegativeInteger(value: unknown) { const parsed = Number(value); return Number.isInteger(parsed) && parsed >= 0 ? parsed : null; }
+function text(value: unknown) { return typeof value === "string" && value.trim() ? value.trim() : null; }
 
 function normalizeModelEntry(entry: Record<string, unknown>): ModelEntry {
   const id = String(entry?.id || entry?.name || "").trim();
