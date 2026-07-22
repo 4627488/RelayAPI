@@ -1,12 +1,20 @@
 import { describe, expect, test } from "vitest";
-import { isGrokModel } from "@/src/server/http/grokRelay";
+import { channelDeclaresModel } from "@/src/server/services/channels";
 
-describe("Grok provider dispatch", () => {
-  test.each(["grok-4.5", "GROK-4.3", " grok-code-fast-1 "])("routes %s to Grok", (model) => {
-    expect(isGrokModel(model)).toBe(true);
+describe("channel model declarations", () => {
+  test("matches a model regardless of provider-style naming", () => {
+    expect(channelDeclaresModel({ modelAllowlist: ["custom-reasoner"] }, "custom-reasoner")).toBe(true);
   });
 
-  test.each(["gpt-5.4", "", null, undefined])("does not route %s to Grok", (model) => {
-    expect(isGrokModel(model)).toBe(false);
+  test("does not infer a provider from the model prefix", () => {
+    expect(channelDeclaresModel({ modelAllowlist: ["gpt-5.5"] }, "grok-4.5")).toBe(false);
+  });
+
+  test("requires the channel to declare the model", () => {
+    expect(channelDeclaresModel({ modelAllowlist: [] }, "gpt-5.5")).toBe(false);
+  });
+
+  test("matches a thinking suffix through the declared base model", () => {
+    expect(channelDeclaresModel({ modelAllowlist: ["gpt-5.5"] }, "gpt-5.5(high)")).toBe(true);
   });
 });

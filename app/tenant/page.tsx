@@ -25,7 +25,7 @@ export default async function TenantPage() {
   }
 
   const tenant = toPublicTenant(session.tenant);
-  const resources = await getTenantResources(session.tenant);
+  const resources = await getTenantResources(session.tenant, session.user.id);
   const initialNow = new Date().getTime();
 
   return (

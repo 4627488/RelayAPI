@@ -21,7 +21,7 @@ import {
   transferApiKeyTenant,
   updateApiKey,
 } from "@/src/server/repositories/apiKeys";
-import { getTenantById, getTenantUserById } from "@/src/server/repositories/tenants";
+import { getTenantById, getTenantOwnerUser, getTenantUserById } from "@/src/server/repositories/tenants";
 import {
   transferApiKeyLogScope,
 } from "@/src/server/repositories/logs";
@@ -283,6 +283,11 @@ export function authenticateRelayRequest(request: Request): RelayApiKeyContext {
   if (record.tenantId) {
     tenant = getTenantById(record.tenantId);
     assertTenantUsable(tenant);
+    const owner = getTenantOwnerUser(record.tenantId);
+    if (!owner?.enabled) {
+      throw new HttpError(403, "tenant_user_not_available", "Tenant user is not available");
+    }
+    tenantUserId = owner.id;
   }
   const libreChatUserId = cleanString(
     request.headers.get("x-librechat-openid-id"),

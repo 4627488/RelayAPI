@@ -11,7 +11,7 @@ export async function GET(request: Request, context: RouteContext<"/api/tenant/s
     const auth = requireTenantRequest(request);
     const { id } = await context.params;
     const subscription = getTenantSubscription(id);
-    if (!subscription || subscription.tenantId !== auth.tenant.id) {
+    if (!subscription || subscription.tenantId !== auth.tenant.id || subscription.tenantUserId !== auth.user.id) {
       throw new HttpError(404, "subscription_not_found", "Subscription not found");
     }
     return Response.json({

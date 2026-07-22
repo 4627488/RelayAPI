@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  CircleAlertIcon,
   ClipboardCopyIcon,
   KeyRoundIcon,
   RefreshCwIcon,
@@ -33,14 +34,17 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createTenantApiKey, tenantErrorMessage } from "@/lib/tenant-api";
+import {
+  buildApiConfig,
+  buildCodexAuthJson,
+  buildOAuthConfig,
+  CODEX_DEFAULT_MODEL,
+  parseCodexModelManifest,
+  serializeCodexModelManifest,
+} from "@/src/shared/codexSetup";
 import type { CreatedApiKey, PublicApiKey, PublicTenant } from "@/src/shared/types/entities";
 
-const DEFAULT_BASE_URL = "https://ai.cafebabe.top/v1";
-const PROVIDER_NAME = "cliproxyapi";
-const DEFAULT_MODEL = "gpt-5.6-sol";
-
 type SetupMode = "oauth" | "api";
-type ModelCatalogResponse = { data?: string[] };
 
 type CodexSetupSectionProps = {
   apiKeys: PublicApiKey[];
@@ -58,28 +62,32 @@ export function TenantCodexSetupSection({
   const [mode, setMode] = React.useState<SetupMode>("oauth");
   const [secret, setSecret] = React.useState(initialSecret);
   const [creating, setCreating] = React.useState(false);
-  const [model, setModel] = React.useState(DEFAULT_MODEL);
-  const [models, setModels] = React.useState<string[]>([DEFAULT_MODEL]);
+  const [model, setModel] = React.useState(CODEX_DEFAULT_MODEL);
+  const [models, setModels] = React.useState<string[]>([CODEX_DEFAULT_MODEL]);
+  const [modelsManifest, setModelsManifest] = React.useState("");
+  const [modelsError, setModelsError] = React.useState("");
   const [modelsLoading, setModelsLoading] = React.useState(true);
 
   const loadModels = React.useCallback(async (notify = false) => {
     setModelsLoading(true);
     try {
-      const response = await fetch("/api/model-catalog", {
+      const response = await fetch("/api/model-catalog?format=codex", {
         cache: "no-store",
         credentials: "same-origin",
       });
       if (!response.ok) throw new Error("模型目录暂时不可用");
-      const result = (await response.json()) as ModelCatalogResponse;
-      const nextModels = Array.isArray(result.data)
-        ? [...new Set(result.data.map((value) => String(value || "").trim()).filter(Boolean))]
-        : [];
-      if (nextModels.length === 0) throw new Error("上游没有返回可用模型");
+      const manifest = parseCodexModelManifest(await response.json());
+      const nextModels = manifest.models.map((entry) => entry.slug);
       setModels(nextModels);
+      setModelsManifest(serializeCodexModelManifest(manifest));
+      setModelsError("");
       setModel((current) => nextModels.includes(current) ? current : nextModels[0]);
       if (notify) toast.success(`已同步 ${nextModels.length} 个模型`);
     } catch (error) {
-      if (notify) toast.error(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setModelsManifest("");
+      setModelsError(message);
+      if (notify) toast.error(message);
     } finally {
       setModelsLoading(false);
     }
@@ -185,7 +193,11 @@ export function TenantCodexSetupSection({
                 </SelectContent>
               </Select>
               <FieldDescription>
-                {modelsLoading ? "正在同步可用模型…" : `${models.length} 个模型可用，推荐从 ${DEFAULT_MODEL} 开始。`}
+                {modelsLoading
+                  ? "正在同步可用模型…"
+                  : modelsError
+                    ? `同步失败：${modelsError}`
+                    : `${models.length} 个模型可用，推荐从 ${CODEX_DEFAULT_MODEL} 开始。`}
               </FieldDescription>
             </Field>
           </FieldGroup>
@@ -210,13 +222,24 @@ export function TenantCodexSetupSection({
         <TabsContent value="api" className="flex flex-col gap-4">
           <SetupIntro
             title="使用 API Key 连接"
-            description="适合不需要 ChatGPT OAuth 登录的环境。config.toml 和 auth.json 都需要写入。"
-            steps={["启动 CLIProxyAPI 服务器", "写入 config.toml", "将 Key 写入 auth.json，然后启动 Codex"]}
+            description="适合不需要 ChatGPT OAuth 登录的环境。config.toml、auth.json 和 models.json 都需要写入。"
+            steps={["启动 CLIProxyAPI 服务器", "将下方三个文件写入 ~/.codex", "完全退出并重新启动 Codex"]}
           />
-          <div className="grid gap-4 xl:grid-cols-2">
-            <ConfigPanel filename="~/.codex/config.toml" value={config} />
-            <ConfigPanel filename="~/.codex/auth.json" value={buildCodexAuthJson(keyValue)} />
-          </div>
+          {modelsManifest ? (
+            <div className="grid gap-4 xl:grid-cols-2">
+              <ConfigPanel filename="~/.codex/config.toml" value={config} />
+              <ConfigPanel filename="~/.codex/auth.json" value={buildCodexAuthJson(keyValue)} />
+              <ConfigPanel filename="~/.codex/models.json" value={modelsManifest} />
+            </div>
+          ) : (
+            <Alert variant="destructive">
+              <CircleAlertIcon />
+              <AlertTitle>暂时无法生成 API 模式配置</AlertTitle>
+              <AlertDescription>
+                {modelsLoading ? "正在加载完整模型元数据…" : modelsError || "完整模型元数据不可用，请重试同步。"}
+              </AlertDescription>
+            </Alert>
+          )}
         </TabsContent>
       </Tabs>
     </div>
@@ -265,48 +288,4 @@ function ConfigPanel({ filename, value }: { filename: string; value: string }) {
 async function copyText(value: string, message: string) {
   await navigator.clipboard.writeText(value);
   toast.success(message);
-}
-
-function safetyOptions() {
-  return `# 无需确认是否执行操作，危险指令，初次接触 Codex 不建议开启，移除 # 号即可开启
-# approval_policy = "never"
-
-# 沙箱模式超高权限，危险指令，初次接触 Codex 不建议开启，移除 # 号即可开启
-# sandbox_mode = "danger-full-access"`;
-}
-
-function buildOAuthConfig(model: string, apiKey: string) {
-  return `model = "${model}"
-model_provider = "${PROVIDER_NAME}"
-model_reasoning_effort = "xhigh"
-plan_mode_reasoning_effort = "xhigh"
-
-${safetyOptions()}
-
-[model_providers.${PROVIDER_NAME}]
-base_url = "${DEFAULT_BASE_URL}"
-experimental_bearer_token = "${apiKey}"
-name = "OpenAI"
-wire_api = "responses"
-requires_openai_auth = true
-supports_websockets = true
-`;
-}
-
-function buildApiConfig(model: string) {
-  return `${safetyOptions()}
-
-model_provider = "${PROVIDER_NAME}"
-model = "${model}"
-model_reasoning_effort = "high"
-
-[model_providers.${PROVIDER_NAME}]
-name = "${PROVIDER_NAME}"
-base_url = "${DEFAULT_BASE_URL}"
-wire_api = "responses"
-`;
-}
-
-function buildCodexAuthJson(apiKey: string) {
-  return JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2);
 }

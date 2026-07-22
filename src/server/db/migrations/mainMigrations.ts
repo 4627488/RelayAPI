@@ -574,6 +574,24 @@ export function migrateMainDb(db: SqliteDatabase) {
     addColumnIfMissing(database, "tenant_subscriptions", "estimated_5h_nano_usd", "TEXT");
     addColumnIfMissing(database, "tenant_subscriptions", "estimated_7d_nano_usd", "TEXT");
   });
+
+  applyMigration(db, "019_subscription_user_ownership", (database) => {
+    addColumnIfMissing(database, "tenant_subscriptions", "tenant_user_id", "TEXT");
+    database.exec(`
+      UPDATE tenant_subscriptions
+      SET tenant_user_id = (
+        SELECT tenant_users.id
+        FROM tenant_users
+        WHERE tenant_users.tenant_id = tenant_subscriptions.tenant_id
+          AND tenant_users.role = 'owner'
+        ORDER BY tenant_users.created_at ASC
+        LIMIT 1
+      )
+      WHERE tenant_user_id IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_tenant_subscriptions_user
+        ON tenant_subscriptions(tenant_user_id, enabled);
+    `);
+  });
 }
 
 function applyMigration(

@@ -6,7 +6,12 @@ import {
   listProviderCredentials,
   providerCredentialIdentity,
 } from "@/src/server/repositories/providerCredentials";
-import { getTenantById, listTenants } from "@/src/server/repositories/tenants";
+import {
+  getTenantById,
+  getTenantOwnerUser,
+  getTenantUserById,
+  listTenants,
+} from "@/src/server/repositories/tenants";
 import {
   deleteTenantSubscription,
   getTenantSubscription,
@@ -19,23 +24,31 @@ import { getSubscriptionQuotaState } from "@/src/server/repositories/quotaAccoun
 import { codexPlanLabel, codexPlanShares } from "@/src/shared/codexPlans";
 import { subscriptionQuotaLimits } from "@/src/server/services/tenantQuota";
 
-export function listSubscriptions(tenantId?: string) {
-  return listTenantSubscriptions(tenantId).map((subscription) => {
-    const currentLimits = subscriptionQuotaLimits(subscription);
-    return {
-      ...subscription,
-      quota: Object.fromEntries(
-      Object.entries(getSubscriptionQuotaState(subscription.id).windows).map(
-        ([kind, window]) => [kind, {
-          limitNanoUsd: String(currentLimits?.[kind as "5h" | "7d"] ?? window.limitNanoUsd),
-          settledNanoUsd: String(window.settledNanoUsd),
-          reservedNanoUsd: String(window.reservedNanoUsd),
-          resetsAt: window.resetsAt,
-        }],
-      ),
-      ),
-    };
-  });
+export function listSubscriptions(tenantId?: string, tenantUserId?: string) {
+  return listTenantSubscriptions(tenantId)
+    .filter((subscription) => !tenantUserId || subscription.tenantUserId === tenantUserId)
+    .map((subscription) => {
+      const currentLimits = subscriptionQuotaLimits(subscription);
+      const user = subscription.tenantUserId
+        ? getTenantUserById(subscription.tenantUserId)
+        : null;
+      return {
+        ...subscription,
+        user: user
+          ? { id: user.id, email: user.email, displayName: user.displayName }
+          : null,
+        quota: Object.fromEntries(
+          Object.entries(getSubscriptionQuotaState(subscription.id).windows).map(
+            ([kind, window]) => [kind, {
+              limitNanoUsd: String(currentLimits?.[kind as "5h" | "7d"] ?? window.limitNanoUsd),
+              settledNanoUsd: String(window.settledNanoUsd),
+              reservedNanoUsd: String(window.reservedNanoUsd),
+              resetsAt: window.resetsAt,
+            }],
+          ),
+        ),
+      };
+    });
 }
 
 export function getSubscriptionAllocationOverview() {
@@ -108,10 +121,12 @@ export function createSubscription(input: Record<string, unknown>) {
   if (!credential.enabled) throw new HttpError(400, "codex_credential_disabled", "Disabled credential cannot receive new allocations");
   const tenant = getTenantById(tenantId);
   if (!tenant?.enabled) throw new HttpError(400, "tenant_disabled", "Disabled tenant cannot receive new allocations");
+  const tenantUser = getTenantOwnerUser(tenantId);
+  if (!tenantUser?.enabled) throw new HttpError(400, "tenant_user_not_available", "Tenant user must be active before receiving a subscription");
   const units = positiveNumber(input.units, 1);
   const unitsPerCredential = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);
   return insertTenantSubscription({
-    id: randomId("sub"), tenantId, credentialId,
+    id: randomId("sub"), tenantId, tenantUserId: tenantUser.id, credentialId,
     name: clean(input.name) || `${credential.provider === "grok" ? "Grok" : codexPlanLabel(credential.planType)} ${units}/${unitsPerCredential}`,
     units, unitsPerCredential, enabled: input.enabled !== false,
     priority: integer(input.priority, 100),
@@ -151,7 +166,7 @@ function integer(value: unknown, fallback: number) { const n = Number(value); re
 function positiveNumber(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) && n > 0 ? n : fallback; }
 function date(value: unknown) { const text = clean(value); return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null; }
 function nullableNanoUsd(value: unknown) {
-  if (value === null || value === "") return null;
+  if (value === undefined || value === null || value === "") return null;
   let parsed: bigint;
   try { parsed = typeof value === "bigint" ? value : BigInt(String(value)); }
   catch { throw new HttpError(400, "invalid_estimated_quota", "Estimated quota must be a whole nano-USD amount"); }

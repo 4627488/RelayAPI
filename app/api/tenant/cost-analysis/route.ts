@@ -13,7 +13,7 @@ export function GET(request: Request) {
     const context = requireTenantRequest(request);
     const subscriptionId = new URL(request.url).searchParams.get("subscriptionId") || "";
     const subscription = getTenantSubscription(subscriptionId);
-    if (!subscription || subscription.tenantId !== context.tenant.id) {
+    if (!subscription || subscription.tenantId !== context.tenant.id || subscription.tenantUserId !== context.user.id) {
       return Response.json({ error: { code: "subscription_not_found", message: "Subscription not found" } }, { status: 404 });
     }
     const weekly = getSubscriptionQuotaState(subscriptionId).windows["7d"];

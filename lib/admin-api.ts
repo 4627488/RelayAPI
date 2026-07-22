@@ -397,7 +397,7 @@ export type TenantPayload = {
 };
 
 export type TenantSubscriptionRecord = {
-  id: string; tenantId: string; credentialId: string; name: string;
+  id: string; tenantId: string; tenantUserId: string | null; credentialId: string; name: string;
   units: number; unitsPerCredential: number; enabled: boolean; priority: number;
   estimatedFiveHourNanoUsd: string | null; estimatedSevenDayNanoUsd: string | null;
   startsAt: string; expiresAt: string | null; createdAt: string; updatedAt: string;
@@ -405,6 +405,7 @@ export type TenantSubscriptionRecord = {
     limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string; resetsAt: string;
   }>>;
   tenant?: { id: string; name: string; enabled: boolean; ownerEmail: string | null } | null;
+  user?: { id: string; email: string; displayName: string } | null;
   lifecycle?: "active" | "disabled" | "scheduled" | "expired";
 };
 

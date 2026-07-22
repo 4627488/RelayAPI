@@ -3,7 +3,7 @@ import "server-only";
 import { HttpError } from "@/src/server/http/errors";
 import { getCodexQuotaCacheByCredentialId } from "@/src/server/repositories/quota";
 import { getProviderCredential } from "@/src/server/repositories/providerCredentials";
-import { getTenantSubscription, listActiveTenantSubscriptions } from "@/src/server/repositories/tenantSubscriptions";
+import { getTenantSubscription, listActiveTenantSubscriptionsForUser } from "@/src/server/repositories/tenantSubscriptions";
 import { getSubscriptionQuotaState, releaseSubscriptionQuota, settleSubscriptionQuota, SubscriptionQuotaCapacityError, type SubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
 import { reserveCostQuotaPolicies, subscriptionCostQuotaPolicies } from "@/src/server/services/quotaPolicy";
 import type { ModelPriceSnapshot } from "@/src/server/services/modelPricing";
@@ -12,7 +12,10 @@ import { getEffectiveQuotaBaselines, getQuotaOversellRatios, quotaSharesForPlan 
 
 export interface TenantQuotaAdmission { requestId: string; tenantId: string; subscriptionId: string | null; units: number | null; unitsPerCredential: number | null; price: ModelPriceSnapshot | null; state: SubscriptionQuotaState | null; }
 
-export function eligibleCredentialIdsForTenant(tenantId: string) { return [...new Set(listActiveTenantSubscriptions(tenantId).filter((item) => hasLocalCapacity(item)).map((item) => item.credentialId))]; }
+export function eligibleCredentialIdsForTenant(tenantId: string, tenantUserId: string | null) {
+  if (!tenantUserId) return [];
+  return [...new Set(listActiveTenantSubscriptionsForUser(tenantId, tenantUserId).filter((item) => hasLocalCapacity(item)).map((item) => item.credentialId))];
+}
 
 export function subscriptionQuotaLimits(subscription: { units: number; unitsPerCredential: number; credentialId: string; estimatedFiveHourNanoUsd?: string | null; estimatedSevenDayNanoUsd?: string | null }) {
   if (subscription.estimatedFiveHourNanoUsd && subscription.estimatedSevenDayNanoUsd) {
@@ -33,11 +36,11 @@ export function subscriptionQuotaLimits(subscription: { units: number; unitsPerC
   })) as Record<"5h" | "7d", bigint>;
 }
 
-export function admitTenantRequest(input: { tenantId: string; credentialId: string; requestId: string; model: string; now?: Date }): TenantQuotaAdmission {
+export function admitTenantRequest(input: { tenantId: string; tenantUserId: string; credentialId: string; requestId: string; model: string; now?: Date }): TenantQuotaAdmission {
   const price = resolveConfiguredModelPrice(input.model);
   const providerCredential = getProviderCredential(input.credentialId);
   if (!providerCredential) throw new HttpError(404, "credential_not_found", "Credential not found");
-  const candidates = listActiveTenantSubscriptions(input.tenantId, input.now).filter((item) => item.credentialId === input.credentialId).sort((a, b) => b.priority - a.priority || availableRatio(b.id) - availableRatio(a.id));
+  const candidates = listActiveTenantSubscriptionsForUser(input.tenantId, input.tenantUserId, input.now).filter((item) => item.credentialId === input.credentialId).sort((a, b) => b.priority - a.priority || availableRatio(b.id) - availableRatio(a.id));
   if (!candidates.length) throw new HttpError(403, "subscription_not_available", "No active subscription is assigned for the selected credential");
   // Unknown prices must not turn into an outage. Keep the subscription association
   // for the request log, but defer monetary accounting until an admin sets a price.

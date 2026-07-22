@@ -307,7 +307,7 @@ export function ChannelsSection({
                         <TableCell>{formatNumber(channel.priority)}</TableCell>
                         <TableCell>{formatNumber(channel.weight)}</TableCell>
                         <TableCell>
-                          {renderStringList(channel.modelAllowlist, "全部模型")}
+                          {renderStringList(channel.modelAllowlist, "未声明模型")}
                         </TableCell>
                         <TableCell>
                           <div className="min-w-28 space-y-1">
@@ -467,6 +467,10 @@ function ChannelFormDialogBody({
       toast.error(`请至少选择一个 ${form.provider === "grok" ? "Grok" : "Codex"} 凭据`);
       return;
     }
+    if (parseList(form.modelAllowlist).length === 0) {
+      toast.error("请至少声明一个可路由模型");
+      return;
+    }
     setPending(true);
     try {
       const payload = channelFormToPayload(form);
@@ -622,6 +626,7 @@ function ChannelFields({
         <Field>
           <FieldLabel>模型白名单</FieldLabel>
           <ModelSelector key={form.provider} catalogProvider={form.provider} selectedModels={parseList(form.modelAllowlist)} onSelectedModelsChange={(models) => update("modelAllowlist", models.join("\n"))} />
+          <FieldDescription>请求只会进入明确声明了对应模型的路由池。</FieldDescription>
         </Field>
       </FieldGroup>
     </FieldSet>

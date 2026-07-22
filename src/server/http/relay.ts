@@ -1,6 +1,6 @@
 import "server-only";
 
-import { handleGrokChatCompletions, handleGrokResponses, isGrokModel } from "@/src/server/http/grokRelay";
+import { handleGrokChatCompletions, handleGrokResponses } from "@/src/server/http/grokRelay";
 import {
   admitRelayQuota,
   quotaResponseHeaders,
@@ -80,6 +80,7 @@ import {
   selectChannel,
 } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
+import { selectProviderForModel } from "@/src/server/services/relayRouting";
 import { getFullRequestLoggingSetting } from "@/src/server/services/settings";
 import {
   tenantQuotaHeaders,
@@ -174,7 +175,6 @@ export async function handleCodexModels(request: Request) {
 
 export async function handleOpenAIResponses(request: Request) {
   const probe = await request.clone().json().catch(() => null) as Record<string, unknown> | null;
-  if (isGrokModel(probe?.model)) return handleGrokResponses(request);
   const startedAt = new Date().toISOString();
   const start = Date.now();
   const timing = createStageTimer();
@@ -186,6 +186,13 @@ export async function handleOpenAIResponses(request: Request) {
     apiKey = timing.time("authenticate", "认证 API Key", () =>
       authenticateRelayRequest(request),
     );
+    const requestedModel = stringValue(probe?.model) || serverConfig.codexDefaultModel;
+    const provider = timing.time("select_provider", "按通道模型声明选择上游", () =>
+      selectProviderForModel({ model: requestedModel, apiKey: apiKey! }),
+    );
+    if (provider === "grok") {
+      return handleGrokResponses(request, { apiKey });
+    }
     input = await timing.timeAsync("read_request_body", "读取请求 Body", () =>
       readJsonObject(request),
     );
@@ -791,7 +798,6 @@ async function forwardImagesStream(input: {
 
 export async function handleChatCompletions(request: Request) {
   const probe = await request.clone().json().catch(() => null) as Record<string, unknown> | null;
-  if (isGrokModel(probe?.model)) return handleGrokChatCompletions(request);
   const startedAt = new Date().toISOString();
   const start = Date.now();
   const timing = createStageTimer();
@@ -803,6 +809,13 @@ export async function handleChatCompletions(request: Request) {
     apiKey = timing.time("authenticate", "认证 API Key", () =>
       authenticateRelayRequest(request),
     );
+    const requestedModel = stringValue(probe?.model) || serverConfig.codexDefaultModel;
+    const provider = timing.time("select_provider", "按通道模型声明选择上游", () =>
+      selectProviderForModel({ model: requestedModel, apiKey: apiKey! }),
+    );
+    if (provider === "grok") {
+      return handleGrokChatCompletions(request, { apiKey });
+    }
     input = await timing.timeAsync("read_request_body", "读取请求 Body", () =>
       readJsonObject(request),
     );

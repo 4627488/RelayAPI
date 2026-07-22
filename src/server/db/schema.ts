@@ -163,6 +163,7 @@ export const tenantSubscriptions = sqliteTable(
   {
     id: text("id").primaryKey(),
     tenantId: text("tenant_id").notNull(),
+    tenantUserId: text("tenant_user_id"),
     credentialId: text("credential_id").notNull(),
     name: text("name").notNull(),
     units: real("units").notNull().default(1),
@@ -178,6 +179,7 @@ export const tenantSubscriptions = sqliteTable(
   },
   (table) => [
     index("idx_tenant_subscriptions_tenant").on(table.tenantId, table.enabled),
+    index("idx_tenant_subscriptions_user").on(table.tenantUserId, table.enabled),
     index("idx_tenant_subscriptions_credential").on(table.credentialId, table.enabled),
   ],
 );

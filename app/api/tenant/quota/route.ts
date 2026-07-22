@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     const context = requireTenantRequest(request);
     return Response.json({
       tenantId: context.tenant.id,
-      subscriptions: listSubscriptions(context.tenant.id).map((subscription) => ({
+      subscriptions: listSubscriptions(context.tenant.id, context.user.id).map((subscription) => ({
         id: subscription.id, name: subscription.name, units: subscription.units,
         unitsPerCredential: subscription.unitsPerCredential, enabled: subscription.enabled,
         startsAt: subscription.startsAt, expiresAt: subscription.expiresAt,

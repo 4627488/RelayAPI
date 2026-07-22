@@ -380,15 +380,22 @@ export function codexManifestEntry(entry: ModelEntry, index: number) {
     max_context_window: contextWindow,
     default_reasoning_level: defaultReasoning,
     supported_reasoning_levels: supported,
+    shell_type: "shell_command",
     supports_reasoning_summaries: true,
     supports_reasoning_summary_parameter: true,
     supports_parallel_tool_calls: true,
     support_verbosity: false,
+    default_verbosity: null,
+    apply_patch_tool_type: null,
+    truncation_policy: { mode: "bytes", limit: 10_000 },
+    supports_image_detail_original: false,
+    experimental_supported_tools: [],
     prefer_websockets: false,
     visibility: "list",
     minimal_client_version: "0.0.0",
     supported_in_api: true,
     priority: index + 1,
+    upgrade: null,
     base_instructions: "You are a coding agent. Follow the developer and user instructions.",
   };
 }
@@ -404,7 +411,7 @@ export function buildGrokCodexClientModels(models: ModelEntry[], templates: Reco
     if (exact) {
       const entry: Record<string, unknown> = structuredClone(exact);
       if (text(model.display_name)) entry.display_name = text(model.display_name);
-      return sanitizeReasoningMetadata(entry);
+      return ensureCodexLocalCatalogMetadata(sanitizeReasoningMetadata(entry));
     }
     const entry: Record<string, unknown> = structuredClone(defaultTemplate);
     entry.slug = model.id;
@@ -426,11 +433,27 @@ export function buildGrokCodexClientModels(models: ModelEntry[], templates: Reco
     applyThinkingMetadata(entry, model.thinking);
     const type = `${text(model.type) || ""} ${text(model.object) || ""}`.toLowerCase();
     if (type.includes("image") || type.includes("video")) entry.visibility = "hide";
-    return sanitizeReasoningMetadata(entry);
+    return ensureCodexLocalCatalogMetadata(sanitizeReasoningMetadata(entry));
   });
   return output
     .sort((left, right) => String(left.display_name || left.slug).localeCompare(String(right.display_name || right.slug)))
     .map((entry, index) => ({ ...entry, priority: templatesBySlug.has(String(entry.slug)) ? entry.priority : maxTemplatePriority + 100 * (index + 1) }));
+}
+
+function ensureCodexLocalCatalogMetadata(entry: Record<string, unknown>) {
+  if (!text(entry.shell_type)) entry.shell_type = "shell_command";
+  if (entry.supports_reasoning_summaries === undefined) entry.supports_reasoning_summaries = true;
+  if (entry.support_verbosity === undefined) entry.support_verbosity = false;
+  if (entry.default_verbosity === undefined) entry.default_verbosity = null;
+  if (entry.apply_patch_tool_type === undefined) entry.apply_patch_tool_type = null;
+  if (!entry.truncation_policy || typeof entry.truncation_policy !== "object" || Array.isArray(entry.truncation_policy)) {
+    entry.truncation_policy = { mode: "bytes", limit: 10_000 };
+  }
+  if (entry.supports_parallel_tool_calls === undefined) entry.supports_parallel_tool_calls = true;
+  if (entry.supports_image_detail_original === undefined) entry.supports_image_detail_original = false;
+  if (!Array.isArray(entry.experimental_supported_tools)) entry.experimental_supported_tools = [];
+  if (entry.upgrade === undefined) entry.upgrade = null;
+  return entry;
 }
 
 function applyThinkingMetadata(entry: Record<string, unknown>, thinking: unknown) {

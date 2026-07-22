@@ -66,6 +66,7 @@ export function listChannelRecords() {
 export function createChannel(input: CreateChannelInput) {
   const provider = input.provider === "grok" ? "grok" : "codex";
   const credentials = assertChannelCredentials(input, provider);
+  const modelAllowlist = requireDeclaredModels(input.modelAllowlist);
   const primaryCredential = credentials[0];
   const channel = insertChannel({
     id: randomId("ch"),
@@ -80,7 +81,7 @@ export function createChannel(input: CreateChannelInput) {
     enabled: input.enabled ?? true,
     priority: normalizeInteger(input.priority, 100),
     weight: Math.max(1, normalizeInteger(input.weight, 1)),
-    modelAllowlist: cleanStringArray(input.modelAllowlist),
+    modelAllowlist,
     status: "healthy",
   });
   if (!channel) {
@@ -119,7 +120,7 @@ export function patchChannel(
       ? { weight: Math.max(1, normalizeInteger(input.weight, 1)) }
       : {}),
     ...(input.modelAllowlist !== undefined
-      ? { modelAllowlist: cleanStringArray(input.modelAllowlist) }
+      ? { modelAllowlist: requireDeclaredModels(input.modelAllowlist) }
       : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.healthScore !== undefined
@@ -144,24 +145,15 @@ export function removeChannel(id: string) {
 export function selectChannel(input: {
   model: string;
   apiKey: RelayApiKeyContext;
+  markUsed?: boolean;
 }) {
   const model = cleanString(input.model);
   const baseModel = stripModelThinkingSuffix(model);
-  if (
-    input.apiKey.modelAllowlist.length > 0 &&
-    model &&
-    !modelMatchesAllowlist(model, baseModel, input.apiKey.modelAllowlist)
-  ) {
-    throw new HttpError(
-      403,
-      "model_not_allowed",
-      `API key is not allowed to use model: ${model}`,
-    );
-  }
+  assertApiKeyModelAllowed(model, input.apiKey);
 
   const now = Date.now();
   const eligibleCredentialIds = input.apiKey.tenantId
-    ? new Set(eligibleCredentialIdsForTenant(input.apiKey.tenantId))
+    ? new Set(eligibleCredentialIdsForTenant(input.apiKey.tenantId, input.apiKey.tenantUserId))
     : null;
   const availableChannels = listChannels().filter((channel) =>
     isChannelAvailable(channel, input.apiKey, model, baseModel, now),
@@ -207,9 +199,39 @@ export function selectChannel(input: {
     );
   }
   const channel = { ...selected.channel, credentialId: credential.id };
-  markChannelUsed(channel.id);
-  markCodexCredentialUsed(credential.id);
+  if (input.markUsed !== false) {
+    markChannelUsed(channel.id);
+    markCodexCredentialUsed(credential.id);
+  }
   return { channel, credential };
+}
+
+export function assertApiKeyModelAllowed(model: string, apiKey: RelayApiKeyContext) {
+  const cleanModel = cleanString(model);
+  const baseModel = stripModelThinkingSuffix(cleanModel);
+  if (
+    apiKey.modelAllowlist.length > 0 &&
+    cleanModel &&
+    !modelMatchesAllowlist(cleanModel, baseModel, apiKey.modelAllowlist)
+  ) {
+    throw new HttpError(
+      403,
+      "model_not_allowed",
+      `API key is not allowed to use model: ${cleanModel}`,
+    );
+  }
+}
+
+export function channelDeclaresModel(
+  channel: Pick<ChannelRecord, "modelAllowlist">,
+  model: string,
+) {
+  const cleanModel = cleanString(model);
+  return Boolean(
+    cleanModel &&
+    channel.modelAllowlist.length > 0 &&
+    modelMatchesAllowlist(cleanModel, stripModelThinkingSuffix(cleanModel), channel.modelAllowlist),
+  );
 }
 
 export function recordChannelSuccess(channel: ChannelRecord) {
@@ -426,11 +448,7 @@ function isChannelAvailable(
   if (channel.cooldownUntil && Date.parse(channel.cooldownUntil) > now) {
     return false;
   }
-  if (
-    channel.modelAllowlist.length > 0 &&
-    model &&
-    !modelMatchesAllowlist(model, baseModel, channel.modelAllowlist)
-  ) {
+  if (model && !channelDeclaresModel(channel, model)) {
     return false;
   }
   if (
@@ -577,6 +595,18 @@ function cleanStringArray(value: unknown) {
     return [];
   }
   return [...new Set(value.map(cleanString).filter(Boolean))];
+}
+
+function requireDeclaredModels(value: unknown) {
+  const models = cleanStringArray(value);
+  if (models.length === 0) {
+    throw new HttpError(
+      400,
+      "channel_models_required",
+      "Channel must declare at least one model",
+    );
+  }
+  return models;
 }
 
 function normalizeInteger(value: unknown, fallback: number) {

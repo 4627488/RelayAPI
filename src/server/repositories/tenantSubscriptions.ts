@@ -7,6 +7,7 @@ import { tenantSubscriptions } from "@/src/server/db/schema";
 export type TenantSubscription = {
   id: string;
   tenantId: string;
+  tenantUserId: string | null;
   credentialId: string;
   name: string;
   units: number;
@@ -32,6 +33,16 @@ export function listTenantSubscriptions(tenantId?: string) {
 export function listActiveTenantSubscriptions(tenantId: string, now = new Date()) {
   return listTenantSubscriptions(tenantId).filter((item) =>
     item.enabled && item.startsAt <= now.toISOString() && (!item.expiresAt || item.expiresAt > now.toISOString()),
+  );
+}
+
+export function listActiveTenantSubscriptionsForUser(
+  tenantId: string,
+  tenantUserId: string,
+  now = new Date(),
+) {
+  return listActiveTenantSubscriptions(tenantId, now).filter(
+    (item) => item.tenantUserId === tenantUserId,
   );
 }
 

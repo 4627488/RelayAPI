@@ -15,13 +15,13 @@ import { tenantQuotaHeaders, type TenantQuotaAdmission } from "@/src/server/serv
 import { selectGrokChannel, recordGrokCredentialFailure, recordGrokCredentialSuccess } from "@/src/server/services/grokRouting";
 import type { ChannelRecord, RelayApiKeyContext } from "@/src/shared/types/entities";
 
-export function isGrokModel(value: unknown) { return typeof value === "string" && value.trim().toLowerCase().startsWith("grok"); }
+type PreparedGrokRequest = { apiKey: RelayApiKeyContext };
 
-export async function handleGrokResponses(request: Request) {
+export async function handleGrokResponses(request: Request, prepared?: PreparedGrokRequest) {
   const startedAt = new Date().toISOString(); const start = Date.now(); const timing = createStageTimer();
   let apiKey: RelayApiKeyContext | null = null; let channel: ChannelRecord | null = null; let input: Record<string, unknown> | null = null; let admission: TenantQuotaAdmission | null = null;
   try {
-    apiKey = timing.time("authenticate", "认证 API Key", () => authenticateRelayRequest(request));
+    apiKey = prepared?.apiKey || timing.time("authenticate", "认证 API Key", () => authenticateRelayRequest(request));
     input = await timing.timeAsync("read_request_body", "读取请求 Body", () => readJsonObject(request));
     const model = requiredModel(input.model); const stream = input.stream !== false;
     const result = await grokWithFailover(input, { model, apiKey, stream, timing }); channel = result.channel; admission = result.admission;
@@ -40,11 +40,11 @@ export async function handleGrokResponses(request: Request) {
   }
 }
 
-export async function handleGrokChatCompletions(request: Request) {
+export async function handleGrokChatCompletions(request: Request, prepared?: PreparedGrokRequest) {
   const startedAt = new Date().toISOString(); const start = Date.now(); const timing = createStageTimer();
   let apiKey: RelayApiKeyContext | null = null; let channel: ChannelRecord | null = null; let input: Record<string, unknown> | null = null; let admission: TenantQuotaAdmission | null = null;
   try {
-    apiKey = timing.time("authenticate", "认证 API Key", () => authenticateRelayRequest(request));
+    apiKey = prepared?.apiKey || timing.time("authenticate", "认证 API Key", () => authenticateRelayRequest(request));
     input = await timing.timeAsync("read_request_body", "读取请求 Body", () => readJsonObject(request));
     const model = requiredModel(input.model); const stream = input.stream === true;
     const converted = timing.time("normalize_payload", "Chat 转换为 Responses Payload", () => chatCompletionsToCodex(input!, { stream: true, defaultModel: model }));

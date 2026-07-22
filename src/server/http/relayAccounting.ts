@@ -1,5 +1,6 @@
 import "server-only";
 
+import { HttpError } from "@/src/server/http/errors";
 import { calculateRequestCost } from "@/src/server/services/modelPricing";
 import { recordCredentialPricedUsage } from "@/src/server/services/quotaCalibration";
 import { resolveConfiguredModelPrice } from "@/src/server/services/quotaAdministration";
@@ -20,8 +21,12 @@ export function admitRelayQuota(
   credentialId: string,
 ) {
   if (apiKey.tenantId) {
+    if (!apiKey.tenantUserId) {
+      throw new HttpError(403, "tenant_user_not_available", "Tenant user is not available");
+    }
     return admitTenantRequest({
       tenantId: apiKey.tenantId,
+      tenantUserId: apiKey.tenantUserId,
       credentialId,
       requestId: crypto.randomUUID(),
       model,

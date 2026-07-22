@@ -27,6 +27,7 @@ import {
   updateTenantUser,
 } from "@/src/server/repositories/tenants";
 import { listChannelRecords } from "@/src/server/services/channels";
+import { eligibleCredentialIdsForTenant } from "@/src/server/services/tenantQuota";
 import { normalizeCodexUserAgentInput } from "@/src/server/services/settings";
 import { base64Url, randomId, sha256 } from "@/src/server/services/crypto";
 import {
@@ -469,12 +470,15 @@ export function requireTenantRequest(request: Request): TenantSessionContext {
 
 export async function getTenantResources(
   tenant: TenantWithSecrets,
+  tenantUserId: string,
 ): Promise<TenantResources> {
   const allowedChannelIds = new Set(tenant.channelAllowlist);
+  const eligibleCredentialIds = new Set(eligibleCredentialIdsForTenant(tenant.id, tenantUserId));
   const channels = listChannelRecords()
     .filter((channel) =>
       allowedChannelIds.size > 0 ? allowedChannelIds.has(channel.id) : true,
     )
+    .filter((channel) => channel.credentialIds.some((id) => eligibleCredentialIds.has(id)))
     .map((channel) => ({
       id: channel.id,
       name: channel.name,
