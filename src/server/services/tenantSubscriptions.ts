@@ -135,7 +135,14 @@ export function patchCredentialQuotaEstimates(credentialId: string, input: Recor
     ...(Object.hasOwn(input, "5h") ? { "5h": nullableQuotaOverride(input["5h"]) } : {}),
     ...(Object.hasOwn(input, "7d") ? { "7d": nullableQuotaOverride(input["7d"]) } : {}),
   });
-  return getCredentialQuotaEstimates(credentialId, credential.planType);
+  const estimates = getCredentialQuotaEstimates(credentialId, credential.planType);
+  return Object.fromEntries((["5h", "7d"] as const).map((kind) => [kind, {
+    automaticNanoUsd: estimates[kind].automaticNanoUsd === null ? null : String(estimates[kind].automaticNanoUsd),
+    overrideNanoUsd: estimates[kind].overrideNanoUsd === null ? null : String(estimates[kind].overrideNanoUsd),
+    effectiveNanoUsd: estimates[kind].effectiveNanoUsd === null ? null : String(estimates[kind].effectiveNanoUsd),
+    confidence: estimates[kind].confidence,
+    sampleCount: estimates[kind].sampleCount,
+  }]));
 }
 
 export function createSubscription(input: Record<string, unknown>) {
