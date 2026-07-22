@@ -22,6 +22,7 @@ import {
 import { randomId } from "@/src/server/services/crypto";
 import { getSubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
 import { subscriptionQuotaLimits } from "@/src/server/services/tenantQuota";
+import { getCredentialQuotaEstimates, setCredentialQuotaEstimates } from "@/src/server/services/quotaCalibration";
 import {
   providerCapacityUnits,
   providerPlanLabel,
@@ -89,6 +90,7 @@ export function getSubscriptionAllocationOverview() {
     const allocatedUnits = normalizedAllocations
       .filter((item) => item.lifecycle === "active")
       .reduce((sum, item) => sum + item.allocatedPoolUnits, 0);
+    const estimates = getCredentialQuotaEstimates(credential.id, credential.planType);
     return {
       id: credential.id,
       provider: credential.provider,
@@ -103,6 +105,13 @@ export function getSubscriptionAllocationOverview() {
       allocatedUnits,
       allocationCount: normalizedAllocations.length,
       activeAllocationCount: normalizedAllocations.filter((item) => item.lifecycle === "active").length,
+      quotaEstimates: Object.fromEntries((["5h", "7d"] as const).map((kind) => [kind, {
+        automaticNanoUsd: estimates[kind].automaticNanoUsd === null ? null : String(estimates[kind].automaticNanoUsd),
+        overrideNanoUsd: estimates[kind].overrideNanoUsd === null ? null : String(estimates[kind].overrideNanoUsd),
+        effectiveNanoUsd: estimates[kind].effectiveNanoUsd === null ? null : String(estimates[kind].effectiveNanoUsd),
+        confidence: estimates[kind].confidence,
+        sampleCount: estimates[kind].sampleCount,
+      }])),
       subscriptions: normalizedAllocations,
     };
   });
@@ -117,6 +126,16 @@ export function getSubscriptionAllocationOverview() {
     },
     pools,
   };
+}
+
+export function patchCredentialQuotaEstimates(credentialId: string, input: Record<string, unknown>) {
+  const credential = getProviderCredential(credentialId);
+  if (!credential) throw new HttpError(404, "provider_credential_not_found", "Credential not found");
+  setCredentialQuotaEstimates(credentialId, {
+    ...(Object.hasOwn(input, "5h") ? { "5h": nullableQuotaOverride(input["5h"]) } : {}),
+    ...(Object.hasOwn(input, "7d") ? { "7d": nullableQuotaOverride(input["7d"]) } : {}),
+  });
+  return getCredentialQuotaEstimates(credentialId, credential.planType);
 }
 
 export function createSubscription(input: Record<string, unknown>) {
@@ -140,8 +159,6 @@ export function createSubscription(input: Record<string, unknown>) {
     name: clean(input.name) || `${providerPlanLabel(credential.provider, credential.planType)} ${units}/${unitsPerCredential}`,
     units, unitsPerCredential, enabled: input.enabled !== false,
     priority: integer(input.priority, 100),
-    estimatedFiveHourNanoUsd: nullableNanoUsd(input.estimatedFiveHourNanoUsd),
-    estimatedSevenDayNanoUsd: nullableNanoUsd(input.estimatedSevenDayNanoUsd),
     startsAt: date(input.startsAt) || new Date().toISOString(),
     expiresAt: date(input.expiresAt),
   });
@@ -165,8 +182,6 @@ export function patchSubscription(id: string, input: Record<string, unknown>) {
     credentialId, units, unitsPerCredential,
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
     ...(input.priority !== undefined ? { priority: integer(input.priority, 100) } : {}),
-    ...(input.estimatedFiveHourNanoUsd !== undefined ? { estimatedFiveHourNanoUsd: nullableNanoUsd(input.estimatedFiveHourNanoUsd) } : {}),
-    ...(input.estimatedSevenDayNanoUsd !== undefined ? { estimatedSevenDayNanoUsd: nullableNanoUsd(input.estimatedSevenDayNanoUsd) } : {}),
     ...(input.startsAt !== undefined ? { startsAt: date(input.startsAt) || current.startsAt } : {}),
     ...(input.expiresAt !== undefined ? { expiresAt: date(input.expiresAt) } : {}),
   })!;
@@ -180,11 +195,13 @@ function clean(value: unknown) { return typeof value === "string" ? value.trim()
 function integer(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) ? Math.floor(n) : fallback; }
 function positiveNumber(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) && n > 0 ? n : fallback; }
 function date(value: unknown) { const text = clean(value); return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null; }
-function nullableNanoUsd(value: unknown) {
+function nullableQuotaOverride(value: unknown) {
   if (value === undefined || value === null || value === "") return null;
-  let parsed: bigint;
-  try { parsed = typeof value === "bigint" ? value : BigInt(String(value)); }
-  catch { throw new HttpError(400, "invalid_estimated_quota", "Estimated quota must be a whole nano-USD amount"); }
-  if (parsed <= 0n) throw new HttpError(400, "invalid_estimated_quota", "Estimated quota must be greater than zero");
-  return String(parsed);
+  try {
+    const parsed = BigInt(String(value));
+    if (parsed <= 0n) throw new Error();
+    return parsed;
+  } catch {
+    throw new HttpError(400, "invalid_estimated_quota", "Estimated quota must be greater than zero");
+  }
 }

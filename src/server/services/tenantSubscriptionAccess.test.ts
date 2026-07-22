@@ -82,8 +82,6 @@ describe("tenant subscription user access", () => {
       unitsPerCredential: 20,
       enabled: true,
       priority: 100,
-      estimatedFiveHourNanoUsd: null,
-      estimatedSevenDayNanoUsd: null,
       startsAt: now,
       expiresAt: null,
     });

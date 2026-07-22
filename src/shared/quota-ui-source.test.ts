@@ -13,7 +13,8 @@ describe("quota workspace surfaces", () => {
     if (!existsSync(adminPath) || !existsSync(tenantPath)) return;
     expect(readFileSync(adminPath, "utf8")).not.toContain("每份 5 小时额度");
     expect(readFileSync(allocationPath, "utf8")).toContain("5 小时推测额度（USD）");
-    expect(readFileSync(allocationPath, "utf8")).toContain("推测额度由每条订阅独立配置");
+    expect(readFileSync(allocationPath, "utf8")).toContain("推测额度归属于每个主订阅容量池");
+    expect(readFileSync(allocationPath, "utf8")).toContain("所有子订阅仅按所占份额继承");
     expect(readFileSync(tenantPath, "utf8")).toContain("模型成本剖析");
     expect(readFileSync(tenantPath, "utf8")).not.toMatch(/remaining|剩余/i);
     expect(readFileSync(allocationPath, "utf8")).not.toContain("remainingUnits");

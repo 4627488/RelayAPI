@@ -170,8 +170,6 @@ export const tenantSubscriptions = sqliteTable(
     unitsPerCredential: integer("units_per_credential").notNull().default(20),
     enabled: integer("enabled").notNull().default(1),
     priority: integer("priority").notNull().default(100),
-    estimatedFiveHourNanoUsd: text("estimated_5h_nano_usd"),
-    estimatedSevenDayNanoUsd: text("estimated_7d_nano_usd"),
     startsAt: text("starts_at").notNull(),
     expiresAt: text("expires_at"),
     createdAt: text("created_at").notNull(),

@@ -5,6 +5,7 @@ import { proxiedFetch } from "@/src/server/net/proxy";
 import { updateGrokCredential } from "@/src/server/repositories/grokCredentials";
 import { resolveCredentialProxy } from "@/src/server/services/codexCredentials";
 import { ensureFreshGrokCredential, forceRefreshGrokCredential } from "@/src/server/services/grokCredentials";
+import { recordCodexQuotaObservation } from "@/src/server/services/quotaCalibration";
 
 const DEFAULT_GROK_CLI_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 const GROK_CLI_VERSION = "0.2.93";
@@ -63,6 +64,14 @@ export async function getGrokQuota(id: string): Promise<GrokQuotaReport> {
   const productUsage = weeklyConfig ? productWindows(weeklyConfig) : [];
   const planType = detectPlan(monthlyConfig);
   if (planType && planType !== credential.planType) updateGrokCredential(id, { planType });
+  if (weekly) {
+    recordCodexQuotaObservation({
+      credentialId: credential.id,
+      planType: planType || credential.planType,
+      observedAt: new Date().toISOString(),
+      windows: [{ kind: "7d", usedPercent: weekly.usedPercent, resetsAt: weekly.resetsAt }],
+    });
+  }
   return {
     status: successful.length === 2 ? "available" : "partial",
     fetchedAt: new Date().toISOString(),

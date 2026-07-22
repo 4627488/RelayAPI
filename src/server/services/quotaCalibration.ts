@@ -175,6 +175,7 @@ type PersistedCalibrationState = {
   samples: Record<"5h" | "7d", Array<{ perShareNanoUsd: string; credentialId: string; percentSpan: number; observedAt: string }>>;
   baselines: Record<"5h" | "7d", { automaticNanoUsd: string | null; overrideNanoUsd: string | null; confidence: number; sampleCount: number }>;
   oversellRatios: Record<"5h" | "7d", number>;
+  credentialOverrides: Record<string, Partial<Record<"5h" | "7d", string | null>>>;
 };
 
 export function recordCredentialPricedUsage(
@@ -269,6 +270,38 @@ export function getEffectiveQuotaBaselines() {
   ) as Record<"5h" | "7d", { automaticNanoUsd: bigint | null; overrideNanoUsd: bigint | null; effectiveNanoUsd: bigint | null; confidence: number; sampleCount: number }>;
 }
 
+export function getCredentialQuotaEstimates(credentialId: string, planType: string) {
+  const state = readState();
+  const shares = BigInt(quotaSharesForPlan(planType));
+  return Object.fromEntries((["5h", "7d"] as const).map((kind) => {
+    const automatic = deriveQuotaBaseline(state.samples[kind]
+      .filter((sample) => sample.credentialId === credentialId)
+      .map((sample) => ({ ...sample, perShareNanoUsd: BigInt(sample.perShareNanoUsd) })));
+    const automaticNanoUsd = automatic.valueNanoUsd === null ? null : automatic.valueNanoUsd * shares;
+    const override = state.credentialOverrides[credentialId]?.[kind] ?? null;
+    return [kind, {
+      automaticNanoUsd,
+      overrideNanoUsd: override === null ? null : BigInt(override),
+      effectiveNanoUsd: override === null ? automaticNanoUsd : BigInt(override),
+      confidence: automatic.confidence,
+      sampleCount: automatic.sampleCount,
+    }];
+  })) as Record<"5h" | "7d", { automaticNanoUsd: bigint | null; overrideNanoUsd: bigint | null; effectiveNanoUsd: bigint | null; confidence: number; sampleCount: number }>;
+}
+
+export function setCredentialQuotaEstimates(
+  credentialId: string,
+  values: Partial<Record<"5h" | "7d", bigint | null>>,
+) {
+  const state = readState();
+  const current = state.credentialOverrides[credentialId] || {};
+  for (const kind of ["5h", "7d"] as const) {
+    if (Object.hasOwn(values, kind)) current[kind] = values[kind] === null ? null : String(values[kind]);
+  }
+  state.credentialOverrides[credentialId] = current;
+  writeState(state);
+}
+
 export function setQuotaBaselineOverride(
   kind: "5h" | "7d",
   valueNanoUsd: bigint | null,
@@ -304,6 +337,7 @@ function readState(): PersistedCalibrationState {
       "7d": { automaticNanoUsd: null, overrideNanoUsd: null, confidence: 0, sampleCount: 0 },
     },
     oversellRatios: { "5h": 1, "7d": 1 },
+    credentialOverrides: {},
   };
   const raw = getSettingValue(CALIBRATION_STATE_KEY);
   if (!raw) return empty;
@@ -317,6 +351,7 @@ function readState(): PersistedCalibrationState {
       samples: { ...empty.samples, ...(parsed.samples || {}) },
       baselines: { ...empty.baselines, ...(parsed.baselines || {}) },
       oversellRatios: { ...empty.oversellRatios, ...(parsed.oversellRatios || {}) },
+      credentialOverrides: parsed.credentialOverrides || {},
     };
   } catch {
     return empty;

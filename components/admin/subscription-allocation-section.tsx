@@ -18,14 +18,14 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { adminErrorMessage, createTenantSubscription, deleteTenantSubscription, getSubscriptionAllocationOverview, getSubscriptionCalibration, startSubscriptionCalibration, updateTenantSubscription, type SubscriptionAllocationOverview, type SubscriptionCapacityPool, type TenantSubscriptionRecord } from "@/lib/admin-api";
+import { adminErrorMessage, createTenantSubscription, deleteTenantSubscription, getSubscriptionAllocationOverview, updateSubscriptionPoolQuotaEstimates, updateTenantSubscription, type SubscriptionAllocationOverview, type SubscriptionCapacityPool, type TenantSubscriptionRecord } from "@/lib/admin-api";
 import { providerLabel, providerPlanLabel } from "@/src/shared/providerCapabilities";
 import type { PublicTenant } from "@/src/shared/types/entities";
 
-type AllocationDraft = { tenantId: string; units: string; unitsPerCredential: string; priority: number; estimatedFiveHourUsd: string; estimatedSevenDayUsd: string };
-type EditDraft = { units: string; unitsPerCredential: string; priority: number; enabled: boolean; estimatedFiveHourUsd: string; estimatedSevenDayUsd: string };
+type AllocationDraft = { tenantId: string; units: string; unitsPerCredential: string; priority: number };
+type EditDraft = { units: string; unitsPerCredential: string; priority: number; enabled: boolean };
 
-const EMPTY_DRAFT: AllocationDraft = { tenantId: "", units: "1", unitsPerCredential: "1", priority: 100, estimatedFiveHourUsd: "", estimatedSevenDayUsd: "" };
+const EMPTY_DRAFT: AllocationDraft = { tenantId: "", units: "1", unitsPerCredential: "1", priority: 100 };
 
 export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTenant[] }) {
   const [overview, setOverview] = React.useState<SubscriptionAllocationOverview | null>(null);
@@ -39,7 +39,6 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
   const [draft, setDraft] = React.useState(EMPTY_DRAFT);
   const [pendingDelete, setPendingDelete] = React.useState<TenantSubscriptionRecord | null>(null);
   const [deleting, setDeleting] = React.useState(false);
-  const [calibratingIds, setCalibratingIds] = React.useState<Set<string>>(new Set());
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -80,8 +79,6 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
         units: parsePositiveUnits(draft.units),
         unitsPerCredential: parsePositiveUnits(draft.unitsPerCredential),
         priority: draft.priority,
-        estimatedFiveHourNanoUsd: usdToNanoUsd(draft.estimatedFiveHourUsd),
-        estimatedSevenDayNanoUsd: usdToNanoUsd(draft.estimatedSevenDayUsd),
       });
       setCreateOpen(false);
       await load();
@@ -102,8 +99,6 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
         ...edit,
         units: parsePositiveUnits(edit.units),
         unitsPerCredential: parsePositiveUnits(edit.unitsPerCredential),
-        estimatedFiveHourNanoUsd: usdToNanoUsd(edit.estimatedFiveHourUsd),
-        estimatedSevenDayNanoUsd: usdToNanoUsd(edit.estimatedSevenDayUsd),
       });
       await load();
       toast.success("分配已更新");
@@ -153,26 +148,12 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
     }
   }
 
-  async function calibrate(item: TenantSubscriptionRecord) {
-    setCalibratingIds((current) => new Set(current).add(item.id));
-    try {
-      await startSubscriptionCalibration(item.id);
-      for (;;) {
-        await new Promise((resolve) => window.setTimeout(resolve, 500));
-        const task = await getSubscriptionCalibration(item.id);
-        if (task.status === "completed") { await load(); toast.success(`校准完成：5h ${task.windows?.["5h"].requestCount || 0} 个请求，7d ${task.windows?.["7d"].requestCount || 0} 个请求`); break; }
-        if (task.status === "failed") throw new Error(task.error || "校准失败");
-      }
-    } catch (error) { toast.error(adminErrorMessage(error)); }
-    finally { setCalibratingIds((current) => { const next = new Set(current); next.delete(item.id); return next; }); }
-  }
-
   return (
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
           <CardTitle>订阅容量工作台</CardTitle>
-          <CardDescription>统一管理 Codex 与 Grok 的容量分发；推测额度由每条订阅独立配置。</CardDescription>
+          <CardDescription>统一管理 Codex 与 Grok 的容量分发；推测额度归属于每个主订阅容量池。</CardDescription>
           <CardAction>
             <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load()}>
               {loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
@@ -217,7 +198,7 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
             </CardContent>
           </Card>
 
-          {selectedPool ? <PoolWorkspace pool={selectedPool} edits={edits} savingId={savingId} calibratingIds={calibratingIds} equalizing={equalizing} onEdit={(id, edit) => setEdits((current) => ({ ...current, [id]: edit }))} onSave={saveAllocation} onCalibrate={calibrate} onDelete={setPendingDelete} onCreate={openCreate} onEqualize={equalizeAllocations} /> : null}
+          {selectedPool ? <PoolWorkspace pool={selectedPool} edits={edits} savingId={savingId} equalizing={equalizing} onReload={load} onEdit={(id, edit) => setEdits((current) => ({ ...current, [id]: edit }))} onSave={saveAllocation} onDelete={setPendingDelete} onCreate={openCreate} onEqualize={equalizeAllocations} /> : null}
         </div>
       )}
 
@@ -289,7 +270,7 @@ function PoolButton({ pool, active, onClick }: { pool: SubscriptionCapacityPool;
   );
 }
 
-function PoolWorkspace({ pool, edits, savingId, calibratingIds, equalizing, onEdit, onSave, onCalibrate, onDelete, onCreate, onEqualize }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; calibratingIds: Set<string>; equalizing: boolean; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onCalibrate: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void; onCreate: () => void; onEqualize: (pool: SubscriptionCapacityPool) => void }) {
+function PoolWorkspace({ pool, edits, savingId, equalizing, onReload, onEdit, onSave, onDelete, onCreate, onEqualize }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; equalizing: boolean; onReload: () => Promise<void>; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void; onCreate: () => void; onEqualize: (pool: SubscriptionCapacityPool) => void }) {
   const enabledCount = pool.subscriptions.filter((item) => item.enabled).length;
   return (
     <Card>
@@ -313,6 +294,7 @@ function PoolWorkspace({ pool, edits, savingId, calibratingIds, equalizing, onEd
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        <PoolQuotaEstimates key={pool.id} pool={pool} onSaved={onReload} />
         {pool.allocatedUnits > pool.capacityUnits ? (
           <Alert variant="destructive">
             <AlertTriangleIcon />
@@ -338,14 +320,14 @@ function PoolWorkspace({ pool, edits, savingId, calibratingIds, equalizing, onEd
             </EmptyHeader>
           </Empty>
         ) : (
-          <AllocationTable pool={pool} edits={edits} savingId={savingId} calibratingIds={calibratingIds} onEdit={onEdit} onSave={onSave} onCalibrate={onCalibrate} onDelete={onDelete} />
+          <AllocationTable pool={pool} edits={edits} savingId={savingId} onEdit={onEdit} onSave={onSave} onDelete={onDelete} />
         )}
       </CardContent>
     </Card>
   );
 }
 
-function AllocationTable({ pool, edits, savingId, calibratingIds, onEdit, onSave, onCalibrate, onDelete }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; calibratingIds: Set<string>; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onCalibrate: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void }) {
+function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void }) {
   return (
     <Table>
       <TableHeader>
@@ -355,8 +337,6 @@ function AllocationTable({ pool, edits, savingId, calibratingIds, onEdit, onSave
           <TableHead className="w-24">份数</TableHead>
           <TableHead className="w-24">拆分基数</TableHead>
           <TableHead className="w-24">优先级</TableHead>
-          <TableHead className="w-32">5h 推测额度</TableHead>
-          <TableHead className="w-32">7d 推测额度</TableHead>
           <TableHead className="w-20">启用</TableHead>
           <TableHead className="w-24" />
         </TableRow>
@@ -364,7 +344,7 @@ function AllocationTable({ pool, edits, savingId, calibratingIds, onEdit, onSave
       <TableBody>
         {pool.subscriptions.map((item) => {
           const edit = edits[item.id] || editFrom(item);
-          const dirty = Number(edit.units) !== item.units || Number(edit.unitsPerCredential) !== item.unitsPerCredential || edit.priority !== item.priority || edit.enabled !== item.enabled || edit.estimatedFiveHourUsd !== nanoUsdToUsd(item.estimatedFiveHourNanoUsd) || edit.estimatedSevenDayUsd !== nanoUsdToUsd(item.estimatedSevenDayNanoUsd);
+          const dirty = Number(edit.units) !== item.units || Number(edit.unitsPerCredential) !== item.unitsPerCredential || edit.priority !== item.priority || edit.enabled !== item.enabled;
           return (
             <TableRow key={item.id}>
               <TableCell>
@@ -413,21 +393,12 @@ function AllocationTable({ pool, edits, savingId, calibratingIds, onEdit, onSave
                 />
               </TableCell>
               <TableCell>
-                <Input inputMode="decimal" value={edit.estimatedFiveHourUsd} placeholder="USD" aria-label="5 小时推测额度" onChange={(event) => onEdit(item.id, { ...edit, estimatedFiveHourUsd: event.target.value })} />
-              </TableCell>
-              <TableCell>
-                <Input inputMode="decimal" value={edit.estimatedSevenDayUsd} placeholder="USD" aria-label="7 天推测额度" onChange={(event) => onEdit(item.id, { ...edit, estimatedSevenDayUsd: event.target.value })} />
-              </TableCell>
-              <TableCell>
                 <Switch checked={edit.enabled} onCheckedChange={(checked) => onEdit(item.id, { ...edit, enabled: checked })} aria-label={`${item.tenant?.name || item.tenantId} 启用状态`} />
               </TableCell>
               <TableCell>
                 <div className="flex justify-end gap-1">
                   <Button type="button" variant={dirty ? "default" : "ghost"} size="icon" disabled={!dirty || savingId === item.id} aria-label="保存分配" onClick={() => onSave(item)}>
                     {savingId === item.id ? <Spinner /> : dirty ? <SaveIcon /> : <CheckIcon />}
-                  </Button>
-                  <Button type="button" variant="ghost" size="icon" disabled={calibratingIds.has(item.id) || !item.quota?.["5h"] || !item.quota?.["7d"]} aria-label="按最近 5 小时和 7 天请求校准额度" onClick={() => onCalibrate(item)}>
-                    {calibratingIds.has(item.id) ? <Spinner /> : <RefreshCwIcon />}
                   </Button>
                   <Button type="button" variant="ghost" size="icon" aria-label="回收分配" onClick={() => onDelete(item)}>
                     <Trash2Icon />
@@ -510,15 +481,6 @@ function CreateAllocationDialog({ open, pool, tenants, draft, pending, onDraftCh
             />
             <FieldDescription>同一租户拥有多个可用子订阅时，优先选择数值更高的项。</FieldDescription>
           </Field>
-          <Field>
-            <FieldLabel>5 小时推测额度（USD）</FieldLabel>
-            <Input inputMode="decimal" value={draft.estimatedFiveHourUsd} placeholder="留空表示暂不限制" onChange={(event) => onDraftChange({ ...draft, estimatedFiveHourUsd: event.target.value })} />
-          </Field>
-          <Field>
-            <FieldLabel>7 天推测额度（USD）</FieldLabel>
-            <Input inputMode="decimal" value={draft.estimatedSevenDayUsd} placeholder="留空表示暂不限制" onChange={(event) => onDraftChange({ ...draft, estimatedSevenDayUsd: event.target.value })} />
-            <FieldDescription>额度属于这条租户订阅，不会影响同一父凭据下的其他分配。</FieldDescription>
-          </Field>
         </FieldGroup>
         <DialogFooter>
           <Button type="button" variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>
@@ -561,6 +523,38 @@ function QuotaUsage({ item }: { item: TenantSubscriptionRecord }) {
   );
 }
 
+function PoolQuotaEstimates({ pool, onSaved }: { pool: SubscriptionCapacityPool; onSaved: () => Promise<void> }) {
+  const [fiveHour, setFiveHour] = React.useState(nanoUsdToUsd(pool.quotaEstimates["5h"].overrideNanoUsd));
+  const [sevenDay, setSevenDay] = React.useState(nanoUsdToUsd(pool.quotaEstimates["7d"].overrideNanoUsd));
+  const [pending, setPending] = React.useState(false);
+  async function save() {
+    setPending(true);
+    try {
+      await updateSubscriptionPoolQuotaEstimates(pool.id, { "5h": usdToNanoUsd(fiveHour), "7d": usdToNanoUsd(sevenDay) });
+      await onSaved();
+      toast.success("主订阅推测额度已保存");
+    } catch (error) { toast.error(adminErrorMessage(error)); }
+    finally { setPending(false); }
+  }
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>主订阅推测额度</CardTitle>
+        <CardDescription>应用于这个主账号的完整容量；所有子订阅仅按所占份额继承。</CardDescription>
+        <CardAction><Button type="button" size="sm" disabled={pending} onClick={() => void save()}>{pending && <Spinner data-icon="inline-start" />}保存</Button></CardAction>
+      </CardHeader>
+      <CardContent className="grid gap-3 sm:grid-cols-2">
+        <Field><FieldLabel htmlFor={`pool-5h-${pool.id}`}>5 小时推测额度（USD）</FieldLabel><Input id={`pool-5h-${pool.id}`} inputMode="decimal" value={fiveHour} placeholder={nanoUsdToUsd(pool.quotaEstimates["5h"].automaticNanoUsd) || "采样中"} onChange={(event) => setFiveHour(event.target.value)} /><FieldDescription>{estimateDescription(pool.quotaEstimates["5h"])}</FieldDescription></Field>
+        <Field><FieldLabel htmlFor={`pool-7d-${pool.id}`}>7 天推测额度（USD）</FieldLabel><Input id={`pool-7d-${pool.id}`} inputMode="decimal" value={sevenDay} placeholder={nanoUsdToUsd(pool.quotaEstimates["7d"].automaticNanoUsd) || "采样中"} onChange={(event) => setSevenDay(event.target.value)} /><FieldDescription>{estimateDescription(pool.quotaEstimates["7d"])}</FieldDescription></Field>
+      </CardContent>
+    </Card>
+  );
+}
+
+function estimateDescription(estimate: SubscriptionCapacityPool["quotaEstimates"]["5h"]) {
+  return `自动推测 ${nanoUsdToUsd(estimate.automaticNanoUsd) || "暂无"} USD · ${estimate.sampleCount} 个样本 · 置信度 ${percent(estimate.confidence)}`;
+}
+
 function Metric({ icon, label, value, hint, danger = false }: { icon: React.ReactNode; label: string; value: string; hint: string; danger?: boolean }) {
   return (
     <Card size="sm">
@@ -592,7 +586,7 @@ function LifecycleBadge({ lifecycle }: { lifecycle?: TenantSubscriptionRecord["l
 }
 
 function editFrom(item: TenantSubscriptionRecord): EditDraft {
-  return { units: String(item.units), unitsPerCredential: String(item.unitsPerCredential), priority: item.priority, enabled: item.enabled, estimatedFiveHourUsd: nanoUsdToUsd(item.estimatedFiveHourNanoUsd), estimatedSevenDayUsd: nanoUsdToUsd(item.estimatedSevenDayNanoUsd) };
+  return { units: String(item.units), unitsPerCredential: String(item.unitsPerCredential), priority: item.priority, enabled: item.enabled };
 }
 function parsePositiveUnits(value: string) {
   const units = Number(value);

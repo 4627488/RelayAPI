@@ -592,6 +592,11 @@ export function migrateMainDb(db: SqliteDatabase) {
         ON tenant_subscriptions(tenant_user_id, enabled);
     `);
   });
+
+  applyMigration(db, "020_parent_subscription_quota_estimates", (database) => {
+    dropColumnIfPresent(database, "tenant_subscriptions", "estimated_5h_nano_usd");
+    dropColumnIfPresent(database, "tenant_subscriptions", "estimated_7d_nano_usd");
+  });
 }
 
 function applyMigration(
@@ -628,5 +633,16 @@ function addColumnIfMissing(
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   if (!columns.some((column) => column.name === columnName)) {
     db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+function dropColumnIfPresent(
+  db: SqliteDatabase,
+  tableName: string,
+  columnName: string,
+) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) {
+    db.exec(`ALTER TABLE ${tableName} DROP COLUMN ${columnName}`);
   }
 }

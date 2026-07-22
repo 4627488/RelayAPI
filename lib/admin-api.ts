@@ -400,7 +400,6 @@ export type TenantSubscriptionRecord = {
   id: string; tenantId: string; tenantUserId: string | null; credentialId: string; name: string;
   units: number; unitsPerCredential: number; enabled: boolean; priority: number;
   allocatedPoolUnits?: number;
-  estimatedFiveHourNanoUsd: string | null; estimatedSevenDayNanoUsd: string | null;
   startsAt: string; expiresAt: string | null; createdAt: string; updatedAt: string;
   quota?: Partial<Record<"5h" | "7d", {
     limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string; resetsAt: string;
@@ -415,6 +414,7 @@ export type SubscriptionCapacityPool = {
   expiresAt: string | null; cooldownUntil: string | null; lastError: string | null;
   capacityUnits: number; allocatedUnits: number;
   allocationCount: number; activeAllocationCount: number;
+  quotaEstimates: Record<"5h" | "7d", { automaticNanoUsd: string | null; overrideNanoUsd: string | null; effectiveNanoUsd: string | null; confidence: number; sampleCount: number }>;
   subscriptions: TenantSubscriptionRecord[];
 };
 
@@ -427,7 +427,6 @@ export type SubscriptionAllocationOverview = {
 export type TenantSubscriptionPayload = {
   tenantId?: string; credentialId?: string; name?: string; units?: number;
   unitsPerCredential?: number; enabled?: boolean; priority?: number;
-  estimatedFiveHourNanoUsd?: string | null; estimatedSevenDayNanoUsd?: string | null;
   startsAt?: string; expiresAt?: string | null;
 };
 export type SubscriptionCalibrationTask = { subscriptionId: string; status: "idle" | "pending" | "running" | "completed" | "failed"; startedAt: string | null; completedAt: string | null; error: string | null; windows?: Record<"5h" | "7d", { startedAt: string; costNanoUsd: string; requestCount: number }> };
@@ -546,6 +545,10 @@ export async function listTenantSubscriptions(tenantId?: string) {
 
 export function getSubscriptionAllocationOverview() {
   return adminRequest<SubscriptionAllocationOverview>("/api/admin/subscriptions");
+}
+
+export function updateSubscriptionPoolQuotaEstimates(id: string, payload: Partial<Record<"5h" | "7d", string | null>>) {
+  return adminRequest(`/api/admin/subscriptions/pools/${encodePath(id)}/quota-estimates`, { method: "PATCH", body: payload });
 }
 
 export function createTenantSubscription(payload: TenantSubscriptionPayload) {

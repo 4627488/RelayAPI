@@ -8,7 +8,7 @@ import { getSubscriptionQuotaState, releaseSubscriptionQuota, settleSubscription
 import { reserveCostQuotaPolicies, subscriptionCostQuotaPolicies } from "@/src/server/services/quotaPolicy";
 import type { ModelPriceSnapshot } from "@/src/server/services/modelPricing";
 import { resolveConfiguredModelPrice } from "@/src/server/services/quotaAdministration";
-import { getEffectiveQuotaBaselines, getQuotaOversellRatios } from "@/src/server/services/quotaCalibration";
+import { getCredentialQuotaEstimates, getEffectiveQuotaBaselines, getQuotaOversellRatios } from "@/src/server/services/quotaCalibration";
 import { providerCapability, providerCapacityUnits } from "@/src/shared/providerCapabilities";
 
 export interface TenantQuotaAdmission { requestId: string; tenantId: string; subscriptionId: string | null; units: number | null; unitsPerCredential: number | null; price: ModelPriceSnapshot | null; state: SubscriptionQuotaState | null; }
@@ -18,22 +18,19 @@ export function eligibleCredentialIdsForTenant(tenantId: string, tenantUserId: s
   return [...new Set(listActiveTenantSubscriptionsForUser(tenantId, tenantUserId).filter((item) => hasLocalCapacity(item)).map((item) => item.credentialId))];
 }
 
-export function subscriptionQuotaLimits(subscription: { units: number; unitsPerCredential: number; credentialId: string; estimatedFiveHourNanoUsd?: string | null; estimatedSevenDayNanoUsd?: string | null }) {
-  if (subscription.estimatedFiveHourNanoUsd && subscription.estimatedSevenDayNanoUsd) {
-    return {
-      "5h": BigInt(subscription.estimatedFiveHourNanoUsd),
-      "7d": BigInt(subscription.estimatedSevenDayNanoUsd),
-    };
-  }
+export function subscriptionQuotaLimits(subscription: { units: number; unitsPerCredential: number; credentialId: string }) {
   const baselines = getEffectiveQuotaBaselines();
   const oversellRatios = getQuotaOversellRatios();
   const credential = getProviderCredential(subscription.credentialId);
   if (!credential || !providerCapability(credential.provider).calibratedCostQuota || !baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) return null;
+  const credentialEstimates = getCredentialQuotaEstimates(credential.id, credential.planType);
   const parentCapacityMultiplier = BigInt(providerCapacityUnits(credential.provider, credential.planType));
   const fractionMilli = BigInt(Math.floor(subscription.units * 1_000_000 / subscription.unitsPerCredential));
   return Object.fromEntries((["5h", "7d"] as const).map((kind) => {
     const oversellMilli = BigInt(Math.round(oversellRatios[kind] * 1000));
-    return [kind, baselines[kind].effectiveNanoUsd! * parentCapacityMultiplier * fractionMilli * oversellMilli / 1_000_000_000n];
+    const parentCapacity = credentialEstimates[kind].effectiveNanoUsd
+      ?? baselines[kind].effectiveNanoUsd! * parentCapacityMultiplier;
+    return [kind, parentCapacity * fractionMilli * oversellMilli / 1_000_000_000n];
   })) as Record<"5h" | "7d", bigint>;
 }
 
