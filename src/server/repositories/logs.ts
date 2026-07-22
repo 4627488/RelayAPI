@@ -225,7 +225,7 @@ export function appendRequestLog(input: RequestLogInput) {
   return id;
 }
 
-export function getCostAnalysis(scope: { tenantId?: string | null; subscriptionId?: string; startedAt?: string; endedAt?: string } = {}) {
+export function getCostAnalysis(scope: { tenantId?: string | null; subscriptionId?: string; credentialId?: string; startedAt?: string; endedAt?: string } = {}) {
   const clauses = ["cost_nano_usd IS NOT NULL"];
   const params: unknown[] = [];
   if (scope.tenantId !== undefined) {
@@ -236,7 +236,15 @@ export function getCostAnalysis(scope: { tenantId?: string | null; subscriptionI
       params.push(scope.tenantId);
     }
   }
-  if (scope.subscriptionId) { clauses.push("subscription_id = ?"); params.push(scope.subscriptionId); }
+  if (scope.subscriptionId) {
+    if (scope.credentialId && typeof scope.tenantId === "string") {
+      clauses.push("(subscription_id = ? OR (subscription_id IS NULL AND tenant_id = ? AND credential_id = ?))");
+      params.push(scope.subscriptionId, scope.tenantId, scope.credentialId);
+    } else {
+      clauses.push("subscription_id = ?");
+      params.push(scope.subscriptionId);
+    }
+  }
   if (scope.startedAt) { clauses.push("started_at >= ?"); params.push(scope.startedAt); }
   if (scope.endedAt) { clauses.push("started_at < ?"); params.push(scope.endedAt); }
   const where = `WHERE ${clauses.join(" AND ")}`;

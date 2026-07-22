@@ -169,6 +169,7 @@ describe("queryRequestLogs", () => {
     logs.appendRequestLog({ ...base, subscriptionId: "sub-cal", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0, costNanoUsd: "200", pricingComplete: true } });
     logs.appendRequestLog({ ...base, subscriptionId: "sub-other", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, cachedTokens: 0, costNanoUsd: "400", pricingComplete: true } });
     expect(logs.getSubscriptionCalibrationCost({ subscriptionId: "sub-cal", tenantId: "tenant-cal", credentialId: "cred-cal", startedAt: "2026-07-05T00:00:00.000Z", endedAt: "2026-07-06T00:00:00.000Z" })).toEqual({ costNanoUsd: 300n, requestCount: 2 });
+    expect(logs.getCostAnalysis({ subscriptionId: "sub-cal", tenantId: "tenant-cal", credentialId: "cred-cal", startedAt: "2026-07-05T00:00:00.000Z", endedAt: "2026-07-06T00:00:00.000Z" })).toMatchObject({ totalCostNanoUsd: "300", pricedRequests: 2 });
   });
   test("records and backfills successful requests with a previously unknown price", () => {
     logs.appendRequestLog({

@@ -17,7 +17,7 @@ export function GET(request: Request) {
       return Response.json({ error: { code: "subscription_not_found", message: "Subscription not found" } }, { status: 404 });
     }
     const weekly = getSubscriptionQuotaState(subscriptionId).windows["7d"];
-    return Response.json(attachConfiguredModelPrices(getCostAnalysis({ tenantId: context.tenant.id, subscriptionId, ...(weekly ? { startedAt: weekly.startedAt, endedAt: weekly.resetsAt } : {}) })));
+    return Response.json(attachConfiguredModelPrices(getCostAnalysis({ tenantId: context.tenant.id, subscriptionId, credentialId: subscription.credentialId, ...(weekly ? { startedAt: weekly.startedAt, endedAt: weekly.resetsAt } : {}) })));
   } catch (error) {
     return errorToResponse(error);
   }

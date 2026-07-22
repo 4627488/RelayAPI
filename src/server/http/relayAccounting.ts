@@ -16,6 +16,8 @@ import {
 import type { RelayApiKeyContext, UsageSnapshot } from "@/src/shared/types/entities";
 
 type SecondaryUsage = { model: string; usage: UsageSnapshot };
+type SettledSubscriptionQuota = NonNullable<ReturnType<typeof settleTenantRequest>>;
+export type RelayQuotaSettlement = SettledSubscriptionQuota | { subscriptionId: string };
 
 export function admitRelayQuota(
   apiKey: RelayApiKeyContext,
@@ -50,7 +52,7 @@ export function settleRelayQuota(
   usage: UsageSnapshot,
   credentialId: string,
   secondaryUsage?: SecondaryUsage | null,
-) {
+): RelayQuotaSettlement | null {
   if (!admission) return null;
   const mainCost = applyUsagePrice(usage, admission.price);
   const secondaryCost = secondaryUsage
@@ -73,7 +75,9 @@ export function settleRelayQuota(
         requestId: admission.requestId,
         actualNanoUsd: totalCost,
       })
-    : null;
+    : admission.subscriptionId
+      ? { subscriptionId: admission.subscriptionId }
+      : null;
 }
 
 const grokQuotaObservationAt = new Map<string, number>();
@@ -103,9 +107,9 @@ export function releaseRelayQuota(
 }
 
 export function quotaResponseHeaders(
-  state: ReturnType<typeof settleTenantRequest>,
+  state: RelayQuotaSettlement | null,
 ) {
-  return state ? tenantQuotaHeaders(state) : {};
+  return state && "windows" in state ? tenantQuotaHeaders(state) : {};
 }
 
 function applyUsagePrice(
