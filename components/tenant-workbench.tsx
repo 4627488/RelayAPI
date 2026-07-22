@@ -225,7 +225,7 @@ export function TenantWorkbench({
     },
     {
       id: "setup",
-      label: "Codex 接入",
+      label: "客户端接入",
       icon: BotIcon,
       group: "连接",
     },
@@ -323,6 +323,7 @@ export function TenantWorkbench({
           <TenantCodexSetupSection
             apiKeys={apiKeys}
             initialSecret={codexSetupSecret}
+            resources={resources}
             tenant={tenant}
             onApiKeyCreated={(created) => {
               setApiKeys((current) => [created, ...current]);

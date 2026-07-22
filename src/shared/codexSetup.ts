@@ -1,46 +1,85 @@
-export const CODEX_DEFAULT_BASE_URL = "https://ai.cafebabe.top/v1";
-export const CODEX_PROVIDER_NAME = "cliproxyapi";
+export const RELAY_DEFAULT_BASE_URL = "https://ai.cafebabe.top/v1";
+export const RELAY_PROVIDER_NAME = "relayapi";
 export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
 
 export type CodexModelManifest = {
   models: Array<Record<string, unknown> & { slug: string }>;
 };
 
-export function buildOAuthConfig(model: string, apiKey: string) {
-  return `model = "${model}"
-model_provider = "${CODEX_PROVIDER_NAME}"
-model_reasoning_effort = "xhigh"
-plan_mode_reasoning_effort = "xhigh"
+export function buildCodexConfig(
+  model: string,
+  baseUrl = RELAY_DEFAULT_BASE_URL,
+) {
+  return `model = "${tomlString(model)}"
+model_provider = "${RELAY_PROVIDER_NAME}"
 
-${safetyOptions()}
-
-[model_providers.${CODEX_PROVIDER_NAME}]
-base_url = "${CODEX_DEFAULT_BASE_URL}"
-experimental_bearer_token = "${apiKey}"
-name = "OpenAI"
-wire_api = "responses"
-requires_openai_auth = true
-supports_websockets = true
-`;
-}
-
-export function buildApiConfig(model: string) {
-  return `${safetyOptions()}
-
-model_provider = "${CODEX_PROVIDER_NAME}"
-model = "${model}"
-model_reasoning_effort = "high"
-model_catalog_json = "./models.json"
-
-[model_providers.${CODEX_PROVIDER_NAME}]
-name = "${CODEX_PROVIDER_NAME}"
-base_url = "${CODEX_DEFAULT_BASE_URL}"
+[model_providers.${RELAY_PROVIDER_NAME}]
+name = "RelayAPI"
+base_url = "${tomlString(normalizeRelayBaseUrl(baseUrl))}"
+env_key = "RELAY_API_KEY"
+env_key_instructions = "Set RELAY_API_KEY to your tenant API key"
 wire_api = "responses"
 `;
 }
 
-export function buildCodexAuthJson(apiKey: string) {
-  return JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2);
+export function buildOpenCodeConfig(
+  model: string,
+  manifest: CodexModelManifest,
+  apiKey: string,
+  baseUrl = RELAY_DEFAULT_BASE_URL,
+) {
+  const models = Object.fromEntries(
+    manifest.models.map((entry) => [
+      entry.slug,
+      {
+        name:
+          typeof entry.display_name === "string" && entry.display_name.trim()
+            ? entry.display_name.trim()
+            : entry.slug,
+      },
+    ]),
+  );
+  return JSON.stringify(
+    {
+      $schema: "https://opencode.ai/config.json",
+      model: `${RELAY_PROVIDER_NAME}/${model}`,
+      provider: {
+        [RELAY_PROVIDER_NAME]: {
+          npm: "@ai-sdk/openai",
+          name: "RelayAPI",
+          options: {
+            baseURL: normalizeRelayBaseUrl(baseUrl),
+            apiKey,
+          },
+          models,
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
+export function buildPowerShellEnvironment(apiKey: string) {
+  return `$env:RELAY_API_KEY = "${apiKey.replaceAll('"', '`"')}"`;
+}
+
+export function buildPosixEnvironment(apiKey: string) {
+  return `export RELAY_API_KEY='${apiKey.replaceAll("'", `'"'"'`)}'`;
+}
+
+export function buildOpenAIEnvironment(
+  apiKey: string,
+  baseUrl = RELAY_DEFAULT_BASE_URL,
+) {
+  return `OPENAI_BASE_URL=${normalizeRelayBaseUrl(baseUrl)}
+OPENAI_API_KEY=${apiKey}`;
+}
+
+export function normalizeRelayBaseUrl(value: string) {
+  const trimmed = String(value || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return RELAY_DEFAULT_BASE_URL;
+  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
 export function parseCodexModelManifest(payload: unknown): CodexModelManifest {
@@ -69,10 +108,6 @@ export function serializeCodexModelManifest(manifest: CodexModelManifest) {
   return JSON.stringify(manifest, null, 2);
 }
 
-function safetyOptions() {
-  return `# 无需确认是否执行操作，危险指令，初次接触 Codex 不建议开启，移除 # 号即可开启
-# approval_policy = "never"
-
-# 沙箱模式超高权限，危险指令，初次接触 Codex 不建议开启，移除 # 号即可开启
-# sandbox_mode = "danger-full-access"`;
+function tomlString(value: string) {
+  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }

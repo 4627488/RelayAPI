@@ -35,20 +35,30 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { createTenantApiKey, tenantErrorMessage } from "@/lib/tenant-api";
 import {
-  buildApiConfig,
-  buildCodexAuthJson,
-  buildOAuthConfig,
+  buildCodexConfig,
+  buildOpenAIEnvironment,
+  buildOpenCodeConfig,
+  buildPosixEnvironment,
+  buildPowerShellEnvironment,
   CODEX_DEFAULT_MODEL,
+  type CodexModelManifest,
+  normalizeRelayBaseUrl,
   parseCodexModelManifest,
-  serializeCodexModelManifest,
+  RELAY_DEFAULT_BASE_URL,
 } from "@/src/shared/codexSetup";
-import type { CreatedApiKey, PublicApiKey, PublicTenant } from "@/src/shared/types/entities";
+import type {
+  CreatedApiKey,
+  PublicApiKey,
+  PublicTenant,
+  TenantResources,
+} from "@/src/shared/types/entities";
 
-type SetupMode = "oauth" | "api";
+type SetupClient = "codex" | "opencode" | "openai";
 
 type CodexSetupSectionProps = {
   apiKeys: PublicApiKey[];
   initialSecret?: string;
+  resources: TenantResources;
   tenant: PublicTenant;
   onApiKeyCreated: (apiKey: CreatedApiKey) => void;
 };
@@ -57,16 +67,21 @@ export function TenantCodexSetupSection({
   apiKeys,
   initialSecret = "",
   onApiKeyCreated,
+  resources,
   tenant,
 }: CodexSetupSectionProps) {
-  const [mode, setMode] = React.useState<SetupMode>("oauth");
+  const [client, setClient] = React.useState<SetupClient>("codex");
   const [secret, setSecret] = React.useState(initialSecret);
   const [creating, setCreating] = React.useState(false);
   const [model, setModel] = React.useState(CODEX_DEFAULT_MODEL);
-  const [models, setModels] = React.useState<string[]>([CODEX_DEFAULT_MODEL]);
-  const [modelsManifest, setModelsManifest] = React.useState("");
+  const [manifest, setManifest] = React.useState<CodexModelManifest | null>(null);
   const [modelsError, setModelsError] = React.useState("");
   const [modelsLoading, setModelsLoading] = React.useState(true);
+  const relayBaseUrl = normalizeRelayBaseUrl(React.useSyncExternalStore(
+    subscribeToBrowserOrigin,
+    readBrowserOrigin,
+    readServerOrigin,
+  ));
 
   const loadModels = React.useCallback(async (notify = false) => {
     setModelsLoading(true);
@@ -76,16 +91,15 @@ export function TenantCodexSetupSection({
         credentials: "same-origin",
       });
       if (!response.ok) throw new Error("模型目录暂时不可用");
-      const manifest = parseCodexModelManifest(await response.json());
-      const nextModels = manifest.models.map((entry) => entry.slug);
-      setModels(nextModels);
-      setModelsManifest(serializeCodexModelManifest(manifest));
+      const nextManifest = parseCodexModelManifest(await response.json());
+      const nextModels = nextManifest.models.map((entry) => entry.slug);
+      setManifest(nextManifest);
       setModelsError("");
       setModel((current) => nextModels.includes(current) ? current : nextModels[0]);
-      if (notify) toast.success(`已同步 ${nextModels.length} 个模型`);
+      if (notify) toast.success(`已同步 ${nextModels.length} 个可路由模型`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setModelsManifest("");
+      setManifest(null);
       setModelsError(message);
       if (notify) toast.error(message);
     } finally {
@@ -102,7 +116,7 @@ export function TenantCodexSetupSection({
     setCreating(true);
     try {
       const created = await createTenantApiKey({
-        name: "Codex CLI",
+        name: "客户端接入",
         enabled: true,
         scopes: ["relay"],
         modelAllowlist: [],
@@ -113,7 +127,7 @@ export function TenantCodexSetupSection({
       });
       onApiKeyCreated(created);
       setSecret(created.key);
-      toast.success("已创建 Codex 专用 Key");
+      toast.success("已创建客户端专用 Key");
     } catch (error) {
       toast.error(tenantErrorMessage(error));
     } finally {
@@ -121,18 +135,21 @@ export function TenantCodexSetupSection({
     }
   }
 
+  const models = manifest?.models.map((entry) => entry.slug) || [];
   const keyValue = secret || "sk-填入你的租户 API Key";
-  const config = mode === "oauth"
-    ? buildOAuthConfig(model, keyValue)
-    : buildApiConfig(model);
+  const providers = providersForModel(resources, model);
+  const codexConfig = buildCodexConfig(model, relayBaseUrl);
+  const openCodeConfig = manifest
+    ? buildOpenCodeConfig(model, manifest, keyValue, relayBaseUrl)
+    : "";
 
   return (
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>连接 Codex</CardTitle>
+          <CardTitle>客户端接入</CardTitle>
           <CardDescription>
-            选择登录方式，复制配置，然后在 Codex CLI 或 Codex App 中开始使用。
+            配置会使用当前 RelayAPI 地址，并只展示你的子订阅实际授权、可路由的模型。
           </CardDescription>
           <CardAction>
             <Button
@@ -168,15 +185,15 @@ export function TenantCodexSetupSection({
           ) : (
             <p className="text-sm text-muted-foreground">
               {apiKeys.length > 0
-                ? "已有 Key 的明文无法再次查看。请使用刚创建并保存的 Key，或新建一个 Codex 专用 Key。"
-                : "你还没有 API Key。先创建专用 Key，页面会自动把它填入配置。"}
+                ? "已有 Key 的明文无法再次查看。请使用已保存的 Key，或创建一个新的客户端专用 Key。"
+                : "你还没有 API Key。创建后，页面会自动填入下面的配置。"}
             </p>
           )}
 
           <FieldGroup>
             <Field>
               <div className="flex items-center justify-between gap-3">
-                <FieldLabel>模型</FieldLabel>
+                <FieldLabel>默认模型</FieldLabel>
                 <Button type="button" variant="ghost" size="sm" disabled={modelsLoading} onClick={() => void loadModels(true)}>
                   {modelsLoading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
                   同步模型
@@ -188,58 +205,96 @@ export function TenantCodexSetupSection({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    {models.map((modelId) => <SelectItem key={modelId} value={modelId}>{modelId}</SelectItem>)}
+                    {models.map((modelId) => (
+                      <SelectItem key={modelId} value={modelId}>
+                        {modelId}
+                      </SelectItem>
+                    ))}
                   </SelectGroup>
                 </SelectContent>
               </Select>
               <FieldDescription>
                 {modelsLoading
-                  ? "正在同步可用模型…"
+                  ? "正在同步可路由模型…"
                   : modelsError
                     ? `同步失败：${modelsError}`
-                    : `${models.length} 个模型可用，推荐从 ${CODEX_DEFAULT_MODEL} 开始。`}
+                    : `${models.length} 个模型可用。Grok 等模型同样按通道声明匹配，不按名称前缀分类。`}
               </FieldDescription>
+              {providers.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {providers.map((provider) => <Badge key={provider} variant="outline">{providerLabel(provider)} 通道</Badge>)}
+                </div>
+              )}
             </Field>
           </FieldGroup>
         </CardContent>
       </Card>
 
-      <Tabs value={mode} onValueChange={(value) => setMode(value as SetupMode)}>
+      <Tabs value={client} onValueChange={(value) => setClient(value as SetupClient)}>
         <TabsList>
-          <TabsTrigger value="oauth">OAuth 登录（推荐）</TabsTrigger>
-          <TabsTrigger value="api">API 模式</TabsTrigger>
+          <TabsTrigger value="codex">Codex</TabsTrigger>
+          <TabsTrigger value="opencode">OpenCode</TabsTrigger>
+          <TabsTrigger value="openai">OpenAI 兼容</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="oauth" className="flex flex-col gap-4">
+        <TabsContent value="codex" className="flex flex-col gap-4">
           <SetupIntro
-            title="使用 ChatGPT 账户登录"
-            description="适用于任意 ChatGPT 订阅，包括免费账户。只需写入 config.toml，不要修改 auth.json。"
-            steps={["启动 CLIProxyAPI 服务器", "写入下方 config.toml", "打开 Codex CLI 或 Codex App，按提示登录 ChatGPT"]}
+            title="Codex CLI"
+            description="使用官方自定义 Provider 配置。Codex 会从 RelayAPI 的 /v1/models 自动加载该用户可路由的完整模型目录。"
+            steps={[
+              "在启动 Codex 的终端设置 RELAY_API_KEY",
+              "将 config.toml 写入 ~/.codex/config.toml",
+              "从同一终端启动或完全重启 Codex，模型目录会自动刷新",
+            ]}
           />
-          <ConfigPanel filename="~/.codex/config.toml" value={config} />
-        </TabsContent>
-
-        <TabsContent value="api" className="flex flex-col gap-4">
-          <SetupIntro
-            title="使用 API Key 连接"
-            description="适合不需要 ChatGPT OAuth 登录的环境。config.toml、auth.json 和 models.json 都需要写入。"
-            steps={["启动 CLIProxyAPI 服务器", "将下方三个文件写入 ~/.codex", "完全退出并重新启动 Codex"]}
-          />
-          {modelsManifest ? (
-            <div className="grid gap-4 xl:grid-cols-2">
-              <ConfigPanel filename="~/.codex/config.toml" value={config} />
-              <ConfigPanel filename="~/.codex/auth.json" value={buildCodexAuthJson(keyValue)} />
-              <ConfigPanel filename="~/.codex/models.json" value={modelsManifest} />
-            </div>
-          ) : (
-            <Alert variant="destructive">
-              <CircleAlertIcon />
-              <AlertTitle>暂时无法生成 API 模式配置</AlertTitle>
+          {providers.includes("grok") && (
+            <Alert>
+              <ShieldCheckIcon />
+              <AlertTitle>已选择 Grok 订阅可用模型</AlertTitle>
               <AlertDescription>
-                {modelsLoading ? "正在加载完整模型元数据…" : modelsError || "完整模型元数据不可用，请重试同步。"}
+                Codex 仍通过同一个 Responses Provider 接入；RelayAPI 的 /v1/models 会返回 Grok 的上下文和推理元数据，不需要 OAuth 模式或模型前缀判断。
               </AlertDescription>
             </Alert>
           )}
+          <div className="grid gap-4 xl:grid-cols-2">
+            <ConfigPanel filename="~/.codex/config.toml" value={codexConfig} />
+            <ConfigPanel filename="PowerShell：当前终端" value={buildPowerShellEnvironment(keyValue)} />
+            <ConfigPanel filename="macOS / Linux：当前终端" value={buildPosixEnvironment(keyValue)} />
+            <ConfigPanel filename="Codex 远程模型目录" value={`${relayBaseUrl}/models?format=codex`} />
+          </div>
+        </TabsContent>
+
+        <TabsContent value="opencode" className="flex flex-col gap-4">
+          <SetupIntro
+            title="OpenCode"
+            description="RelayAPI 提供 Responses API，因此按 OpenCode 最新文档使用 @ai-sdk/openai。配置包含你的全部可路由模型。"
+            steps={[
+              "把下方文件保存为项目 opencode.json，或保存为 ~/.config/opencode/opencode.json",
+              "完全重启 OpenCode",
+              "运行 /models，选择 relayapi 下的模型",
+            ]}
+          />
+          {openCodeConfig ? (
+            <ConfigPanel filename="opencode.json" value={openCodeConfig} />
+          ) : (
+            <ModelsUnavailable loading={modelsLoading} error={modelsError} />
+          )}
+        </TabsContent>
+
+        <TabsContent value="openai" className="flex flex-col gap-4">
+          <SetupIntro
+            title="通用 OpenAI 兼容客户端"
+            description="支持 Responses API 的客户端优先使用 /v1/responses；旧客户端也可以使用 /v1/chat/completions。"
+            steps={[
+              "设置下面两个环境变量",
+              "在客户端中选择上方模型",
+              "如客户端要求接口类型，优先选择 Responses API",
+            ]}
+          />
+          <div className="grid gap-4 xl:grid-cols-2">
+            <ConfigPanel filename="环境变量" value={buildOpenAIEnvironment(keyValue, relayBaseUrl)} />
+            <ConfigPanel filename="模型目录接口" value={`${relayBaseUrl}/models`} />
+          </div>
         </TabsContent>
       </Tabs>
     </div>
@@ -285,7 +340,45 @@ function ConfigPanel({ filename, value }: { filename: string; value: string }) {
   );
 }
 
+function ModelsUnavailable({ loading, error }: { loading: boolean; error: string }) {
+  return (
+    <Alert variant="destructive">
+      <CircleAlertIcon />
+      <AlertTitle>暂时无法生成完整配置</AlertTitle>
+      <AlertDescription>
+        {loading ? "正在加载模型元数据…" : error || "模型元数据不可用，请重试同步。"}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+function providersForModel(resources: TenantResources, model: string) {
+  return [...new Set(
+    resources.channels
+      .filter((channel) => channel.enabled && channel.modelAllowlist.includes(model))
+      .map((channel) => channel.provider),
+  )];
+}
+
+function providerLabel(provider: string) {
+  if (provider === "grok") return "Grok";
+  if (provider === "codex") return "Codex";
+  return provider;
+}
+
 async function copyText(value: string, message: string) {
   await navigator.clipboard.writeText(value);
   toast.success(message);
+}
+
+function subscribeToBrowserOrigin() {
+  return () => undefined;
+}
+
+function readBrowserOrigin() {
+  return window.location.origin;
+}
+
+function readServerOrigin() {
+  return RELAY_DEFAULT_BASE_URL;
 }

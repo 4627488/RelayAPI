@@ -11,5 +11,8 @@ export function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  return withCors(() => new URL(request.url).searchParams.has("client_version") ? handleCodexModels(request) : handleModels(request));
+  const searchParams = new URL(request.url).searchParams;
+  const wantsCodexCatalog =
+    searchParams.has("client_version") || searchParams.get("format") === "codex";
+  return withCors(() => wantsCodexCatalog ? handleCodexModels(request) : handleModels(request));
 }
