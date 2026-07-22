@@ -33,6 +33,16 @@ describe("client setup files", () => {
     expect(config).not.toContain("model_catalog_json");
   });
 
+  test.each(["macos", "linux"] as const)("builds safe command authentication for %s", (platform) => {
+    const config = buildCodexConfig("gpt-5.6-sol", "sk-test'value", "https://relay.example.com", platform);
+    expect(config).toContain('command = "/bin/sh"');
+    expect(config).toContain('"printf %s \\"$1\\""');
+    expect(config).toContain('"relayapi-auth"');
+    expect(config).toContain('"sk-test\'value"');
+    expect(config).not.toContain("[windows]");
+    expect(config).not.toContain("powershell");
+  });
+
   test("builds an OpenCode Responses provider with the authorized catalog", () => {
     const manifest = parseCodexModelManifest({
       models: [

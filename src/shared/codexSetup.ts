@@ -1,6 +1,7 @@
 export const RELAY_DEFAULT_BASE_URL = "https://ai.cafebabe.top/v1";
 export const RELAY_PROVIDER_NAME = "relayapi";
 export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
+export type CodexPlatform = "windows" | "macos" | "linux";
 
 export type CodexModelManifest = {
   models: Array<Record<string, unknown> & { slug: string }>;
@@ -10,8 +11,28 @@ export function buildCodexConfig(
   model: string,
   apiKey: string,
   baseUrl = RELAY_DEFAULT_BASE_URL,
+  platform: CodexPlatform = "windows",
 ) {
-  const tokenCommand = `[Console]::Out.Write('${powerShellSingleQuoted(apiKey)}')`;
+  const auth = platform === "windows"
+    ? `command = "powershell"
+args = [
+  "-NoProfile",
+  "-Command",
+  "${tomlString(`[Console]::Out.Write('${powerShellSingleQuoted(apiKey)}')`)}"
+]`
+    : `command = "/bin/sh"
+args = [
+  "-c",
+  "${tomlString('printf %s "$1"')}",
+  "relayapi-auth",
+  "${tomlString(apiKey)}"
+]`;
+  const platformConfig = platform === "windows"
+    ? `
+[windows]
+sandbox = "elevated"
+`
+    : "";
 
   return `model = "${tomlString(model)}"
 model_provider = "${RELAY_PROVIDER_NAME}"
@@ -23,17 +44,10 @@ base_url = "${tomlString(normalizeRelayBaseUrl(baseUrl))}"
 wire_api = "responses"
 
 [model_providers.${RELAY_PROVIDER_NAME}.auth]
-command = "powershell"
-args = [
-  "-NoProfile",
-  "-Command",
-  "${tomlString(tokenCommand)}"
-]
+${auth}
 timeout_ms = 5000
 refresh_interval_ms = 0
-
-[windows]
-sandbox = "elevated"
+${platformConfig}
 `;
 }
 

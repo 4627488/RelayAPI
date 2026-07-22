@@ -39,6 +39,7 @@ import {
   buildOpenAIEnvironment,
   buildOpenCodeConfig,
   CODEX_DEFAULT_MODEL,
+  type CodexPlatform,
   type CodexModelManifest,
   normalizeRelayBaseUrl,
   parseCodexModelManifest,
@@ -69,6 +70,7 @@ export function TenantCodexSetupSection({
   tenant,
 }: CodexSetupSectionProps) {
   const [client, setClient] = React.useState<SetupClient>("codex");
+  const [codexPlatform, setCodexPlatform] = React.useState<CodexPlatform>("windows");
   const [secret, setSecret] = React.useState(initialSecret);
   const [creating, setCreating] = React.useState(false);
   const [model, setModel] = React.useState(CODEX_DEFAULT_MODEL);
@@ -136,7 +138,7 @@ export function TenantCodexSetupSection({
   const models = manifest?.models.map((entry) => entry.slug) || [];
   const keyValue = secret || "sk-填入你的租户 API Key";
   const providers = providersForModel(resources, model);
-  const codexConfig = buildCodexConfig(model, keyValue, relayBaseUrl);
+  const codexConfig = buildCodexConfig(model, keyValue, relayBaseUrl, codexPlatform);
   const openCodeConfig = manifest
     ? buildOpenCodeConfig(model, manifest, keyValue, relayBaseUrl)
     : "";
@@ -238,13 +240,20 @@ export function TenantCodexSetupSection({
         <TabsContent value="codex" className="flex flex-col gap-4">
           <SetupIntro
             title="Codex CLI"
-            description="Windows 单文件配置：Key 直接写入 config.toml，Codex 会通过命令认证从 RelayAPI 的 /v1/models 自动加载该用户可路由的完整模型目录。"
+            description="跨平台单文件配置：选择操作系统后，页面会生成对应的命令认证配置；Codex 会从 RelayAPI 的 /v1/models 自动加载该用户可路由的完整模型目录。"
             steps={[
               "创建客户端专用 Key，页面会自动写入下方配置",
-              "将完整配置保存为 ~/.codex/config.toml",
+              `将完整配置保存为 ${codexConfigPath(codexPlatform)}`,
               "完全重启 Codex，随后可使用 /model 选择 RelayAPI 返回的模型",
             ]}
           />
+          <Tabs value={codexPlatform} onValueChange={(value) => setCodexPlatform(value as CodexPlatform)}>
+            <TabsList>
+              <TabsTrigger value="windows">Windows</TabsTrigger>
+              <TabsTrigger value="macos">macOS</TabsTrigger>
+              <TabsTrigger value="linux">Linux</TabsTrigger>
+            </TabsList>
+          </Tabs>
           <Alert>
             <CircleAlertIcon />
             <AlertTitle>Key 会以明文保存在配置文件中</AlertTitle>
@@ -262,7 +271,7 @@ export function TenantCodexSetupSection({
             </Alert>
           )}
           <div className="grid gap-4 xl:grid-cols-2">
-            <ConfigPanel filename="~/.codex/config.toml" value={codexConfig} />
+            <ConfigPanel filename={codexConfigPath(codexPlatform)} value={codexConfig} />
             <ConfigPanel filename="Codex 远程模型目录" value={`${relayBaseUrl}/models?format=codex`} />
           </div>
         </TabsContent>
@@ -367,6 +376,12 @@ function providerLabel(provider: string) {
   if (provider === "grok") return "Grok";
   if (provider === "codex") return "Codex";
   return provider;
+}
+
+function codexConfigPath(platform: CodexPlatform) {
+  return platform === "windows"
+    ? "%USERPROFILE%\\.codex\\config.toml"
+    : "~/.codex/config.toml";
 }
 
 async function copyText(value: string, message: string) {
