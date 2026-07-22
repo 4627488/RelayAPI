@@ -29,8 +29,8 @@ import {
   withStreamingHeaders,
 } from "@/src/server/http/relayHttpUtilities";
 
-import { createModelsResponse } from "@/src/server/codex/models";
-import { listGrokUpstreamModelIds } from "@/src/server/services/grokModels";
+import { createCodexModelsManifest, createModelsResponse } from "@/src/server/codex/models";
+import { listGrokUpstreamModels } from "@/src/server/services/grokModels";
 import {
   buildImagesApiResponseFromSseText,
   buildImagesEditsJsonRequest,
@@ -120,9 +120,8 @@ export async function handleModels(request: Request) {
         }),
     );
     if (listChannels().some((channel) => channel.provider === "grok" && channel.enabled)) {
-      const grokModels = (await listGrokUpstreamModelIds())
-        .filter((id) => apiKey.modelAllowlist.length === 0 || apiKey.modelAllowlist.includes(id))
-        .map((id) => ({ id, object: "model", owned_by: "xai" }));
+      const grokModels = (await listGrokUpstreamModels())
+        .filter((entry) => apiKey.modelAllowlist.length === 0 || apiKey.modelAllowlist.includes(entry.id));
       payload = { ...payload, data: [...payload.data, ...grokModels] };
     }
     const logId = appendRequestLogWithAutoPrune({
@@ -159,6 +158,16 @@ export async function handleModels(request: Request) {
       null,
       timing,
     );
+    return errorToResponse(error);
+  }
+}
+
+export async function handleCodexModels(request: Request) {
+  try {
+    const apiKey = authenticateRelayRequest(request);
+    const payload = await createCodexModelsManifest({ modelAllowlist: apiKey.modelAllowlist });
+    return Response.json(payload, { headers: { "Cache-Control": "private, max-age=60" } });
+  } catch (error) {
     return errorToResponse(error);
   }
 }

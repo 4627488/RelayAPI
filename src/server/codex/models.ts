@@ -1,7 +1,7 @@
 import "server-only";
 
 import { serverConfig } from "@/src/server/config/env";
-import { listGrokUpstreamModelIds } from "@/src/server/services/grokModels";
+import { listGrokUpstreamModelIds, listGrokUpstreamModels } from "@/src/server/services/grokModels";
 
 const CREATED_2024_01_01 = 1704067200;
 const REMOTE_CATALOG_CACHE_MS = 5 * 60 * 1000;
@@ -133,6 +133,22 @@ export async function listUpstreamModelIds() {
   return [...new Set([...response.data.map((entry) => entry.id).filter(Boolean), ...grokModels])];
 }
 
+export async function createCodexModelsManifest(input: { modelAllowlist?: string[] } = {}) {
+  const [catalog, codex, upstreamGrok] = await Promise.all([
+    getModelsCatalog(),
+    createModelsResponse({ planType: "pro" }),
+    listGrokUpstreamModels(),
+  ]);
+  const grokCatalog = Array.isArray(catalog.data.xai) ? catalog.data.xai.map(normalizeModelEntry) : [];
+  const grokById = new Map(grokCatalog.map((entry) => [entry.id, entry]));
+  const grok = upstreamGrok.map((entry) => ({ ...(grokById.get(entry.id) || fallbackGrokModel(entry.id)), ...entry, id: entry.id, object: "model" }));
+  const allowlist = input.modelAllowlist || [];
+  const models = [...codex.data, ...grok]
+    .filter((entry) => allowlist.length === 0 || modelMatchesAllowlist(entry.id, allowlist))
+    .map((entry, index) => codexManifestEntry(entry, index));
+  return { models };
+}
+
 export function normalizePlan(planType?: string) {
   const normalized = String(planType || "")
     .trim()
@@ -259,6 +275,48 @@ function fallbackModelById(id: string): ModelEntry {
   }
   return model(id, id, CREATED_2024_01_01);
 }
+
+function fallbackGrokModel(id: string): ModelEntry {
+  return { ...model(id, id, CREATED_2024_01_01), owned_by: "xai", type: "xai", context_length: 128000, max_completion_tokens: 65536 };
+}
+
+export function codexManifestEntry(entry: ModelEntry, index: number) {
+  const rawLevels = Array.isArray((entry.thinking as Record<string, unknown> | undefined)?.levels)
+    ? ((entry.thinking as Record<string, unknown>).levels as unknown[]).map((level) => String(level).trim().toLowerCase())
+    : ["low", "medium", "high"];
+  const levels = [...new Set(rawLevels.filter((level) => ["none", "low", "medium", "high", "xhigh", "max", "ultra"].includes(level)))];
+  const supported = (levels.length ? levels : ["medium"]).map((effort) => ({ effort, description: reasoningDescription(effort) }));
+  const defaultReasoning = levels.includes("medium") ? "medium" : levels.find((level) => level !== "none") || levels[0] || "medium";
+  const contextWindow = positiveInteger(entry.context_length) || 128000;
+  return {
+    slug: entry.id,
+    display_name: String(entry.display_name || entry.name || entry.id),
+    description: String(entry.description || `${entry.id} via RelayAPI`),
+    context_window: contextWindow,
+    max_context_window: contextWindow,
+    default_reasoning_level: defaultReasoning,
+    supported_reasoning_levels: supported,
+    supports_reasoning_summaries: true,
+    supports_reasoning_summary_parameter: true,
+    supports_parallel_tool_calls: true,
+    support_verbosity: false,
+    prefer_websockets: false,
+    visibility: "list",
+    minimal_client_version: "0.0.0",
+    supported_in_api: true,
+    priority: index + 1,
+    base_instructions: "You are a coding agent. Follow the developer and user instructions.",
+  };
+}
+
+function reasoningDescription(level: string) {
+  if (level === "none") return "No reasoning";
+  if (level === "low") return "Fast responses with lighter reasoning";
+  if (level === "medium") return "Balances speed and reasoning depth";
+  return `${level} reasoning depth`;
+}
+
+function positiveInteger(value: unknown) { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : null; }
 
 function normalizeModelEntry(entry: Record<string, unknown>): ModelEntry {
   const id = String(entry?.id || entry?.name || "").trim();

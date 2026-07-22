@@ -47,11 +47,11 @@ export function saveGrokCredential(input: {
   return getGrokCredentialWithTokens(input.id)!;
 }
 
-export function updateGrokCredential(id: string, patch: Partial<Pick<GrokCredentialRecord, "enabled" | "priority" | "weight" | "upstreamTransport" | "grokBaseUrl" | "grokNativeXSearch" | "grokClientToolCache" | "grokHeaders" | "grokModelAliases" | "grokExcludedModels" | "lastUsedAt" | "cooldownUntil" | "lastError">>) {
+export function updateGrokCredential(id: string, patch: Partial<Pick<GrokCredentialRecord, "planType" | "enabled" | "priority" | "weight" | "upstreamTransport" | "grokBaseUrl" | "grokNativeXSearch" | "grokClientToolCache" | "grokHeaders" | "grokModelAliases" | "grokExcludedModels" | "lastUsedAt" | "cooldownUntil" | "lastError">>) {
   const existing = getGrokCredentialWithTokens(id); if (!existing) return null;
   const next = { ...existing, ...patch };
   const metadata = { ...next.metadata, auth_type: next.authType, cooldown_until: next.cooldownUntil, last_error: next.lastError, upstream_transport: next.upstreamTransport, grok_base_url: next.grokBaseUrl, grok_native_x_search: next.grokNativeXSearch, grok_client_tool_cache: next.grokClientToolCache, grok_headers: next.grokHeaders, grok_model_aliases: next.grokModelAliases, grok_excluded_models: next.grokExcludedModels };
-  patchProviderCredentialRow(id, "grok", { enabled: next.enabled ? 1 : 0, priority: next.priority, weight: Math.max(1, next.weight), lastUsedAt: next.lastUsedAt, metadataJson: jsonStringify(metadata), updatedAt: new Date().toISOString() });
+  patchProviderCredentialRow(id, "grok", { planType: next.planType, enabled: next.enabled ? 1 : 0, priority: next.priority, weight: Math.max(1, next.weight), lastUsedAt: next.lastUsedAt, metadataJson: jsonStringify(metadata), updatedAt: new Date().toISOString() });
   return getGrokCredentialWithTokens(id);
 }
 

@@ -1,5 +1,5 @@
 import { corsPreflightResponse, withCors } from "@/src/server/http/cors";
-import { handleModels } from "@/src/server/http/relay";
+import { handleCodexModels, handleModels } from "@/src/server/http/relay";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,5 +11,5 @@ export function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  return withCors(() => handleModels(request));
+  return withCors(() => new URL(request.url).searchParams.has("client_version") ? handleCodexModels(request) : handleModels(request));
 }

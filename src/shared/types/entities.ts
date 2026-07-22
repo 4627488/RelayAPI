@@ -275,6 +275,7 @@ export interface GrokCredentialRecord {
   useGlobalProxy: boolean;
   proxyPoolId: string | null;
   proxy: PublicCredentialProxyConfig | null;
+  usageHealth?: CodexAccountUsageHealth;
   expiresAt: string | null;
   lastRefreshAt: string | null;
   lastUsedAt: string | null;

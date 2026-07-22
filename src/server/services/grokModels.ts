@@ -5,11 +5,12 @@ import { listGrokCredentialsWithTokens } from "@/src/server/repositories/grokCre
 import { resolveCredentialProxy } from "@/src/server/services/codexCredentials";
 import { ensureFreshGrokCredential, forceRefreshGrokCredential } from "@/src/server/services/grokCredentials";
 
-const CACHE_MS = 5 * 60_000;
-let cache: { ids: string[]; expiresAt: number } = { ids: [], expiresAt: 0 };
+const CACHE_MS = 60_000;
+export type GrokUpstreamModel = Record<string, unknown> & { id: string; object: string; owned_by: string };
+let cache: { models: GrokUpstreamModel[]; expiresAt: number } = { models: [], expiresAt: 0 };
 
-export async function listGrokUpstreamModelIds() {
-  if (Date.now() < cache.expiresAt) return [...cache.ids];
+export async function listGrokUpstreamModels() {
+  if (Date.now() < cache.expiresAt) return structuredClone(cache.models);
   const credentials = listGrokCredentialsWithTokens().filter((credential) => credential.enabled);
   const results = await Promise.allSettled(credentials.map(async (stored) => {
     let credential = await ensureFreshGrokCredential(stored.id);
@@ -20,17 +21,28 @@ export async function listGrokUpstreamModelIds() {
     let response = await request();
     if (response.status === 401 && oauth && credential.tokens.refresh_token) { await response.body?.cancel().catch(() => undefined); credential = await forceRefreshGrokCredential(credential.id); response = await request(); }
     if (!response.ok) { await response.body?.cancel().catch(() => undefined); return []; }
-    return parseGrokModelIds(await response.json());
+    return parseGrokModels(await response.json());
   }));
-  const ids = [...new Set(results.flatMap((result) => result.status === "fulfilled" ? result.value : []))].sort();
-  if (ids.length > 0 || credentials.length === 0) cache = { ids, expiresAt: Date.now() + CACHE_MS };
-  return ids.length > 0 ? ids : [...cache.ids];
+  const byId = new Map<string, GrokUpstreamModel>();
+  for (const model of results.flatMap((result) => result.status === "fulfilled" ? result.value : [])) byId.set(model.id, { ...(byId.get(model.id) || {}), ...model });
+  const models = [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
+  if (models.length > 0 || credentials.length === 0) cache = { models, expiresAt: Date.now() + CACHE_MS };
+  return structuredClone(models.length > 0 ? models : cache.models);
 }
 
-export function parseGrokModelIds(payload: unknown) {
+export async function listGrokUpstreamModelIds() { return (await listGrokUpstreamModels()).map((model) => model.id); }
+
+export function parseGrokModels(payload: unknown): GrokUpstreamModel[] {
   const root = record(payload);
   const data = Array.isArray(root?.data) ? root.data : Array.isArray(root?.models) ? root.models : [];
-  return [...new Set(data.map((entry) => typeof entry === "string" ? entry.trim() : text(record(entry)?.id) || text(record(entry)?.name)).filter((id): id is string => Boolean(id)))];
+  const byId = new Map<string, GrokUpstreamModel>();
+  for (const raw of data) {
+    const source = typeof raw === "string" ? { id: raw } : record(raw);
+    const id = text(source?.id) || text(source?.name);
+    if (!id) continue;
+    byId.set(id, { ...(byId.get(id) || {}), ...structuredClone(source || {}), id, object: text(source?.object) || "model", owned_by: text(source?.owned_by) || "xai" });
+  }
+  return [...byId.values()];
 }
 
 function record(value: unknown) { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }

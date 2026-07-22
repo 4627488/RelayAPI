@@ -26,7 +26,7 @@ export function GrokCredentialCards() {
   const loadQuota = React.useCallback(async (credential: GrokCredentialRecord) => {
     if (credential.authType !== "oauth") return;
     setQuotaLoading((current) => new Set(current).add(credential.id));
-    try { const response = await fetch(`/api/admin/grok/credentials/${credential.id}/quota`); if (!response.ok) throw new Error(await errorText(response)); const report: GrokQuotaReport = await response.json(); setQuotas((current) => ({ ...current, [credential.id]: report })); setQuotaErrors((current) => { const next = { ...current }; delete next[credential.id]; return next; }); }
+    try { const response = await fetch(`/api/admin/grok/credentials/${credential.id}/quota`); if (!response.ok) throw new Error(await errorText(response)); const report: GrokQuotaReport = await response.json(); setQuotas((current) => ({ ...current, [credential.id]: report })); if (report.planType) setItems((current) => current.map((item) => item.id === credential.id ? { ...item, planType: report.planType! } : item)); setQuotaErrors((current) => { const next = { ...current }; delete next[credential.id]; return next; }); }
     catch (error) { setQuotaErrors((current) => ({ ...current, [credential.id]: error instanceof Error ? error.message : String(error) })); }
     finally { setQuotaLoading((current) => { const next = new Set(current); next.delete(credential.id); return next; }); }
   }, []);
@@ -34,13 +34,7 @@ export function GrokCredentialCards() {
     const response = await fetch("/api/admin/grok/credentials");
     if (response.ok) { const next: GrokCredentialRecord[] = await response.json(); setItems(next); await Promise.all(next.map(loadQuota)); }
   }, [loadQuota]);
-  React.useEffect(() => {
-    let active = true;
-    void fetch("/api/admin/grok/credentials").then(async (response) => {
-      if (active && response.ok) setItems(await response.json());
-    });
-    return () => { active = false; };
-  }, []);
+  React.useEffect(() => { void load(); }, [load]);
   React.useEffect(() => { const reload = () => void load(); window.addEventListener("grok-credentials-changed", reload); window.addEventListener("grok-quota-refresh", reload); return () => { window.removeEventListener("grok-credentials-changed", reload); window.removeEventListener("grok-quota-refresh", reload); }; }, [load]);
   async function createChannel(credential: GrokCredentialRecord) { const response = await fetch("/api/admin/channels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "grok", name: `Grok · ${credential.email || credential.subject || credential.id}`, credentialIds: [credential.id], baseUrl: credential.authType === "oauth" ? "https://cli-chat-proxy.grok.com/v1" : "https://api.x.ai/v1", modelAllowlist: [] }) }); if (!response.ok) return toast.error(await errorText(response)); toast.success("Grok 通道已创建，模型将从上游自动探测"); }
   async function remove(id: string) { const response = await fetch(`/api/admin/grok/credentials/${id}`, { method: "DELETE" }); if (!response.ok) return toast.error(await errorText(response)); await load(); }
@@ -50,18 +44,19 @@ export function GrokCredentialCards() {
       <CardContent className="grid gap-3">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
           <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-            <Badge variant="outline" className="h-6 shrink-0 px-2 text-sm font-semibold">{item.planType === "api-key" ? "Grok API" : item.planType}</Badge>
+            <Badge variant="outline" className="h-6 shrink-0 px-2 text-sm font-semibold">{grokPlanLabel(quotas[item.id]?.planType || item.planType)}</Badge>
             <div className="min-w-0 flex-1 truncate text-base font-medium" title={name}>{name}</div>
           </div>
           <GrokSettingsDialog credential={item} onCreateChannel={() => createChannel(item)} onDeleted={() => remove(item.id)} onSaved={load} />
         </div>
         {!item.enabled && <div className="flex flex-wrap gap-1.5"><WorkspaceStatusBadge tone="muted">off</WorkspaceStatusBadge></div>}
         <div className="grid gap-2 text-sm">
-          <div className="flex items-center gap-2"><span className="shrink-0 text-muted-foreground">用量采样：</span><WorkspaceStatusBadge tone={item.lastError ? "danger" : "muted"}>{item.lastError ? "error" : "unknown"}</WorkspaceStatusBadge></div>
+          <div className="flex items-center gap-2"><span className="shrink-0 text-muted-foreground">用量采样：</span><WorkspaceStatusBadge tone="muted">{item.usageHealth?.status === "unused" ? "未使用" : item.usageHealth ? "已采样" : "unknown"}</WorkspaceStatusBadge>{item.usageHealth && <span className="tabular-nums text-muted-foreground">{Math.round(item.usageHealth.score)}%</span>}</div>
+          {item.usageHealth && item.usageHealth.status !== "unused" && <div className="text-xs text-muted-foreground">最近 {item.usageHealth.windowSize} 次 · 成功 {item.usageHealth.successCount} · 错误 {item.usageHealth.errorCount}</div>}
           {item.cooldownUntil && <div className="flex items-center gap-2 text-xs text-muted-foreground"><WorkspaceStatusBadge tone="warning">cooldown</WorkspaceStatusBadge>{formatDateTime(item.cooldownUntil)}</div>}
           {item.lastError && <div className="text-xs text-destructive">{item.lastError}</div>}
         </div>
-        <div className="flex items-center gap-2 text-sm"><span className="shrink-0 text-muted-foreground">请求代理：</span><Badge variant="outline">{item.useGlobalProxy ? "跟随全局" : item.proxy ? "独立代理" : "直连"}</Badge></div>
+        <div className="flex items-center gap-2 text-sm"><span className="shrink-0 text-muted-foreground">请求代理：</span><Badge variant="outline">{item.useGlobalProxy ? "跟随全局" : item.proxy?.enabled ? `已启用 · ${item.proxy.type}` : "未配置"}</Badge></div>
         <div className="flex items-center gap-2 text-sm"><span className="shrink-0 text-muted-foreground">过期时间：</span><span className="min-w-0 truncate">{item.expiresAt ? formatDateTime(item.expiresAt) : "-"}</span></div>
         <div className="grid gap-2 text-sm">
           <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">剩余额度：</span><Button type="button" variant="ghost" size="sm" disabled={quotaLoading.has(item.id) || item.authType !== "oauth"} onClick={() => void loadQuota(item)}>刷新</Button></div>
@@ -77,13 +72,23 @@ function GrokQuotaProgress({ report, error, apiKey }: { report?: GrokQuotaReport
   if (apiKey) return <div className="text-xs text-muted-foreground">xAI API Key 的额度由 API 账单管理，不提供订阅余额。</div>;
   if (error) return <div className="text-xs text-destructive">{error}</div>;
   if (!report) return <div className="text-xs text-muted-foreground">正在读取 Grok 上游额度…</div>;
-  const windows = [report.weekly, report.monthly, report.rateLimit].filter((window) => window && (window.usedPercent !== null || window.remainingPercent !== null));
+  const windows = [report.weekly, ...report.productUsage, report.monthly, report.rateLimit].filter((window) => window && (window.usedPercent !== null || window.remainingPercent !== null));
   if (!windows.length) return <div className="text-xs text-muted-foreground">Grok 上游未返回可计算的额度。</div>;
   return <div className="grid gap-3">{windows.map((window) => {
     const label = window!.label;
-    const used = window!.usedPercent;
-    return <div key={label} className="grid gap-1"><div className="flex items-center justify-between text-xs"><span className="font-medium">{label}</span><span className="text-muted-foreground">{window!.remainingPercent !== null ? `${Math.round(window!.remainingPercent! * 10) / 10}% 可用` : "上游未返回"}</span></div><Progress value={used ?? 0} />{window!.resetsAt && <div className="text-xs text-muted-foreground">重置 {formatDateTime(window!.resetsAt)}</div>}</div>;
+    const remaining = window!.remainingPercent;
+    return <div key={label} className="grid min-w-0 gap-1"><div className="flex min-w-0 items-center justify-between gap-2"><span className="min-w-0 truncate text-xs font-medium text-foreground">{label}</span><span className="shrink-0 text-right text-xs text-muted-foreground">{window!.resetsAt ? formatDateTime(window!.resetsAt) : "-"}</span></div><div className="flex min-w-0 items-center gap-2"><Progress className="min-w-0 flex-1 **:data-[slot=progress-track]:h-2" value={remaining ?? 0} /><span className="w-9 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{remaining === null ? "未知" : `${Math.round(remaining)}%`}</span></div></div>;
   })}</div>;
+}
+
+function grokPlanLabel(planType: string) {
+  const normalized = planType.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (normalized === "apikey") return "Grok API";
+  if (normalized === "supergrokheavy") return "SuperGrok Heavy";
+  if (normalized === "supergrok") return "SuperGrok";
+  if (normalized === "free") return "Free";
+  if (!normalized || normalized === "groksubscription") return "Grok";
+  return planType;
 }
 
 function GrokSettingsDialog({ credential, onCreateChannel, onDeleted, onSaved }: { credential: GrokCredentialRecord; onCreateChannel: () => Promise<unknown>; onDeleted: () => Promise<unknown>; onSaved: () => Promise<void> }) {
