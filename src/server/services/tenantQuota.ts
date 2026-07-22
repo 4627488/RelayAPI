@@ -22,15 +22,21 @@ export function subscriptionQuotaLimits(subscription: { units: number; unitsPerC
   const baselines = getEffectiveQuotaBaselines();
   const oversellRatios = getQuotaOversellRatios();
   const credential = getProviderCredential(subscription.credentialId);
-  if (!credential || !providerCapability(credential.provider).calibratedCostQuota || !baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) return null;
+  if (!credential || !providerCapability(credential.provider).calibratedCostQuota) return null;
   const credentialEstimates = getCredentialQuotaEstimates(credential.id, credential.planType);
   const parentCapacityMultiplier = BigInt(providerCapacityUnits(credential.provider, credential.planType));
+  const parentCapacities = Object.fromEntries((["5h", "7d"] as const).map((kind) => [
+    kind,
+    credentialEstimates[kind].effectiveNanoUsd
+      ?? (baselines[kind].effectiveNanoUsd === null
+        ? null
+        : baselines[kind].effectiveNanoUsd * parentCapacityMultiplier),
+  ])) as Record<"5h" | "7d", bigint | null>;
+  if (!parentCapacities["5h"] || !parentCapacities["7d"]) return null;
   const fractionMilli = BigInt(Math.floor(subscription.units * 1_000_000 / subscription.unitsPerCredential));
   return Object.fromEntries((["5h", "7d"] as const).map((kind) => {
     const oversellMilli = BigInt(Math.round(oversellRatios[kind] * 1000));
-    const parentCapacity = credentialEstimates[kind].effectiveNanoUsd
-      ?? baselines[kind].effectiveNanoUsd! * parentCapacityMultiplier;
-    return [kind, parentCapacity * fractionMilli * oversellMilli / 1_000_000_000n];
+    return [kind, parentCapacities[kind]! * fractionMilli * oversellMilli / 1_000_000_000n];
   })) as Record<"5h" | "7d", bigint>;
 }
 

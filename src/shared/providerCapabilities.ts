@@ -27,7 +27,7 @@ const PROVIDER_CAPABILITIES: Record<ProviderId, ProviderCapability> = {
     defaultBaseUrl: "https://cli-chat-proxy.grok.com/v1",
     planLabel: grokPlanLabel,
     capacityUnits: () => 1,
-    calibratedCostQuota: false,
+    calibratedCostQuota: true,
     quotaResetStrategy: "rolling",
   },
 };

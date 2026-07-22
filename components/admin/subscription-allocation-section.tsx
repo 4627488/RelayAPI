@@ -552,7 +552,7 @@ function PoolQuotaEstimates({ pool, onSaved }: { pool: SubscriptionCapacityPool;
 }
 
 function estimateDescription(estimate: SubscriptionCapacityPool["quotaEstimates"]["5h"]) {
-  return `自动推测 ${nanoUsdToUsd(estimate.automaticNanoUsd) || "暂无"} USD · ${estimate.sampleCount} 个样本 · 置信度 ${percent(estimate.confidence)}`;
+  return `自动推测 ${nanoUsdToUsd(estimate.automaticNanoUsd) || "暂无"} USD · ${estimate.sampleCount} 个样本 · 置信度 ${percent(estimate.confidence)}；需两次同周期额度快照，使用后最多 5 分钟自动刷新。`;
 }
 
 function Metric({ icon, label, value, hint, danger = false }: { icon: React.ReactNode; label: string; value: string; hint: string; danger?: boolean }) {

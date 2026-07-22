@@ -3,6 +3,8 @@ import "server-only";
 import { HttpError } from "@/src/server/http/errors";
 import { calculateRequestCost } from "@/src/server/services/modelPricing";
 import { recordCredentialPricedUsage } from "@/src/server/services/quotaCalibration";
+import { getProviderCredential } from "@/src/server/repositories/providerCredentials";
+import { logServerError } from "@/src/server/http/errors";
 import { resolveConfiguredModelPrice } from "@/src/server/services/quotaAdministration";
 import {
   admitTenantRequest,
@@ -61,6 +63,7 @@ export function settleRelayQuota(
     (!secondaryUsage || secondaryUsage.usage.pricingComplete === true);
   const totalCost = mainCost + secondaryCost;
   recordCredentialPricedUsage(credentialId, totalCost, pricingComplete);
+  scheduleGrokQuotaObservation(credentialId);
   if (!pricingComplete) {
     releaseTenantRequest(admission.requestId);
     return null;
@@ -71,6 +74,25 @@ export function settleRelayQuota(
         actualNanoUsd: totalCost,
       })
     : null;
+}
+
+const grokQuotaObservationAt = new Map<string, number>();
+const GROK_QUOTA_OBSERVATION_INTERVAL_MS = 5 * 60 * 1000;
+
+function scheduleGrokQuotaObservation(credentialId: string) {
+  const credential = getProviderCredential(credentialId);
+  if (credential?.provider !== "grok" || credential.authType !== "oauth") return;
+  const now = Date.now();
+  if (now - (grokQuotaObservationAt.get(credentialId) || 0) < GROK_QUOTA_OBSERVATION_INTERVAL_MS) return;
+  grokQuotaObservationAt.set(credentialId, now);
+  setImmediate(() => {
+    void import("@/src/server/services/grokQuota")
+      .then(({ getGrokQuota }) => getGrokQuota(credentialId))
+      .catch((error) => logServerError(error, {
+        operation: "grok.quota.observe_after_usage",
+        metadata: { credentialId },
+      }));
+  });
 }
 
 export function releaseRelayQuota(
