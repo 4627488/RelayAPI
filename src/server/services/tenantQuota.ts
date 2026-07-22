@@ -8,7 +8,8 @@ import { getSubscriptionQuotaState, releaseSubscriptionQuota, settleSubscription
 import { reserveCostQuotaPolicies, subscriptionCostQuotaPolicies } from "@/src/server/services/quotaPolicy";
 import type { ModelPriceSnapshot } from "@/src/server/services/modelPricing";
 import { resolveConfiguredModelPrice } from "@/src/server/services/quotaAdministration";
-import { getEffectiveQuotaBaselines, getQuotaOversellRatios, quotaSharesForPlan } from "@/src/server/services/quotaCalibration";
+import { getEffectiveQuotaBaselines, getQuotaOversellRatios } from "@/src/server/services/quotaCalibration";
+import { providerCapability, providerCapacityUnits } from "@/src/shared/providerCapabilities";
 
 export interface TenantQuotaAdmission { requestId: string; tenantId: string; subscriptionId: string | null; units: number | null; unitsPerCredential: number | null; price: ModelPriceSnapshot | null; state: SubscriptionQuotaState | null; }
 
@@ -27,8 +28,8 @@ export function subscriptionQuotaLimits(subscription: { units: number; unitsPerC
   const baselines = getEffectiveQuotaBaselines();
   const oversellRatios = getQuotaOversellRatios();
   const credential = getProviderCredential(subscription.credentialId);
-  if (!credential || credential.provider !== "codex" || !baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) return null;
-  const parentCapacityMultiplier = BigInt(quotaSharesForPlan(credential.planType));
+  if (!credential || !providerCapability(credential.provider).calibratedCostQuota || !baselines["5h"].effectiveNanoUsd || !baselines["7d"].effectiveNanoUsd) return null;
+  const parentCapacityMultiplier = BigInt(providerCapacityUnits(credential.provider, credential.planType));
   const fractionMilli = BigInt(Math.floor(subscription.units * 1_000_000 / subscription.unitsPerCredential));
   return Object.fromEntries((["5h", "7d"] as const).map((kind) => {
     const oversellMilli = BigInt(Math.round(oversellRatios[kind] * 1000));
@@ -81,7 +82,7 @@ export const releaseTenantRequest = releaseSubscriptionQuota;
 export function tenantQuotaHeaders(state: SubscriptionQuotaState) { const subscription = getTenantSubscription(state.subscriptionId); const headers: Record<string, string> = { "x-relay-subscription-id": state.subscriptionId, ...(subscription ? { "x-relay-subscription-units": `${subscription.units}/${subscription.unitsPerCredential}` } : {}) }; for (const kind of ["5h", "7d"] as const) { const window = state.windows[kind]; if (!window) continue; const used = window.settledNanoUsd + window.reservedNanoUsd; headers[`x-relay-quota-${kind}-limit-nanousd`] = String(window.limitNanoUsd); headers[`x-relay-quota-${kind}-used-nanousd`] = String(used); headers[`x-relay-quota-${kind}-reset`] = window.resetsAt; } return headers; }
 
 function subscriptionResetTimes(provider: "codex" | "grok", credentialId: string, subscriptionId: string, now = new Date()) {
-  if (provider === "codex") {
+  if (providerCapability(provider).quotaResetStrategy === "codex-cache") {
     const cache = getCodexQuotaCacheByCredentialId(credentialId);
     const windows = cache?.cache && typeof cache.cache === "object" ? (cache.cache as { windows?: Array<{ id?: string; resets_at?: string | null }> }).windows || [] : [];
     const five = windows.find((item) => item.id === "code-5h")?.resets_at;

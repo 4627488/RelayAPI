@@ -4,6 +4,7 @@ import type {
   ChannelRecord,
   CodexAccountUsageHealth,
   CodexCredentialRecord,
+  ProviderId,
   RelayApiKeyContext,
 } from "@/src/shared/types/entities";
 import {
@@ -20,7 +21,7 @@ import {
   markCodexCredentialUsed,
   updateCodexCredential,
 } from "@/src/server/repositories/codexCredentials";
-import { getGrokCredentialWithTokens } from "@/src/server/repositories/grokCredentials";
+import { getProviderCredentialWithTokens } from "@/src/server/repositories/providerCredentials";
 import {
   channelUsageHealth,
   credentialUsageHealth,
@@ -30,6 +31,7 @@ import { serverConfig } from "@/src/server/config/env";
 import { randomId } from "@/src/server/services/crypto";
 import { HttpError } from "@/src/server/http/errors";
 import { eligibleCredentialIdsForTenant } from "@/src/server/services/tenantQuota";
+import { normalizeProviderId, providerDefaultBaseUrl, providerLabel } from "@/src/shared/providerCapabilities";
 
 const THINKING_SUFFIX_LEVELS = new Set([
   "none",
@@ -42,7 +44,7 @@ const THINKING_SUFFIX_LEVELS = new Set([
 ]);
 
 export interface CreateChannelInput {
-  provider?: "codex" | "grok";
+  provider?: ProviderId;
   name?: string;
   baseUrl?: string;
   credentialId?: string;
@@ -64,7 +66,7 @@ export function listChannelRecords() {
 }
 
 export function createChannel(input: CreateChannelInput) {
-  const provider = input.provider === "grok" ? "grok" : "codex";
+  const provider = normalizeProviderId(input.provider);
   const credentials = assertChannelCredentials(input, provider);
   const modelAllowlist = requireDeclaredModels(input.modelAllowlist);
   const primaryCredential = credentials[0];
@@ -73,10 +75,10 @@ export function createChannel(input: CreateChannelInput) {
     name:
       cleanString(input.name) ||
       (primaryCredential.email
-        ? `${provider === "grok" ? "Grok" : "Codex"} · ${primaryCredential.email}`
-        : `${provider === "grok" ? "Grok" : "Codex"} · ${primaryCredential.id}`),
+        ? `${providerLabel(provider)} · ${primaryCredential.email}`
+        : `${providerLabel(provider)} · ${primaryCredential.id}`),
     provider,
-    baseUrl: cleanString(input.baseUrl) || (provider === "grok" ? "https://cli-chat-proxy.grok.com/v1" : serverConfig.codexBaseUrl),
+    baseUrl: cleanString(input.baseUrl) || providerDefaultBaseUrl(provider, serverConfig.codexBaseUrl),
     credentialIds: credentials.map((credential) => credential.id),
     enabled: input.enabled ?? true,
     priority: normalizeInteger(input.priority, 100),
@@ -98,10 +100,11 @@ export function patchChannel(
     cooldownUntil?: string | null;
   },
 ) {
+  const current = getChannelById(id);
   const credentialPatch =
     input.credentialIds !== undefined || input.credentialId !== undefined
       ? {
-          credentialIds: assertChannelCredentials(input, getChannelById(id)?.provider || "codex").map(
+          credentialIds: assertChannelCredentials(input, current?.provider || "codex").map(
             (credential) => credential.id,
           ),
         }
@@ -109,7 +112,7 @@ export function patchChannel(
   const channel = updateChannel(id, {
     ...(input.name !== undefined ? { name: cleanString(input.name) } : {}),
     ...(input.baseUrl !== undefined
-      ? { baseUrl: cleanString(input.baseUrl) || serverConfig.codexBaseUrl }
+      ? { baseUrl: cleanString(input.baseUrl) || providerDefaultBaseUrl(current?.provider || "codex", serverConfig.codexBaseUrl) }
       : {}),
     ...credentialPatch,
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
@@ -460,7 +463,7 @@ function isChannelAvailable(
   return channel.credentialIds.length > 0;
 }
 
-function assertChannelCredentials(input: CreateChannelInput, provider: "codex" | "grok" = "codex") {
+function assertChannelCredentials(input: CreateChannelInput, provider: ProviderId = "codex") {
   const credentialIds = cleanStringArray([
     ...(Array.isArray(input.credentialIds) ? input.credentialIds : []),
     ...(input.credentialId ? [input.credentialId] : []),
@@ -469,18 +472,16 @@ function assertChannelCredentials(input: CreateChannelInput, provider: "codex" |
     throw new HttpError(
       400,
       "missing_channel_credentials",
-      "Channel must include at least one Codex credential",
+      "Channel must include at least one provider credential",
     );
   }
   return credentialIds.map((credentialId) => {
-    const credential = provider === "grok"
-      ? getGrokCredentialWithTokens(credentialId)
-      : getCodexCredentialWithTokens(credentialId);
-    if (!credential) {
+    const credential = getProviderCredentialWithTokens(credentialId, provider);
+    if (!credential || credential.provider !== provider) {
       throw new HttpError(
         400,
-        "codex_credential_not_found",
-        "Cannot bind channel to a missing Codex credential",
+        "provider_credential_not_found",
+        `Cannot bind channel to a missing ${providerLabel(provider)} credential`,
       );
     }
     return credential;

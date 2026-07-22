@@ -83,16 +83,17 @@ import {
   createTenantPasswordReset,
   createTenantSubscription,
   deleteTenantSubscription,
+  getSubscriptionAllocationOverview,
   listTenantSubscriptions,
-  listCredentials,
   deleteTenant,
   revokeTenantSessions,
   updateTenant,
   type TenantPayload,
+  type SubscriptionCapacityPool,
   type TenantSubscriptionRecord,
 } from "@/lib/admin-api";
-import type { CodexCredentialRecord, CreatedTenantInvite, PublicTenant } from "@/src/shared/types/entities";
-import { codexPlanLabel, codexPlanShares } from "@/src/shared/codexPlans";
+import type { CreatedTenantInvite, PublicTenant } from "@/src/shared/types/entities";
+import { providerPlanLabel } from "@/src/shared/providerCapabilities";
 
 type TenantFormState = {
   name: string;
@@ -730,7 +731,7 @@ function TenantAction({ children, label }: { children: React.ReactElement; label
 function SubscriptionDialog({ tenant, onOpenChange, onSubscriptionsChanged }: { tenant: PublicTenant | null; onOpenChange: (open: boolean) => void; onSubscriptionsChanged: (items: TenantSubscriptionRecord[]) => void }) {
   const [items, setItems] = React.useState<TenantSubscriptionRecord[]>([]);
   const [allItems, setAllItems] = React.useState<TenantSubscriptionRecord[]>([]);
-  const [credentials, setCredentials] = React.useState<CodexCredentialRecord[]>([]);
+  const [credentials, setCredentials] = React.useState<SubscriptionCapacityPool[]>([]);
   const [credentialId, setCredentialId] = React.useState("");
   const [name, setName] = React.useState("");
   const [units, setUnits] = React.useState("1");
@@ -738,28 +739,29 @@ function SubscriptionDialog({ tenant, onOpenChange, onSubscriptionsChanged }: { 
   const [pending, setPending] = React.useState(false);
   React.useEffect(() => {
     if (!tenant) return;
-    void Promise.all([listTenantSubscriptions(tenant.id), listTenantSubscriptions(), listCredentials()])
-      .then(([tenantItems, subscriptions, credentialItems]) => { setItems(tenantItems); setAllItems(subscriptions); onSubscriptionsChanged(subscriptions); setCredentials(credentialItems); })
+    void Promise.all([listTenantSubscriptions(tenant.id), listTenantSubscriptions(), getSubscriptionAllocationOverview()])
+      .then(([tenantItems, subscriptions, overview]) => { setItems(tenantItems); setAllItems(subscriptions); onSubscriptionsChanged(subscriptions); setCredentials(overview.pools); })
       .catch((error) => toast.error(adminErrorMessage(error)));
   }, [tenant, onSubscriptionsChanged]);
   const selectedCredential = credentials.find((credential) => credential.id === credentialId);
   const allocated = credentialId ? allocatedRatio(allItems, credentialId) : 0;
   function selectCredential(id: string | null) {
     const credential = credentials.find((item) => item.id === id);
-    const suggestedDenominator = credential ? codexPlanShares(credential.planType) : 1;
+    const suggestedDenominator = credential?.capacityUnits || 1;
     setCredentialId(id || "");
     setDenominator(String(suggestedDenominator));
-    setName(credential ? `${planLabel(credential.planType)} 子订阅` : "");
+    setName(credential ? `${planLabel(credential)} 子订阅` : "");
   }
-  async function create() { if (!tenant) return; setPending(true); try { const item = await createTenantSubscription({ tenantId: tenant.id, credentialId, name: name.trim(), units: Math.max(1, Number(units) || 1), unitsPerCredential: Math.max(1, Number(denominator) || 20) }); setItems((current) => [item, ...current]); setAllItems((current) => { const next = [item, ...current]; onSubscriptionsChanged(next); return next; }); setCredentialId(""); setName(""); toast.success("子订阅已下发"); } catch (error) { toast.error(adminErrorMessage(error)); } finally { setPending(false); } }
+  async function create() { if (!tenant) return; setPending(true); try { const item = await createTenantSubscription({ tenantId: tenant.id, credentialId, name: name.trim(), units: positiveShare(units, "持有份数"), unitsPerCredential: positiveShare(denominator, "整份拆分数") }); setItems((current) => [item, ...current]); setAllItems((current) => { const next = [item, ...current]; onSubscriptionsChanged(next); return next; }); setCredentialId(""); setName(""); toast.success("子订阅已下发"); } catch (error) { toast.error(adminErrorMessage(error)); } finally { setPending(false); } }
   async function remove(id: string) { if (!window.confirm("确认收回这个子订阅？")) return; try { await deleteTenantSubscription(id); setItems((current) => current.filter((item) => item.id !== id)); setAllItems((current) => { const next = current.filter((item) => item.id !== id); onSubscriptionsChanged(next); return next; }); toast.success("子订阅已收回"); } catch (error) { toast.error(adminErrorMessage(error)); } }
-  return <Dialog open={Boolean(tenant)} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>管理子订阅</DialogTitle><DialogDescription>为 {tenant?.ownerEmail || tenant?.name || "租户用户"} 从具体上游凭据下发份额。只有该用户可以使用父订阅凭据所在的通道。</DialogDescription></DialogHeader><FieldGroup><div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>上游凭据</FieldLabel><Select value={credentialId || null} onValueChange={selectCredential}><SelectTrigger className="w-full"><SelectValue placeholder="选择上游凭据" /></SelectTrigger><SelectContent><SelectGroup>{credentials.map((credential) => { const used = allocatedRatio(allItems, credential.id); return <SelectItem key={credential.id} value={credential.id} disabled={!credential.enabled}><span className="flex min-w-0 flex-1 items-center justify-between gap-3"><span className="truncate">{credential.email || credential.accountId || credential.id} · {planLabel(credential.planType)}</span><span className="text-xs text-muted-foreground">已分配 {formatPercent(used)}{used > 1 ? " · 超卖" : ""}</span></span></SelectItem>; })}</SelectGroup></SelectContent></Select><FieldDescription>{selectedCredential ? allocated > 1 ? `已分配 ${formatPercent(allocated)}，当前超卖 ${formatPercent(allocated - 1)}` : `已分配 ${formatPercent(allocated)}，物理余量 ${formatPercent(1 - allocated)}；仍可继续超卖` : "选择后会自动建议 Pro 或 Plus 的拆分数。"}</FieldDescription></Field><Field><FieldLabel htmlFor="subscription-name">展示名称</FieldLabel><Input id="subscription-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Pro20x 子订阅" /></Field><Field><FieldLabel htmlFor="subscription-units">持有份数</FieldLabel><Input id="subscription-units" inputMode="numeric" value={units} onChange={(event) => setUnits(event.target.value)} /></Field><Field><FieldLabel htmlFor="subscription-denominator">整份拆分数</FieldLabel><Input id="subscription-denominator" inputMode="numeric" value={denominator} onChange={(event) => setDenominator(event.target.value)} /><FieldDescription>Pro20x 默认 20；独享 Plus 默认 1。</FieldDescription></Field></div><Button type="button" disabled={pending || !credentialId} onClick={create}>{pending && <Spinner data-icon="inline-start" />}下发子订阅</Button></FieldGroup><Table><TableHeader><TableRow><TableHead>名称</TableHead><TableHead>用户</TableHead><TableHead>份额</TableHead><TableHead>凭据</TableHead><TableHead>状态</TableHead><TableHead /></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.user?.email || tenant?.ownerEmail || "未绑定"}</TableCell><TableCell>{item.units}/{item.unitsPerCredential}</TableCell><TableCell>{credentialName(credentials, item.credentialId)}</TableCell><TableCell>{item.enabled ? "启用" : "停用"}</TableCell><TableCell className="text-right"><Button type="button" variant="outline" size="icon" aria-label="收回子订阅" onClick={() => remove(item.id)}><Trash2Icon /></Button></TableCell></TableRow>)}</TableBody></Table><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
+  return <Dialog open={Boolean(tenant)} onOpenChange={onOpenChange}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>管理子订阅</DialogTitle><DialogDescription>为 {tenant?.ownerEmail || tenant?.name || "租户用户"} 从具体上游凭据下发份额。只有该用户可以使用父订阅凭据所在的通道。</DialogDescription></DialogHeader><FieldGroup><div className="grid gap-3 sm:grid-cols-2"><Field><FieldLabel>上游凭据</FieldLabel><Select value={credentialId || null} onValueChange={selectCredential}><SelectTrigger className="w-full"><SelectValue placeholder="选择上游凭据" /></SelectTrigger><SelectContent><SelectGroup>{credentials.map((credential) => { const used = allocatedRatio(allItems, credential.id); return <SelectItem key={credential.id} value={credential.id} disabled={!credential.enabled}><span className="flex min-w-0 flex-1 items-center justify-between gap-3"><span className="truncate">{credential.email || credential.accountId || credential.id} · {planLabel(credential)}</span><span className="text-xs text-muted-foreground">已分配 {formatPercent(used)}{used > 1 ? " · 超卖" : ""}</span></span></SelectItem>; })}</SelectGroup></SelectContent></Select><FieldDescription>{selectedCredential ? allocated > 1 ? `已分配 ${formatPercent(allocated)}，当前超卖 ${formatPercent(allocated - 1)}` : `已分配 ${formatPercent(allocated)}，物理余量 ${formatPercent(1 - allocated)}；仍可继续超卖` : "可选择任意已接入厂商的凭据，系统会建议该容量池的默认拆分数。"}</FieldDescription></Field><Field><FieldLabel htmlFor="subscription-name">展示名称</FieldLabel><Input id="subscription-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="厂商套餐子订阅" /></Field><Field><FieldLabel htmlFor="subscription-units">持有份数</FieldLabel><Input id="subscription-units" inputMode="decimal" value={units} onChange={(event) => setUnits(event.target.value)} /></Field><Field><FieldLabel htmlFor="subscription-denominator">整份拆分数</FieldLabel><Input id="subscription-denominator" inputMode="decimal" value={denominator} onChange={(event) => setDenominator(event.target.value)} /><FieldDescription>例如 1/5 表示父订阅的 20%；Codex、Grok 与以后新增的厂商使用同一规则。</FieldDescription></Field></div><Button type="button" disabled={pending || !credentialId} onClick={create}>{pending && <Spinner data-icon="inline-start" />}下发子订阅</Button></FieldGroup><Table><TableHeader><TableRow><TableHead>名称</TableHead><TableHead>用户</TableHead><TableHead>份额</TableHead><TableHead>凭据</TableHead><TableHead>状态</TableHead><TableHead /></TableRow></TableHeader><TableBody>{items.map((item) => <TableRow key={item.id}><TableCell>{item.name}</TableCell><TableCell>{item.user?.email || tenant?.ownerEmail || "未绑定"}</TableCell><TableCell>{item.units}/{item.unitsPerCredential}</TableCell><TableCell>{credentialName(credentials, item.credentialId)}</TableCell><TableCell>{item.enabled ? "启用" : "停用"}</TableCell><TableCell className="text-right"><Button type="button" variant="outline" size="icon" aria-label="收回子订阅" onClick={() => remove(item.id)}><Trash2Icon /></Button></TableCell></TableRow>)}</TableBody></Table><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
 }
 
 function allocatedRatio(items: TenantSubscriptionRecord[], credentialId: string) { return items.filter((item) => item.enabled && item.credentialId === credentialId).reduce((sum, item) => sum + item.units / item.unitsPerCredential, 0); }
 function formatPercent(value: number) { return `${Math.round(value * 1000) / 10}%`; }
-function planLabel(planType: string) { return codexPlanLabel(planType); }
-function credentialName(credentials: CodexCredentialRecord[], id: string) { const credential = credentials.find((item) => item.id === id); return credential ? `${credential.email || credential.accountId || id} · ${planLabel(credential.planType)}` : id; }
+function planLabel(credential: Pick<SubscriptionCapacityPool, "provider" | "planType">) { return providerPlanLabel(credential.provider, credential.planType); }
+function credentialName(credentials: SubscriptionCapacityPool[], id: string) { const credential = credentials.find((item) => item.id === id); return credential ? `${credential.email || credential.accountId || id} · ${planLabel(credential)}` : id; }
+function positiveShare(value: string, label: string) { const parsed = Number(value); if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${label}必须是大于 0 的数字`); return parsed; }
 
 
 

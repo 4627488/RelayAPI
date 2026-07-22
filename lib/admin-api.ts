@@ -399,6 +399,7 @@ export type TenantPayload = {
 export type TenantSubscriptionRecord = {
   id: string; tenantId: string; tenantUserId: string | null; credentialId: string; name: string;
   units: number; unitsPerCredential: number; enabled: boolean; priority: number;
+  allocatedPoolUnits?: number;
   estimatedFiveHourNanoUsd: string | null; estimatedSevenDayNanoUsd: string | null;
   startsAt: string; expiresAt: string | null; createdAt: string; updatedAt: string;
   quota?: Partial<Record<"5h" | "7d", {

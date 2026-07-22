@@ -30,7 +30,6 @@ import {
 } from "@/src/server/http/relayHttpUtilities";
 
 import { createCodexModelsManifest, createModelsResponse } from "@/src/server/codex/models";
-import { listGrokUpstreamModels } from "@/src/server/services/grokModels";
 import {
   buildImagesApiResponseFromSseText,
   buildImagesEditsJsonRequest,
@@ -73,14 +72,13 @@ import {
   type StageTimer,
 } from "@/src/server/http/stageTimer";
 import { authenticateRelayRequest } from "@/src/server/services/apiKeys";
-import { listChannels } from "@/src/server/repositories/channels";
 import {
   recordChannelFailure,
   recordChannelSuccess,
   selectChannel,
 } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
-import { selectProviderForModel } from "@/src/server/services/relayRouting";
+import { listRoutableModelsForApiKey, selectProviderForModel } from "@/src/server/services/relayRouting";
 import { getFullRequestLoggingSetting } from "@/src/server/services/settings";
 import {
   tenantQuotaHeaders,
@@ -110,21 +108,29 @@ export async function handleModels(request: Request) {
       new URL(request.url).searchParams.get("plan") ||
       credentials[0]?.planType ||
       "";
-    let payload = await timing.timeAsync(
+    const routableModels = timing.time("list_routable_models", "聚合已授权通道模型", () =>
+      listRoutableModelsForApiKey(apiKey),
+    );
+    let payload = routableModels.length > 0 ? await timing.timeAsync(
       "create_models",
       "生成模型列表",
       () =>
         createModelsResponse({
           planType,
           openAICompatible: true,
-          modelAllowlist: apiKey.modelAllowlist,
+          modelAllowlist: routableModels,
         }),
-    );
-    if (listChannels().some((channel) => channel.provider === "grok" && channel.enabled)) {
-      const grokModels = (await listGrokUpstreamModels())
-        .filter((entry) => apiKey.modelAllowlist.length === 0 || apiKey.modelAllowlist.includes(entry.id));
-      payload = { ...payload, data: [...payload.data, ...grokModels] };
-    }
+    ) : { object: "list", data: [] };
+    const knownModels = new Set(payload.data.map((entry) => entry.id));
+    payload = {
+      ...payload,
+      data: [
+        ...payload.data,
+        ...routableModels
+          .filter((id) => !knownModels.has(id))
+          .map((id) => ({ id, object: "model", owned_by: "relay" })),
+      ],
+    };
     const logId = appendRequestLogWithAutoPrune({
       startedAt,
       method: request.method,
@@ -166,7 +172,9 @@ export async function handleModels(request: Request) {
 export async function handleCodexModels(request: Request) {
   try {
     const apiKey = authenticateRelayRequest(request);
-    const payload = await createCodexModelsManifest({ modelAllowlist: apiKey.modelAllowlist });
+    const payload = await createCodexModelsManifest({
+      modelAllowlist: listRoutableModelsForApiKey(apiKey),
+    });
     return Response.json(payload, { headers: { "Cache-Control": "private, max-age=60" } });
   } catch (error) {
     return errorToResponse(error);

@@ -475,6 +475,7 @@ export async function getTenantResources(
   const allowedChannelIds = new Set(tenant.channelAllowlist);
   const eligibleCredentialIds = new Set(eligibleCredentialIdsForTenant(tenant.id, tenantUserId));
   const channels = listChannelRecords()
+    .filter((channel) => channel.enabled && channel.status !== "disabled")
     .filter((channel) =>
       allowedChannelIds.size > 0 ? allowedChannelIds.has(channel.id) : true,
     )
@@ -482,6 +483,7 @@ export async function getTenantResources(
     .map((channel) => ({
       id: channel.id,
       name: channel.name,
+      provider: channel.provider,
       enabled: channel.enabled,
       status: channel.status,
       modelAllowlist: channel.modelAllowlist,
@@ -489,8 +491,11 @@ export async function getTenantResources(
   const channelModels = [
     ...new Set(channels.flatMap((channel) => channel.modelAllowlist)),
   ];
+  const tenantModels = new Set(tenant.modelAllowlist);
   return {
-    models: tenant.modelAllowlist.length > 0 ? tenant.modelAllowlist : channelModels,
+    models: tenantModels.size > 0
+      ? channelModels.filter((model) => tenantModels.has(model))
+      : channelModels,
     channels,
   };
 }

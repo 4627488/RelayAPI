@@ -180,14 +180,26 @@ export async function createCodexModelsManifest(input: { modelAllowlist?: string
     getCodexClientModelsCatalog(),
   ]);
   const allowlist = input.modelAllowlist || [];
+  const restricted = input.modelAllowlist !== undefined;
   const codexModels = codex.data
-    .filter((entry) => allowlist.length === 0 || modelMatchesAllowlist(entry.id, allowlist))
+    .filter((entry) => !restricted || modelMatchesAllowlist(entry.id, allowlist))
     .map((entry, index) => codexManifestEntry(entry, index));
   const grokModels = buildGrokCodexClientModels(
-    grok.filter((entry) => allowlist.length === 0 || modelMatchesAllowlist(entry.id, allowlist)),
+    grok.filter((entry) => !restricted || modelMatchesAllowlist(entry.id, allowlist)),
     templates,
   );
-  return { models: [...codexModels, ...grokModels] };
+  const knownIds = new Set(
+    [...codexModels, ...grokModels].map((entry) => String(entry.slug || "")),
+  );
+  const genericModels = restricted
+    ? buildGrokCodexClientModels(
+        [...new Set(allowlist.map((id) => parseThinkingSuffixModel(id).baseModel))]
+          .filter((id) => id && !knownIds.has(id))
+          .map((id) => ({ ...model(id, id, CREATED_2024_01_01), owned_by: "relay" })),
+        templates,
+      )
+    : [];
+  return { models: [...codexModels, ...grokModels, ...genericModels] };
 }
 
 export function normalizePlan(planType?: string) {

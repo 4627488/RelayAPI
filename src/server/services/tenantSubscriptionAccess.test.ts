@@ -9,16 +9,20 @@ type ApiKeyService = typeof import("@/src/server/services/apiKeys");
 type TenantRepository = typeof import("@/src/server/repositories/tenants");
 type SubscriptionRepository = typeof import("@/src/server/repositories/tenantSubscriptions");
 type CodexCredentialRepository = typeof import("@/src/server/repositories/codexCredentials");
+type GrokCredentialRepository = typeof import("@/src/server/repositories/grokCredentials");
 type TenantQuotaService = typeof import("@/src/server/services/tenantQuota");
 type SubscriptionService = typeof import("@/src/server/services/tenantSubscriptions");
+type ChannelService = typeof import("@/src/server/services/channels");
 
 let tenants: TenantService;
 let apiKeys: ApiKeyService;
 let tenantRepository: TenantRepository;
 let subscriptions: SubscriptionRepository;
 let codexCredentials: CodexCredentialRepository;
+let grokCredentials: GrokCredentialRepository;
 let tenantQuota: TenantQuotaService;
 let subscriptionService: SubscriptionService;
+let channelService: ChannelService;
 
 describe("tenant subscription user access", () => {
   beforeAll(async () => {
@@ -32,8 +36,10 @@ describe("tenant subscription user access", () => {
     tenantRepository = await import("@/src/server/repositories/tenants");
     subscriptions = await import("@/src/server/repositories/tenantSubscriptions");
     codexCredentials = await import("@/src/server/repositories/codexCredentials");
+    grokCredentials = await import("@/src/server/repositories/grokCredentials");
     tenantQuota = await import("@/src/server/services/tenantQuota");
     subscriptionService = await import("@/src/server/services/tenantSubscriptions");
+    channelService = await import("@/src/server/services/channels");
   });
 
   test("only exposes a parent credential to the assigned tenant user", () => {
@@ -112,5 +118,56 @@ describe("tenant subscription user access", () => {
 
     expect(context.tenantId).toBe(tenant.id);
     expect(context.tenantUserId).toBe(user.id);
+  });
+
+  test("splits a Grok parent subscription and exposes its models to one Codex client", async () => {
+    const tenant = tenantRepository.getTenantById(
+      tenantRepository.getTenantUserByEmail("assigned@example.com")!.tenantId,
+    )!;
+    grokCredentials.saveGrokCredential({
+      id: "grok-parent-split",
+      authType: "api_key",
+      email: "grok@example.com",
+      subject: "grok-parent",
+      planType: "supergrok",
+      tokens: {
+        access_token: "",
+        refresh_token: "",
+        id_token: "",
+        token_type: "Bearer",
+        expired: "",
+        token_endpoint: "",
+        api_key: "grok-key",
+      },
+    });
+
+    const subscription = subscriptionService.createSubscription({
+      tenantId: tenant.id,
+      credentialId: "grok-parent-split",
+      units: 1,
+      unitsPerCredential: 5,
+    });
+    channelService.createChannel({
+      provider: "grok",
+      name: "Grok shared pool",
+      credentialIds: ["grok-parent-split"],
+      modelAllowlist: ["grok-shared-model"],
+    });
+
+    expect(subscription.units).toBe(1);
+    expect(subscription.unitsPerCredential).toBe(5);
+    const pool = subscriptionService.getSubscriptionAllocationOverview().pools
+      .find((item) => item.id === "grok-parent-split")!;
+    expect(pool.capacityUnits).toBe(1);
+    expect(pool.allocatedUnits).toBeCloseTo(0.2);
+    expect(pool.subscriptions[0].allocatedPoolUnits).toBeCloseTo(0.2);
+    const resources = await tenants.getTenantResources(
+      tenant,
+      tenantRepository.getTenantOwnerUser(tenant.id)!.id,
+    );
+    expect(resources.models).toContain("grok-shared-model");
+    expect(resources.channels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "grok" }),
+    ]));
   });
 });

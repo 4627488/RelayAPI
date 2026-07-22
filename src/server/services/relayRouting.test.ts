@@ -18,7 +18,7 @@ vi.mock("@/src/server/services/grokRouting", () => ({
   selectGrokChannel: mocks.selectGrok,
 }));
 
-import { selectProviderForModel } from "@/src/server/services/relayRouting";
+import { listRoutableModelsForApiKey, selectProviderForModel } from "@/src/server/services/relayRouting";
 import type { RelayApiKeyContext } from "@/src/shared/types/entities";
 
 const apiKey = {
@@ -39,8 +39,8 @@ describe("provider-neutral relay routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listChannels.mockReturnValue([
-      { id: "codex-channel" },
-      { id: "grok-channel" },
+      { id: "codex-channel", modelAllowlist: ["codex-model"] },
+      { id: "grok-channel", modelAllowlist: ["grok-model"] },
     ]);
     mocks.selectCodex.mockImplementation(() => {
       throw new HttpError(503, "no_available_channel", "missing");
@@ -63,8 +63,8 @@ describe("provider-neutral relay routing", () => {
 
   test("uses channel order rather than model naming for equal priorities", () => {
     mocks.listChannels.mockReturnValue([
-      { id: "grok-channel" },
-      { id: "codex-channel" },
+      { id: "grok-channel", modelAllowlist: ["shared-model"] },
+      { id: "codex-channel", modelAllowlist: ["shared-model"] },
     ]);
     mocks.selectCodex.mockReturnValue({ channel: { id: "codex-channel", priority: 100 } });
     mocks.selectGrok.mockReturnValue({ channel: { id: "grok-channel", priority: 100 } });
@@ -74,5 +74,22 @@ describe("provider-neutral relay routing", () => {
   test("fails when no usable channel declares the model", () => {
     expect(() => selectProviderForModel({ model: "undeclared", apiKey }))
       .toThrowError(/No usable channel declares model/);
+  });
+
+  test("lists only models that have a usable provider route", () => {
+    mocks.listChannels.mockReturnValue([
+      { id: "codex-channel", modelAllowlist: ["codex-model", "offline-model"] },
+      { id: "grok-channel", modelAllowlist: ["grok-model"] },
+    ]);
+    mocks.selectCodex.mockImplementation(({ model }) => {
+      if (model === "codex-model") return { channel: { id: "codex-channel", priority: 100 } };
+      throw new HttpError(503, "no_available_channel", "missing");
+    });
+    mocks.selectGrok.mockImplementation(({ model }) => {
+      if (model === "grok-model") return { channel: { id: "grok-channel", priority: 100 } };
+      throw new HttpError(503, "no_available_grok_channel", "missing");
+    });
+
+    expect(listRoutableModelsForApiKey(apiKey)).toEqual(["codex-model", "grok-model"]);
   });
 });

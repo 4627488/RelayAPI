@@ -21,8 +21,11 @@ import {
 } from "@/src/server/repositories/tenantSubscriptions";
 import { randomId } from "@/src/server/services/crypto";
 import { getSubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
-import { codexPlanLabel, codexPlanShares } from "@/src/shared/codexPlans";
 import { subscriptionQuotaLimits } from "@/src/server/services/tenantQuota";
+import {
+  providerCapacityUnits,
+  providerPlanLabel,
+} from "@/src/shared/providerCapabilities";
 
 export function listSubscriptions(tenantId?: string, tenantUserId?: string) {
   return listTenantSubscriptions(tenantId)
@@ -78,10 +81,14 @@ export function getSubscriptionAllocationOverview() {
   }
   const pools = listProviderCredentials().map((credential) => {
     const allocations = byCredential.get(credential.id) || [];
-    const capacityUnits = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);
-    const allocatedUnits = allocations
+    const capacityUnits = providerCapacityUnits(credential.provider, credential.planType);
+    const normalizedAllocations = allocations.map((item) => ({
+      ...item,
+      allocatedPoolUnits: item.units / item.unitsPerCredential * capacityUnits,
+    }));
+    const allocatedUnits = normalizedAllocations
       .filter((item) => item.lifecycle === "active")
-      .reduce((sum, item) => sum + item.units, 0);
+      .reduce((sum, item) => sum + item.allocatedPoolUnits, 0);
     return {
       id: credential.id,
       provider: credential.provider,
@@ -94,9 +101,9 @@ export function getSubscriptionAllocationOverview() {
       lastError: credential.lastError,
       capacityUnits,
       allocatedUnits,
-      allocationCount: allocations.length,
-      activeAllocationCount: allocations.filter((item) => item.lifecycle === "active").length,
-      subscriptions: allocations,
+      allocationCount: normalizedAllocations.length,
+      activeAllocationCount: normalizedAllocations.filter((item) => item.lifecycle === "active").length,
+      subscriptions: normalizedAllocations,
     };
   });
   return {
@@ -117,17 +124,20 @@ export function createSubscription(input: Record<string, unknown>) {
   const credentialId = clean(input.credentialId);
   if (!getTenantById(tenantId)) throw new HttpError(404, "tenant_not_found", "Tenant not found");
   const credential = getProviderCredential(credentialId);
-  if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
-  if (!credential.enabled) throw new HttpError(400, "codex_credential_disabled", "Disabled credential cannot receive new allocations");
+  if (!credential) throw new HttpError(404, "provider_credential_not_found", "Credential not found");
+  if (!credential.enabled) throw new HttpError(400, "provider_credential_disabled", "Disabled credential cannot receive new allocations");
   const tenant = getTenantById(tenantId);
   if (!tenant?.enabled) throw new HttpError(400, "tenant_disabled", "Disabled tenant cannot receive new allocations");
   const tenantUser = getTenantOwnerUser(tenantId);
   if (!tenantUser?.enabled) throw new HttpError(400, "tenant_user_not_available", "Tenant user must be active before receiving a subscription");
   const units = positiveNumber(input.units, 1);
-  const unitsPerCredential = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);
+  const unitsPerCredential = positiveNumber(
+    input.unitsPerCredential,
+    providerCapacityUnits(credential.provider, credential.planType),
+  );
   return insertTenantSubscription({
     id: randomId("sub"), tenantId, tenantUserId: tenantUser.id, credentialId,
-    name: clean(input.name) || `${credential.provider === "grok" ? "Grok" : codexPlanLabel(credential.planType)} ${units}/${unitsPerCredential}`,
+    name: clean(input.name) || `${providerPlanLabel(credential.provider, credential.planType)} ${units}/${unitsPerCredential}`,
     units, unitsPerCredential, enabled: input.enabled !== false,
     priority: integer(input.priority, 100),
     estimatedFiveHourNanoUsd: nullableNanoUsd(input.estimatedFiveHourNanoUsd),
@@ -142,9 +152,14 @@ export function patchSubscription(id: string, input: Record<string, unknown>) {
   if (!current) throw new HttpError(404, "subscription_not_found", "Subscription not found");
   const credentialId = input.credentialId === undefined ? current.credentialId : clean(input.credentialId);
   const credential = getProviderCredential(credentialId);
-  if (!credential) throw new HttpError(404, "codex_credential_not_found", "Credential not found");
+  if (!credential) throw new HttpError(404, "provider_credential_not_found", "Credential not found");
   const units = input.units === undefined ? current.units : positiveNumber(input.units, current.units);
-  const unitsPerCredential = credential.provider === "grok" ? 1 : codexPlanShares(credential.planType);
+  const defaultUnitsPerCredential = credentialId === current.credentialId
+    ? current.unitsPerCredential
+    : providerCapacityUnits(credential.provider, credential.planType);
+  const unitsPerCredential = input.unitsPerCredential === undefined
+    ? defaultUnitsPerCredential
+    : positiveNumber(input.unitsPerCredential, defaultUnitsPerCredential);
   return updateTenantSubscription(id, {
     ...(input.name !== undefined ? { name: clean(input.name) || current.name } : {}),
     credentialId, units, unitsPerCredential,

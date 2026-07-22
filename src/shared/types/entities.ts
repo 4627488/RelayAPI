@@ -160,6 +160,7 @@ export interface CreatedTenantInvite {
 export interface TenantResourceChannel {
   id: string;
   name: string;
+  provider: ProviderId;
   enabled: boolean;
   status: ChannelStatus;
   modelAllowlist: string[];

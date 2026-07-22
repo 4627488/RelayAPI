@@ -4,7 +4,20 @@ import { HttpError, isHttpError } from "@/src/server/http/errors";
 import { listChannels } from "@/src/server/repositories/channels";
 import { selectChannel } from "@/src/server/services/channels";
 import { selectGrokChannel } from "@/src/server/services/grokRouting";
-import type { ProviderId, RelayApiKeyContext } from "@/src/shared/types/entities";
+import type { ChannelRecord, ProviderId, RelayApiKeyContext } from "@/src/shared/types/entities";
+
+type ProviderRoutingAdapter = {
+  provider: ProviderId;
+  missingChannelCode: string;
+  select: (input: { model: string; apiKey: RelayApiKeyContext; markUsed?: boolean }) => {
+    channel: ChannelRecord;
+  };
+};
+
+const providerRoutingAdapters: ProviderRoutingAdapter[] = [
+  { provider: "codex", missingChannelCode: "no_available_channel", select: selectChannel },
+  { provider: "grok", missingChannelCode: "no_available_grok_channel", select: selectGrokChannel },
+];
 
 export function selectProviderForModel(input: {
   model: string;
@@ -15,26 +28,17 @@ export function selectProviderForModel(input: {
   );
   const candidates: Array<{ provider: ProviderId; priority: number; order: number }> = [];
 
-  try {
-    const selected = selectChannel({ ...input, markUsed: false });
-    candidates.push({
-      provider: "codex",
-      priority: selected.channel.priority,
-      order: channelOrder.get(selected.channel.id) ?? Number.MAX_SAFE_INTEGER,
-    });
-  } catch (error) {
-    if (!isMissingProviderChannel(error, "no_available_channel")) throw error;
-  }
-
-  try {
-    const selected = selectGrokChannel({ ...input, markUsed: false });
-    candidates.push({
-      provider: "grok",
-      priority: selected.channel.priority,
-      order: channelOrder.get(selected.channel.id) ?? Number.MAX_SAFE_INTEGER,
-    });
-  } catch (error) {
-    if (!isMissingProviderChannel(error, "no_available_grok_channel")) throw error;
+  for (const adapter of providerRoutingAdapters) {
+    try {
+      const selected = adapter.select({ ...input, markUsed: false });
+      candidates.push({
+        provider: adapter.provider,
+        priority: selected.channel.priority,
+        order: channelOrder.get(selected.channel.id) ?? Number.MAX_SAFE_INTEGER,
+      });
+    } catch (error) {
+      if (!isMissingProviderChannel(error, adapter.missingChannelCode)) throw error;
+    }
   }
 
   if (candidates.length === 0) {
@@ -49,6 +53,24 @@ export function selectProviderForModel(input: {
     right.priority - left.priority || left.order - right.order,
   );
   return candidates[0].provider;
+}
+
+export function listRoutableModelsForApiKey(apiKey: RelayApiKeyContext) {
+  const declaredModels = [
+    ...new Set(listChannels().flatMap((channel) => channel.modelAllowlist)),
+  ];
+  return declaredModels.filter((model) => {
+    try {
+      selectProviderForModel({ model, apiKey });
+      return true;
+    } catch (error) {
+      if (isHttpError(error) && [
+        "model_not_allowed",
+        "no_declared_model_channel",
+      ].includes(error.code)) return false;
+      throw error;
+    }
+  });
 }
 
 function isMissingProviderChannel(error: unknown, code: string) {
