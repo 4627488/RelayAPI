@@ -20,7 +20,10 @@ import {
   updateTenantSubscription,
 } from "@/src/server/repositories/tenantSubscriptions";
 import { randomId } from "@/src/server/services/crypto";
-import { getSubscriptionQuotaState } from "@/src/server/repositories/quotaAccounting";
+import {
+  getSubscriptionQuotaState,
+  updateSubscriptionQuotaLimits,
+} from "@/src/server/repositories/quotaAccounting";
 import { subscriptionQuotaLimits } from "@/src/server/services/tenantQuota";
 import {
   getCredentialQuotaEstimates,
@@ -228,6 +231,12 @@ export function patchCredentialQuotaEstimates(
       ? { "7d": nullableQuotaOverride(input["7d"]) }
       : {}),
   });
+  for (const subscription of listTenantSubscriptions().filter(
+    (item) => item.credentialId === credentialId,
+  )) {
+    const limits = subscriptionQuotaLimits(subscription);
+    if (limits) updateSubscriptionQuotaLimits(subscription.id, limits);
+  }
   const estimates = getCredentialQuotaEstimates(
     credentialId,
     credential.provider,

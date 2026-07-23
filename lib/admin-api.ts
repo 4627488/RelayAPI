@@ -545,7 +545,7 @@ export function getSubscriptionAllocationOverview() {
 }
 
 export function updateSubscriptionPoolQuotaEstimates(id: string, payload: Partial<Record<"5h" | "7d", string | null>>) {
-  return adminRequest(`/api/admin/subscriptions/pools/${encodePath(id)}/quota-estimates`, { method: "PATCH", body: payload });
+  return adminRequest<SubscriptionCapacityPool["quotaEstimates"]>(`/api/admin/subscriptions/pools/${encodePath(id)}/quota-estimates`, { method: "PATCH", body: payload });
 }
 
 export function createTenantSubscription(payload: TenantSubscriptionPayload) {

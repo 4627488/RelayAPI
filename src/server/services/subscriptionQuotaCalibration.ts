@@ -6,6 +6,7 @@ import {
   calibrateSubscriptionQuota,
   getSubscriptionQuotaState,
   synchronizeSubscriptionQuotaWindows,
+  updateSubscriptionQuotaLimits,
   type QuotaWindowKind,
 } from "@/src/server/repositories/quotaAccounting";
 import { getProviderCredential } from "@/src/server/repositories/providerCredentials";
@@ -14,6 +15,7 @@ import {
   getProviderQuota,
   providerCredentialSupportsQuota,
 } from "@/src/server/services/providerQuota";
+import { subscriptionQuotaLimits } from "@/src/server/services/tenantQuota";
 
 export type SubscriptionCalibrationTask = { subscriptionId: string; status: "idle" | "pending" | "running" | "completed" | "failed"; startedAt: string | null; completedAt: string | null; error: string | null; windows?: Record<"5h" | "7d", { startedAt: string; costNanoUsd: string; requestCount: number }> };
 const tasks = new Map<string, SubscriptionCalibrationTask>();
@@ -46,6 +48,8 @@ async function run(subscriptionId: string) {
       });
     }
     advanceStaleCalibrationWindows(subscriptionId, now);
+    const limits = subscriptionQuotaLimits(subscription);
+    if (limits) updateSubscriptionQuotaLimits(subscriptionId, limits);
     const quotaState = getSubscriptionQuotaState(subscriptionId);
     const windows = Object.fromEntries((["5h", "7d"] as const).map((kind) => {
       const quotaWindow = quotaState.windows[kind];

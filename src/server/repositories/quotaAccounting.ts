@@ -305,6 +305,31 @@ export function synchronizeSubscriptionQuotaWindows(
   for (const event of events) appendQuotaWindowAuditEvent(event);
   return advanced;
 }
+export function updateSubscriptionQuotaLimits(
+  subscriptionId: string,
+  limits: Partial<Record<QuotaWindowKind, bigint>>,
+) {
+  const updatedAt = new Date().toISOString();
+  return getMainOrm().transaction((tx) => {
+    let count = 0;
+    for (const kind of ["5h", "7d"] as const) {
+      const limit = limits[kind];
+      if (limit === undefined) continue;
+      count += tx
+        .update(subscriptionQuotaWindows)
+        .set({ limitNanoUsd: String(limit), updatedAt })
+        .where(
+          and(
+            eq(subscriptionQuotaWindows.subscriptionId, subscriptionId),
+            eq(subscriptionQuotaWindows.windowKind, kind),
+          ),
+        )
+        .run().changes;
+    }
+    return count;
+  });
+}
+
 export function calibrateSubscriptionQuota(
   subscriptionId: string,
   values: Record<

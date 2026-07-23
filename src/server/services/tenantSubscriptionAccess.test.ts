@@ -238,6 +238,21 @@ describe("tenant subscription user access", () => {
     expect(admission.state?.windows["5h"].limitNanoUsd).toBe(200n);
     expect(admission.state?.windows["7d"].limitNanoUsd).toBe(1_000n);
     tenantQuota.releaseTenantRequest(admission.requestId);
+
+    subscriptionService.patchCredentialQuotaEstimates("grok-parent-split", {
+      "5h": "20000",
+      "7d": "40000",
+    });
+    const updatedState = quotaAccounting.getSubscriptionQuotaState(
+      subscription.id,
+    );
+    expect(updatedState.windows["5h"].limitNanoUsd).toBe(4_000n);
+    expect(updatedState.windows["7d"].limitNanoUsd).toBe(8_000n);
+    const listed = subscriptionService
+      .listSubscriptions()
+      .find((item) => item.id === subscription.id)!;
+    expect(listed.quota["5h"]?.limitNanoUsd).toBe("4000");
+    expect(listed.quota["7d"]?.limitNanoUsd).toBe("8000");
   });
 
   test("marks rolling subscription windows as local until an upstream reset is observed", () => {

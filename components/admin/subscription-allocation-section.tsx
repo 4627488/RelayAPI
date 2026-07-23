@@ -928,10 +928,15 @@ function QuotaUsage({ item }: { item: TenantSubscriptionRecord }) {
           Number(window.settledNanoUsd) + Number(window.reservedNanoUsd);
         const ratio = limit > 0 ? used / limit : 0;
         return (
-          <div key={kind} className="flex items-center gap-2 text-xs">
-            <span className="w-6 font-mono text-muted-foreground">{kind}</span>
-            <Progress value={Math.min(100, ratio * 100)} className="flex-1" />
-            <span className="w-12 text-right font-mono">{percent(ratio)}</span>
+          <div key={kind} className="flex flex-col gap-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-6 font-mono text-muted-foreground">{kind}</span>
+              <Progress value={Math.min(100, ratio * 100)} className="flex-1" />
+              <span className="w-12 text-right font-mono">{percent(ratio)}</span>
+            </div>
+            <div className="pl-8 text-right font-mono text-[0.6875rem] text-muted-foreground">
+              {formatQuotaUsd(used)} / {formatQuotaUsd(limit)}
+            </div>
           </div>
         );
       })}
@@ -956,12 +961,16 @@ function PoolQuotaEstimates({
   async function save() {
     setPending(true);
     try {
-      await updateSubscriptionPoolQuotaEstimates(pool.id, {
+      const estimates = await updateSubscriptionPoolQuotaEstimates(pool.id, {
         "5h": usdToNanoUsd(fiveHour),
         "7d": usdToNanoUsd(sevenDay),
-      });
+      }) as SubscriptionCapacityPool["quotaEstimates"];
       await onSaved();
-      toast.success("主订阅推测额度已保存");
+      if (!estimates["5h"].effectiveNanoUsd || !estimates["7d"].effectiveNanoUsd) {
+        toast.warning("已保存，但 5h 和 7d 必须同时有有效额度才会启用子订阅成本限制");
+      } else {
+        toast.success("主订阅推测额度已保存并应用到所有子订阅");
+      }
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -1124,6 +1133,11 @@ function equalUnits(capacity: number, count: number) {
 }
 function percent(value: number) {
   return `${Math.round(value * 1000) / 10}%`;
+}
+function formatQuotaUsd(value: number) {
+  return `$${(value / 1_000_000_000).toLocaleString("zh-CN", {
+    maximumFractionDigits: 4,
+  })}`;
 }
 function usdToNanoUsd(value: string) {
   const parsed = Number(value.trim());
