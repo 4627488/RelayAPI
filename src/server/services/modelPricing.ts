@@ -51,17 +51,18 @@ export function resolveModelPrice(
   if (!pricedModel) {
     return null;
   }
+  const candidates = pricingModelCandidates(pricedModel);
   const entry =
-    findPrice(options.overrides, pricedModel) ||
-    findPrice(options.catalog, pricedModel) ||
-    findPrice(options.bundled || BUNDLED_PRICES, pricedModel);
+    findPrice(options.overrides, candidates) ||
+    findPrice(options.catalog, candidates) ||
+    findPrice(options.bundled || BUNDLED_PRICES, candidates);
   if (!entry) {
     return null;
   }
   return {
     ...entry,
     requestedModel,
-    pricedModel,
+    pricedModel: entry.model,
   };
 }
 
@@ -138,8 +139,31 @@ export function normalizeLiteLlmCatalog(
   return entries;
 }
 
-function findPrice(entries: ModelPriceEntry[] | undefined, model: string) {
-  return entries?.find((entry) => cleanModel(entry.model) === model) || null;
+function findPrice(
+  entries: ModelPriceEntry[] | undefined,
+  candidates: string[],
+) {
+  for (const candidate of candidates) {
+    const found = entries?.find(
+      (entry) => cleanModel(entry.model) === candidate,
+    );
+    if (found) return found;
+  }
+  return null;
+}
+
+function pricingModelCandidates(model: string) {
+  const candidates = [model];
+  if (!model.includes("/") && model.startsWith("grok-")) {
+    candidates.push(`xai/${model}`);
+  }
+  if (
+    !model.includes("/") &&
+    (/^gpt-/.test(model) || /^o[134]-/.test(model) || model.startsWith("codex-"))
+  ) {
+    candidates.push(`openai/${model}`);
+  }
+  return candidates;
 }
 
 function priceToNanoUsd(value: unknown) {

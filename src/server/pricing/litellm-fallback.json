@@ -1,14 +1,76 @@
 {
-  "catalogVersion": "bundled-2026-07-10",
+  "catalogVersion": "bundled-2026-07-23",
   "source": "https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json",
   "models": {
-    "gpt-5.2": { "input_cost_per_token": 0.00000175, "output_cost_per_token": 0.000014, "cache_read_input_token_cost": 0.000000175 },
-    "gpt-5.3-codex": { "input_cost_per_token": 0.00000175, "output_cost_per_token": 0.000014, "cache_read_input_token_cost": 0.000000175 },
-    "gpt-5.4": { "input_cost_per_token": 0.0000025, "output_cost_per_token": 0.000015, "cache_read_input_token_cost": 0.00000025 },
-    "gpt-5.4-mini": { "input_cost_per_token": 0.00000075, "output_cost_per_token": 0.0000045, "cache_read_input_token_cost": 0.000000075 },
-    "gpt-5.5": { "input_cost_per_token": 0.000005, "output_cost_per_token": 0.00003, "cache_read_input_token_cost": 0.0000005 },
-    "gpt-5.6": { "input_cost_per_token": 0.000005, "output_cost_per_token": 0.00003, "cache_read_input_token_cost": 0.0000005 },
-    "gpt-5.6-terra": { "input_cost_per_token": 0.0000025, "output_cost_per_token": 0.000015, "cache_read_input_token_cost": 0.00000025 },
-    "gpt-image-2": { "input_cost_per_token": 0.000005, "output_cost_per_token": 0.00001 }
+    "gpt-5.2": {
+      "input_cost_per_token": 1.75e-06,
+      "output_cost_per_token": 1.4e-05,
+      "cache_read_input_token_cost": 1.75e-07
+    },
+    "gpt-5.3-codex": {
+      "input_cost_per_token": 1.75e-06,
+      "output_cost_per_token": 1.4e-05,
+      "cache_read_input_token_cost": 1.75e-07
+    },
+    "gpt-5.4": {
+      "input_cost_per_token": 2.5e-06,
+      "output_cost_per_token": 1.5e-05,
+      "cache_read_input_token_cost": 2.5e-07
+    },
+    "gpt-5.4-mini": {
+      "input_cost_per_token": 7.5e-07,
+      "output_cost_per_token": 4.5e-06,
+      "cache_read_input_token_cost": 7.5e-08
+    },
+    "gpt-5.5": {
+      "input_cost_per_token": 5e-06,
+      "output_cost_per_token": 3e-05,
+      "cache_read_input_token_cost": 5e-07
+    },
+    "gpt-5.6": {
+      "input_cost_per_token": 5e-06,
+      "output_cost_per_token": 3e-05,
+      "cache_read_input_token_cost": 5e-07
+    },
+    "gpt-5.6-terra": {
+      "input_cost_per_token": 2.5e-06,
+      "output_cost_per_token": 1.5e-05,
+      "cache_read_input_token_cost": 2.5e-07
+    },
+    "gpt-image-2": {
+      "input_cost_per_token": 5e-06,
+      "output_cost_per_token": 1e-05
+    },
+    "gpt-5.6-sol": {
+      "input_cost_per_token": 5e-06,
+      "output_cost_per_token": 3e-05,
+      "cache_read_input_token_cost": 5e-07,
+      "cache_creation_input_token_cost": 6.25e-06
+    },
+    "xai/grok-4.5": {
+      "input_cost_per_token": 2e-06,
+      "output_cost_per_token": 6e-06,
+      "cache_read_input_token_cost": 5e-07
+    },
+    "xai/grok-4.3": {
+      "input_cost_per_token": 1.25e-06,
+      "output_cost_per_token": 2.5e-06,
+      "cache_read_input_token_cost": 2e-07
+    },
+    "xai/grok-4.20-0309-reasoning": {
+      "input_cost_per_token": 2e-06,
+      "output_cost_per_token": 6e-06,
+      "cache_read_input_token_cost": 2e-07
+    },
+    "xai/grok-3-mini": {
+      "input_cost_per_token": 3e-07,
+      "output_cost_per_token": 5e-07,
+      "cache_read_input_token_cost": 7.5e-08
+    },
+    "xai/grok-3-mini-fast": {
+      "input_cost_per_token": 6e-07,
+      "output_cost_per_token": 4e-06,
+      "cache_read_input_token_cost": 1.5e-07
+    }
   }
 }

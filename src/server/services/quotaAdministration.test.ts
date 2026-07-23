@@ -45,4 +45,42 @@ describe("quota administration", () => {
       outputNanoUsdPerToken: BigInt(16000),
     });
   });
+
+  test("updates and deletes existing custom model prices", () => {
+    service.patchQuotaAdministration({
+      overrides: {
+        "editable-model": {
+          inputNanoUsdPerToken: "1000",
+          outputNanoUsdPerToken: "2000",
+        },
+      },
+    });
+    expect(service.resolveConfiguredModelPrice("editable-model")).toMatchObject({
+      source: "admin",
+      inputNanoUsdPerToken: 1000n,
+      outputNanoUsdPerToken: 2000n,
+    });
+
+    const updated = service.patchQuotaAdministration({
+      overrides: {
+        "editable-model": {
+          inputNanoUsdPerToken: "3000",
+          outputNanoUsdPerToken: "4000",
+          cachedInputNanoUsdPerToken: "500",
+        },
+      },
+    });
+    expect(updated.pricing.overrides).toEqual([
+      expect.objectContaining({
+        model: "editable-model",
+        inputNanoUsdPerToken: "3000",
+        outputNanoUsdPerToken: "4000",
+        cachedInputNanoUsdPerToken: "500",
+      }),
+    ]);
+
+    const deleted = service.patchQuotaAdministration({ overrides: {} });
+    expect(deleted.pricing.overrides).toEqual([]);
+    expect(service.resolveConfiguredModelPrice("editable-model")).toBeNull();
+  });
 });

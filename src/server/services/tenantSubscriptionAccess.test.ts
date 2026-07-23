@@ -209,6 +209,37 @@ describe("tenant subscription user access", () => {
     );
   });
 
+  test("enforces saved Grok parent estimates through provider-qualified pricing", () => {
+    const tenant = tenantRepository.getTenantById(
+      tenantRepository.getTenantUserByEmail("assigned@example.com")!.tenantId,
+    )!;
+    const user = tenantRepository.getTenantOwnerUser(tenant.id)!;
+    const subscription = subscriptionService
+      .listSubscriptions()
+      .find((item) => item.credentialId === "grok-parent-split")!;
+    quotaCalibration.setCredentialQuotaEstimates("grok-parent-split", {
+      "5h": 1_000n,
+      "7d": 5_000n,
+    });
+
+    expect(tenantQuota.subscriptionQuotaLimits(subscription)).toEqual({
+      "5h": 200n,
+      "7d": 1_000n,
+    });
+    const admission = tenantQuota.admitTenantRequest({
+      tenantId: tenant.id,
+      tenantUserId: user.id,
+      credentialId: "grok-parent-split",
+      requestId: "grok-priced-admission",
+      model: "grok-4.5",
+      now: new Date("2026-07-23T10:00:00.000Z"),
+    });
+    expect(admission.price).toMatchObject({ pricedModel: "xai/grok-4.5" });
+    expect(admission.state?.windows["5h"].limitNanoUsd).toBe(200n);
+    expect(admission.state?.windows["7d"].limitNanoUsd).toBe(1_000n);
+    tenantQuota.releaseTenantRequest(admission.requestId);
+  });
+
   test("marks rolling subscription windows as local until an upstream reset is observed", () => {
     const subscription = subscriptionService
       .listSubscriptions()

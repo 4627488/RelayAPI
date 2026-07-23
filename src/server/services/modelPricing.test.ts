@@ -66,6 +66,35 @@ describe("model pricing", () => {
     });
   });
 
+  test("resolves provider-qualified Grok catalog prices from native model IDs", () => {
+    const price = resolveModelPrice("grok-4.5", {
+      catalog: [
+        {
+          ...catalog[0],
+          model: "xai/grok-4.5",
+          inputNanoUsdPerToken: 2_000n,
+          outputNanoUsdPerToken: 6_000n,
+        },
+      ],
+    });
+
+    expect(price).toMatchObject({
+      requestedModel: "grok-4.5",
+      pricedModel: "xai/grok-4.5",
+      inputNanoUsdPerToken: 2_000n,
+      outputNanoUsdPerToken: 6_000n,
+    });
+  });
+
+  test("bundles a Grok price so manual parent estimates are enforceable offline", () => {
+    expect(resolveModelPrice("grok-4.5")).toMatchObject({
+      source: "bundled",
+      pricedModel: "xai/grok-4.5",
+      inputNanoUsdPerToken: 2_000n,
+      outputNanoUsdPerToken: 6_000n,
+    });
+  });
+
   test("unknown models do not silently become free", () => {
     expect(resolveModelPrice("missing-model", { catalog })).toBeNull();
   });

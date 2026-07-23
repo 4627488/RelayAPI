@@ -421,6 +421,17 @@ export type ModelPricingSnapshot = {
   reasoningNanoUsdPerToken: string;
 };
 
+export type ModelPricingOverride = {
+  model: string;
+  source: "admin";
+  version: string;
+  inputNanoUsdPerToken: string;
+  outputNanoUsdPerToken: string;
+  cachedInputNanoUsdPerToken: string;
+  cacheWriteNanoUsdPerToken: string;
+  reasoningNanoUsdPerToken: string;
+};
+
 export type QuotaAdministration = {
   providers: Record<ProviderId, Record<"5h" | "7d", {
     automaticNanoUsd: string | null;
@@ -432,7 +443,7 @@ export type QuotaAdministration = {
   }>>;
   pricing: {
     aliases: Record<string, string>;
-    overrides: Array<Record<string, string>>;
+    overrides: ModelPricingOverride[];
     catalogModelCount: number;
     catalogVersion: string | null;
     catalogUpdatedAt: string | null;
