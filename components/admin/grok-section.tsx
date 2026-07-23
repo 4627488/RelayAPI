@@ -5,6 +5,7 @@ import { SettingsIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ProviderCredentialCard } from "@/components/admin/provider-credential-card";
+import { QuotaResetHistorySheet } from "@/components/quota-reset-history-sheet";
 import { ProviderCredentialRoutingFields } from "@/components/admin/provider-credential-routing-fields";
 import { ProviderQuotaWindows } from "@/components/admin/provider-quota-windows";
 import {
@@ -40,6 +41,7 @@ import type { GrokCredentialRecord } from "@/src/shared/types/entities";
 import {
   deleteProviderCredential,
   getProviderCredentialQuota,
+  getProviderCredentialResetEvents,
   updateProviderCredential,
 } from "@/lib/admin-api";
 import {
@@ -176,17 +178,27 @@ export function GrokCredentialCards({
               </Badge>
             }
             quotaAction={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={
-                  quotaLoading.has(item.id) || item.authType !== "oauth"
-                }
-                onClick={() => void loadQuota(item)}
-              >
-                刷新
-              </Button>
+              <div className="flex items-center gap-1">
+                <QuotaResetHistorySheet
+                  description={`${item.email || item.subject || item.id} · ${providerPlanLabel("grok", item.planType)}`}
+                  load={() =>
+                    getProviderCredentialResetEvents("grok", item.id).then(
+                      (result) => result.events,
+                    )
+                  }
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={
+                    quotaLoading.has(item.id) || item.authType !== "oauth"
+                  }
+                  onClick={() => void loadQuota(item)}
+                >
+                  刷新
+                </Button>
+              </div>
             }
             quotaContent={
               <GrokQuotaProgress

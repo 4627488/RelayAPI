@@ -1,8 +1,15 @@
+import "server-only";
+
 import {
   providerCapacityUnits,
   providerIds,
 } from "@/src/shared/providerCapabilities";
 import type { ProviderId } from "@/src/shared/types/entities";
+import { recordNaturalCredentialQuotaReset } from "@/src/server/repositories/credentialQuotaResetEvents";
+import {
+  getSettingValue,
+  upsertSettingValue,
+} from "@/src/server/repositories/settings";
 
 export type CalibrationRejectionReason =
   | "window_reset"
@@ -291,6 +298,14 @@ export function recordProviderQuotaObservation(input: {
     const key = `${input.credentialId}:${window.kind}`;
     const previous = state.observations[key];
     if (previous) {
+      recordNaturalCredentialQuotaReset({
+        credentialId: input.credentialId,
+        windowKind: window.kind,
+        previousResetsAt: previous.resetsAt,
+        nextResetsAt: window.resetsAt,
+        previousUsedPercent: previous.usedPercent,
+        occurredAt: input.observedAt,
+      });
       const result = estimateQuotaSample({
         provider: input.provider,
         planType: input.planType,
@@ -542,9 +557,3 @@ function readState(): PersistedCalibrationState {
 function writeState(state: PersistedCalibrationState) {
   upsertSettingValue(CALIBRATION_STATE_KEY, JSON.stringify(state));
 }
-import "server-only";
-
-import {
-  getSettingValue,
-  upsertSettingValue,
-} from "@/src/server/repositories/settings";

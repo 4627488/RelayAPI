@@ -15,6 +15,11 @@ describe("quota workspace surfaces", () => {
     expect(readFileSync(allocationPath, "utf8")).toContain("5 小时推测额度（USD）");
     expect(readFileSync(allocationPath, "utf8")).toContain("推测额度归属于每个主订阅容量池");
     expect(readFileSync(allocationPath, "utf8")).toContain("所有子订阅仅按所占份额继承");
+    expect(readFileSync(allocationPath, "utf8")).toContain("重新核算子订阅用量");
+    expect(readFileSync(allocationPath, "utf8")).toContain("startSubscriptionCalibration");
+    const grokPath = resolve(process.cwd(), "components/admin/grok-section.tsx");
+    expect(readFileSync(grokPath, "utf8")).toContain("getProviderCredentialResetEvents");
+    expect(readFileSync(grokPath, "utf8")).toContain("QuotaResetHistorySheet");
     expect(readFileSync(tenantPath, "utf8")).toContain("模型成本剖析");
     expect(readFileSync(tenantPath, "utf8")).not.toMatch(/remaining|剩余/i);
     expect(readFileSync(allocationPath, "utf8")).not.toContain("remainingUnits");

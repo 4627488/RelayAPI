@@ -455,7 +455,13 @@ export type CredentialQuotaResetEvent = {
 };
 
 export type CredentialQuotaResetHistory = {
-  credential: { id: string; email: string; accountId: string; planType: string };
+  credential: {
+    id: string;
+    provider: ProviderId;
+    email: string | null;
+    accountId: string | null;
+    planType: string;
+  };
   events: CredentialQuotaResetEvent[];
 };
 
@@ -715,10 +721,17 @@ export function getCredentialResetCredits(
   );
 }
 
-export function getCredentialResetEvents(id: string) {
+export function getProviderCredentialResetEvents(
+  provider: ProviderId,
+  id: string,
+) {
   return adminRequest<CredentialQuotaResetHistory>(
-    `/api/admin/codex/credentials/${encodePath(id)}/quota/reset-events`,
+    `/api/admin/providers/${provider}/credentials/${encodePath(id)}/quota/reset-events`,
   );
+}
+
+export function getCredentialResetEvents(id: string) {
+  return getProviderCredentialResetEvents("codex", id);
 }
 
 export function consumeCredentialResetCredit(

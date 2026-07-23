@@ -81,6 +81,8 @@ import {
   createTenantSubscription,
   deleteTenantSubscription,
   getSubscriptionAllocationOverview,
+  getSubscriptionCalibration,
+  startSubscriptionCalibration,
   updateSubscriptionPoolQuotaEstimates,
   updateTenantSubscription,
   type SubscriptionAllocationOverview,
@@ -131,6 +133,9 @@ export function SubscriptionAllocationSection({
   const [pendingDelete, setPendingDelete] =
     React.useState<TenantSubscriptionRecord | null>(null);
   const [deleting, setDeleting] = React.useState(false);
+  const [calibratingIds, setCalibratingIds] = React.useState<Set<string>>(
+    new Set(),
+  );
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -257,6 +262,35 @@ export function SubscriptionAllocationSection({
     }
   }
 
+  async function recalculateUsage(item: TenantSubscriptionRecord) {
+    setCalibratingIds((current) => new Set(current).add(item.id));
+    try {
+      await startSubscriptionCalibration(item.id);
+      for (;;) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        const task = await getSubscriptionCalibration(item.id);
+        if (task.status === "completed") {
+          await load();
+          toast.success(
+            `重新核算完成：5h ${task.windows?.["5h"].requestCount || 0} 个请求，7d ${task.windows?.["7d"].requestCount || 0} 个请求`,
+          );
+          break;
+        }
+        if (task.status === "failed") {
+          throw new Error(task.error || "重新核算失败");
+        }
+      }
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setCalibratingIds((current) => {
+        const next = new Set(current);
+        next.delete(item.id);
+        return next;
+      });
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Card>
@@ -333,12 +367,14 @@ export function SubscriptionAllocationSection({
               pool={selectedPool}
               edits={edits}
               savingId={savingId}
+              calibratingIds={calibratingIds}
               equalizing={equalizing}
               onReload={load}
               onEdit={(id, edit) =>
                 setEdits((current) => ({ ...current, [id]: edit }))
               }
               onSave={saveAllocation}
+              onRecalculateUsage={recalculateUsage}
               onDelete={setPendingDelete}
               onCreate={openCreate}
               onEqualize={equalizeAllocations}
@@ -474,10 +510,12 @@ function PoolWorkspace({
   pool,
   edits,
   savingId,
+  calibratingIds,
   equalizing,
   onReload,
   onEdit,
   onSave,
+  onRecalculateUsage,
   onDelete,
   onCreate,
   onEqualize,
@@ -485,10 +523,12 @@ function PoolWorkspace({
   pool: SubscriptionCapacityPool;
   edits: Record<string, EditDraft>;
   savingId: string | null;
+  calibratingIds: Set<string>;
   equalizing: boolean;
   onReload: () => Promise<void>;
   onEdit: (id: string, edit: EditDraft) => void;
   onSave: (item: TenantSubscriptionRecord) => void;
+  onRecalculateUsage: (item: TenantSubscriptionRecord) => void;
   onDelete: (item: TenantSubscriptionRecord) => void;
   onCreate: () => void;
   onEqualize: (pool: SubscriptionCapacityPool) => void;
@@ -565,8 +605,10 @@ function PoolWorkspace({
             pool={pool}
             edits={edits}
             savingId={savingId}
+            calibratingIds={calibratingIds}
             onEdit={onEdit}
             onSave={onSave}
+            onRecalculateUsage={onRecalculateUsage}
             onDelete={onDelete}
           />
         )}
@@ -579,15 +621,19 @@ function AllocationTable({
   pool,
   edits,
   savingId,
+  calibratingIds,
   onEdit,
   onSave,
+  onRecalculateUsage,
   onDelete,
 }: {
   pool: SubscriptionCapacityPool;
   edits: Record<string, EditDraft>;
   savingId: string | null;
+  calibratingIds: Set<string>;
   onEdit: (id: string, edit: EditDraft) => void;
   onSave: (item: TenantSubscriptionRecord) => void;
+  onRecalculateUsage: (item: TenantSubscriptionRecord) => void;
   onDelete: (item: TenantSubscriptionRecord) => void;
 }) {
   return (
@@ -695,6 +741,21 @@ function AllocationTable({
                     ) : (
                       <CheckIcon />
                     )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    disabled={
+                      calibratingIds.has(item.id) ||
+                      !item.quota?.["5h"] ||
+                      !item.quota?.["7d"]
+                    }
+                    aria-label="重新核算子订阅用量"
+                    title="重新核算子订阅用量"
+                    onClick={() => onRecalculateUsage(item)}
+                  >
+                    {calibratingIds.has(item.id) ? <Spinner /> : <RefreshCwIcon />}
                   </Button>
                   <Button
                     type="button"

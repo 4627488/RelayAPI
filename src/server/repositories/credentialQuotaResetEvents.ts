@@ -34,6 +34,35 @@ export function listCredentialQuotaResetEvents(credentialId: string, limit = 100
     .map(toEvent);
 }
 
+export function recordNaturalCredentialQuotaReset(input: {
+  credentialId: string;
+  windowKind: Exclude<CredentialQuotaResetWindow, "all">;
+  previousResetsAt: string;
+  nextResetsAt: string;
+  previousUsedPercent: number | null;
+  occurredAt: string;
+}) {
+  const previousResetAt = Date.parse(input.previousResetsAt);
+  const nextResetAt = Date.parse(input.nextResetsAt);
+  if (
+    !Number.isFinite(previousResetAt) ||
+    !Number.isFinite(nextResetAt) ||
+    nextResetAt - previousResetAt <= 60_000
+  ) {
+    return null;
+  }
+  const occurredAt = Date.parse(input.occurredAt);
+  const since = new Date(
+    (Number.isFinite(occurredAt) ? occurredAt : Date.now()) - 10 * 60 * 1000,
+  ).toISOString();
+  if (hasRecentResetCreditEvent(input.credentialId, since)) return null;
+  return insertCredentialQuotaResetEvent({
+    ...input,
+    source: "natural",
+    windowsReset: 1,
+  });
+}
+
 export function hasRecentResetCreditEvent(credentialId: string, since: string) {
   return Boolean(getMainOrm().select({ id: credentialQuotaResetEvents.id }).from(credentialQuotaResetEvents)
     .where(and(eq(credentialQuotaResetEvents.credentialId, credentialId), eq(credentialQuotaResetEvents.source, "reset_credit"), gte(credentialQuotaResetEvents.occurredAt, since))).get());

@@ -21,4 +21,31 @@ describe("credential quota reset events", () => {
     expect(events.hasRecentResetCreditEvent("cred-1", "2026-07-16T05:59:00Z")).toBe(true);
     expect(events.hasRecentResetCreditEvent("cred-1", "2026-07-16T06:01:00Z")).toBe(false);
   });
+
+  test("records a natural reset for any provider credential only when the boundary advances", () => {
+    const reset = events.recordNaturalCredentialQuotaReset({
+      credentialId: "grok-cred-1",
+      windowKind: "7d",
+      previousResetsAt: "2026-07-16T03:25:00Z",
+      nextResetsAt: "2026-07-23T03:25:00Z",
+      previousUsedPercent: 64,
+      occurredAt: "2026-07-16T03:25:01Z",
+    });
+    expect(reset).toMatchObject({
+      credentialId: "grok-cred-1",
+      windowKind: "7d",
+      source: "natural",
+      previousUsedPercent: 64,
+    });
+    expect(
+      events.recordNaturalCredentialQuotaReset({
+        credentialId: "grok-cred-1",
+        windowKind: "7d",
+        previousResetsAt: "2026-07-23T03:25:00Z",
+        nextResetsAt: "2026-07-23T03:25:30Z",
+        previousUsedPercent: 0,
+        occurredAt: "2026-07-16T03:25:02Z",
+      }),
+    ).toBeNull();
+  });
 });
