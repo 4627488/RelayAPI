@@ -5,13 +5,16 @@ import {
   getCodexCredentialWithTokens,
   listCodexCredentials,
   listCodexCredentialsWithTokens,
+  markCodexCredentialUsed,
+  updateCodexCredential,
 } from "@/src/server/repositories/codexCredentials";
 import {
   getGrokCredentialWithTokens,
   listGrokCredentials,
   listGrokCredentialsWithTokens,
+  updateGrokCredential,
 } from "@/src/server/repositories/grokCredentials";
-import { providerIds } from "@/src/shared/providerCapabilities";
+import { providerCredentialIdentity, providerIds } from "@/src/shared/providerCapabilities";
 import type {
   ProviderCredentialRecord,
   ProviderCredentialWithTokens,
@@ -23,6 +26,14 @@ type ProviderCredentialStore = {
   listWithTokens: () => ProviderCredentialWithTokens[];
   get: (id: string) => ProviderCredentialRecord | null;
   getWithTokens: (id: string) => ProviderCredentialWithTokens | null;
+  markUsed: (id: string) => void;
+  updateLifecycle: (id: string, patch: ProviderCredentialLifecyclePatch) => unknown;
+};
+
+type ProviderCredentialLifecyclePatch = {
+  cooldownUntil?: string | null;
+  lastError?: string | null;
+  lastUsedAt?: string | null;
 };
 
 const providerCredentialStores: Record<ProviderId, ProviderCredentialStore> = {
@@ -31,12 +42,16 @@ const providerCredentialStores: Record<ProviderId, ProviderCredentialStore> = {
     listWithTokens: listCodexCredentialsWithTokens,
     get: getCodexCredentialById,
     getWithTokens: getCodexCredentialWithTokens,
+    markUsed: markCodexCredentialUsed,
+    updateLifecycle: updateCodexCredential,
   },
   grok: {
     list: listGrokCredentials,
     listWithTokens: listGrokCredentialsWithTokens,
     get: (id) => listGrokCredentials().find((item) => item.id === id) || null,
     getWithTokens: getGrokCredentialWithTokens,
+    markUsed: (id) => updateGrokCredential(id, { lastUsedAt: new Date().toISOString() }),
+    updateLifecycle: updateGrokCredential,
   },
 };
 
@@ -76,10 +91,16 @@ export function getProviderCredentialWithTokens(
   return null;
 }
 
-export function providerCredentialIdentity(
-  credential: ProviderCredentialRecord,
-) {
-  return credential.provider === "codex"
-    ? credential.accountId
-    : credential.subject;
+export function markProviderCredentialUsed(provider: ProviderId, id: string) {
+  providerCredentialStores[provider].markUsed(id);
 }
+
+export function updateProviderCredentialLifecycle(
+  provider: ProviderId,
+  id: string,
+  patch: ProviderCredentialLifecyclePatch,
+) {
+  return providerCredentialStores[provider].updateLifecycle(id, patch);
+}
+
+export { providerCredentialIdentity };

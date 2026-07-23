@@ -1,5 +1,5 @@
 import { errorToResponse } from "@/src/server/http/errors";
-import { getCodexQuota } from "@/src/server/services/codexQuota";
+import { getProviderQuota } from "@/src/server/services/providerQuota";
 import { requireWebRequest } from "@/src/server/services/webAccess";
 
 export const runtime = "nodejs";
@@ -17,8 +17,7 @@ export async function GET(
     ({ id } = await context.params);
     const searchParams = new URL(request.url).searchParams;
     return Response.json(
-      await getCodexQuota({
-        credentialId: id,
+      await getProviderQuota("codex", id, {
         forceRefresh:
           searchParams.get("refresh") === "1" ||
           searchParams.get("force") === "1",

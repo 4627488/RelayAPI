@@ -1,4 +1,8 @@
-import { codexPlanShares } from "@/src/shared/codexPlans";
+import {
+  providerCapacityUnits,
+  providerIds,
+} from "@/src/shared/providerCapabilities";
+import type { ProviderId } from "@/src/shared/types/entities";
 
 export type CalibrationRejectionReason =
   | "window_reset"
@@ -17,6 +21,7 @@ export type QuotaSampleResult =
   | { accepted: false; reason: CalibrationRejectionReason };
 
 export function estimateQuotaSample(input: {
+  provider?: ProviderId;
   planType: string;
   previousUsedPercent: number;
   currentUsedPercent: number;
@@ -43,7 +48,11 @@ export function estimateQuotaSample(input: {
   if (input.observedNanoUsd <= BigInt(0)) {
     return { accepted: false, reason: "missing_usage" };
   }
-  const planShares = quotaSharesForPlan(input.planType, input.planShares);
+  const planShares = quotaSharesForPlan(
+    input.provider || "codex",
+    input.planType,
+    input.planShares,
+  );
   const deltaThousandths = BigInt(Math.round(delta * 1000));
   const credentialCapacity =
     (input.observedNanoUsd * BigInt(100_000)) / deltaThousandths;
@@ -73,8 +82,12 @@ export function deriveQuotaBaseline(samples: AcceptedCalibrationSample[]) {
   // It also prevents one frequently-polled credential from dominating merely
   // because it produced more adjacent samples.
   const credentialSamples = aggregateCredentialSamples(samples);
-  const center = median(credentialSamples.map((sample) => sample.perShareNanoUsd));
-  const deviations = credentialSamples.map((sample) => absolute(sample.perShareNanoUsd - center));
+  const center = median(
+    credentialSamples.map((sample) => sample.perShareNanoUsd),
+  );
+  const deviations = credentialSamples.map((sample) =>
+    absolute(sample.perShareNanoUsd - center),
+  );
   const mad = median(deviations);
   const threshold = mad === BigInt(0) ? center / BigInt(10) : mad * BigInt(3);
   const filtered = credentialSamples.filter(
@@ -82,8 +95,14 @@ export function deriveQuotaBaseline(samples: AcceptedCalibrationSample[]) {
   );
   const valueNanoUsd = weightedMedian(filtered);
   const credentials = filtered.length;
-  const span = filtered.reduce((total, sample) => total + sample.percentSpan, 0);
-  const contributingSamples = filtered.reduce((total, sample) => total + sample.sampleCount, 0);
+  const span = filtered.reduce(
+    (total, sample) => total + sample.percentSpan,
+    0,
+  );
+  const contributingSamples = filtered.reduce(
+    (total, sample) => total + sample.sampleCount,
+    0,
+  );
   const confidence = Math.min(
     1,
     contributingSamples / 12 + credentials / 8 + Math.min(span, 100) / 400,
@@ -95,9 +114,13 @@ export function deriveQuotaBaseline(samples: AcceptedCalibrationSample[]) {
   };
 }
 
-type AggregatedCalibrationSample = AcceptedCalibrationSample & { sampleCount: number };
+type AggregatedCalibrationSample = AcceptedCalibrationSample & {
+  sampleCount: number;
+};
 
-function aggregateCredentialSamples(samples: AcceptedCalibrationSample[]): AggregatedCalibrationSample[] {
+function aggregateCredentialSamples(
+  samples: AcceptedCalibrationSample[],
+): AggregatedCalibrationSample[] {
   const groups = new Map<string, AcceptedCalibrationSample[]>();
   for (const sample of samples) {
     const group = groups.get(sample.credentialId) || [];
@@ -105,15 +128,21 @@ function aggregateCredentialSamples(samples: AcceptedCalibrationSample[]): Aggre
     groups.set(sample.credentialId, group);
   }
   return [...groups.entries()].map(([credentialId, group]) => {
-    const span = group.reduce((total, sample) => total + Math.max(sample.percentSpan, 0.001), 0);
+    const span = group.reduce(
+      (total, sample) => total + Math.max(sample.percentSpan, 0.001),
+      0,
+    );
     const scale = 1_000;
     const weightedTotal = group.reduce(
       (total, sample) =>
-        total + sample.perShareNanoUsd * BigInt(Math.max(1, Math.round(sample.percentSpan * scale))),
+        total +
+        sample.perShareNanoUsd *
+          BigInt(Math.max(1, Math.round(sample.percentSpan * scale))),
       BigInt(0),
     );
     const weight = group.reduce(
-      (total, sample) => total + BigInt(Math.max(1, Math.round(sample.percentSpan * scale))),
+      (total, sample) =>
+        total + BigInt(Math.max(1, Math.round(sample.percentSpan * scale))),
       BigInt(0),
     );
     return {
@@ -121,7 +150,8 @@ function aggregateCredentialSamples(samples: AcceptedCalibrationSample[]): Aggre
       perShareNanoUsd: weightedTotal / weight,
       percentSpan: span,
       observedAt: group.reduce(
-        (latest, sample) => (sample.observedAt > latest ? sample.observedAt : latest),
+        (latest, sample) =>
+          sample.observedAt > latest ? sample.observedAt : latest,
         group[0].observedAt,
       ),
       sampleCount: group.length,
@@ -129,13 +159,19 @@ function aggregateCredentialSamples(samples: AcceptedCalibrationSample[]): Aggre
   });
 }
 
-export function quotaSharesForPlan(planType: string, overrides?: Record<string, number>) {
-  const plan = String(planType || "").trim().toLowerCase();
+export function quotaSharesForPlan(
+  provider: ProviderId,
+  planType: string,
+  overrides?: Record<string, number>,
+) {
+  const plan = String(planType || "")
+    .trim()
+    .toLowerCase();
   const configured = overrides?.[plan];
   if (configured && Number.isInteger(configured) && configured > 0) {
     return configured;
   }
-  return codexPlanShares(planType);
+  return providerCapacityUnits(provider, planType);
 }
 
 function weightedMedian(samples: AggregatedCalibrationSample[]) {
@@ -146,7 +182,10 @@ function weightedMedian(samples: AggregatedCalibrationSample[]) {
   // single account should be able to define the global baseline on its own.
   const weightOf = (sample: AggregatedCalibrationSample) =>
     Math.sqrt(Math.min(Math.max(sample.percentSpan, 0.001), 100));
-  const totalWeight = sorted.reduce((total, sample) => total + weightOf(sample), 0);
+  const totalWeight = sorted.reduce(
+    (total, sample) => total + weightOf(sample),
+    0,
+  );
   let cursor = 0;
   for (const sample of sorted) {
     cursor += weightOf(sample);
@@ -167,15 +206,50 @@ function absolute(value: bigint) {
   return value < BigInt(0) ? -value : value;
 }
 
-const CALIBRATION_STATE_KEY = "quota_calibration_state_v1";
+const CALIBRATION_STATE_KEY = "quota_calibration_state_v2";
+const LEGACY_CALIBRATION_STATE_KEY = "quota_calibration_state_v1";
 
 type PersistedCalibrationState = {
-  credentialUsage: Record<string, { totalNanoUsd: string; unpricedRequests: number }>;
-  observations: Record<string, { usedPercent: number; resetsAt: string; totalNanoUsd: string; unpricedRequests: number }>;
-  samples: Record<"5h" | "7d", Array<{ perShareNanoUsd: string; credentialId: string; percentSpan: number; observedAt: string }>>;
-  baselines: Record<"5h" | "7d", { automaticNanoUsd: string | null; overrideNanoUsd: string | null; confidence: number; sampleCount: number }>;
+  credentialUsage: Record<
+    string,
+    { totalNanoUsd: string; unpricedRequests: number }
+  >;
+  observations: Record<
+    string,
+    {
+      usedPercent: number;
+      resetsAt: string;
+      totalNanoUsd: string;
+      unpricedRequests: number;
+    }
+  >;
+  providers: Record<ProviderId, ProviderCalibrationState>;
+  credentialOverrides: Record<
+    string,
+    Partial<Record<"5h" | "7d", string | null>>
+  >;
+};
+
+type ProviderCalibrationState = {
+  samples: Record<
+    "5h" | "7d",
+    Array<{
+      perShareNanoUsd: string;
+      credentialId: string;
+      percentSpan: number;
+      observedAt: string;
+    }>
+  >;
+  baselines: Record<
+    "5h" | "7d",
+    {
+      automaticNanoUsd: string | null;
+      overrideNanoUsd: string | null;
+      confidence: number;
+      sampleCount: number;
+    }
+  >;
   oversellRatios: Record<"5h" | "7d", number>;
-  credentialOverrides: Record<string, Partial<Record<"5h" | "7d", string | null>>>;
 };
 
 export function recordCredentialPricedUsage(
@@ -194,17 +268,23 @@ export function recordCredentialPricedUsage(
   writeState(state);
 }
 
-export function recordCodexQuotaObservation(input: {
+export function recordProviderQuotaObservation(input: {
+  provider: ProviderId;
   credentialId: string;
   planType: string;
   observedAt: string;
-  windows: Array<{ kind: "5h" | "7d"; usedPercent: number | null; resetsAt: string | null }>;
+  windows: Array<{
+    kind: "5h" | "7d";
+    usedPercent: number | null;
+    resetsAt: string | null;
+  }>;
 }) {
   const state = readState();
   const usage = state.credentialUsage[input.credentialId] || {
     totalNanoUsd: "0",
     unpricedRequests: 0,
   };
+  const providerState = state.providers[input.provider];
   const results: Array<{ kind: "5h" | "7d"; result: QuotaSampleResult }> = [];
   for (const window of input.windows) {
     if (window.usedPercent === null || !window.resetsAt) continue;
@@ -212,6 +292,7 @@ export function recordCodexQuotaObservation(input: {
     const previous = state.observations[key];
     if (previous) {
       const result = estimateQuotaSample({
+        provider: input.provider,
         planType: input.planType,
         previousUsedPercent: previous.usedPercent,
         currentUsedPercent: window.usedPercent,
@@ -223,23 +304,24 @@ export function recordCodexQuotaObservation(input: {
       });
       results.push({ kind: window.kind, result });
       if (result.accepted) {
-        state.samples[window.kind].push({
+        providerState.samples[window.kind].push({
           perShareNanoUsd: String(result.perShareNanoUsd),
           credentialId: input.credentialId,
           percentSpan: result.percentSpan,
           observedAt: input.observedAt,
         });
-        state.samples[window.kind] = state.samples[window.kind].slice(-100);
+        providerState.samples[window.kind] =
+          providerState.samples[window.kind].slice(-100);
         const baseline = deriveQuotaBaseline(
-          state.samples[window.kind].map((sample) => ({
+          providerState.samples[window.kind].map((sample) => ({
             ...sample,
             perShareNanoUsd: BigInt(sample.perShareNanoUsd),
           })),
         );
-        state.baselines[window.kind].automaticNanoUsd =
+        providerState.baselines[window.kind].automaticNanoUsd =
           baseline.valueNanoUsd === null ? null : String(baseline.valueNanoUsd);
-        state.baselines[window.kind].confidence = baseline.confidence;
-        state.baselines[window.kind].sampleCount = baseline.sampleCount;
+        providerState.baselines[window.kind].confidence = baseline.confidence;
+        providerState.baselines[window.kind].sampleCount = baseline.sampleCount;
       }
     }
     state.observations[key] = {
@@ -253,40 +335,92 @@ export function recordCodexQuotaObservation(input: {
   return results;
 }
 
-export function getEffectiveQuotaBaselines() {
+export function getProviderQuotaResetTimes(credentialId: string) {
+  const observations = readState().observations;
+  return Object.fromEntries(
+    (["5h", "7d"] as const).flatMap((kind) => {
+      const resetsAt = observations[`${credentialId}:${kind}`]?.resetsAt;
+      return resetsAt ? [[kind, resetsAt]] : [];
+    }),
+  ) as Partial<Record<"5h" | "7d", string>>;
+}
+
+export function getEffectiveQuotaBaselines(provider: ProviderId) {
   const state = readState();
   return Object.fromEntries(
     (["5h", "7d"] as const).map((kind) => {
-      const row = state.baselines[kind];
+      const row = state.providers[provider].baselines[kind];
       const effective = row.overrideNanoUsd || row.automaticNanoUsd;
-      return [kind, {
-        automaticNanoUsd: row.automaticNanoUsd === null ? null : BigInt(row.automaticNanoUsd),
-        overrideNanoUsd: row.overrideNanoUsd === null ? null : BigInt(row.overrideNanoUsd),
-        effectiveNanoUsd: effective === null ? null : BigInt(effective),
-        confidence: row.confidence,
-        sampleCount: row.sampleCount,
-      }];
+      return [
+        kind,
+        {
+          automaticNanoUsd:
+            row.automaticNanoUsd === null ? null : BigInt(row.automaticNanoUsd),
+          overrideNanoUsd:
+            row.overrideNanoUsd === null ? null : BigInt(row.overrideNanoUsd),
+          effectiveNanoUsd: effective === null ? null : BigInt(effective),
+          confidence: row.confidence,
+          sampleCount: row.sampleCount,
+        },
+      ];
     }),
-  ) as Record<"5h" | "7d", { automaticNanoUsd: bigint | null; overrideNanoUsd: bigint | null; effectiveNanoUsd: bigint | null; confidence: number; sampleCount: number }>;
+  ) as Record<
+    "5h" | "7d",
+    {
+      automaticNanoUsd: bigint | null;
+      overrideNanoUsd: bigint | null;
+      effectiveNanoUsd: bigint | null;
+      confidence: number;
+      sampleCount: number;
+    }
+  >;
 }
 
-export function getCredentialQuotaEstimates(credentialId: string, planType: string) {
+export function getCredentialQuotaEstimates(
+  credentialId: string,
+  provider: ProviderId,
+  planType: string,
+) {
   const state = readState();
-  const shares = BigInt(quotaSharesForPlan(planType));
-  return Object.fromEntries((["5h", "7d"] as const).map((kind) => {
-    const automatic = deriveQuotaBaseline(state.samples[kind]
-      .filter((sample) => sample.credentialId === credentialId)
-      .map((sample) => ({ ...sample, perShareNanoUsd: BigInt(sample.perShareNanoUsd) })));
-    const automaticNanoUsd = automatic.valueNanoUsd === null ? null : automatic.valueNanoUsd * shares;
-    const override = state.credentialOverrides[credentialId]?.[kind] ?? null;
-    return [kind, {
-      automaticNanoUsd,
-      overrideNanoUsd: override === null ? null : BigInt(override),
-      effectiveNanoUsd: override === null ? automaticNanoUsd : BigInt(override),
-      confidence: automatic.confidence,
-      sampleCount: automatic.sampleCount,
-    }];
-  })) as Record<"5h" | "7d", { automaticNanoUsd: bigint | null; overrideNanoUsd: bigint | null; effectiveNanoUsd: bigint | null; confidence: number; sampleCount: number }>;
+  const shares = BigInt(quotaSharesForPlan(provider, planType));
+  const providerState = state.providers[provider];
+  return Object.fromEntries(
+    (["5h", "7d"] as const).map((kind) => {
+      const automatic = deriveQuotaBaseline(
+        providerState.samples[kind]
+          .filter((sample) => sample.credentialId === credentialId)
+          .map((sample) => ({
+            ...sample,
+            perShareNanoUsd: BigInt(sample.perShareNanoUsd),
+          })),
+      );
+      const automaticNanoUsd =
+        automatic.valueNanoUsd === null
+          ? null
+          : automatic.valueNanoUsd * shares;
+      const override = state.credentialOverrides[credentialId]?.[kind] ?? null;
+      return [
+        kind,
+        {
+          automaticNanoUsd,
+          overrideNanoUsd: override === null ? null : BigInt(override),
+          effectiveNanoUsd:
+            override === null ? automaticNanoUsd : BigInt(override),
+          confidence: automatic.confidence,
+          sampleCount: automatic.sampleCount,
+        },
+      ];
+    }),
+  ) as Record<
+    "5h" | "7d",
+    {
+      automaticNanoUsd: bigint | null;
+      overrideNanoUsd: bigint | null;
+      effectiveNanoUsd: bigint | null;
+      confidence: number;
+      sampleCount: number;
+    }
+  >;
 }
 
 export function setCredentialQuotaEstimates(
@@ -296,61 +430,108 @@ export function setCredentialQuotaEstimates(
   const state = readState();
   const current = state.credentialOverrides[credentialId] || {};
   for (const kind of ["5h", "7d"] as const) {
-    if (Object.hasOwn(values, kind)) current[kind] = values[kind] === null ? null : String(values[kind]);
+    if (Object.hasOwn(values, kind))
+      current[kind] = values[kind] === null ? null : String(values[kind]);
   }
   state.credentialOverrides[credentialId] = current;
   writeState(state);
 }
 
 export function setQuotaBaselineOverride(
+  provider: ProviderId,
   kind: "5h" | "7d",
   valueNanoUsd: bigint | null,
 ) {
   const state = readState();
-  state.baselines[kind].overrideNanoUsd =
+  state.providers[provider].baselines[kind].overrideNanoUsd =
     valueNanoUsd === null ? null : String(valueNanoUsd);
   writeState(state);
-  return getEffectiveQuotaBaselines()[kind];
+  return getEffectiveQuotaBaselines(provider)[kind];
 }
 
-export function getQuotaOversellRatios() {
-  return readState().oversellRatios;
+export function getQuotaOversellRatios(provider: ProviderId) {
+  return readState().providers[provider].oversellRatios;
 }
 
-export function setQuotaOversellRatio(kind: "5h" | "7d", ratio: number) {
+export function setQuotaOversellRatio(
+  provider: ProviderId,
+  kind: "5h" | "7d",
+  ratio: number,
+) {
   if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 1000) {
     throw new Error(`${kind} oversell ratio must be between 0 and 1000`);
   }
   const state = readState();
-  state.oversellRatios[kind] = Math.round(ratio * 1000) / 1000;
+  state.providers[provider].oversellRatios[kind] =
+    Math.round(ratio * 1000) / 1000;
   writeState(state);
-  return state.oversellRatios[kind];
+  return state.providers[provider].oversellRatios[kind];
 }
 
 function readState(): PersistedCalibrationState {
+  const emptyProvider = (): ProviderCalibrationState => ({
+    samples: { "5h": [], "7d": [] },
+    baselines: {
+      "5h": {
+        automaticNanoUsd: null,
+        overrideNanoUsd: null,
+        confidence: 0,
+        sampleCount: 0,
+      },
+      "7d": {
+        automaticNanoUsd: null,
+        overrideNanoUsd: null,
+        confidence: 0,
+        sampleCount: 0,
+      },
+    },
+    oversellRatios: { "5h": 1, "7d": 1 },
+  });
   const empty: PersistedCalibrationState = {
     credentialUsage: {},
     observations: {},
-    samples: { "5h": [], "7d": [] },
-    baselines: {
-      "5h": { automaticNanoUsd: null, overrideNanoUsd: null, confidence: 0, sampleCount: 0 },
-      "7d": { automaticNanoUsd: null, overrideNanoUsd: null, confidence: 0, sampleCount: 0 },
-    },
-    oversellRatios: { "5h": 1, "7d": 1 },
+    providers: { codex: emptyProvider(), grok: emptyProvider() },
     credentialOverrides: {},
   };
-  const raw = getSettingValue(CALIBRATION_STATE_KEY);
+  const raw =
+    getSettingValue(CALIBRATION_STATE_KEY) ||
+    getSettingValue(LEGACY_CALIBRATION_STATE_KEY);
   if (!raw) return empty;
   try {
-    const parsed = JSON.parse(raw) as Partial<PersistedCalibrationState>;
+    const parsed = JSON.parse(raw) as Partial<PersistedCalibrationState> &
+      Partial<ProviderCalibrationState>;
+    const legacyCodex = {
+      samples: { ...empty.providers.codex.samples, ...(parsed.samples || {}) },
+      baselines: {
+        ...empty.providers.codex.baselines,
+        ...(parsed.baselines || {}),
+      },
+      oversellRatios: {
+        ...empty.providers.codex.oversellRatios,
+        ...(parsed.oversellRatios || {}),
+      },
+    };
+    const providers = Object.fromEntries(
+      providerIds.map((provider) => {
+        const stored = parsed.providers?.[provider];
+        const fallback = provider === "codex" ? legacyCodex : emptyProvider();
+        return [
+          provider,
+          {
+            samples: { ...fallback.samples, ...(stored?.samples || {}) },
+            baselines: { ...fallback.baselines, ...(stored?.baselines || {}) },
+            oversellRatios: {
+              ...fallback.oversellRatios,
+              ...(stored?.oversellRatios || {}),
+            },
+          },
+        ];
+      }),
+    ) as Record<ProviderId, ProviderCalibrationState>;
     return {
-      ...empty,
-      ...parsed,
       credentialUsage: parsed.credentialUsage || {},
       observations: parsed.observations || {},
-      samples: { ...empty.samples, ...(parsed.samples || {}) },
-      baselines: { ...empty.baselines, ...(parsed.baselines || {}) },
-      oversellRatios: { ...empty.oversellRatios, ...(parsed.oversellRatios || {}) },
+      providers,
       credentialOverrides: parsed.credentialOverrides || {},
     };
   } catch {

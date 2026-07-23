@@ -35,6 +35,13 @@ const apiKey = {
   rateLimitPerMinute: null,
 } satisfies RelayApiKeyContext;
 
+function selected(id: string, priority: number, healthScore = 100) {
+  return {
+    channel: { id, priority, healthScore },
+    credential: { usageHealth: { score: healthScore } },
+  };
+}
+
 describe("provider-neutral relay routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,13 +58,13 @@ describe("provider-neutral relay routing", () => {
   });
 
   test("routes a non-Grok-named model through a Grok channel declaration", () => {
-    mocks.selectGrok.mockReturnValue({ channel: { id: "grok-channel", priority: 100 } });
+    mocks.selectGrok.mockReturnValue(selected("grok-channel", 100));
     expect(selectProviderForModel({ model: "custom-reasoner", apiKey })).toBe("grok");
   });
 
   test("uses channel priority when both providers declare the model", () => {
-    mocks.selectCodex.mockReturnValue({ channel: { id: "codex-channel", priority: 200 } });
-    mocks.selectGrok.mockReturnValue({ channel: { id: "grok-channel", priority: 100 } });
+    mocks.selectCodex.mockReturnValue(selected("codex-channel", 200));
+    mocks.selectGrok.mockReturnValue(selected("grok-channel", 100));
     expect(selectProviderForModel({ model: "shared-model", apiKey })).toBe("codex");
   });
 
@@ -66,8 +73,8 @@ describe("provider-neutral relay routing", () => {
       { id: "grok-channel", modelAllowlist: ["shared-model"] },
       { id: "codex-channel", modelAllowlist: ["shared-model"] },
     ]);
-    mocks.selectCodex.mockReturnValue({ channel: { id: "codex-channel", priority: 100 } });
-    mocks.selectGrok.mockReturnValue({ channel: { id: "grok-channel", priority: 100 } });
+    mocks.selectCodex.mockReturnValue(selected("codex-channel", 100));
+    mocks.selectGrok.mockReturnValue(selected("grok-channel", 100));
     expect(selectProviderForModel({ model: "gpt-named-but-shared", apiKey })).toBe("grok");
   });
 
@@ -76,17 +83,24 @@ describe("provider-neutral relay routing", () => {
       .toThrowError(/No usable channel declares model/);
   });
 
+  test("prefers a healthy provider over a degraded higher-priority provider", () => {
+    mocks.selectCodex.mockReturnValue(selected("codex-channel", 100, 95));
+    mocks.selectGrok.mockReturnValue(selected("grok-channel", 500, 40));
+
+    expect(selectProviderForModel({ model: "shared-model", apiKey })).toBe("codex");
+  });
+
   test("lists only models that have a usable provider route", () => {
     mocks.listChannels.mockReturnValue([
       { id: "codex-channel", modelAllowlist: ["codex-model", "offline-model"] },
       { id: "grok-channel", modelAllowlist: ["grok-model"] },
     ]);
     mocks.selectCodex.mockImplementation(({ model }) => {
-      if (model === "codex-model") return { channel: { id: "codex-channel", priority: 100 } };
+      if (model === "codex-model") return selected("codex-channel", 100);
       throw new HttpError(503, "no_available_channel", "missing");
     });
     mocks.selectGrok.mockImplementation(({ model }) => {
-      if (model === "grok-model") return { channel: { id: "grok-channel", priority: 100 } };
+      if (model === "grok-model") return selected("grok-channel", 100);
       throw new HttpError(503, "no_available_grok_channel", "missing");
     });
 

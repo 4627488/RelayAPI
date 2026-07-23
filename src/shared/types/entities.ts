@@ -12,10 +12,10 @@ export type ChannelStatus =
   | "cooling_down"
   | "disabled";
 
-export type CodexAccountUsageStatus = "normal" | "warning" | "error" | "unused";
+export type ProviderUsageStatus = "normal" | "warning" | "error" | "unused";
 
-export interface CodexAccountUsageHealth {
-  status: CodexAccountUsageStatus;
+export interface ProviderUsageHealth {
+  status: ProviderUsageStatus;
   score: number;
   requestCount: number;
   successCount: number;
@@ -25,6 +25,11 @@ export interface CodexAccountUsageHealth {
   lastErrorCode: string | null;
   windowSize: number;
 }
+
+/** @deprecated Use ProviderUsageStatus. */
+export type CodexAccountUsageStatus = ProviderUsageStatus;
+/** @deprecated Use ProviderUsageHealth. */
+export type CodexAccountUsageHealth = ProviderUsageHealth;
 
 export interface ApiKeyRecord {
   id: string;
@@ -89,8 +94,7 @@ export interface TenantRecord extends TenantLimits {
   metadata: Record<string, unknown>;
 }
 
-export interface TenantWithSecrets
-  extends Omit<TenantRecord, "proxy"> {
+export interface TenantWithSecrets extends Omit<TenantRecord, "proxy"> {
   proxy: CredentialProxyConfig | null;
 }
 
@@ -179,7 +183,7 @@ export interface TenantResourceCredential {
   upstreamTransport: CodexUpstreamTransport;
   useGlobalProxy: boolean;
   proxy: PublicCredentialProxyConfig | null;
-  usageHealth?: CodexAccountUsageHealth;
+  usageHealth?: ProviderUsageHealth;
   expiresAt: string | null;
   lastRefreshAt: string | null;
   lastUsedAt: string | null;
@@ -234,16 +238,36 @@ export interface ProxyPoolRecord {
   lastUsedAt: string | null;
 }
 
-export interface ProxyPoolRecordWithSecret extends Omit<
-  ProxyPoolRecord,
-  "passwordSet"
-> {
+export interface ProxyPoolRecordWithSecret
+  extends Omit<ProxyPoolRecord, "passwordSet"> {
   password: string;
 }
 
 export type CodexUpstreamTransport = "http" | "websocket";
 export type ProviderId = "codex" | "grok";
 export type ProviderAuthType = "oauth" | "api_key";
+
+export interface ProviderCredentialRecordBase<P extends ProviderId> {
+  id: string;
+  provider: P;
+  email: string;
+  planType: string;
+  enabled: boolean;
+  priority: number;
+  weight: number;
+  useGlobalProxy: boolean;
+  proxyPoolId: string | null;
+  proxy: PublicCredentialProxyConfig | null;
+  usageHealth?: ProviderUsageHealth;
+  expiresAt: string | null;
+  lastRefreshAt: string | null;
+  lastUsedAt: string | null;
+  cooldownUntil: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+}
 
 export interface GrokTokenBundle {
   access_token: string;
@@ -256,16 +280,10 @@ export interface GrokTokenBundle {
   plan_type?: string;
 }
 
-export interface GrokCredentialRecord {
-  id: string;
-  provider: "grok";
+export interface GrokCredentialRecord
+  extends ProviderCredentialRecordBase<"grok"> {
   authType: ProviderAuthType;
-  email: string;
   subject: string;
-  planType: string;
-  enabled: boolean;
-  priority: number;
-  weight: number;
   upstreamTransport: "auto" | "http" | "websocket";
   grokBaseUrl: string | null;
   grokNativeXSearch: boolean;
@@ -273,18 +291,6 @@ export interface GrokCredentialRecord {
   grokHeaders: Record<string, string>;
   grokModelAliases: Record<string, string>;
   grokExcludedModels: string[];
-  useGlobalProxy: boolean;
-  proxyPoolId: string | null;
-  proxy: PublicCredentialProxyConfig | null;
-  usageHealth?: CodexAccountUsageHealth;
-  expiresAt: string | null;
-  lastRefreshAt: string | null;
-  lastUsedAt: string | null;
-  cooldownUntil: string | null;
-  lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
-  metadata: Record<string, unknown>;
 }
 
 export type GrokCredentialWithTokens = Omit<GrokCredentialRecord, "proxy"> & {
@@ -300,30 +306,12 @@ export interface CodexTokenBundle {
   last_refresh: string;
 }
 
-export interface CodexCredentialRecord {
-  id: string;
-  provider: "codex";
-  email: string;
+export interface CodexCredentialRecord
+  extends ProviderCredentialRecordBase<"codex"> {
   accountId: string;
-  planType: string;
-  enabled: boolean;
-  priority: number;
-  weight: number;
   fastEnabled: boolean;
   upstreamTransport: CodexUpstreamTransport;
   userAgent: string | null;
-  useGlobalProxy: boolean;
-  proxyPoolId: string | null;
-  proxy: PublicCredentialProxyConfig | null;
-  usageHealth?: CodexAccountUsageHealth;
-  expiresAt: string | null;
-  lastRefreshAt: string | null;
-  lastUsedAt: string | null;
-  cooldownUntil: string | null;
-  lastError: string | null;
-  createdAt: string;
-  updatedAt: string;
-  metadata: Record<string, unknown>;
 }
 
 export type CodexCredentialWithTokens = Omit<CodexCredentialRecord, "proxy"> & {
@@ -361,11 +349,7 @@ export interface GlobalSettingsRecord {
   updatedAt: string | null;
 }
 
-export type TimeZoneRebuildStatus =
-  | "idle"
-  | "pending"
-  | "running"
-  | "failed";
+export type TimeZoneRebuildStatus = "idle" | "pending" | "running" | "failed";
 
 export interface ChannelRecord {
   id: string;
@@ -380,7 +364,7 @@ export interface ChannelRecord {
   modelAllowlist: string[];
   status: ChannelStatus;
   healthScore: number;
-  usageHealth?: CodexAccountUsageHealth;
+  usageHealth?: ProviderUsageHealth;
   cooldownUntil: string | null;
   lastError: string | null;
   lastUsedAt: string | null;
@@ -491,7 +475,13 @@ export interface ApiKeyDailyUsageStatsRow extends DailyUsageStatsRow {
 
 export interface DailyDimensionUsageStatsRow extends UsageStatsRow {
   date: string;
-  dimension: "tenant" | "api_key" | "model" | "channel" | "credential" | "request_type";
+  dimension:
+    | "tenant"
+    | "api_key"
+    | "model"
+    | "channel"
+    | "credential"
+    | "request_type";
   dimensionId: string | null;
   dimensionName: string;
 }

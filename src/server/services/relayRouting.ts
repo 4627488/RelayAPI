@@ -4,19 +4,40 @@ import { HttpError, isHttpError } from "@/src/server/http/errors";
 import { listChannels } from "@/src/server/repositories/channels";
 import { selectChannel } from "@/src/server/services/channels";
 import { selectGrokChannel } from "@/src/server/services/grokRouting";
-import type { ChannelRecord, ProviderId, RelayApiKeyContext } from "@/src/shared/types/entities";
+import { providerRoutingHealthTier } from "@/src/server/services/providerRoutingCore";
+import { providerUnavailableChannelCode } from "@/src/shared/providerCapabilities";
+import type {
+  ChannelRecord,
+  ProviderUsageHealth,
+  ProviderId,
+  RelayApiKeyContext,
+} from "@/src/shared/types/entities";
 
 type ProviderRoutingAdapter = {
   provider: ProviderId;
   missingChannelCode: string;
-  select: (input: { model: string; apiKey: RelayApiKeyContext; markUsed?: boolean }) => {
+  select: (input: {
+    model: string;
+    apiKey: RelayApiKeyContext;
+    excludedCredentialIds?: Set<string>;
+    markUsed?: boolean;
+  }) => {
     channel: ChannelRecord;
+    credential: { usageHealth?: ProviderUsageHealth };
   };
 };
 
 const providerRoutingAdapters: ProviderRoutingAdapter[] = [
-  { provider: "codex", missingChannelCode: "no_available_channel", select: selectChannel },
-  { provider: "grok", missingChannelCode: "no_available_grok_channel", select: selectGrokChannel },
+  {
+    provider: "codex",
+    missingChannelCode: providerUnavailableChannelCode("codex"),
+    select: selectChannel,
+  },
+  {
+    provider: "grok",
+    missingChannelCode: providerUnavailableChannelCode("grok"),
+    select: selectGrokChannel,
+  },
 ];
 
 export function selectProviderForModel(input: {
@@ -26,7 +47,12 @@ export function selectProviderForModel(input: {
   const channelOrder = new Map(
     listChannels().map((channel, index) => [channel.id, index]),
   );
-  const candidates: Array<{ provider: ProviderId; priority: number; order: number }> = [];
+  const candidates: Array<{
+    provider: ProviderId;
+    priority: number;
+    order: number;
+    healthScore: number;
+  }> = [];
 
   for (const adapter of providerRoutingAdapters) {
     try {
@@ -35,9 +61,14 @@ export function selectProviderForModel(input: {
         provider: adapter.provider,
         priority: selected.channel.priority,
         order: channelOrder.get(selected.channel.id) ?? Number.MAX_SAFE_INTEGER,
+        healthScore: Math.min(
+          selected.channel.healthScore,
+          selected.credential.usageHealth?.score ?? 100,
+        ),
       });
     } catch (error) {
-      if (!isMissingProviderChannel(error, adapter.missingChannelCode)) throw error;
+      if (!isMissingProviderChannel(error, adapter.missingChannelCode))
+        throw error;
     }
   }
 
@@ -49,8 +80,12 @@ export function selectProviderForModel(input: {
     );
   }
 
-  candidates.sort((left, right) =>
-    right.priority - left.priority || left.order - right.order,
+  candidates.sort(
+    (left, right) =>
+      providerRoutingHealthTier(right.healthScore) -
+        providerRoutingHealthTier(left.healthScore) ||
+      right.priority - left.priority ||
+      left.order - right.order,
   );
   return candidates[0].provider;
 }
@@ -64,10 +99,11 @@ export function listRoutableModelsForApiKey(apiKey: RelayApiKeyContext) {
       selectProviderForModel({ model, apiKey });
       return true;
     } catch (error) {
-      if (isHttpError(error) && [
-        "model_not_allowed",
-        "no_declared_model_channel",
-      ].includes(error.code)) return false;
+      if (
+        isHttpError(error) &&
+        ["model_not_allowed", "no_declared_model_channel"].includes(error.code)
+      )
+        return false;
       throw error;
     }
   });

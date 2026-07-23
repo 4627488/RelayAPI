@@ -1,5 +1,11 @@
 import "server-only";
 
+import type {
+  CodexQuotaCoreReport,
+  CodexQuotaStatus,
+  CodexQuotaWindow,
+} from "@/src/shared/providerQuota";
+
 import crypto from "node:crypto";
 
 import { serverConfig } from "@/src/server/config/env";
@@ -25,7 +31,7 @@ import {
   getGlobalProxySetting,
   getGlobalTimeZoneSetting,
 } from "@/src/server/services/settings";
-import { recordCodexQuotaObservation } from "@/src/server/services/quotaCalibration";
+import { recordProviderQuotaObservation } from "@/src/server/services/quotaCalibration";
 import { formatInstant } from "@/src/shared/time";
 import type {
   CodexCredentialRecord,
@@ -41,40 +47,15 @@ export const WHAM_RESET_CREDITS_CONSUME_URL =
 const WINDOW_5H_SECONDS = 5 * 60 * 60;
 const WINDOW_7D_SECONDS = 7 * 24 * 60 * 60;
 
-type CodexQuotaStatus =
-  | "unknown"
-  | "exhausted"
-  | "low"
-  | "medium"
-  | "high"
-  | "full";
-
 type CacheState = "cached" | "fresh" | "missing";
 
 type RawObject = Record<string, unknown>;
 
-interface QuotaWindow {
-  id: string;
-  label: string;
-  used_percent: number | null;
-  remaining_percent: number | null;
-  reset_label: string;
-  resets_at: string | null;
-  exhausted: boolean;
-}
-
-interface CodexQuotaReport {
-  provider: "codex";
-  credential_id: string;
-  account_id: string;
-  email: string;
-  plan_type: string;
-  status: CodexQuotaStatus;
+type QuotaWindow = CodexQuotaWindow & { resets_at: string | null };
+type CodexQuotaReport = CodexQuotaCoreReport & {
   windows: QuotaWindow[];
   additional_windows: QuotaWindow[];
-  retrieved_at: string;
-  raw?: unknown;
-}
+};
 
 interface PublicCodexQuotaReport extends CodexQuotaReport {
   cached: boolean;
@@ -240,7 +221,8 @@ export async function getCodexQuota({
         return [];
       })),
     );
-    recordCodexQuotaObservation({
+    recordProviderQuotaObservation({
+      provider: "codex",
       credentialId: credential.id,
       planType: report.plan_type,
       observedAt: report.retrieved_at,

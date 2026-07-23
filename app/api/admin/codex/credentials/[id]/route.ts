@@ -1,8 +1,8 @@
 import { errorToResponse } from "@/src/server/http/errors";
 import {
-  patchCodexCredentialRouting,
-  removeCodexCredential,
-} from "@/src/server/services/codexCredentials";
+  patchProviderCredential,
+  removeProviderCredential,
+} from "@/src/server/services/providerCredentials";
 import { requireWebRequest } from "@/src/server/services/webAccess";
 
 export const runtime = "nodejs";
@@ -18,7 +18,7 @@ export async function PATCH(
     requireWebRequest(request);
     const { id } = await context.params;
     const body = await request.json();
-    return Response.json(patchCodexCredentialRouting(id, body));
+    return Response.json(patchProviderCredential("codex", id, body));
   } catch (error) {
     return errorToResponse(error);
   }
@@ -31,7 +31,7 @@ export async function DELETE(
   try {
     requireWebRequest(request);
     const { id } = await context.params;
-    await removeCodexCredential(id);
+    await removeProviderCredential("codex", id);
     return Response.json({ id, deleted: true });
   } catch (error) {
     return errorToResponse(error);

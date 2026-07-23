@@ -10,8 +10,8 @@ vi.mock("@/src/server/grok/client", () => ({ grokFetch: mocks.grokFetch }));
 vi.mock("@/src/server/services/apiKeys", () => ({ authenticateRelayRequest: () => ({ id: "key-1", tenantId: null, tenant: null, prefix: "rk", name: "test", modelAllowlist: [], channelAllowlist: [] }) }));
 vi.mock("@/src/server/services/grokRouting", () => ({
   selectGrokChannel: () => ({ channel: { id: "ch-1", name: "Grok", provider: "grok", credentialId: "grok-1", credentialIds: ["grok-1"] }, credential: { id: "grok-1" } }),
-  recordGrokCredentialSuccess: mocks.recordSuccess,
-  recordGrokCredentialFailure: mocks.recordFailure,
+  recordGrokChannelSuccess: mocks.recordSuccess,
+  recordGrokChannelFailure: mocks.recordFailure,
 }));
 vi.mock("@/src/server/http/relayAccounting", () => ({
   admitRelayQuota: () => ({ requestId: "req-1", tenantId: "", subscriptionId: "sub-1", state: null, price: null }),
@@ -47,15 +47,17 @@ describe("Grok relay logging", () => {
     const response = await handleGrokResponses(request("/v1/responses", { model: "grok-4.5", input: "hi", stream: true }));
     await response.text();
     expect(mocks.appendSuccessLog).toHaveBeenCalledWith(expect.objectContaining({ requestType: "responses", stream: true, statusCode: 200, usage: expect.objectContaining({ totalTokens: 6 }), upstreamBody: expect.stringContaining("response.completed") }));
-    expect(mocks.recordSuccess).toHaveBeenCalledWith("grok-1");
+    expect(mocks.recordSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "ch-1", credentialId: "grok-1" }),
+    );
   });
 
   test("logs upstream errors with request and forwarded bodies", async () => {
-    mocks.grokFetch.mockResolvedValue({ response: Response.json({ error: { message: "bad tool" } }, { status: 400 }), credential, upstreamPayload });
+    mocks.grokFetch.mockResolvedValue({ response: Response.json({ error: { code: "invalid_tool", message: "bad tool" } }, { status: 400 }), credential, upstreamPayload });
     const response = await handleGrokResponses(request("/v1/responses", { model: "grok-4.5", input: "hi" }));
     expect(response.status).toBe(400);
     expect(mocks.releaseRelayQuota).toHaveBeenCalled();
-    expect(mocks.appendSuccessLog).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, errorCode: "upstream_error", errorMessage: "bad tool", forwardedBody: upstreamPayload }));
+    expect(mocks.appendSuccessLog).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400, errorCode: "invalid_tool", errorMessage: "bad tool", forwardedBody: upstreamPayload }));
   });
 
   test("logs non-stream Chat Completions usage", async () => {

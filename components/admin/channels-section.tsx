@@ -83,13 +83,13 @@ import {
 import type {
   ChannelRecord,
   ChannelStatus,
-  CodexCredentialRecord,
-  GrokCredentialRecord,
   ProviderCredentialRecord,
+  ProviderId,
 } from "@/src/shared/types/entities";
+import { providerCredentialName, providerLabel, providerPlanLabel } from "@/src/shared/providerCapabilities";
 
 type ChannelFormState = {
-  provider: "codex" | "grok";
+  provider: ProviderId;
   name: string;
   credentialIds: string;
   enabled: boolean;
@@ -125,26 +125,17 @@ export function ChannelsSection({
   onUpdated,
 }: {
   channels: ChannelRecord[];
-  credentials: CodexCredentialRecord[];
+  credentials: ProviderCredentialRecord[];
   onCreated: (channel: ChannelRecord) => void;
   onDeleted: (id: string) => void;
   onUpdated: (channel: ChannelRecord) => void;
 }) {
-  const [grokCredentials, setGrokCredentials] = React.useState<GrokCredentialRecord[]>([]);
-  React.useEffect(() => {
-    let active = true;
-    void fetch("/api/admin/grok/credentials").then(async (response) => {
-      if (active && response.ok) setGrokCredentials(await response.json());
-    });
-    return () => { active = false; };
-  }, []);
-  const allCredentials: ProviderCredentialRecord[] = [...credentials, ...grokCredentials];
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editingChannel, setEditingChannel] =
     React.useState<ChannelRecord | null>(null);
   const [pendingId, setPendingId] = React.useState<string | null>(null);
   const credentialsById = new Map(
-    allCredentials.map((credential) => [credential.id, credential]),
+    credentials.map((credential) => [credential.id, credential]),
   );
   const uniqueChannels = uniqueChannelsById(channels);
 
@@ -373,7 +364,7 @@ export function ChannelsSection({
       </div>
 
       <ChannelFormDialog
-        credentials={allCredentials}
+          credentials={credentials}
         mode="create"
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -381,7 +372,7 @@ export function ChannelsSection({
       />
       <ChannelFormDialog
         channel={editingChannel}
-        credentials={allCredentials}
+            credentials={credentials}
         mode="edit"
         open={Boolean(editingChannel)}
         onOpenChange={(open) => {
@@ -413,12 +404,14 @@ function ChannelFormDialog({
   onSaved: (channel: ChannelRecord) => void;
   open: boolean;
 }) {
+  const defaultCredential = credentials[0];
   const initialForm =
     mode === "edit" && channel
       ? channelToForm(channel)
       : {
           ...EMPTY_CHANNEL_FORM,
-          credentialIds: credentials.find((item) => item.provider === "codex")?.id || credentials[0]?.id || "",
+          provider: defaultCredential?.provider || "codex",
+          credentialIds: defaultCredential?.id || "",
         };
 
   return (
@@ -464,7 +457,7 @@ function ChannelFormDialogBody({
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (parseList(form.credentialIds).length === 0) {
-      toast.error(`请至少选择一个 ${form.provider === "grok" ? "Grok" : "Codex"} 凭据`);
+      toast.error(`请至少选择一个 ${providerLabel(form.provider)} 凭据`);
       return;
     }
     if (parseList(form.modelAllowlist).length === 0) {
@@ -523,6 +516,10 @@ function ChannelFields({
   form: ChannelFormState;
   onChange: React.Dispatch<React.SetStateAction<ChannelFormState>>;
 }) {
+  const providerCredentials = credentials.filter(
+    (credential) => credential.provider === form.provider,
+  );
+  const selectedProviderLabel = providerLabel(form.provider);
   const update = <K extends keyof ChannelFormState>(
     key: K,
     value: ChannelFormState[K],
@@ -542,12 +539,12 @@ function ChannelFields({
           </Select>
           <FieldDescription>一个路由池只绑定同一服务商的凭据。</FieldDescription>
         </Field>
-        {credentials.length === 0 && (
+        {providerCredentials.length === 0 && (
           <Alert>
             <UserRoundIcon />
-            <AlertTitle>需要先连接 Codex 凭据</AlertTitle>
+            <AlertTitle>需要先连接 {selectedProviderLabel} 凭据</AlertTitle>
             <AlertDescription>
-              创建路由池前必须至少有一个 Codex 凭据。
+              创建路由池前必须至少有一个 {selectedProviderLabel} 凭据。
             </AlertDescription>
           </Alert>
         )}
@@ -557,7 +554,7 @@ function ChannelFields({
           <Input
             id="channel-name"
             value={form.name}
-            placeholder="Codex · account@example.com"
+            placeholder={`${selectedProviderLabel} · account@example.com`}
             onChange={(event) => update("name", event.target.value)}
           />
         </Field>
@@ -565,7 +562,8 @@ function ChannelFields({
         <Field>
           <FieldLabel>绑定凭据</FieldLabel>
           <CredentialVisualSelector
-            credentials={credentials.filter((credential) => credential.provider === form.provider)}
+            credentials={providerCredentials}
+            provider={form.provider}
             selectedIds={parseList(form.credentialIds)}
             onSelectedIdsChange={(ids) =>
               update("credentialIds", ids.join("\n"))
@@ -595,7 +593,7 @@ function ChannelFields({
           <Input
             id="channel-base-url"
             value={form.baseUrl}
-            placeholder="留空使用服务端默认 Codex 基础 URL"
+            placeholder={`留空使用 ${selectedProviderLabel} 默认上游地址`}
             onChange={(event) => update("baseUrl", event.target.value)}
           />
         </Field>
@@ -636,9 +634,11 @@ function ChannelFields({
 function CredentialVisualSelector({
   credentials,
   onSelectedIdsChange,
+  provider,
   selectedIds,
 }: {
   credentials: ProviderCredentialRecord[];
+  provider: ProviderCredentialRecord["provider"];
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
 }) {
@@ -657,7 +657,9 @@ function CredentialVisualSelector({
       <Alert>
         <UserRoundIcon />
         <AlertTitle>暂无可选凭据</AlertTitle>
-        <AlertDescription>请先连接或上传 Codex 凭据。</AlertDescription>
+        <AlertDescription>
+          请先连接或上传 {providerLabel(provider)} 凭据。
+        </AlertDescription>
       </Alert>
     );
   }
@@ -686,7 +688,7 @@ function CredentialVisualSelector({
                   <span className="truncate font-medium">{name}</span>
                 </div>
                 <Badge variant="outline" className="shrink-0">
-                  {credential.provider === "grok" ? "Grok" : codexPlanLabel(credential.planType)}
+                  {providerPlanLabel(credential.provider, credential.planType)}
                 </Badge>
               </div>
               <div className="grid gap-1 text-xs text-muted-foreground">
@@ -694,7 +696,7 @@ function CredentialVisualSelector({
                 <div>
                   优先级 {formatNumber(credential.priority)} · 权重{" "}
                   {formatNumber(credential.weight)} · 采样分数{" "}
-                  {formatNumber(credential.provider === "codex" ? usageHealthScore(credential.usageHealth) : 100)}%
+                  {formatNumber(usageHealthScore(credential.usageHealth))}%
                 </div>
               </div>
             </div>
@@ -887,21 +889,7 @@ function formatNumber(value: number) {
   }).format(value);
 }
 
-function codexPlanLabel(planType: string) {
-  const normalized = planType.trim().toLowerCase();
-  const labels: Record<string, string> = {
-    free: "Free",
-    plus: "Plus",
-    pro: "Pro 20x",
-    prolite: "Pro 5x",
-    "pro-lite": "Pro 5x",
-    pro_lite: "Pro 5x",
-    team: "Team",
-  };
-  return labels[normalized] || planType || "未知";
-}
-
-function usageHealthScore(health: CodexCredentialRecord["usageHealth"]) {
+function usageHealthScore(health: ProviderCredentialRecord["usageHealth"]) {
   return clamp(health?.score ?? 100, 0, 100);
 }
-function credentialIdentity(credential: ProviderCredentialRecord) { return credential.email || (credential.provider === "codex" ? credential.accountId : credential.subject) || credential.id; }
+const credentialIdentity = providerCredentialName;

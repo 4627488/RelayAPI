@@ -4,6 +4,47 @@ import { HttpError } from "@/src/server/http/errors";
 import type { StageTimer } from "@/src/server/http/stageTimer";
 import type { UsageSnapshot } from "@/src/shared/types/entities";
 
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+const SENSITIVE_UPSTREAM_RESPONSE_HEADERS = new Set([
+  "api-key",
+  "authorization",
+  "chatgpt-account-id",
+  "cookie",
+  "openai-api-key",
+  "session-id",
+  "session_id",
+  "set-cookie",
+  "set-cookie2",
+  "x-api-key",
+]);
+
+export function copyUpstreamResponseHeaders(headers: Headers) {
+  const output = new Headers();
+  for (const [name, value] of headers.entries()) {
+    const lower = name.toLowerCase();
+    if (
+      HOP_BY_HOP_RESPONSE_HEADERS.has(lower) ||
+      SENSITIVE_UPSTREAM_RESPONSE_HEADERS.has(lower) ||
+      lower === "content-length" ||
+      lower === "content-encoding"
+    ) {
+      continue;
+    }
+    output.set(name, value);
+  }
+  return output;
+}
+
 const DETAIL_TEXT_LIMIT = 512 * 1024;
 const JSON_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 

@@ -17,12 +17,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Field,
@@ -42,9 +37,7 @@ import {
   WorkspaceShell,
   type WorkspaceNavItem,
 } from "@/components/workspace/workspace-shell";
-import {
-  ApiKeysSection,
-} from "@/components/admin/api-keys-section";
+import { ApiKeysSection } from "@/components/admin/api-keys-section";
 import { ChannelsSection } from "@/components/admin/channels-section";
 import { CredentialsSection } from "@/components/admin/credentials-section";
 import { LogsSection } from "@/components/admin/logs-section";
@@ -61,8 +54,8 @@ import {
   getOverview,
   getRequestLogsPage,
   listApiKeys,
+  listAllProviderCredentials,
   listChannels,
-  listCredentials,
   listProxyPoolItems,
   listTenants,
   logoutWebSession,
@@ -86,16 +79,15 @@ import type {
   ProxyPoolRecord,
   PublicApiKey,
   PublicTenant,
+  ProviderCredentialRecord,
 } from "@/src/shared/types/entities";
-import {
-  parseInstant,
-} from "@/src/shared/time";
+import { parseInstant } from "@/src/shared/time";
 
 type AdminWorkbenchProps = {
   initialApiKeys: PublicApiKey[];
   initialTenants: PublicTenant[];
   initialChannels: ChannelRecord[];
-  initialCredentials: CodexCredentialRecord[];
+  initialCredentials: ProviderCredentialRecord[];
   initialProxyPool: ProxyPoolRecord[];
   initialRequestLogsPage: RequestLogsPage;
   initialOverviewStats: AdminOverviewStats;
@@ -184,8 +176,12 @@ export function AdminWorkbench({
   });
   const [overviewStats, setOverviewStats] =
     React.useState(initialOverviewStats);
-  const [costAnalysis, setCostAnalysis] = React.useState<CostAnalysis | null>(null);
-  const [overview24hLogs, setOverview24hLogs] = React.useState<AdminDashboardRequestLogRow[]>([]);
+  const [costAnalysis, setCostAnalysis] = React.useState<CostAnalysis | null>(
+    null,
+  );
+  const [overview24hLogs, setOverview24hLogs] = React.useState<
+    AdminDashboardRequestLogRow[]
+  >([]);
   const [, setSnapshotTime] = React.useState(initialNow);
   const [refreshing, setRefreshing] = React.useState(false);
   const [loggingOut, setLoggingOut] = React.useState(false);
@@ -258,7 +254,8 @@ export function AdminWorkbench({
   const loadSectionData = React.useCallback(
     async (section: SectionId, force = false) => {
       const alreadyLoaded =
-        section === "overview" || section === "quota" ||
+        section === "overview" ||
+        section === "quota" ||
         (section === "traffic" && loadedData.logs) ||
         (section === "routing" &&
           loadedData.credentials &&
@@ -296,7 +293,7 @@ export function AdminWorkbench({
         } else if (section === "routing") {
           const [nextCredentials, nextChannels, nextProxyPool] =
             await Promise.all([
-              listCredentials(),
+              listAllProviderCredentials(),
               listChannels(),
               listProxyPoolItems(),
             ]);
@@ -387,13 +384,19 @@ export function AdminWorkbench({
 
   async function refreshCredentialAndChannelData() {
     const [nextCredentials, nextChannels] = await Promise.all([
-      listCredentials(),
+      listAllProviderCredentials(),
       listChannels(),
     ]);
     setCredentials(nextCredentials);
     setChannels(nextChannels);
     setSnapshotTime(Date.now());
-    return { credentials: nextCredentials, channels: nextChannels };
+    return {
+      credentials: nextCredentials.filter(
+        (credential): credential is CodexCredentialRecord =>
+          credential.provider === "codex",
+      ),
+      channels: nextChannels,
+    };
   }
 
   function handleCredentialUpdated(updated: CodexCredentialRecord) {
@@ -408,18 +411,20 @@ export function AdminWorkbench({
       current.filter((credential) => credential.id !== id),
     );
     setChannels((current) =>
-      current
-        .map((channel) => {
-          const credentialIds = channel.credentialIds.filter(
-            (credentialId) => credentialId !== id,
-          );
-          return {
-            ...channel,
-            credentialId: credentialIds[0] || channel.credentialId,
-            credentialIds,
-          };
-        })
-        .filter((channel) => channel.credentialIds.length > 0),
+      current.flatMap((channel) => {
+        const credentialIds = channel.credentialIds.filter(
+          (credentialId) => credentialId !== id,
+        );
+        return credentialIds.length > 0
+          ? [
+              {
+                ...channel,
+                credentialId: credentialIds[0] || channel.credentialId,
+                credentialIds,
+              },
+            ]
+          : [];
+      }),
     );
   }
 
@@ -507,7 +512,10 @@ export function AdminWorkbench({
     <WorkspaceShell
       activeId={activeSection}
       navItems={navigationItems}
-      title={navigationItems.find((item) => item.id === activeSection)?.label ?? "运行总览"}
+      title={
+        navigationItems.find((item) => item.id === activeSection)?.label ??
+        "运行总览"
+      }
       status={
         <Badge variant={hasOperationalData ? "secondary" : "outline"}>
           {hasOperationalData ? "运行中" : "等待首个请求"}
@@ -569,78 +577,90 @@ export function AdminWorkbench({
           </AlertDescription>
         </Alert>
       )}
-            {activeSection === "overview" && (
-              <OverviewSection
-                apiKeyCount={apiKeyCount}
-                channelCount={channelCount}
-                credentialCount={credentialCount}
-                enabledChannelCount={enabledChannelCount}
-                hasOperationalData={hasOperationalData}
-                overviewStats={overviewStats}
-                costAnalysis={costAnalysis}
-                hourlyTrends={aggregateHourlyTrends(overview24hLogs)}
-                tenantCount={tenantCount}
-                onRefresh={refreshOverviewStats}
+      {activeSection === "overview" && (
+        <OverviewSection
+          apiKeyCount={apiKeyCount}
+          channelCount={channelCount}
+          credentialCount={credentialCount}
+          enabledChannelCount={enabledChannelCount}
+          hasOperationalData={hasOperationalData}
+          overviewStats={overviewStats}
+          costAnalysis={costAnalysis}
+          hourlyTrends={aggregateHourlyTrends(overview24hLogs)}
+          tenantCount={tenantCount}
+          onRefresh={refreshOverviewStats}
+        />
+      )}
+      {activeSection === "traffic" && (
+        <LogsSection
+          key={requestLogsRenderKey}
+          initialRequestLogsPage={requestLogsPage}
+          onLoaded={handleRequestLogsLoaded}
+        />
+      )}
+      {activeSection === "routing" && (
+        <div className="grid gap-3">
+          <SubscriptionAllocationSection tenants={tenants} />
+          <CredentialsSection
+            credentials={credentials.filter(
+              (credential): credential is CodexCredentialRecord =>
+                credential.provider === "codex",
+            )}
+            globalSettings={globalSettings}
+            proxyPool={proxyPool}
+            onDeleted={handleCredentialDeleted}
+            onRefreshData={refreshCredentialAndChannelData}
+            onUpdated={handleCredentialUpdated}
+            providerControls={
+              <GrokCredentialCards
+                credentials={credentials.filter(
+                  (credential): credential is Extract<
+                    ProviderCredentialRecord,
+                    { provider: "grok" }
+                  > => credential.provider === "grok",
+                )}
+                onRoutingChanged={refreshCredentialAndChannelData}
               />
-            )}
-            {activeSection === "traffic" && (
-              <LogsSection
-                key={requestLogsRenderKey}
-                initialRequestLogsPage={requestLogsPage}
-                onLoaded={handleRequestLogsLoaded}
-              />
-            )}
-            {activeSection === "routing" && (
-              <div className="grid gap-3">
-                <SubscriptionAllocationSection
-                  tenants={tenants}
-                />
-                <CredentialsSection
-                  credentials={credentials}
-                  globalSettings={globalSettings}
-                  proxyPool={proxyPool}
-                  onDeleted={handleCredentialDeleted}
-                  onRefreshData={refreshCredentialAndChannelData}
-                  onUpdated={handleCredentialUpdated}
-                  providerControls={<GrokCredentialCards />}
-                />
-                <div className="grid gap-3 xl:grid-cols-2">
-                  <ChannelsSection
-                    channels={channels}
-                    credentials={credentials}
-                    onCreated={handleChannelCreated}
-                    onDeleted={handleChannelDeleted}
-                    onUpdated={handleChannelUpdated}
-                  />
-                  <ProxyPoolSection
-                    proxyPool={proxyPool}
-                    onChanged={setProxyPool}
-                  />
-                </div>
-              </div>
-            )}
-            {activeSection === "access" && (
-              <div className="flex flex-col gap-3">
-                <AdminTenantsSection tenants={tenants} onChanged={setTenants} publicBaseUrl={globalSettings.publicBaseUrl} />
-                <ApiKeysSection
-                  apiKeys={apiKeys}
-                  channels={channels}
-                  onCreated={handleApiKeyCreated}
-                  onDeleted={handleApiKeyDeleted}
-                  onTransferred={handleApiKeyTransferred}
-                  onUpdated={handleApiKeyUpdated}
-                  tenants={tenants}
-                />
-              </div>
-            )}
-            {activeSection === "settings" && (
-              <SettingsSection
-                key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.userAgentSource}:${globalSettings.userAgent}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.codexAutoDisableRefreshExhausted}:${globalSettings.requestLogRetentionDays}:${globalSettings.requestLogDetailRetentionDays}:${globalSettings.oidcClientId}:${globalSettings.oidcClientSecretSet}:${globalSettings.oidcRedirectUris.join(",")}:${globalSettings.updatedAt}`}
-                settings={globalSettings}
-                onSaved={setGlobalSettings}
-              />
-            )}
-            {activeSection === "quota" && <AdminQuotaSection />}
+            }
+          />
+          <div className="grid gap-3 xl:grid-cols-2">
+            <ChannelsSection
+              channels={channels}
+              credentials={credentials}
+              onCreated={handleChannelCreated}
+              onDeleted={handleChannelDeleted}
+              onUpdated={handleChannelUpdated}
+            />
+            <ProxyPoolSection proxyPool={proxyPool} onChanged={setProxyPool} />
+          </div>
+        </div>
+      )}
+      {activeSection === "access" && (
+        <div className="flex flex-col gap-3">
+          <AdminTenantsSection
+            tenants={tenants}
+            onChanged={setTenants}
+            publicBaseUrl={globalSettings.publicBaseUrl}
+          />
+          <ApiKeysSection
+            apiKeys={apiKeys}
+            channels={channels}
+            onCreated={handleApiKeyCreated}
+            onDeleted={handleApiKeyDeleted}
+            onTransferred={handleApiKeyTransferred}
+            onUpdated={handleApiKeyUpdated}
+            tenants={tenants}
+          />
+        </div>
+      )}
+      {activeSection === "settings" && (
+        <SettingsSection
+          key={`${globalSettings.proxySource}:${globalSettings.proxy?.enabled}:${globalSettings.proxy?.type}:${globalSettings.proxy?.host}:${globalSettings.proxy?.port}:${globalSettings.proxy?.username}:${globalSettings.proxy?.passwordSet}:${globalSettings.userAgentSource}:${globalSettings.userAgent}:${globalSettings.fullRequestLoggingEnabled}:${globalSettings.codexAutoDisableRefreshExhausted}:${globalSettings.requestLogRetentionDays}:${globalSettings.requestLogDetailRetentionDays}:${globalSettings.oidcClientId}:${globalSettings.oidcClientSecretSet}:${globalSettings.oidcRedirectUris.join(",")}:${globalSettings.updatedAt}`}
+          settings={globalSettings}
+          onSaved={setGlobalSettings}
+        />
+      )}
+      {activeSection === "quota" && <AdminQuotaSection />}
     </WorkspaceShell>
   );
 }
@@ -667,7 +687,9 @@ function SettingsSection({
   );
   const [timeZoneSaving, setTimeZoneSaving] = React.useState(false);
   const [pruning, setPruning] = React.useState(false);
-  const [publicBaseUrl, setPublicBaseUrl] = React.useState(settings.publicBaseUrl);
+  const [publicBaseUrl, setPublicBaseUrl] = React.useState(
+    settings.publicBaseUrl,
+  );
   const [publicBaseUrlSaving, setPublicBaseUrlSaving] = React.useState(false);
   const [oidcForm, setOidcForm] = React.useState(() => ({
     clientId: settings.oidcClientId,
@@ -676,7 +698,11 @@ function SettingsSection({
   }));
   const [oidcSaving, setOidcSaving] = React.useState(false);
   const [oidcRotating, setOidcRotating] = React.useState(false);
-  const [adminPasswords, setAdminPasswords] = React.useState({ current: "", next: "", confirm: "" });
+  const [adminPasswords, setAdminPasswords] = React.useState({
+    current: "",
+    next: "",
+    confirm: "",
+  });
   const [adminPasswordSaving, setAdminPasswordSaving] = React.useState(false);
   const [retentionForm, setRetentionForm] = React.useState(() => ({
     requestLogRetentionDays: String(settings.requestLogRetentionDays ?? 90),
@@ -752,11 +778,17 @@ function SettingsSection({
   async function savePublicBaseUrl() {
     setPublicBaseUrlSaving(true);
     try {
-      const updated = await updateGlobalSettings({ publicBaseUrl: publicBaseUrl.trim() });
-      onSaved(updated); setPublicBaseUrl(updated.publicBaseUrl);
+      const updated = await updateGlobalSettings({
+        publicBaseUrl: publicBaseUrl.trim(),
+      });
+      onSaved(updated);
+      setPublicBaseUrl(updated.publicBaseUrl);
       toast.success("公开网站地址已保存");
-    } catch (error) { toast.error(adminErrorMessage(error)); }
-    finally { setPublicBaseUrlSaving(false); }
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setPublicBaseUrlSaving(false);
+    }
   }
 
   async function saveOidcSettings() {
@@ -764,9 +796,11 @@ function SettingsSection({
       .split(/[\r\n,]+/)
       .map((item) => item.trim())
       .filter(Boolean);
-    if (!publicBaseUrl.trim()) return toast.error("请先保存公开网站地址，OIDC 将使用它作为 Issuer");
+    if (!publicBaseUrl.trim())
+      return toast.error("请先保存公开网站地址，OIDC 将使用它作为 Issuer");
     if (!oidcForm.clientId.trim()) return toast.error("请输入 OIDC Client ID");
-    if (!redirectUris.length) return toast.error("请至少填写一个 LibreChat 回调地址");
+    if (!redirectUris.length)
+      return toast.error("请至少填写一个 LibreChat 回调地址");
     setOidcSaving(true);
     try {
       const updated = await updateGlobalSettings({
@@ -808,15 +842,23 @@ function SettingsSection({
 
   async function saveAdminPassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (adminPasswords.next.length < 10) return toast.error("新密码至少需要 10 位");
-    if (adminPasswords.next !== adminPasswords.confirm) return toast.error("两次输入的新密码不一致");
+    if (adminPasswords.next.length < 10)
+      return toast.error("新密码至少需要 10 位");
+    if (adminPasswords.next !== adminPasswords.confirm)
+      return toast.error("两次输入的新密码不一致");
     setAdminPasswordSaving(true);
     try {
-      await changeAdminPassword({ currentPassword: adminPasswords.current, newPassword: adminPasswords.next });
+      await changeAdminPassword({
+        currentPassword: adminPasswords.current,
+        newPassword: adminPasswords.next,
+      });
       setAdminPasswords({ current: "", next: "", confirm: "" });
       toast.success("管理员密码已修改，其他会话已失效");
-    } catch (error) { toast.error(adminErrorMessage(error)); }
-    finally { setAdminPasswordSaving(false); }
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setAdminPasswordSaving(false);
+    }
   }
 
   async function clearProxy() {
@@ -1033,14 +1075,91 @@ function SettingsSection({
         <CardContent className="grid gap-4 xl:grid-cols-2">
           <div className="grid gap-3 rounded-md border bg-muted/25 p-3 text-sm">
             <div className="font-medium">公开网站地址</div>
-            <Field><FieldLabel htmlFor="public-base-url">外部访问 URL</FieldLabel><Input id="public-base-url" type="url" value={publicBaseUrl} placeholder="https://relay.example.com" onChange={(event) => setPublicBaseUrl(event.target.value)} /><FieldDescription>用于生成邀请和密码重置链接；留空时使用当前浏览器域名。</FieldDescription></Field>
-            <div><Button type="button" size="sm" disabled={publicBaseUrlSaving} onClick={savePublicBaseUrl}>{publicBaseUrlSaving && <Spinner data-icon="inline-start" />}保存网站地址</Button></div>
+            <Field>
+              <FieldLabel htmlFor="public-base-url">外部访问 URL</FieldLabel>
+              <Input
+                id="public-base-url"
+                type="url"
+                value={publicBaseUrl}
+                placeholder="https://relay.example.com"
+                onChange={(event) => setPublicBaseUrl(event.target.value)}
+              />
+              <FieldDescription>
+                用于生成邀请和密码重置链接；留空时使用当前浏览器域名。
+              </FieldDescription>
+            </Field>
+            <div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={publicBaseUrlSaving}
+                onClick={savePublicBaseUrl}
+              >
+                {publicBaseUrlSaving && <Spinner data-icon="inline-start" />}
+                保存网站地址
+              </Button>
+            </div>
           </div>
           <div className="grid gap-3 rounded-md border bg-muted/25 p-3 text-sm">
             <div className="font-medium">管理员密码</div>
             <form className="grid gap-3" onSubmit={saveAdminPassword}>
-              <FieldGroup><Field><FieldLabel htmlFor="admin-current-password">当前密码</FieldLabel><Input id="admin-current-password" type="password" autoComplete="current-password" value={adminPasswords.current} onChange={(event) => setAdminPasswords((value) => ({ ...value, current: event.target.value }))} /></Field><Field><FieldLabel htmlFor="admin-next-password">新密码</FieldLabel><Input id="admin-next-password" type="password" autoComplete="new-password" value={adminPasswords.next} onChange={(event) => setAdminPasswords((value) => ({ ...value, next: event.target.value }))} /></Field><Field><FieldLabel htmlFor="admin-confirm-password">确认新密码</FieldLabel><Input id="admin-confirm-password" type="password" autoComplete="new-password" value={adminPasswords.confirm} onChange={(event) => setAdminPasswords((value) => ({ ...value, confirm: event.target.value }))} /></Field></FieldGroup>
-              <div><Button type="submit" size="sm" disabled={adminPasswordSaving}>{adminPasswordSaving && <Spinner data-icon="inline-start" />}修改管理员密码</Button></div>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="admin-current-password">
+                    当前密码
+                  </FieldLabel>
+                  <Input
+                    id="admin-current-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={adminPasswords.current}
+                    onChange={(event) =>
+                      setAdminPasswords((value) => ({
+                        ...value,
+                        current: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="admin-next-password">新密码</FieldLabel>
+                  <Input
+                    id="admin-next-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={adminPasswords.next}
+                    onChange={(event) =>
+                      setAdminPasswords((value) => ({
+                        ...value,
+                        next: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="admin-confirm-password">
+                    确认新密码
+                  </FieldLabel>
+                  <Input
+                    id="admin-confirm-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={adminPasswords.confirm}
+                    onChange={(event) =>
+                      setAdminPasswords((value) => ({
+                        ...value,
+                        confirm: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+              </FieldGroup>
+              <div>
+                <Button type="submit" size="sm" disabled={adminPasswordSaving}>
+                  {adminPasswordSaving && <Spinner data-icon="inline-start" />}
+                  修改管理员密码
+                </Button>
+              </div>
             </form>
           </div>
           <div className="grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 text-sm xl:col-span-2">
@@ -1152,7 +1271,8 @@ function SettingsSection({
                 <AlertTriangleIcon />
                 <AlertTitle>时区切换失败</AlertTitle>
                 <AlertDescription>
-                  {settings.timeZoneRebuildError || "后台重建失败，请重新保存后重试。"}
+                  {settings.timeZoneRebuildError ||
+                    "后台重建失败，请重新保存后重试。"}
                 </AlertDescription>
               </Alert>
             )}
@@ -1443,7 +1563,9 @@ function SettingsSection({
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="oidc-client-secret">Client Secret</FieldLabel>
+                <FieldLabel htmlFor="oidc-client-secret">
+                  Client Secret
+                </FieldLabel>
                 <Input
                   id="oidc-client-secret"
                   value={oidcForm.clientSecret}
@@ -1466,7 +1588,9 @@ function SettingsSection({
               </Field>
             </div>
             <Field>
-              <FieldLabel htmlFor="oidc-redirect-uris">LibreChat 回调地址</FieldLabel>
+              <FieldLabel htmlFor="oidc-redirect-uris">
+                LibreChat 回调地址
+              </FieldLabel>
               <Textarea
                 id="oidc-redirect-uris"
                 className="min-h-24 font-mono text-xs"
@@ -1506,7 +1630,9 @@ function SettingsSection({
                 {oidcSaving && <Spinner data-icon="inline-start" />}
                 保存 OIDC 配置
               </Button>
-              <Badge variant={settings.oidcConfigured ? "secondary" : "outline"}>
+              <Badge
+                variant={settings.oidcConfigured ? "secondary" : "outline"}
+              >
                 {settings.oidcConfigured ? "已配置" : "未完成"}
               </Badge>
             </Field>
@@ -1641,4 +1767,3 @@ function formatNumber(value: number) {
     maximumFractionDigits: 0,
   }).format(value);
 }
-

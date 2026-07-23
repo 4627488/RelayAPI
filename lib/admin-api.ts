@@ -5,6 +5,9 @@ import type {
   CreatedApiKey,
   PublicApiKey,
   CodexCredentialRecord,
+  GrokCredentialRecord,
+  ProviderCredentialRecord,
+  ProviderId,
   CredentialProxyType,
   GlobalSettingsRecord,
   JsonValue,
@@ -196,7 +199,7 @@ export type ProxyPoolPayload = {
 };
 
 export type ChannelPayload = {
-  provider?: "codex" | "grok";
+  provider?: ProviderId;
   name?: string;
   baseUrl?: string;
   credentialId?: string;
@@ -216,39 +219,13 @@ export type OAuthStartResponse = {
   authUrl: string;
 };
 
-export type CodexQuotaStatus =
-  | "unknown"
-  | "exhausted"
-  | "low"
-  | "medium"
-  | "high"
-  | "full"
-  | "not_cached";
-
-export type CodexQuotaWindow = {
-  id: string;
-  label: string;
-  used_percent: number | null;
-  remaining_percent: number | null;
-  reset_label: string;
-  exhausted: boolean;
-};
-
-export type CodexQuotaReport = {
-  provider: "codex";
-  credential_id: string;
-  account_id: string;
-  email: string;
-  plan_type: string;
-  status: CodexQuotaStatus;
-  windows: CodexQuotaWindow[];
-  additional_windows: CodexQuotaWindow[];
-  retrieved_at: string;
-  cached: boolean;
-  cache_state: "cached" | "fresh" | "missing";
-  message?: string;
-  raw?: unknown;
-};
+export type {
+  CodexQuotaReport,
+  CodexQuotaStatus,
+  CodexQuotaWindow,
+} from "@/src/shared/providerQuota";
+import type { CodexQuotaReport } from "@/src/shared/providerQuota";
+import type { GrokQuotaReport } from "@/src/shared/providerQuota";
 
 export type CodexResetCredit = {
   id: string;
@@ -402,7 +379,8 @@ export type TenantSubscriptionRecord = {
   allocatedPoolUnits?: number;
   startsAt: string; expiresAt: string | null; createdAt: string; updatedAt: string;
   quota?: Partial<Record<"5h" | "7d", {
-    limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string; resetsAt: string;
+    limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string;
+    startedAt: string; resetsAt: string; resetSource: "upstream" | "local";
   }>>;
   tenant?: { id: string; name: string; enabled: boolean; ownerEmail: string | null } | null;
   user?: { id: string; email: string; displayName: string } | null;
@@ -410,10 +388,12 @@ export type TenantSubscriptionRecord = {
 };
 
 export type SubscriptionCapacityPool = {
-  id: string; provider: "codex" | "grok"; email: string; accountId: string; planType: string; enabled: boolean;
+  id: string; provider: ProviderId; email: string; accountId: string; planType: string; enabled: boolean;
   expiresAt: string | null; cooldownUntil: string | null; lastError: string | null;
   capacityUnits: number; allocatedUnits: number;
   allocationCount: number; activeAllocationCount: number;
+  automaticQuotaSupported: boolean;
+  quotaResetStrategy: "codex-cache" | "rolling";
   quotaEstimates: Record<"5h" | "7d", { automaticNanoUsd: string | null; overrideNanoUsd: string | null; effectiveNanoUsd: string | null; confidence: number; sampleCount: number }>;
   subscriptions: TenantSubscriptionRecord[];
 };
@@ -442,14 +422,14 @@ export type ModelPricingSnapshot = {
 };
 
 export type QuotaAdministration = {
-  baselines: Record<"5h" | "7d", {
+  providers: Record<ProviderId, Record<"5h" | "7d", {
     automaticNanoUsd: string | null;
     overrideNanoUsd: string | null;
     effectiveNanoUsd: string | null;
     confidence: number;
     sampleCount: number;
     oversellRatio: number;
-  }>;
+  }>>;
   pricing: {
     aliases: Record<string, string>;
     overrides: Array<Record<string, string>>;
@@ -615,7 +595,29 @@ export function deleteChannel(id: string) {
 }
 
 export function listCredentials() {
-  return adminRequest<CodexCredentialRecord[]>("/api/admin/codex/credentials");
+  return listProviderCredentials("codex");
+}
+
+export function listProviderCredentials(provider: "codex"): Promise<CodexCredentialRecord[]>;
+export function listProviderCredentials(provider: "grok"): Promise<GrokCredentialRecord[]>;
+export function listProviderCredentials(provider: ProviderId) {
+  return adminRequest<ProviderCredentialRecord[]>(`/api/admin/providers/${provider}/credentials`);
+}
+
+export async function listAllProviderCredentials(): Promise<ProviderCredentialRecord[]> {
+  const [codex, grok] = await Promise.all([
+    listProviderCredentials("codex"),
+    listProviderCredentials("grok"),
+  ]);
+  return [...codex, ...grok];
+}
+
+export function updateProviderCredential(provider: ProviderId, id: string, payload: Record<string, unknown>) {
+  return adminRequest<ProviderCredentialRecord>(`/api/admin/providers/${provider}/credentials/${encodePath(id)}`, { method: "PATCH", body: payload });
+}
+
+export function deleteProviderCredential(provider: ProviderId, id: string) {
+  return adminRequest<AdminDeleteResponse>(`/api/admin/providers/${provider}/credentials/${encodePath(id)}`, { method: "DELETE" });
 }
 
 export function importCredentialJson(
@@ -646,16 +648,13 @@ export function updateCredentialRouting(
   },
 ) {
   return adminRequest<CodexCredentialRecord>(
-    `/api/admin/codex/credentials/${encodePath(id)}`,
+    `/api/admin/providers/codex/credentials/${encodePath(id)}`,
     { method: "PATCH", body: payload },
   );
 }
 
 export function deleteCredential(id: string) {
-  return adminRequest<AdminDeleteResponse>(
-    `/api/admin/codex/credentials/${encodePath(id)}`,
-    { method: "DELETE" },
-  );
+  return deleteProviderCredential("codex", id);
 }
 
 export function refreshCredential(id: string) {
@@ -676,16 +675,29 @@ export function getCredentialQuota(
   id: string,
   options: { refresh?: boolean; raw?: boolean } = {},
 ) {
+  return getProviderCredentialQuota("codex", id, options);
+}
+
+export function getProviderCredentialQuota(
+  provider: "grok",
+  id: string,
+): Promise<GrokQuotaReport>;
+export function getProviderCredentialQuota(
+  provider: "codex",
+  id: string,
+  options?: { refresh?: boolean; raw?: boolean },
+): Promise<CodexQuotaReport>;
+export function getProviderCredentialQuota(
+  provider: ProviderId,
+  id: string,
+  options: { refresh?: boolean; raw?: boolean } = {},
+) {
   const params = new URLSearchParams();
-  if (options.refresh) {
-    params.set("refresh", "1");
-  }
-  if (options.raw) {
-    params.set("raw", "1");
-  }
+  if (options.refresh) params.set("refresh", "1");
+  if (options.raw) params.set("raw", "1");
   const suffix = params.size ? `?${params.toString()}` : "";
-  return adminRequest<CodexQuotaReport>(
-    `/api/admin/codex/credentials/${encodePath(id)}/quota${suffix}`,
+  return adminRequest<CodexQuotaReport | GrokQuotaReport>(
+    `/api/admin/providers/${provider}/credentials/${encodePath(id)}/quota${suffix}`,
   );
 }
 

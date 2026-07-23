@@ -166,7 +166,7 @@ export function OverviewSection({
         <div className="grid gap-4 border-t p-3">
           <MetricStrip className="md:grid-cols-3 xl:grid-cols-3">
             <MetricStripItem label="租户" value={formatNumber(tenantCount)} detail={`${formatNumber(apiKeyCount)} Key`} />
-            <MetricStripItem label="Codex 凭据" value={formatNumber(credentialCount)} detail="已授权" />
+            <MetricStripItem label="上游凭据" value={formatNumber(credentialCount)} detail="Codex 与 Grok" />
             <MetricStripItem label="路由池" value={formatNumber(channelCount)} detail={`${formatNumber(enabledChannelCount)} 启用`} />
           </MetricStrip>
           <div className="grid gap-4 xl:grid-cols-3">

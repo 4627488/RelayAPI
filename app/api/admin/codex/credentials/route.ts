@@ -1,5 +1,5 @@
 import { errorToResponse } from "@/src/server/http/errors";
-import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
+import { listPublicProviderCredentials } from "@/src/server/services/providerCredentials";
 import { requireWebRequest } from "@/src/server/services/webAccess";
 
 export const runtime = "nodejs";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     requireWebRequest(request);
-    return Response.json(await listPublicCodexCredentials());
+    return Response.json(await listPublicProviderCredentials("codex"));
   } catch (error) {
     return errorToResponse(error);
   }

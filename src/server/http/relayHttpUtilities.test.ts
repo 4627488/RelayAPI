@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  copyUpstreamResponseHeaders,
   withDefaultContentType,
   withStreamingHeaders,
 } from "@/src/server/http/relayHttpUtilities";
@@ -21,5 +22,27 @@ describe("relay response headers", () => {
     expect(headers.get("cache-control")).toBe("no-cache, no-transform");
     expect(headers.get("connection")).toBe("keep-alive");
     expect(headers.get("x-accel-buffering")).toBe("no");
+  });
+
+  test("removes sensitive and transport-specific upstream headers", () => {
+    const headers = copyUpstreamResponseHeaders(
+      new Headers({
+        Authorization: "Bearer secret",
+        "Set-Cookie": "session=secret",
+        Connection: "keep-alive",
+        "Content-Encoding": "gzip",
+        "Content-Length": "123",
+        "Retry-After": "42",
+        "X-Request-Id": "request-1",
+      }),
+    );
+
+    expect(headers.get("authorization")).toBeNull();
+    expect(headers.get("set-cookie")).toBeNull();
+    expect(headers.get("connection")).toBeNull();
+    expect(headers.get("content-encoding")).toBeNull();
+    expect(headers.get("content-length")).toBeNull();
+    expect(headers.get("retry-after")).toBe("42");
+    expect(headers.get("x-request-id")).toBe("request-1");
   });
 });

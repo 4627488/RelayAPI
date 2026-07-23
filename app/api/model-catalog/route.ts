@@ -1,12 +1,10 @@
-import {
-  createCodexModelsManifest,
-  listCodexUpstreamModelIds,
-  listGrokCatalogModelIds,
-  listUpstreamModelIds,
-} from "@/src/server/codex/models";
-import { errorToResponse } from "@/src/server/http/errors";
+import { createCodexModelsManifest } from "@/src/server/codex/models";
+import { errorToResponse, HttpError } from "@/src/server/http/errors";
 import { getTenantResources, requireTenantRequest } from "@/src/server/services/tenants";
 import { requireWebRequest } from "@/src/server/services/webAccess";
+import { listProviderModelIds } from "@/src/server/services/providerModels";
+import { providerIds } from "@/src/shared/providerCapabilities";
+import type { ProviderId } from "@/src/shared/types/entities";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +20,7 @@ export async function GET(request: Request) {
     if (searchParams.get("format") === "codex") {
       return Response.json(await createCodexModelsManifest({ modelAllowlist }));
     }
-    const provider = searchParams.get("provider");
+    const provider = requestedProvider(searchParams.get("provider"));
     if (resources) {
       const data = provider
         ? [...new Set(resources.channels
@@ -31,15 +29,17 @@ export async function GET(request: Request) {
         : resources.models;
       return Response.json({ object: "list", provider: provider || "all", data });
     }
-    const data = provider === "grok"
-      ? await listGrokCatalogModelIds()
-      : provider === "codex"
-        ? await listCodexUpstreamModelIds()
-        : await listUpstreamModelIds();
+    const data = await listProviderModelIds(provider);
     return Response.json({ object: "list", provider: provider || "all", data });
   } catch (error) {
     return errorToResponse(error);
   }
+}
+
+function requestedProvider(value: string | null): ProviderId | undefined {
+  if (value === null || value === "") return undefined;
+  if (providerIds.includes(value as ProviderId)) return value as ProviderId;
+  throw new HttpError(400, "invalid_provider", `Unknown provider: ${value}`);
 }
 
 function requireAuthorizedSession(request: Request) {

@@ -126,6 +126,7 @@ export type TenantQuotaReport = {
     enabled: boolean; startsAt: string; expiresAt: string | null;
     windows: Partial<Record<"5h" | "7d", {
       kind: "5h" | "7d"; startedAt: string; resetsAt: string;
+      resetSource: "upstream" | "local";
       limitNanoUsd: string; settledNanoUsd: string; reservedNanoUsd: string;
     }>>;
   }>;

@@ -1,28 +1,334 @@
 import "server-only";
 
 import { HttpError } from "@/src/server/http/errors";
-import { deleteGrokCredential, getGrokCredentialWithTokens, listGrokCredentials, saveGrokCredential, updateGrokCredential } from "@/src/server/repositories/grokCredentials";
-import { grokJwtIdentity, pollGrokDeviceFlow, refreshGrokTokens, startGrokDeviceFlow, type GrokDeviceSession } from "@/src/server/grok/auth";
+import {
+  deleteGrokCredential,
+  getGrokCredentialWithTokens,
+  listGrokCredentials,
+  saveGrokCredential,
+  updateGrokCredential,
+} from "@/src/server/repositories/grokCredentials";
+import {
+  grokJwtIdentity,
+  pollGrokDeviceFlow,
+  refreshGrokTokens,
+  startGrokDeviceFlow,
+  type GrokDeviceSession,
+} from "@/src/server/grok/auth";
 import { randomId } from "@/src/server/services/crypto";
 import { credentialUsageHealth } from "@/src/server/repositories/logs";
 
 const sessions = new Map<string, GrokDeviceSession>();
-const refreshes = new Map<string, Promise<ReturnType<typeof saveGrokCredential>>>();
+const refreshes = new Map<
+  string,
+  Promise<ReturnType<typeof saveGrokCredential>>
+>();
 
-export function listPublicGrokCredentials() { const credentials = listGrokCredentials(); const health = credentialUsageHealth(credentials.map((item) => item.id)); return credentials.map((item) => ({ ...item, usageHealth: health[item.id] })); }
-export async function startGrokOAuth() { const session = await startGrokDeviceFlow(randomId("grok_oauth")); sessions.set(session.id, session); return { sessionId: session.id, userCode: session.userCode, verificationUri: session.verificationUri, verificationUriComplete: session.verificationUriComplete, expiresAt: new Date(session.expiresAt).toISOString(), interval: session.interval }; }
-export async function finishGrokOAuth(sessionId: string) { const session = sessions.get(sessionId); if (!session) throw new HttpError(404, "grok_oauth_session_not_found", "Grok OAuth session was not found"); const tokens = await pollGrokDeviceFlow(session); if (!tokens) return null; sessions.delete(sessionId); const identity = grokJwtIdentity(tokens.id_token); return saveGrokCredential({ id: randomId("grok"), authType: "oauth", email: identity.email, subject: identity.subject, planType: tokens.plan_type, tokens }); }
-export function importGrokApiKey(apiKey: string, name = "") { const key = apiKey.trim(); if (!key) throw new HttpError(400, "grok_api_key_required", "Grok API key is required"); return saveGrokCredential({ id: randomId("grok"), authType: "api_key", email: name.trim(), tokens: { access_token: "", refresh_token: "", id_token: "", token_type: "Bearer", expired: "", token_endpoint: "", api_key: key }, planType: "api-key" }); }
-export async function ensureFreshGrokCredential(id: string) { const credential = getGrokCredentialWithTokens(id); if (!credential) throw new HttpError(404, "grok_credential_not_found", "Grok credential not found"); if (credential.authType === "api_key" || !needsRefresh(credential.expiresAt)) return credential; const existing = refreshes.get(id); if (existing) return await existing; const task = refreshCredential(credential).finally(() => refreshes.delete(id)); refreshes.set(id, task); return await task; }
-export async function forceRefreshGrokCredential(id: string) { const credential = getGrokCredentialWithTokens(id); if (!credential) throw new HttpError(404, "grok_credential_not_found", "Grok credential not found"); return await refreshCredential(credential); }
-export function patchGrokCredential(id: string, input: Record<string, unknown>) { const updated = updateGrokCredential(id, { ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}), ...(input.priority !== undefined ? { priority: integer(input.priority, 100) } : {}), ...(input.weight !== undefined ? { weight: integer(input.weight, 1) } : {}), ...(input.upstreamTransport !== undefined ? { upstreamTransport: transport(input.upstreamTransport) } : {}), ...(input.grokBaseUrl !== undefined ? { grokBaseUrl: baseUrl(input.grokBaseUrl) } : {}), ...(input.grokNativeXSearch !== undefined ? { grokNativeXSearch: Boolean(input.grokNativeXSearch) } : {}), ...(input.grokClientToolCache !== undefined ? { grokClientToolCache: Boolean(input.grokClientToolCache) } : {}), ...(input.grokHeaders !== undefined ? { grokHeaders: headers(input.grokHeaders) } : {}), ...(input.grokModelAliases !== undefined ? { grokModelAliases: modelAliases(input.grokModelAliases) } : {}), ...(input.grokExcludedModels !== undefined ? { grokExcludedModels: modelPatterns(input.grokExcludedModels) } : {}) }); if (!updated) throw new HttpError(404, "grok_credential_not_found", "Grok credential not found"); return updated; }
-export function removeGrokCredential(id: string) { if (!deleteGrokCredential(id)) throw new HttpError(404, "grok_credential_not_found", "Grok credential not found"); }
-async function refreshCredential(credential: NonNullable<ReturnType<typeof getGrokCredentialWithTokens>>) { if (!credential.tokens.refresh_token) throw new HttpError(401, "grok_refresh_token_missing", "Grok credential has no refresh token"); const fresh = await refreshGrokTokens(credential.tokens.refresh_token, credential.tokens.token_endpoint); return saveGrokCredential({ id: credential.id, authType: "oauth", email: credential.email, subject: credential.subject, planType: fresh.plan_type || credential.planType, tokens: { ...fresh, refresh_token: fresh.refresh_token || credential.tokens.refresh_token } }); }
-function needsRefresh(value: string | null) { return !value || Date.parse(value) <= Date.now() + 5 * 60_000; }
-function integer(value: unknown, fallback: number) { const n = Number(value); return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : fallback; }
-function transport(value: unknown) { if (value === "auto" || value === "http" || value === "websocket") return value; throw new HttpError(400, "invalid_grok_transport", "Grok upstream transport must be auto, http, or websocket"); }
-function baseUrl(value: unknown) { const text = typeof value === "string" ? value.trim().replace(/\/+$/, "") : ""; if (!text) return null; let url: URL; try { url = new URL(text); } catch { throw new HttpError(400, "invalid_grok_base_url", "Grok upstream URL must be an absolute HTTP URL"); } if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new HttpError(400, "invalid_grok_base_url", "Grok upstream URL must use HTTP(S) without credentials, query, or fragment"); return text; }
-function headers(value: unknown) { if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "invalid_grok_headers", "Grok headers must be an object"); const blocked = new Set(["authorization", "content-type", "accept", "host", "content-length", "x-xai-token-auth"]); const entries = Object.entries(value); if (entries.length > 32) throw new HttpError(400, "invalid_grok_headers", "At most 32 Grok headers are allowed"); return Object.fromEntries(entries.map(([name, raw]) => { const key = name.trim(); const item = typeof raw === "string" ? raw.trim() : ""; if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || blocked.has(key.toLowerCase()) || !item || item.length > 2048 || /[\r\n]/.test(item)) throw new HttpError(400, "invalid_grok_headers", `Invalid or protected Grok header: ${key}`); return [key, item]; })); }
-function modelAliases(value: unknown) { if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "invalid_grok_model_aliases", "Grok model aliases must be an object"); const entries = Object.entries(value); if (entries.length > 64) throw new HttpError(400, "invalid_grok_model_aliases", "At most 64 Grok model aliases are allowed"); return Object.fromEntries(entries.map(([alias, raw]) => { const target = typeof raw === "string" ? raw.trim() : ""; const name = alias.trim(); if (!modelName(name) || !modelName(target)) throw new HttpError(400, "invalid_grok_model_aliases", "Grok model aliases contain an invalid model name"); return [name, target]; })); }
-function modelPatterns(value: unknown) { const items = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[\r\n,]+/) : []; const patterns = [...new Set(items.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean))]; if (patterns.length > 128 || patterns.some((item) => item.length > 128 || !/^[A-Za-z0-9._*:/-]+$/.test(item))) throw new HttpError(400, "invalid_grok_excluded_models", "Grok excluded model patterns are invalid"); return patterns; }
-function modelName(value: string) { return Boolean(value) && value.length <= 128 && /^[A-Za-z0-9._:/-]+$/.test(value); }
+export function listPublicGrokCredentials() {
+  const credentials = listGrokCredentials();
+  const health = credentialUsageHealth(credentials.map((item) => item.id));
+  return credentials.map((item) => ({ ...item, usageHealth: health[item.id] }));
+}
+export async function startGrokOAuth() {
+  const session = await startGrokDeviceFlow(randomId("grok_oauth"));
+  sessions.set(session.id, session);
+  return {
+    sessionId: session.id,
+    userCode: session.userCode,
+    verificationUri: session.verificationUri,
+    verificationUriComplete: session.verificationUriComplete,
+    expiresAt: new Date(session.expiresAt).toISOString(),
+    interval: session.interval,
+  };
+}
+export async function finishGrokOAuth(sessionId: string) {
+  const session = sessions.get(sessionId);
+  if (!session)
+    throw new HttpError(
+      404,
+      "grok_oauth_session_not_found",
+      "Grok OAuth session was not found",
+    );
+  const tokens = await pollGrokDeviceFlow(session);
+  if (!tokens) return null;
+  sessions.delete(sessionId);
+  const identity = grokJwtIdentity(tokens.id_token);
+  return saveGrokCredential({
+    id: randomId("grok"),
+    authType: "oauth",
+    email: identity.email,
+    subject: identity.subject,
+    planType: tokens.plan_type,
+    tokens,
+  });
+}
+export function importGrokApiKey(apiKey: string, name = "") {
+  const key = apiKey.trim();
+  if (!key)
+    throw new HttpError(
+      400,
+      "grok_api_key_required",
+      "Grok API key is required",
+    );
+  return saveGrokCredential({
+    id: randomId("grok"),
+    authType: "api_key",
+    email: name.trim(),
+    tokens: {
+      access_token: "",
+      refresh_token: "",
+      id_token: "",
+      token_type: "Bearer",
+      expired: "",
+      token_endpoint: "",
+      api_key: key,
+    },
+    planType: "api-key",
+  });
+}
+export async function ensureFreshGrokCredential(id: string) {
+  const credential = getGrokCredentialWithTokens(id);
+  if (!credential)
+    throw new HttpError(
+      404,
+      "grok_credential_not_found",
+      "Grok credential not found",
+    );
+  if (credential.authType === "api_key" || !needsRefresh(credential.expiresAt))
+    return credential;
+  const existing = refreshes.get(id);
+  if (existing) return await existing;
+  const task = refreshCredential(credential).finally(() =>
+    refreshes.delete(id),
+  );
+  refreshes.set(id, task);
+  return await task;
+}
+export async function forceRefreshGrokCredential(id: string) {
+  const credential = getGrokCredentialWithTokens(id);
+  if (!credential)
+    throw new HttpError(
+      404,
+      "grok_credential_not_found",
+      "Grok credential not found",
+    );
+  return await refreshCredential(credential);
+}
+export function patchGrokCredential(
+  id: string,
+  input: Record<string, unknown>,
+) {
+  const updated = updateGrokCredential(id, {
+    ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
+    ...(input.priority !== undefined
+      ? { priority: integer(input.priority, 100) }
+      : {}),
+    ...(input.weight !== undefined ? { weight: integer(input.weight, 1) } : {}),
+    ...(input.upstreamTransport !== undefined
+      ? { upstreamTransport: transport(input.upstreamTransport) }
+      : {}),
+    ...(input.grokBaseUrl !== undefined
+      ? { grokBaseUrl: baseUrl(input.grokBaseUrl) }
+      : {}),
+    ...(input.grokNativeXSearch !== undefined
+      ? { grokNativeXSearch: Boolean(input.grokNativeXSearch) }
+      : {}),
+    ...(input.grokClientToolCache !== undefined
+      ? { grokClientToolCache: Boolean(input.grokClientToolCache) }
+      : {}),
+    ...(input.grokHeaders !== undefined
+      ? { grokHeaders: headers(input.grokHeaders) }
+      : {}),
+    ...(input.grokModelAliases !== undefined
+      ? { grokModelAliases: modelAliases(input.grokModelAliases) }
+      : {}),
+    ...(input.grokExcludedModels !== undefined
+      ? { grokExcludedModels: modelPatterns(input.grokExcludedModels) }
+      : {}),
+  });
+  if (!updated)
+    throw new HttpError(
+      404,
+      "grok_credential_not_found",
+      "Grok credential not found",
+    );
+  return updated;
+}
+export function removeGrokCredential(id: string) {
+  if (!deleteGrokCredential(id))
+    throw new HttpError(
+      404,
+      "grok_credential_not_found",
+      "Grok credential not found",
+    );
+}
+async function refreshCredential(
+  credential: NonNullable<ReturnType<typeof getGrokCredentialWithTokens>>,
+) {
+  if (!credential.tokens.refresh_token)
+    throw new HttpError(
+      401,
+      "grok_refresh_token_missing",
+      "Grok credential has no refresh token",
+    );
+  const fresh = await refreshGrokTokens(
+    credential.tokens.refresh_token,
+    credential.tokens.token_endpoint,
+  );
+  return saveGrokCredential({
+    id: credential.id,
+    authType: "oauth",
+    email: credential.email,
+    subject: credential.subject,
+    planType: fresh.plan_type || credential.planType,
+    tokens: {
+      ...fresh,
+      refresh_token: fresh.refresh_token || credential.tokens.refresh_token,
+    },
+  });
+}
+function needsRefresh(value: string | null) {
+  return !value || Date.parse(value) <= Date.now() + 5 * 60_000;
+}
+function integer(value: unknown, fallback: number) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(1, Math.floor(n)) : fallback;
+}
+function transport(value: unknown) {
+  if (value === "auto" || value === "http" || value === "websocket")
+    return value;
+  throw new HttpError(
+    400,
+    "invalid_grok_transport",
+    "Grok upstream transport must be auto, http, or websocket",
+  );
+}
+function baseUrl(value: unknown) {
+  const text =
+    typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
+  if (!text) return null;
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new HttpError(
+      400,
+      "invalid_grok_base_url",
+      "Grok upstream URL must be an absolute HTTP URL",
+    );
+  }
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    throw new HttpError(
+      400,
+      "invalid_grok_base_url",
+      "Grok upstream URL must use HTTP(S) without credentials, query, or fragment",
+    );
+  return text;
+}
+function headers(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new HttpError(
+      400,
+      "invalid_grok_headers",
+      "Grok headers must be an object",
+    );
+  const blocked = new Set([
+    "authorization",
+    "content-type",
+    "accept",
+    "host",
+    "content-length",
+    "x-xai-token-auth",
+  ]);
+  const entries = Object.entries(value);
+  if (entries.length > 32)
+    throw new HttpError(
+      400,
+      "invalid_grok_headers",
+      "At most 32 Grok headers are allowed",
+    );
+  return Object.fromEntries(
+    entries.map(([name, raw]) => {
+      const key = name.trim();
+      const item = typeof raw === "string" ? raw.trim() : "";
+      if (
+        !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) ||
+        blocked.has(key.toLowerCase()) ||
+        !item ||
+        item.length > 2048 ||
+        /[\r\n]/.test(item)
+      )
+        throw new HttpError(
+          400,
+          "invalid_grok_headers",
+          `Invalid or protected Grok header: ${key}`,
+        );
+      return [key, item];
+    }),
+  );
+}
+function modelAliases(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new HttpError(
+      400,
+      "invalid_grok_model_aliases",
+      "Grok model aliases must be an object",
+    );
+  const entries = Object.entries(value);
+  if (entries.length > 64)
+    throw new HttpError(
+      400,
+      "invalid_grok_model_aliases",
+      "At most 64 Grok model aliases are allowed",
+    );
+  return Object.fromEntries(
+    entries.map(([alias, raw]) => {
+      const target = typeof raw === "string" ? raw.trim() : "";
+      const name = alias.trim();
+      if (!modelName(name) || !modelName(target))
+        throw new HttpError(
+          400,
+          "invalid_grok_model_aliases",
+          "Grok model aliases contain an invalid model name",
+        );
+      return [name, target];
+    }),
+  );
+}
+function modelPatterns(value: unknown) {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[\r\n,]+/)
+      : [];
+  const patterns = [
+    ...new Set(
+      items
+        .map((item) => (typeof item === "string" ? item.trim() : ""))
+        .filter(Boolean),
+    ),
+  ];
+  if (
+    patterns.length > 128 ||
+    patterns.some(
+      (item) => item.length > 128 || !/^[A-Za-z0-9._*:/-]+$/.test(item),
+    )
+  )
+    throw new HttpError(
+      400,
+      "invalid_grok_excluded_models",
+      "Grok excluded model patterns are invalid",
+    );
+  return patterns;
+}
+function modelName(value: string) {
+  return (
+    Boolean(value) && value.length <= 128 && /^[A-Za-z0-9._:/-]+$/.test(value)
+  );
+}

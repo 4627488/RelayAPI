@@ -51,6 +51,7 @@ import type {
   PublicTenant,
   TenantResources,
 } from "@/src/shared/types/entities";
+import { providerLabel as sharedProviderLabel } from "@/src/shared/providerCapabilities";
 
 type SetupClient = "codex" | "opencode" | "openai";
 
@@ -373,9 +374,7 @@ function providersForModel(resources: TenantResources, model: string) {
 }
 
 function providerLabel(provider: string) {
-  if (provider === "grok") return "Grok";
-  if (provider === "codex") return "Codex";
-  return provider;
+  return provider === "codex" || provider === "grok" ? sharedProviderLabel(provider) : provider;
 }
 
 function codexConfigPath(platform: CodexPlatform) {

@@ -15,7 +15,6 @@ import {
   upsertCodexCredential,
 } from "@/src/server/repositories/codexCredentials";
 import { credentialUsageHealth } from "@/src/server/repositories/logs";
-import { detachCredentialFromChannels } from "@/src/server/repositories/channels";
 import { getProxyPoolItemById } from "@/src/server/repositories/proxyPool";
 import {
   saveOAuthPendingState,
@@ -24,10 +23,9 @@ import {
 import { randomId, sha256 } from "@/src/server/services/crypto";
 import {
   getEffectiveCodexUserAgent,
-  getGlobalProxySetting,
   normalizeCodexUserAgentInput,
 } from "@/src/server/services/settings";
-import { getProxyPoolCredentialProxy } from "@/src/server/services/proxyPool";
+import { resolveProviderCredentialProxy } from "@/src/server/services/providerProxy";
 import type {
   CodexCredentialRecord,
   CodexCredentialWithTokens,
@@ -300,27 +298,7 @@ export function patchCodexCredentialRouting(
   return publicCredential(updated);
 }
 
-export function resolveCredentialProxy(input: {
-  proxy: CredentialProxyConfig | null;
-  proxyPoolId: string | null;
-  useGlobalProxy: boolean;
-  tenantProxy?: CredentialProxyConfig | null;
-}) {
-  if (input.proxy?.enabled) {
-    return input.proxy;
-  }
-  const pooledProxy = getProxyPoolCredentialProxy(input.proxyPoolId);
-  if (pooledProxy?.enabled) {
-    return pooledProxy;
-  }
-  if (input.tenantProxy?.enabled) {
-    return input.tenantProxy;
-  }
-  return input.useGlobalProxy ? getGlobalProxySetting() : null;
-}
-
 export async function removeCodexCredential(id: string) {
-  detachCredentialFromChannels(id);
   if (!deleteCodexCredential(id)) {
     throw new HttpError(
       404,
@@ -604,7 +582,7 @@ async function tokenRequest(
       body,
       signal: AbortSignal.timeout(serverConfig.requestTimeoutMs),
     },
-    resolveCredentialProxy({
+    resolveProviderCredentialProxy({
       proxy,
       proxyPoolId,
       useGlobalProxy: useGlobalProxyFallback,

@@ -29,11 +29,19 @@ let remoteCatalogCache: {
   source: "",
   expiresAt: 0,
 };
+let remoteCatalogRefreshInFlight: Promise<{
+  data: Catalog;
+  source: string;
+  expiresAt: number;
+}> | null = null;
 
 let codexClientCatalogCache: {
   models: Record<string, unknown>[] | null;
   expiresAt: number;
 } = { models: null, expiresAt: 0 };
+let codexClientCatalogRefreshInFlight: Promise<
+  Record<string, unknown>[]
+> | null = null;
 
 const FALLBACK_MODEL_BY_ID = new Map(
   [
@@ -231,6 +239,16 @@ async function getModelsCatalog() {
       expiresAt: number;
     };
   }
+  if (remoteCatalogRefreshInFlight) {
+    return remoteCatalogRefreshInFlight;
+  }
+  remoteCatalogRefreshInFlight = refreshModelsCatalog(now).finally(() => {
+    remoteCatalogRefreshInFlight = null;
+  });
+  return remoteCatalogRefreshInFlight;
+}
+
+async function refreshModelsCatalog(now: number) {
   const remote = await fetchRemoteModelsCatalog();
   if (remote) {
     remoteCatalogCache = {
@@ -332,6 +350,15 @@ function fallbackModelById(id: string): ModelEntry {
 async function getCodexClientModelsCatalog() {
   const now = Date.now();
   if (codexClientCatalogCache.models && now < codexClientCatalogCache.expiresAt) return structuredClone(codexClientCatalogCache.models);
+  if (codexClientCatalogRefreshInFlight)
+    return structuredClone(await codexClientCatalogRefreshInFlight);
+  codexClientCatalogRefreshInFlight = refreshCodexClientModelsCatalog(now).finally(() => {
+    codexClientCatalogRefreshInFlight = null;
+  });
+  return structuredClone(await codexClientCatalogRefreshInFlight);
+}
+
+async function refreshCodexClientModelsCatalog(now: number) {
   for (const url of REMOTE_CODEX_CLIENT_MODEL_URLS) {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(REMOTE_CATALOG_TIMEOUT_MS) });
@@ -339,12 +366,12 @@ async function getCodexClientModelsCatalog() {
       const payload = await response.json();
       const models = validateCodexClientModelsCatalog(payload);
       codexClientCatalogCache = { models, expiresAt: now + REMOTE_CATALOG_CACHE_MS };
-      return structuredClone(models);
+      return models;
     } catch {
       // Try the mirrored CPA catalog, then retain the last validated snapshot.
     }
   }
-  if (codexClientCatalogCache.models) return structuredClone(codexClientCatalogCache.models);
+  if (codexClientCatalogCache.models) return codexClientCatalogCache.models;
   throw new HttpError(502, "codex_model_metadata_unavailable", "Codex client model metadata catalog is unavailable");
 }
 

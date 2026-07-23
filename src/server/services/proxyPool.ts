@@ -11,7 +11,7 @@ import {
   updateProxyPoolItem,
   type SaveProxyPoolItemInput,
 } from "@/src/server/repositories/proxyPool";
-import { listCodexCredentials } from "@/src/server/repositories/codexCredentials";
+import { listProviderCredentials } from "@/src/server/repositories/providerCredentials";
 import type {
   CredentialProxyConfig,
   CredentialProxyType,
@@ -56,7 +56,7 @@ export function patchPublicProxyPoolItem(id: string, input: unknown) {
 }
 
 export function removePublicProxyPoolItem(id: string) {
-  const referencingCredentials = listCodexCredentials().filter(
+  const referencingCredentials = listProviderCredentials().filter(
     (credential) => credential.proxyPoolId === id,
   );
   if (referencingCredentials.length > 0) {

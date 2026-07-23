@@ -16,6 +16,9 @@ export function codexPlanShares(planType: string) {
 }
 
 export function codexPlanLabel(planType: string) {
+  const normalized = String(planType || "").trim().toLowerCase();
+  if (normalized === "free") return "Free";
+  if (normalized === "team") return "Team";
   const kind = codexPlanKind(planType);
   if (kind === "plus") return "Plus";
   if (kind === "pro_5x") return "Pro 5x";

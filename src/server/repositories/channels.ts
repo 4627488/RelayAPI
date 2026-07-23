@@ -167,6 +167,8 @@ export function detachCredentialFromChannels(credentialId: string) {
     );
     if (remainingCredentialIds.length > 0) {
       updateChannel(channel.id, { credentialIds: remainingCredentialIds });
+    } else {
+      deleteChannel(channel.id);
     }
   }
 }
@@ -251,10 +253,7 @@ function toChannelRecord(
     provider: row.provider === "grok" ? "grok" : "codex",
     baseUrl: row.baseUrl,
     credentialId: credentialIds[0] || "",
-    credentialIds:
-      credentialIds.length > 0
-        ? credentialIds
-        : [],
+    credentialIds: credentialIds.length > 0 ? credentialIds : [],
     enabled: row.enabled === 1,
     priority: row.priority,
     weight: row.weight,

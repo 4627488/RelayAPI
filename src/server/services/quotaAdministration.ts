@@ -20,6 +20,7 @@ import {
   setQuotaBaselineOverride,
   setQuotaOversellRatio,
 } from "@/src/server/services/quotaCalibration";
+import { providerIds } from "@/src/shared/providerCapabilities";
 
 const PRICING_CONFIG_KEY = "model_pricing_config_v1";
 const LITELLM_URL =
@@ -88,26 +89,21 @@ export function attachConfiguredModelPrices<T extends {
 
 export function getQuotaAdministration() {
   const config = readPricingConfig();
-  const baselines = getEffectiveQuotaBaselines();
-  const oversellRatios = getQuotaOversellRatios();
   return {
-    baselines: Object.fromEntries(
-      (["5h", "7d"] as const).map((kind) => [kind, {
-        automaticNanoUsd: stringOrNull(baselines[kind].automaticNanoUsd),
-        overrideNanoUsd: stringOrNull(baselines[kind].overrideNanoUsd),
-        effectiveNanoUsd: stringOrNull(baselines[kind].effectiveNanoUsd),
-        confidence: baselines[kind].confidence,
-        sampleCount: baselines[kind].sampleCount,
-        oversellRatio: oversellRatios[kind],
-      }]),
-    ) as Record<"5h" | "7d", {
-      automaticNanoUsd: string | null;
-      overrideNanoUsd: string | null;
-      effectiveNanoUsd: string | null;
-      confidence: number;
-      sampleCount: number;
-      oversellRatio: number;
-    }>,
+    providers: Object.fromEntries(providerIds.map((provider) => {
+      const baselines = getEffectiveQuotaBaselines(provider);
+      const oversellRatios = getQuotaOversellRatios(provider);
+      return [provider, Object.fromEntries(
+        (["5h", "7d"] as const).map((kind) => [kind, {
+          automaticNanoUsd: stringOrNull(baselines[kind].automaticNanoUsd),
+          overrideNanoUsd: stringOrNull(baselines[kind].overrideNanoUsd),
+          effectiveNanoUsd: stringOrNull(baselines[kind].effectiveNanoUsd),
+          confidence: baselines[kind].confidence,
+          sampleCount: baselines[kind].sampleCount,
+          oversellRatio: oversellRatios[kind],
+        }]),
+      )];
+    })),
     pricing: {
       aliases: config.aliases,
       overrides: config.overrides,
@@ -124,18 +120,31 @@ export function getQuotaAdministration() {
 export function patchQuotaAdministration(input: unknown) {
   const body = objectValue(input);
   const config = readPricingConfig();
-  const baselines = objectValue(body.baselines);
-  if (baselines) {
+  const providers = objectValue(body.providers);
+  for (const provider of providerIds) {
+    const providerSettings = objectValue(providers[provider]);
     for (const kind of ["5h", "7d"] as const) {
-      if (Object.hasOwn(baselines, kind)) {
-        setQuotaBaselineOverride(kind, nullablePositiveBigInt(baselines[kind], `${kind} baseline`));
+      const window = objectValue(providerSettings[kind]);
+      if (Object.hasOwn(window, "overrideNanoUsd")) {
+        setQuotaBaselineOverride(
+          provider,
+          kind,
+          nullablePositiveBigInt(
+            window.overrideNanoUsd,
+            `${provider} ${kind} baseline`,
+          ),
+        );
       }
-    }
-  }
-  const oversellRatios = objectValue(body.oversellRatios);
-  for (const kind of ["5h", "7d"] as const) {
-    if (Object.hasOwn(oversellRatios, kind)) {
-      setQuotaOversellRatio(kind, positiveDecimal(oversellRatios[kind], `${kind} oversell ratio`));
+      if (Object.hasOwn(window, "oversellRatio")) {
+        setQuotaOversellRatio(
+          provider,
+          kind,
+          positiveDecimal(
+            window.oversellRatio,
+            `${provider} ${kind} oversell ratio`,
+          ),
+        );
+      }
     }
   }
   if (Object.hasOwn(body, "aliases")) {

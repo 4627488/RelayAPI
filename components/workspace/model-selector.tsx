@@ -6,6 +6,7 @@ import { CheckCircle2Icon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { ProviderId } from "@/src/shared/types/entities";
 
 export function ModelSelector({
   catalogProvider,
@@ -13,7 +14,7 @@ export function ModelSelector({
   onSelectedModelsChange,
   selectedModels,
 }: {
-  catalogProvider?: "codex" | "grok";
+  catalogProvider?: ProviderId;
   models?: string[];
   onSelectedModelsChange: (models: string[]) => void;
   selectedModels: string[];

@@ -21,7 +21,8 @@ describe("quota usage repository", () => {
 
   test("counts daily tokens independently for API keys and tenants", async () => {
     logs.appendRequestLog({
-      startedAt: "2026-07-18T01:00:00.000Z",
+      startedAt: "2026-07-18T12:00:00.000Z",
+      completedAt: "2026-07-18T12:00:00.010Z",
       method: "POST",
       path: "/v1/responses",
       requestType: "responses",
@@ -49,13 +50,13 @@ describe("quota usage repository", () => {
     expect(
       quotaUsage.getApiKeyRequestCountSince(
         "key-a",
-        new Date("2026-07-18T00:59:00.000Z"),
+        new Date("2026-07-18T11:59:00.000Z"),
       ),
     ).toBe(1);
     expect(
       quotaUsage.getTenantRequestCountSince(
         "tenant-a",
-        new Date("2026-07-18T01:01:00.000Z"),
+        new Date("2026-07-18T12:01:00.000Z"),
       ),
     ).toBe(0);
   });

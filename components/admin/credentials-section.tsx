@@ -59,7 +59,6 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -82,10 +81,16 @@ import {
   type OAuthStartResponse,
 } from "@/lib/admin-api";
 import { QuotaResetHistorySheet } from "@/components/quota-reset-history-sheet";
+import { ProviderCredentialCard } from "@/components/admin/provider-credential-card";
+import { ProviderQuotaWindows } from "@/components/admin/provider-quota-windows";
+import { ProviderCredentialRoutingFields } from "@/components/admin/provider-credential-routing-fields";
+import { codexQuotaWindowViews } from "@/src/shared/providerQuota";
+import { providerPlanLabel } from "@/src/shared/providerCapabilities";
 import type {
   ChannelRecord,
   CodexCredentialRecord,
   CodexUpstreamTransport,
+  ProviderId,
   CredentialProxyType,
   GlobalSettingsRecord,
   ProxyPoolRecord,
@@ -508,107 +513,30 @@ export function CredentialsSection({
               {sortedCredentials.map((credential) => {
                 const quota = quotas[credential.id];
                 const quotaLoading = quotaLoadingIds.has(credential.id);
-                const name =
-                  credential.email || credential.accountId || "未知账号";
                 const refreshStatus = codexTokenRefreshStatus(credential);
 
                 return (
-                  <Card
+                  <ProviderCredentialCard
                     key={credential.id}
-                    className="relative shadow-sm"
-                  >
-                    <CardContent className="grid gap-3">
-                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
-                        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-                          <Badge
-                            variant="outline"
-                            className={`h-6 shrink-0 px-2 text-sm font-semibold ${codexPlanBadgeTone(credential.planType)}`}
-                          >
-                            {codexPlanLabel(credential.planType)}
-                          </Badge>
-                          <div
-                            className="min-w-0 flex-1 truncate text-base font-medium"
-                            title={name}
-                          >
-                            {name}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 justify-end gap-1.5">
-                          <CredentialSettingsDialog
-                            credential={credential}
-                            disabled={pendingId === credential.id}
-                            onDeleted={() => remove(credential)}
-                            onRefreshToken={() => refreshToken(credential)}
-                            onSaved={onUpdated}
-                            proxyPool={proxyPool}
-                          />
-                        </div>
-                      </div>
-
-                      {(refreshStatus.exhausted ||
+                    credential={credential}
+                    planLabel={providerPlanLabel("codex", credential.planType)}
+                    planBadgeClassName={codexPlanBadgeTone(credential.planType)}
+                    actions={<CredentialSettingsDialog
+                      credential={credential}
+                      disabled={pendingId === credential.id}
+                      onDeleted={() => remove(credential)}
+                      onRefreshToken={() => refreshToken(credential)}
+                      onSaved={onUpdated}
+                      proxyPool={proxyPool}
+                    />}
+                    notice={(refreshStatus.exhausted ||
                         refreshStatus.attemptCount > 0 ||
                         refreshStatus.autoDisabled ||
-                        !credential.enabled) && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {!credential.enabled && (
-                            <WorkspaceStatusBadge tone="muted">
-                              {refreshStatus.autoDisabled
-                                ? "auto off"
-                                : "off"}
-                            </WorkspaceStatusBadge>
-                          )}
-                          {refreshStatus.exhausted ? (
-                            <WorkspaceStatusBadge tone="danger">
-                              refresh error
-                            </WorkspaceStatusBadge>
-                          ) : refreshStatus.attemptCount > 0 ? (
-                            <WorkspaceStatusBadge tone="warning">
-                              refresh{" "}
-                              {formatNumber(refreshStatus.attemptCount)}
-                              /3
-                            </WorkspaceStatusBadge>
-                          ) : null}
-                        </div>
-                      )}
-
-                      <div className="grid gap-2 text-sm">
-                        <div className="flex items-center gap-2">
-                          <span className="shrink-0 text-muted-foreground">
-                            用量采样：
-                          </span>
-                          {credential.usageHealth ? (
-                            <>
-                              <UsageHealthBadge
-                                status={credential.usageHealth.status}
-                              />
-                              <span className="tabular-nums text-muted-foreground">
-                                {formatNumber(credential.usageHealth.score)}%
-                              </span>
-                            </>
-                          ) : (
-                            <WorkspaceStatusBadge tone="muted">
-                              unknown
-                            </WorkspaceStatusBadge>
-                          )}
-                        </div>
-                        {credential.usageHealth && (
-                          <div className="text-xs text-muted-foreground">
-                            最近{" "}
-                            {formatNumber(credential.usageHealth.windowSize)} 次
-                            · 成功{" "}
-                            {formatNumber(credential.usageHealth.successCount)}{" "}
-                            · 错误{" "}
-                            {formatNumber(credential.usageHealth.errorCount)}
-                          </div>
-                        )}
-                        {credential.cooldownUntil && (
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <WorkspaceStatusBadge tone="warning">
-                              cooldown
-                            </WorkspaceStatusBadge>
-                            {formatNullableDate(credential.cooldownUntil)}
-                          </div>
-                        )}
+                        !credential.enabled) ? <div className="flex flex-col gap-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {!credential.enabled && <WorkspaceStatusBadge tone="muted">{refreshStatus.autoDisabled ? "auto off" : "off"}</WorkspaceStatusBadge>}
+                        {refreshStatus.exhausted ? <WorkspaceStatusBadge tone="danger">refresh error</WorkspaceStatusBadge> : refreshStatus.attemptCount > 0 ? <WorkspaceStatusBadge tone="warning">refresh {formatNumber(refreshStatus.attemptCount)}/3</WorkspaceStatusBadge> : null}
+                      </div>
                         {refreshStatus.hasNotice && (
                           <div
                             className={
@@ -643,60 +571,28 @@ export function CredentialsSection({
                             {credential.lastError}
                           </div>
                         )}
-                      </div>
-
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="shrink-0 text-muted-foreground">
-                          请求代理：
-                        </span>
-                        <CredentialProxyBadge
-                          credential={credential}
-                          globalSettings={globalSettings}
-                          proxyPool={proxyPool}
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="shrink-0 text-muted-foreground">
-                          过期时间：
-                        </span>
-                        <span className="min-w-0 truncate">
-                          {formatNullableDate(credential.expiresAt)}
-                        </span>
-                      </div>
-
-                      <div className="grid gap-2 text-sm">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-muted-foreground">剩余额度：</span>
-                          <QuotaResetHistorySheet
-                            description={`${credential.email || credential.accountId || credential.id} · ${codexPlanLabel(credential.planType)}`}
-                            load={() => getCredentialResetEvents(credential.id).then((result) => result.events)}
-                          />
-                        </div>
-                        <div className="rounded-lg border border-border/60 bg-muted/35 p-3">
-                          <QuotaProgressCell
-                            errorMessage={quotaErrors[credential.id]}
-                            loading={quotaLoading}
-                            onResetCredit={() => redeemResetCredit(credential)}
-                            quota={quota}
-                            resetCreditError={
-                              resetCreditErrors[credential.id]
-                            }
-                            resetCredits={resetCredits[credential.id]}
-                            resetting={resettingQuotaIds.has(credential.id)}
-                          />
-                        </div>
-                      </div>
-                    </CardContent>
-                    {refreshingAllQuotas && quotaLoading && (
+                      </div> : null}
+                    showLastError={false}
+                    proxy={<CredentialProxyBadge credential={credential} globalSettings={globalSettings} proxyPool={proxyPool} />}
+                    quotaAction={<QuotaResetHistorySheet description={`${credential.email || credential.accountId || credential.id} · ${providerPlanLabel("codex", credential.planType)}`} load={() => getCredentialResetEvents(credential.id).then((result) => result.events)} />}
+                    quotaContent={<QuotaProgressCell
+                      errorMessage={quotaErrors[credential.id]}
+                      loading={quotaLoading}
+                      onResetCredit={() => redeemResetCredit(credential)}
+                      quota={quota}
+                      resetCreditError={resetCreditErrors[credential.id]}
+                      resetCredits={resetCredits[credential.id]}
+                      resetting={resettingQuotaIds.has(credential.id)}
+                    />}
+                    overlay={refreshingAllQuotas && quotaLoading ? (
                       <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/90">
                         <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm font-medium">
                           <Spinner data-icon="inline-start" />
                           刷新额度中
                         </div>
                       </div>
-                    )}
-                  </Card>
+                    ) : null}
+                  />
                 );
               })}
               {providerControls}
@@ -752,19 +648,18 @@ function CredentialRoutingControls({
 
   return (
     <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5 text-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="font-medium">凭据路由</div>
-        </div>
-        <Switch
-          checked={credential.enabled}
-          disabled={disabled || saving}
-          size="sm"
-          onCheckedChange={(checked) =>
-            saveRouting({ enabled: Boolean(checked) })
-          }
-        />
-      </div>
+      <div className="font-medium">凭据路由</div>
+      <ProviderCredentialRoutingFields
+        credentialId={credential.id}
+        disabled={disabled || saving}
+        enabled={credential.enabled}
+        priority={priority}
+        weight={weight}
+        onEnabledChange={(enabled) => void saveRouting({ enabled })}
+        onPriorityChange={setPriority}
+        onWeightChange={setWeight}
+        action={<Button type="button" size="sm" variant="outline" disabled={disabled || saving} onClick={() => saveRouting({ priority: integerValue(priority, credential.priority), weight: Math.max(1, integerValue(weight, credential.weight)) })}>{saving && <Spinner data-icon="inline-start" />}保存</Button>}
+      />
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/50 p-2">
           <div>
@@ -798,37 +693,6 @@ function CredentialRoutingControls({
             }
           />
         </div>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-        <Input
-          aria-label="凭据优先级"
-          inputMode="numeric"
-          value={priority}
-          placeholder="优先级"
-          onChange={(event) => setPriority(event.target.value)}
-        />
-        <Input
-          aria-label="凭据权重"
-          inputMode="numeric"
-          value={weight}
-          placeholder="权重"
-          onChange={(event) => setWeight(event.target.value)}
-        />
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={disabled || saving}
-          onClick={() =>
-            saveRouting({
-              priority: integerValue(priority, credential.priority),
-              weight: Math.max(1, integerValue(weight, credential.weight)),
-            })
-          }
-        >
-          {saving && <Spinner data-icon="inline-start" />}
-          保存
-        </Button>
       </div>
       <div className="text-xs text-muted-foreground">
         当前：优先级 {formatNumber(credential.priority)} · 权重{" "}
@@ -1228,7 +1092,7 @@ function OAuthDialog({
   open: boolean;
 }) {
   const [pending, setPending] = React.useState(false);
-  const [provider, setProvider] = React.useState<"codex" | "grok">("codex");
+  const [provider, setProvider] = React.useState<ProviderId>("codex");
   const [session, setSession] = React.useState<OAuthStartResponse | null>(null);
   const [callbackUrl, setCallbackUrl] = React.useState("");
   const [grokSession, setGrokSession] = React.useState<{ sessionId: string; userCode: string; verificationUri: string; verificationUriComplete: string } | null>(null);
@@ -1500,7 +1364,7 @@ function QuotaProgressCell({
     );
   }
 
-  const windows = [...quota.windows, ...quota.additional_windows];
+  const windows = codexQuotaWindowViews(quota);
 
   if (windows.length === 0) {
     return (
@@ -1525,41 +1389,7 @@ function QuotaProgressCell({
         loading={loading}
         resetCredits={resetCredits}
       />
-      {windows.map((window, index) => {
-        const remainingPercent = window.remaining_percent;
-        const progressValue =
-          remainingPercent === null ? 0 : clamp(remainingPercent, 0, 100);
-
-        return (
-          <div key={`${window.id}-${index}`} className="grid min-w-0 gap-1">
-            <div className="flex min-w-0 items-center justify-between gap-2">
-              <span className="min-w-0 truncate text-xs font-medium text-foreground">
-                {window.label}
-              </span>
-              <span className="shrink-0 text-right text-xs text-muted-foreground">
-                {window.reset_label || "-"}
-              </span>
-            </div>
-            <div className="flex min-w-0 items-center gap-2">
-              <Progress
-                className="min-w-0 flex-1 **:data-[slot=progress-track]:h-2"
-                value={progressValue}
-              />
-              <span
-                className={`w-9 shrink-0 text-right text-xs tabular-nums ${
-                  window.exhausted
-                    ? "text-destructive"
-                    : "text-muted-foreground"
-                }`}
-              >
-                {remainingPercent === null
-                  ? "未知"
-                  : `${Math.round(remainingPercent)}%`}
-              </span>
-            </div>
-          </div>
-        );
-      })}
+      <ProviderQuotaWindows windows={windows} />
       {onResetCredit && (
         <Button
           type="button"
@@ -1679,7 +1509,7 @@ function CredentialSettingsDialog({
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge variant="secondary">
-                {codexPlanLabel(credential.planType)}
+                {providerPlanLabel("codex", credential.planType)}
               </Badge>
               <Badge variant={credential.enabled ? "secondary" : "outline"}>
                 {credential.enabled ? "已启用" : "已禁用"}
@@ -1978,27 +1808,6 @@ function CredentialDeleteSettingsAction({
   );
 }
 
-function UsageHealthBadge({
-  status,
-}: {
-  status: CodexCredentialRecord["usageHealth"] extends infer Health
-    ? Health extends { status: infer Status }
-      ? Status
-      : never
-    : never;
-}) {
-  if (status === "normal") {
-    return <WorkspaceStatusBadge tone="muted">已采样</WorkspaceStatusBadge>;
-  }
-  if (status === "warning") {
-    return <WorkspaceStatusBadge tone="muted">已采样</WorkspaceStatusBadge>;
-  }
-  if (status === "error") {
-    return <WorkspaceStatusBadge tone="muted">已采样</WorkspaceStatusBadge>;
-  }
-  return <WorkspaceStatusBadge tone="muted">未使用</WorkspaceStatusBadge>;
-}
-
 function globalProxyText(settings: GlobalSettingsRecord) {
   const proxy = settings.proxy;
   if (!proxy) {
@@ -2136,20 +1945,6 @@ function credentialUploadPayloads(parsed: unknown) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function codexPlanLabel(planType: string) {
-  const normalized = codexPlanKey(planType);
-  const labels: Record<string, string> = {
-    free: "Free",
-    plus: "Plus",
-    pro: "Pro 20x",
-    prolite: "Pro 5x",
-    "pro-lite": "Pro 5x",
-    pro_lite: "Pro 5x",
-    team: "Team",
-  };
-  return labels[normalized] || planType || "未知";
 }
 
 function usageHealthScore(health: CodexCredentialRecord["usageHealth"]) {

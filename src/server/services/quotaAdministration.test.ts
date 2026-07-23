@@ -17,7 +17,15 @@ describe("quota administration", () => {
 
   test("persists baseline and model price overrides", () => {
     service.patchQuotaAdministration({
-      baselines: { "5h": "1000000", "7d": "9000000" },
+      providers: {
+        codex: {
+          "5h": { overrideNanoUsd: "1000000" },
+          "7d": { overrideNanoUsd: "9000000" },
+        },
+        grok: {
+          "7d": { overrideNanoUsd: "2000000" },
+        },
+      },
       aliases: { "custom-terra": "gpt-5.6-terra" },
       overrides: {
         "gpt-5.6-terra": {
@@ -27,7 +35,10 @@ describe("quota administration", () => {
         },
       },
     });
-    expect(service.getQuotaAdministration().baselines["5h"].effectiveNanoUsd).toBe("1000000");
+    const quota = service.getQuotaAdministration();
+    expect(quota.providers.codex["5h"].effectiveNanoUsd).toBe("1000000");
+    expect(quota.providers.grok["7d"].effectiveNanoUsd).toBe("2000000");
+    expect(quota.providers.grok["5h"].effectiveNanoUsd).toBeNull();
     expect(service.resolveConfiguredModelPrice("custom-terra")).toMatchObject({
       source: "admin",
       inputNanoUsdPerToken: BigInt(3000),

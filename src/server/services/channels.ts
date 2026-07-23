@@ -2,7 +2,7 @@ import "server-only";
 
 import type {
   ChannelRecord,
-  CodexAccountUsageHealth,
+  ProviderUsageHealth,
   CodexCredentialRecord,
   ProviderId,
   RelayApiKeyContext,
@@ -18,8 +18,6 @@ import {
 import {
   getCodexCredentialWithTokens,
   listCodexCredentials,
-  markCodexCredentialUsed,
-  updateCodexCredential,
 } from "@/src/server/repositories/codexCredentials";
 import { getProviderCredentialWithTokens } from "@/src/server/repositories/providerCredentials";
 import {
@@ -31,17 +29,25 @@ import { serverConfig } from "@/src/server/config/env";
 import { randomId } from "@/src/server/services/crypto";
 import { HttpError } from "@/src/server/http/errors";
 import { eligibleCredentialIdsForTenant } from "@/src/server/services/tenantQuota";
-import { normalizeProviderId, providerDefaultBaseUrl, providerLabel } from "@/src/shared/providerCapabilities";
-
-const THINKING_SUFFIX_LEVELS = new Set([
-  "none",
-  "auto",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-]);
+import {
+  isProviderRoutingChannelAvailable,
+  isProviderRoutingCredentialAvailable,
+  routingChannelDeclaresModel,
+  routingModelMatchesAllowlist,
+  selectProviderRoutingItem,
+} from "@/src/server/services/providerRoutingCore";
+import {
+  markProviderCredentialUsed,
+  recordProviderCredentialFailure,
+  recordProviderCredentialSuccess,
+} from "@/src/server/services/providerCredentialState";
+export { resolveCredentialCooldownUntil } from "@/src/server/services/providerCredentialState";
+import {
+  normalizeProviderId,
+  providerCredentialDefaultBaseUrl,
+  providerLabel,
+  providerUnavailableChannelCode,
+} from "@/src/shared/providerCapabilities";
 
 export interface CreateChannelInput {
   provider?: ProviderId;
@@ -78,7 +84,12 @@ export function createChannel(input: CreateChannelInput) {
         ? `${providerLabel(provider)} · ${primaryCredential.email}`
         : `${providerLabel(provider)} · ${primaryCredential.id}`),
     provider,
-    baseUrl: cleanString(input.baseUrl) || providerDefaultBaseUrl(provider, serverConfig.codexBaseUrl),
+    baseUrl:
+      cleanString(input.baseUrl) ||
+      providerCredentialDefaultBaseUrl(
+        primaryCredential,
+        serverConfig.codexBaseUrl,
+      ),
     credentialIds: credentials.map((credential) => credential.id),
     enabled: input.enabled ?? true,
     priority: normalizeInteger(input.priority, 100),
@@ -101,18 +112,39 @@ export function patchChannel(
   },
 ) {
   const current = getChannelById(id);
-  const credentialPatch =
+  const currentProvider = current?.provider || "codex";
+  const replacementCredentials =
     input.credentialIds !== undefined || input.credentialId !== undefined
-      ? {
-          credentialIds: assertChannelCredentials(input, current?.provider || "codex").map(
-            (credential) => credential.id,
-          ),
-        }
-      : {};
+      ? assertChannelCredentials(input, currentProvider)
+      : null;
+  const fallbackCredential =
+    replacementCredentials?.[0] ||
+    (current?.credentialIds[0]
+      ? getProviderCredentialWithTokens(
+          current.credentialIds[0],
+          currentProvider,
+        )
+      : null);
+  const credentialPatch = replacementCredentials
+    ? {
+        credentialIds: replacementCredentials.map(
+          (credential) => credential.id,
+        ),
+      }
+    : {};
   const channel = updateChannel(id, {
     ...(input.name !== undefined ? { name: cleanString(input.name) } : {}),
     ...(input.baseUrl !== undefined
-      ? { baseUrl: cleanString(input.baseUrl) || providerDefaultBaseUrl(current?.provider || "codex", serverConfig.codexBaseUrl) }
+      ? {
+          baseUrl:
+            cleanString(input.baseUrl) ||
+            (fallbackCredential
+              ? providerCredentialDefaultBaseUrl(
+                  fallbackCredential,
+                  serverConfig.codexBaseUrl,
+                )
+              : serverConfig.codexBaseUrl),
+        }
       : {}),
     ...credentialPatch,
     ...(input.enabled !== undefined ? { enabled: Boolean(input.enabled) } : {}),
@@ -148,18 +180,28 @@ export function removeChannel(id: string) {
 export function selectChannel(input: {
   model: string;
   apiKey: RelayApiKeyContext;
+  excludedCredentialIds?: Set<string>;
   markUsed?: boolean;
 }) {
   const model = cleanString(input.model);
-  const baseModel = stripModelThinkingSuffix(model);
   assertApiKeyModelAllowed(model, input.apiKey);
 
   const now = Date.now();
   const eligibleCredentialIds = input.apiKey.tenantId
-    ? new Set(eligibleCredentialIdsForTenant(input.apiKey.tenantId, input.apiKey.tenantUserId))
+    ? new Set(
+        eligibleCredentialIdsForTenant(
+          input.apiKey.tenantId,
+          input.apiKey.tenantUserId,
+        ),
+      )
     : null;
   const availableChannels = listChannels().filter((channel) =>
-    isChannelAvailable(channel, input.apiKey, model, baseModel, now),
+    isProviderRoutingChannelAvailable(channel, {
+      provider: "codex",
+      model,
+      channelAllowlist: input.apiKey.channelAllowlist,
+      now,
+    }),
   );
   const credentialIds = availableChannels.flatMap(
     (channel) => channel.credentialIds,
@@ -171,6 +213,7 @@ export function selectChannel(input: {
       credentialsById,
       now,
       eligibleCredentialIds,
+      input.excludedCredentialIds,
     );
     if (!credential) {
       return [];
@@ -182,16 +225,20 @@ export function selectChannel(input: {
   if (candidates.length === 0) {
     throw new HttpError(
       503,
-      "no_available_channel",
+      providerUnavailableChannelCode("codex"),
       "No usable channel is available for this request",
     );
   }
 
-  const selected = selectRoutingItem(
+  const selected = selectProviderRoutingItem(
     candidates,
     (candidate) => candidate.channel.priority,
     (candidate) => candidate.channel.weight,
-    (candidate) => candidate.channel.healthScore,
+    (candidate) =>
+      Math.min(
+        candidate.channel.healthScore,
+        usageHealthScore(candidate.credential.usageHealth),
+      ),
   );
   const credential = getCodexCredentialWithTokens(selected.credential.id);
   if (!credential) {
@@ -204,18 +251,20 @@ export function selectChannel(input: {
   const channel = { ...selected.channel, credentialId: credential.id };
   if (input.markUsed !== false) {
     markChannelUsed(channel.id);
-    markCodexCredentialUsed(credential.id);
+    markProviderCredentialUsed("codex", credential.id);
   }
   return { channel, credential };
 }
 
-export function assertApiKeyModelAllowed(model: string, apiKey: RelayApiKeyContext) {
+export function assertApiKeyModelAllowed(
+  model: string,
+  apiKey: RelayApiKeyContext,
+) {
   const cleanModel = cleanString(model);
-  const baseModel = stripModelThinkingSuffix(cleanModel);
   if (
     apiKey.modelAllowlist.length > 0 &&
     cleanModel &&
-    !modelMatchesAllowlist(cleanModel, baseModel, apiKey.modelAllowlist)
+    !routingModelMatchesAllowlist(cleanModel, apiKey.modelAllowlist)
   ) {
     throw new HttpError(
       403,
@@ -229,16 +278,11 @@ export function channelDeclaresModel(
   channel: Pick<ChannelRecord, "modelAllowlist">,
   model: string,
 ) {
-  const cleanModel = cleanString(model);
-  return Boolean(
-    cleanModel &&
-    channel.modelAllowlist.length > 0 &&
-    modelMatchesAllowlist(cleanModel, stripModelThinkingSuffix(cleanModel), channel.modelAllowlist),
-  );
+  return routingChannelDeclaresModel(channel, model);
 }
 
 export function recordChannelSuccess(channel: ChannelRecord) {
-  clearCredentialCooldown(channel.credentialId);
+  recordProviderCredentialSuccess(channel.provider, channel.credentialId);
   const nextScore = clamp(channel.healthScore + 2, 0, 100);
   const next = updateChannel(channel.id, {
     status: nextScore >= 60 ? "healthy" : "degraded",
@@ -265,7 +309,11 @@ export function recordChannelFailure(
 ) {
   const statusCode = input.statusCode ?? null;
   if (isCredentialScopedFailure(statusCode)) {
-    const cooldownUntil = recordCredentialFailure(channel.credentialId, input);
+    const cooldownUntil = recordProviderCredentialFailure(
+      channel.provider,
+      channel.credentialId,
+      input,
+    );
     updateChannel(channel.id, { lastError: input.message || null });
     appendChannelHealthEvent({
       channelId: channel.id,
@@ -304,88 +352,13 @@ function isCredentialScopedFailure(statusCode: number | null) {
   return statusCode === 401 || statusCode === 403 || statusCode === 429;
 }
 
-function recordCredentialFailure(
-  credentialId: string,
-  input: {
-    statusCode?: number | null;
-    message?: string | null;
-    retryAfterMs?: number | null;
-  },
-) {
-  const cooldownUntil = resolveCredentialCooldownUntil({
-    statusCode: input.statusCode ?? null,
-    retryAfterMs: input.retryAfterMs,
-  });
-  if (!cooldownUntil) {
-    updateCodexCredential(credentialId, {
-      cooldownUntil: null,
-      lastError: input.message || null,
-    });
-    return null;
-  }
-  updateCodexCredential(credentialId, {
-    cooldownUntil,
-    lastError: input.message || null,
-  });
-  return cooldownUntil;
-}
-
-export function resolveCredentialCooldownUntil(input: {
-  statusCode?: number | null;
-  retryAfterMs?: number | null;
-  now?: Date;
-}) {
-  const now = input.now || new Date();
-  const retryAfterMs =
-    typeof input.retryAfterMs === "number" &&
-    Number.isFinite(input.retryAfterMs) &&
-    input.retryAfterMs >= 0
-      ? input.retryAfterMs
-      : null;
-  const cooldownMs =
-    retryAfterMs !== null
-      ? retryAfterMs
-      : credentialCooldownMs(input.statusCode ?? null);
-  if (cooldownMs <= 0) {
-    return null;
-  }
-  return new Date(now.getTime() + cooldownMs).toISOString();
-}
-
-function credentialCooldownMs(statusCode: number | null) {
-  switch (statusCode) {
-    case 401:
-      return serverConfig.credentialCooldown401Ms;
-    case 403:
-      return serverConfig.credentialCooldown403Ms;
-    case 429:
-      return serverConfig.credentialCooldown429Ms;
-    default:
-      return 0;
-  }
-}
-
-function clearCredentialCooldown(credentialId: string) {
-  updateCodexCredential(credentialId, {
-    cooldownUntil: null,
-    lastError: null,
-  });
-}
-
 type CredentialRoutingRecord = CodexCredentialRecord & {
-  usageHealth: CodexAccountUsageHealth;
-};
-
-type RoutingCandidate<T> = {
-  item: T;
-  priority: number;
-  weight: number;
-  healthScore: number;
+  usageHealth: ProviderUsageHealth;
 };
 
 function attachChannelUsageHealth(
   channel: ChannelRecord,
-  usageHealth?: CodexAccountUsageHealth,
+  usageHealth?: ProviderUsageHealth,
 ): ChannelRecord {
   const health = usageHealth || unusedUsageHealth(100);
   return { ...channel, usageHealth: health, healthScore: health.score };
@@ -413,21 +386,24 @@ function selectCredentialForChannel(
   credentialsById: Map<string, CredentialRoutingRecord>,
   now: number,
   eligibleCredentialIds: Set<string> | null,
+  excludedCredentialIds?: Set<string>,
 ) {
   const credentials = channel.credentialIds
     .map((credentialId) => credentialsById.get(credentialId))
     .filter((credential): credential is CredentialRoutingRecord =>
       Boolean(
-        credential?.enabled &&
-        (!eligibleCredentialIds || eligibleCredentialIds.has(credential.id)) &&
-        (!credential.cooldownUntil ||
-          Date.parse(credential.cooldownUntil) <= now),
+        credential &&
+          isProviderRoutingCredentialAvailable(credential, {
+            now,
+            eligibleCredentialIds,
+            excludedCredentialIds,
+          }),
       ),
     );
   if (credentials.length === 0) {
     return null;
   }
-  return selectRoutingItem(
+  return selectProviderRoutingItem(
     credentials,
     (credential) => credential.priority,
     (credential) => credential.weight,
@@ -435,35 +411,10 @@ function selectCredentialForChannel(
   );
 }
 
-function isChannelAvailable(
-  channel: ChannelRecord,
-  apiKey: RelayApiKeyContext,
-  model: string,
-  baseModel: string,
-  now: number,
+function assertChannelCredentials(
+  input: CreateChannelInput,
+  provider: ProviderId = "codex",
 ) {
-  if (channel.provider !== "codex") {
-    return false;
-  }
-  if (!channel.enabled || channel.status === "disabled") {
-    return false;
-  }
-  if (channel.cooldownUntil && Date.parse(channel.cooldownUntil) > now) {
-    return false;
-  }
-  if (model && !channelDeclaresModel(channel, model)) {
-    return false;
-  }
-  if (
-    apiKey.channelAllowlist.length > 0 &&
-    !apiKey.channelAllowlist.includes(channel.id)
-  ) {
-    return false;
-  }
-  return channel.credentialIds.length > 0;
-}
-
-function assertChannelCredentials(input: CreateChannelInput, provider: ProviderId = "codex") {
   const credentialIds = cleanStringArray([
     ...(Array.isArray(input.credentialIds) ? input.credentialIds : []),
     ...(input.credentialId ? [input.credentialId] : []),
@@ -488,60 +439,11 @@ function assertChannelCredentials(input: CreateChannelInput, provider: ProviderI
   });
 }
 
-function selectRoutingItem<T>(
-  items: T[],
-  getPriority: (item: T) => number,
-  getWeight: (item: T) => number,
-  getHealthScore: (item: T) => number,
-) {
-  const candidates = items.map((item) => ({
-    item,
-    priority: getPriority(item),
-    weight: getWeight(item),
-    healthScore: getHealthScore(item),
-  }));
-  const healthTiers = [80, 50, 1];
-  for (const tier of healthTiers) {
-    const tierCandidates = candidates.filter(
-      (candidate) => candidate.healthScore >= tier,
-    );
-    if (tierCandidates.length > 0) {
-      return weightedPickHighestPriority(tierCandidates).item;
-    }
-  }
-  return weightedPickHighestPriority(candidates).item;
-}
-
-function weightedPickHighestPriority<T>(candidates: RoutingCandidate<T>[]) {
-  const maxPriority = Math.max(
-    ...candidates.map((candidate) => candidate.priority),
-  );
-  const priorityCandidates = candidates.filter(
-    (candidate) => candidate.priority === maxPriority,
-  );
-  const totalWeight = priorityCandidates.reduce(
-    (sum, candidate) => sum + routingWeight(candidate),
-    0,
-  );
-  let cursor = Math.random() * totalWeight;
-  for (const candidate of priorityCandidates) {
-    cursor -= routingWeight(candidate);
-    if (cursor <= 0) {
-      return candidate;
-    }
-  }
-  return priorityCandidates[0];
-}
-
-function routingWeight(candidate: { weight: number; healthScore: number }) {
-  return Math.max(1, candidate.weight) * Math.max(1, candidate.healthScore);
-}
-
-function usageHealthScore(health: CodexAccountUsageHealth | undefined) {
+function usageHealthScore(health: ProviderUsageHealth | undefined) {
   return clamp(health?.score ?? 100, 0, 100);
 }
 
-function unusedUsageHealth(windowSize: number): CodexAccountUsageHealth {
+function unusedUsageHealth(windowSize: number): ProviderUsageHealth {
   return {
     status: "unused",
     score: 100,
@@ -553,38 +455,6 @@ function unusedUsageHealth(windowSize: number): CodexAccountUsageHealth {
     lastErrorCode: null,
     windowSize,
   };
-}
-
-function modelMatchesAllowlist(
-  model: string,
-  baseModel: string,
-  allowlist: string[],
-) {
-  return allowlist.some((allowed) => {
-    const cleanAllowed = cleanString(allowed);
-    return cleanAllowed === model || cleanAllowed === baseModel;
-  });
-}
-
-function stripModelThinkingSuffix(model: string) {
-  const value = cleanString(model);
-  const lastOpen = value.lastIndexOf("(");
-  if (lastOpen <= 0 || !value.endsWith(")")) {
-    return value;
-  }
-  const baseModel = value.slice(0, lastOpen).trim();
-  const suffix = value
-    .slice(lastOpen + 1, -1)
-    .trim()
-    .toLowerCase();
-  if (!baseModel || !isThinkingSuffix(suffix)) {
-    return value;
-  }
-  return baseModel;
-}
-
-function isThinkingSuffix(suffix: string) {
-  return THINKING_SUFFIX_LEVELS.has(suffix) || /^\d+$/.test(suffix);
 }
 
 function cleanString(value: unknown) {

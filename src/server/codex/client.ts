@@ -11,8 +11,8 @@ import { HttpError } from "@/src/server/http/errors";
 import {
   ensureFreshCredential,
   refreshCodexCredentialForScheduler,
-  resolveCredentialProxy,
 } from "@/src/server/services/codexCredentials";
+import { resolveProviderCredentialProxy } from "@/src/server/services/providerProxy";
 import { getEffectiveCodexUserAgent } from "@/src/server/services/settings";
 import {
   applyCodexReasoningReplay,
@@ -25,29 +25,6 @@ import type {
   UsageSnapshot,
 } from "@/src/shared/types/entities";
 
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-]);
-
-const SENSITIVE_UPSTREAM_RESPONSE_HEADERS = new Set([
-  "api-key",
-  "authorization",
-  "chatgpt-account-id",
-  "cookie",
-  "openai-api-key",
-  "session-id",
-  "session_id",
-  "set-cookie",
-  "set-cookie2",
-  "x-api-key",
-]);
 
 const THINKING_SUFFIX_LEVELS = new Set([
   "none",
@@ -131,7 +108,7 @@ export async function codexFetch(
       replaySessionKey,
       transport: useWebSocket ? "websocket" : "http",
     });
-  const proxy = resolveCredentialProxy({
+  const proxy = resolveProviderCredentialProxy({
     proxy: credential.proxy,
     proxyPoolId: credential.proxyPoolId,
     useGlobalProxy: input.tenant ? true : credential.useGlobalProxy,
@@ -469,24 +446,6 @@ function budgetToCodexEffort(budget: number) {
     return "high";
   }
   return "xhigh";
-}
-
-export function copyUpstreamHeaders(headers: Headers) {
-  const output = new Headers();
-  for (const [name, value] of headers.entries()) {
-    const lower = name.toLowerCase();
-    if (HOP_BY_HOP_HEADERS.has(lower)) {
-      continue;
-    }
-    if (SENSITIVE_UPSTREAM_RESPONSE_HEADERS.has(lower)) {
-      continue;
-    }
-    if (lower === "content-length" || lower === "content-encoding") {
-      continue;
-    }
-    output.set(name, value);
-  }
-  return output;
 }
 
 export function normalizeResponsesPayload(

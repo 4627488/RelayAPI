@@ -5,7 +5,7 @@ import { AdminWorkbench } from "@/components/admin-workbench";
 import { WebAccessLogin } from "@/components/auth/web-access-login";
 import { emptyAdminOverviewStats } from "@/src/server/repositories/logs";
 import { listChannels } from "@/src/server/repositories/channels";
-import { listCodexCredentials } from "@/src/server/repositories/codexCredentials";
+import { listProviderCredentials } from "@/src/server/repositories/providerCredentials";
 import { listApiKeyPublicRecords } from "@/src/server/services/apiKeys";
 import { getPublicGlobalSettings } from "@/src/server/services/settings";
 import { listPublicProxyPoolItems } from "@/src/server/services/proxyPool";
@@ -79,7 +79,7 @@ export default async function Home() {
   const apiKeys = listApiKeyPublicRecords();
   const tenantCount = listTenants().length;
   const channels = listChannels();
-  const codexCredentialCount = listCodexCredentials().length;
+  const credentialCount = listProviderCredentials().length;
   const proxyPool = listPublicProxyPoolItems();
   const overviewStats = emptyAdminOverviewStats() as AdminOverviewStats;
   const globalSettings = getPublicGlobalSettings();
@@ -127,7 +127,7 @@ export default async function Home() {
         healthyChannels: channels.filter(
           (channel) => channel.status === "healthy",
         ).length,
-        credentials: codexCredentialCount,
+        credentials: credentialCount,
         proxyPool: proxyPool.length,
         tenants: tenantCount,
       }}

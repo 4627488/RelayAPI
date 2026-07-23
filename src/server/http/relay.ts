@@ -16,6 +16,7 @@ import {
 import {
   assertContentLength,
   createTextCapture,
+  copyUpstreamResponseHeaders,
   emptyUsage,
   isFreeCodexPlan,
   isRecord,
@@ -44,9 +45,7 @@ import {
   chatCompletionsToCodex,
   chatCompletionsPromptCacheKey,
   codexFetch,
-  codexJson,
   codexResponseToChatCompletion,
-  copyUpstreamHeaders,
   extractUsageFromCodexResponse,
   extractImageGenerationUsage,
   normalizeCompactPayload,
@@ -78,6 +77,12 @@ import {
   selectChannel,
 } from "@/src/server/services/channels";
 import { listPublicCodexCredentials } from "@/src/server/services/codexCredentials";
+import {
+  DEFAULT_PROVIDER_FAILOVER_ATTEMPTS,
+  isRetryableProviderStatus,
+  providerRetryAfterMs,
+  runProviderFailover,
+} from "@/src/server/services/providerFailover";
 import { listRoutableModelsForApiKey, selectProviderForModel } from "@/src/server/services/relayRouting";
 import { getFullRequestLoggingSetting } from "@/src/server/services/settings";
 import {
@@ -236,14 +241,21 @@ export async function handleOpenAIResponses(request: Request) {
       });
     }
 
-    const result = await codexJson(compaction.upstreamPath, payload, {
+    const attempt = await codexJsonWithFailover({
+      request,
+      apiKey,
+      model,
+      payload,
+      upstreamPath: compaction.upstreamPath,
+      initialChannel: channel,
+      initialAdmission: quotaAdmission,
       stream: true,
-      sourceHeaders: request.headers,
-      channel,
-      tenant: apiKey.tenant,
       promptCacheKey: null,
       timing,
     });
+    channel = attempt.channel;
+    quotaAdmission = attempt.admission;
+    const result = attempt.result;
     const raw = timing.time(
       "parse_upstream_response",
       "解析上游响应",
@@ -493,15 +505,22 @@ async function handleImagesProxy(
       });
     }
 
-    const result = await codexJson("/responses", imageRequest.payload, {
+    const attempt = await codexJsonWithFailover({
+      request,
+      apiKey,
+      model: stringValue(imageRequest.payload.model) || imageRequest.model,
+      payload: imageRequest.payload,
+      upstreamPath: "/responses",
+      initialChannel: channel,
+      initialAdmission: quotaAdmission,
       stream: true,
-      sourceHeaders: request.headers,
-      channel,
-      tenant: apiKey.tenant,
       promptCacheKey: null,
       transport: "websocket",
       timing,
     });
+    channel = attempt.channel;
+    quotaAdmission = attempt.admission;
+    const result = attempt.result;
     if (!result.response.ok) {
       const errorInfo = classifyCodexFailure({
         statusCode: result.response.status,
@@ -655,33 +674,38 @@ async function forwardImagesStream(input: {
   timing?: StageTimer;
   quotaAdmission?: TenantQuotaAdmission | null;
 }) {
-  const { response, credential, upstreamPayload } = await codexFetch(
-    "/responses",
-    input.imageRequest.payload,
-    {
-      stream: true,
-      sourceHeaders: input.request.headers,
-      channel: input.channel,
-      tenant: input.apiKey.tenant,
-      promptCacheKey: null,
-      transport: "websocket",
-      timing: input.timing,
-    },
-  );
+  const model =
+    stringValue(input.imageRequest.payload.model) || input.imageRequest.model;
+  const attempt = await codexFetchWithFailover({
+    request: input.request,
+    apiKey: input.apiKey,
+    model,
+    payload: input.imageRequest.payload,
+    upstreamPath: "/responses",
+    initialChannel: input.channel,
+    initialAdmission: input.quotaAdmission || null,
+    stream: true,
+    transport: "websocket",
+    promptCacheKey: null,
+    timing: input.timing,
+  });
+  const { response, credential, upstreamPayload } = attempt.result;
+  const channel = attempt.channel;
+  const quotaAdmission = attempt.admission;
   const headers = withStreamingHeaders(
     withDefaultContentType(
-      copyUpstreamHeaders(response.headers),
+      copyUpstreamResponseHeaders(response.headers),
       "text/event-stream; charset=utf-8",
     ),
   );
-  if (input.quotaAdmission?.state) {
+  if (quotaAdmission?.state) {
     mergeHeaders(
       headers,
-      tenantQuotaHeaders(input.quotaAdmission.state),
+      tenantQuotaHeaders(quotaAdmission.state),
     ).forEach((value, key) => headers.set(key, value));
   }
   if (!response.ok) {
-    releaseRelayQuota(input.quotaAdmission);
+    releaseRelayQuota(quotaAdmission);
     const errorText = input.timing
       ? await input.timing.timeAsync(
           "read_upstream_error_body",
@@ -699,7 +723,7 @@ async function forwardImagesStream(input: {
       payload: upstreamPayload,
       info: errorInfo,
     });
-    recordChannelFailure(input.channel, {
+    recordChannelFailure(channel, {
       statusCode: response.status,
       message: errorInfo.message || errorText.slice(0, 500) || response.statusText,
       retryAfterMs: errorInfo.retryAfterMs,
@@ -709,7 +733,7 @@ async function forwardImagesStream(input: {
       startedAt: input.startedAt,
       start: input.start,
       apiKey: input.apiKey,
-      channel: input.channel,
+      channel,
       credentialEmail: credential.email,
       requestType: input.requestType,
       stream: true,
@@ -745,15 +769,15 @@ async function forwardImagesStream(input: {
           onCompleted: (responsePayload) => {
             const usage = extractUsageFromCodexResponse(responsePayload);
             const imageGeneration = extractImageGenerationUsage(responsePayload, upstreamPayload);
-            settleRelayQuota(input.quotaAdmission, usage, credential.id, imageGeneration);
-            recordChannelSuccess(input.channel);
+            settleRelayQuota(quotaAdmission, usage, credential.id, imageGeneration);
+            recordChannelSuccess(channel);
             appendSuccessLog({
               request: input.request,
-              subscriptionId: input.quotaAdmission?.subscriptionId,
+              subscriptionId: quotaAdmission?.subscriptionId,
               startedAt: input.startedAt,
               start: input.start,
               apiKey: input.apiKey,
-              channel: input.channel,
+              channel,
               credentialEmail: credential.email,
               requestType: input.requestType,
               stream: true,
@@ -769,10 +793,10 @@ async function forwardImagesStream(input: {
             });
           },
           onError: (error) => {
-            releaseRelayQuota(input.quotaAdmission);
+            releaseRelayQuota(quotaAdmission);
             const message =
               error instanceof Error ? error.message : String(error);
-            recordChannelFailure(input.channel, {
+            recordChannelFailure(channel, {
               statusCode: 502,
               message,
             });
@@ -781,7 +805,7 @@ async function forwardImagesStream(input: {
               startedAt: input.startedAt,
               start: input.start,
               apiKey: input.apiKey,
-              channel: input.channel,
+              channel,
               credentialEmail: credential.email,
               requestType: input.requestType,
               stream: true,
@@ -986,17 +1010,22 @@ export async function handleChatCompletions(request: Request) {
       return new Response(body, { status: 200, headers });
     }
 
-    const result = await codexJson("/responses", payload, {
+    const attempt = await codexJsonWithFailover({
+      request,
+      apiKey,
+      model,
+      payload,
+      upstreamPath: "/responses",
+      initialChannel: channel,
+      initialAdmission: quotaAdmission,
       stream: true,
-      sourceHeaders: request.headers,
-      channel,
-      tenant: apiKey.tenant,
       promptCacheKey: chatCompletionsPromptCacheKey(input),
       timing,
     });
+    channel = attempt.channel;
+    quotaAdmission = attempt.admission;
+    const result = attempt.result;
     if (!result.response.ok) {
-      releaseRelayQuota(quotaAdmission);
-      quotaAdmission = null;
       releaseRelayQuota(quotaAdmission);
       quotaAdmission = null;
       recordChannelFailure(channel, {
@@ -1160,14 +1189,21 @@ async function handleRawCodexProxy(
         quotaAdmission,
       });
     }
-    const result = await codexJson(compaction.upstreamPath, payload, {
+    const attempt = await codexJsonWithFailover({
+      request,
+      apiKey,
+      model,
+      payload,
+      upstreamPath: compaction.upstreamPath,
+      initialChannel: channel,
+      initialAdmission: quotaAdmission,
       stream: false,
-      sourceHeaders: request.headers,
-      channel,
-      tenant: apiKey.tenant,
       promptCacheKey: null,
       timing,
     });
+    channel = attempt.channel;
+    quotaAdmission = attempt.admission;
+    const result = attempt.result;
     const usage = timing.time("extract_usage", "提取 Token 用量", () =>
       extractUsageFromCodexResponse(result.json),
     );
@@ -1244,7 +1280,7 @@ async function handleRawCodexProxy(
       status: result.response.status,
       headers: mergeHeaders(
         withDefaultContentType(
-          copyUpstreamHeaders(result.response.headers),
+          copyUpstreamResponseHeaders(result.response.headers),
           "application/json; charset=utf-8",
         ),
         quotaResponseHeaders(quotaState),
@@ -1273,6 +1309,115 @@ async function handleRawCodexProxy(
   }
 }
 
+async function codexFetchWithFailover(input: {
+  request: Request;
+  apiKey: RelayApiKeyContext;
+  model: string;
+  payload: Record<string, unknown>;
+  upstreamPath: "/responses" | "/responses/compact";
+  initialChannel: ChannelRecord;
+  initialAdmission: TenantQuotaAdmission | null;
+  stream: boolean;
+  transport?: "http" | "websocket";
+  promptCacheKey?: string | null;
+  timing?: StageTimer;
+}) {
+  const attempt = await runProviderFailover({
+    initialContext: {
+      channel: input.initialChannel,
+      admission: input.initialAdmission,
+    },
+    credentialId: (context) => context.channel.credentialId,
+    execute: (context) =>
+      codexFetch(input.upstreamPath, input.payload, {
+        stream: input.stream,
+        sourceHeaders: input.request.headers,
+        channel: context.channel,
+        tenant: input.apiKey.tenant,
+        promptCacheKey: input.promptCacheKey,
+        transport:
+          input.transport ||
+          (input.upstreamPath === "/responses" ? "websocket" : "http"),
+        timing: input.timing,
+      }),
+    shouldRetry: (result) =>
+      !result.response.ok &&
+      isRetryableProviderStatus(result.response.status),
+    prepareRetryResult: async (context, result) => {
+      const errorText = await result.response.text();
+      const errorInfo = classifyCodexFailure({
+        statusCode: result.response.status,
+        bodyText: errorText,
+      });
+      releaseRelayQuota(context.admission);
+      context.admission = null;
+      recordChannelFailure(context.channel, {
+        statusCode: result.response.status,
+        message: errorInfo.message || errorText.slice(0, 500),
+        retryAfterMs:
+          errorInfo.retryAfterMs ?? providerRetryAfterMs(result.response.headers),
+      });
+      return {
+        ...result,
+        response: new Response(errorText, {
+          status: result.response.status,
+          headers: result.response.headers,
+        }),
+      };
+    },
+    handleAttemptError: (context, error) => {
+      releaseRelayQuota(context.admission);
+      context.admission = null;
+      recordChannelFailure(context.channel, {
+        statusCode: 502,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    },
+    selectNext: (excludedCredentialIds) => {
+      const selected = selectChannel({
+        model: input.model,
+        apiKey: input.apiKey,
+        excludedCredentialIds: new Set(excludedCredentialIds),
+      });
+      return {
+        channel: selected.channel,
+        admission: admitRelayQuota(
+          input.apiKey,
+          input.model,
+          selected.credential.id,
+        ),
+      };
+    },
+    maxAttempts: DEFAULT_PROVIDER_FAILOVER_ATTEMPTS,
+  });
+  return {
+    result: attempt.result,
+    channel: attempt.context.channel,
+    admission: attempt.context.admission,
+  };
+}
+
+async function codexJsonWithFailover(
+  input: Parameters<typeof codexFetchWithFailover>[0],
+) {
+  const attempt = await codexFetchWithFailover(input);
+  const text = input.timing
+    ? await input.timing.timeAsync(
+        "read_upstream_body",
+        "读取上游响应 Body",
+        () => attempt.result.response.text(),
+      )
+    : await attempt.result.response.text();
+  return {
+    ...attempt,
+    result: {
+      ...attempt.result,
+      text,
+      json: parseMaybeJson<unknown>(text),
+    },
+  };
+}
+
 async function forwardCodexStream(input: {
   request: Request;
   startedAt: string;
@@ -1292,33 +1437,35 @@ async function forwardCodexStream(input: {
 }) {
   const model =
     stringValue(input.payload.model) || serverConfig.codexDefaultModel;
-  const { response, credential, upstreamPayload } = await codexFetch(
-    input.upstreamPath,
-    input.payload,
-    {
-      stream: true,
-      sourceHeaders: input.request.headers,
-      channel: input.channel,
-      tenant: input.apiKey.tenant,
-      promptCacheKey: input.promptCacheKey,
-      transport: input.upstreamPath === "/responses" ? "websocket" : "http",
-      timing: input.timing,
-    },
-  );
+  const attempt = await codexFetchWithFailover({
+    request: input.request,
+    apiKey: input.apiKey,
+    model,
+    payload: input.payload,
+    upstreamPath: input.upstreamPath,
+    initialChannel: input.channel,
+    initialAdmission: input.quotaAdmission || null,
+    stream: true,
+    promptCacheKey: input.promptCacheKey,
+    timing: input.timing,
+  });
+  const { response, credential, upstreamPayload } = attempt.result;
+  const channel = attempt.channel;
+  const quotaAdmission = attempt.admission;
   const headers = withStreamingHeaders(
     withDefaultContentType(
-      copyUpstreamHeaders(response.headers),
+      copyUpstreamResponseHeaders(response.headers),
       input.fallbackContentType,
     ),
   );
-  if (input.quotaAdmission?.state) {
+  if (quotaAdmission?.state) {
     mergeHeaders(
       headers,
-      tenantQuotaHeaders(input.quotaAdmission.state),
+      tenantQuotaHeaders(quotaAdmission.state),
     ).forEach((value, key) => headers.set(key, value));
   }
   if (!response.ok) {
-    releaseRelayQuota(input.quotaAdmission);
+    releaseRelayQuota(quotaAdmission);
     const errorText = input.timing
       ? await input.timing.timeAsync(
           "read_upstream_error_body",
@@ -1326,7 +1473,7 @@ async function forwardCodexStream(input: {
           () => response.text(),
         )
       : await response.text();
-    recordChannelFailure(input.channel, {
+    recordChannelFailure(channel, {
       statusCode: response.status,
       message: errorText.slice(0, 500) || response.statusText,
     });
@@ -1335,7 +1482,7 @@ async function forwardCodexStream(input: {
       startedAt: input.startedAt,
       start: input.start,
       apiKey: input.apiKey,
-      channel: input.channel,
+      channel,
       credentialEmail: credential.email,
       requestType: input.requestType,
       stream: true,
@@ -1368,7 +1515,7 @@ async function forwardCodexStream(input: {
           onCompleted: (usage, responsePayload) => {
             const imageGeneration = extractImageGenerationUsage(responsePayload, upstreamPayload);
             const quotaState = settleRelayQuota(
-              input.quotaAdmission,
+              quotaAdmission,
               usage,
               credential.id,
               imageGeneration,
@@ -1385,14 +1532,14 @@ async function forwardCodexStream(input: {
               payload: upstreamPayload,
               response: responsePayload,
             });
-            recordChannelSuccess(input.channel);
+            recordChannelSuccess(channel);
             appendSuccessLog({
               request: input.request,
               subscriptionId: quotaState?.subscriptionId,
               startedAt: input.startedAt,
               start: input.start,
               apiKey: input.apiKey,
-              channel: input.channel,
+              channel,
               credentialEmail: credential.email,
               requestType: input.requestType,
               stream: true,
@@ -1409,9 +1556,9 @@ async function forwardCodexStream(input: {
           },
           onError: (error, usage) => {
             if (usage.totalTokens > 0) {
-              settleRelayQuota(input.quotaAdmission, usage, credential.id);
+              settleRelayQuota(quotaAdmission, usage, credential.id);
             } else {
-              releaseRelayQuota(input.quotaAdmission);
+              releaseRelayQuota(quotaAdmission);
             }
             const errorInfo = codexErrorInfoFromError(error);
             const message =
@@ -1423,18 +1570,18 @@ async function forwardCodexStream(input: {
               payload: upstreamPayload,
               info: errorInfo,
             });
-            recordChannelFailure(input.channel, {
+            recordChannelFailure(channel, {
               statusCode: errorInfo?.statusCode || 502,
               message,
               retryAfterMs: errorInfo?.retryAfterMs,
             });
             appendSuccessLog({
               request: input.request,
-              subscriptionId: input.quotaAdmission?.subscriptionId,
+              subscriptionId: quotaAdmission?.subscriptionId,
               startedAt: input.startedAt,
               start: input.start,
               apiKey: input.apiKey,
-              channel: input.channel,
+              channel,
               credentialEmail: credential.email,
               requestType: input.requestType,
               stream: true,

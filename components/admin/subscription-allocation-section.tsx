@@ -1,34 +1,125 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangleIcon, BoxesIcon, CheckIcon, GaugeIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon, UsersIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  BoxesIcon,
+  CheckIcon,
+  GaugeIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SaveIcon,
+  Trash2Icon,
+  UsersIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { adminErrorMessage, createTenantSubscription, deleteTenantSubscription, getSubscriptionAllocationOverview, updateSubscriptionPoolQuotaEstimates, updateTenantSubscription, type SubscriptionAllocationOverview, type SubscriptionCapacityPool, type TenantSubscriptionRecord } from "@/lib/admin-api";
-import { providerLabel, providerPlanLabel } from "@/src/shared/providerCapabilities";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  adminErrorMessage,
+  createTenantSubscription,
+  deleteTenantSubscription,
+  getSubscriptionAllocationOverview,
+  updateSubscriptionPoolQuotaEstimates,
+  updateTenantSubscription,
+  type SubscriptionAllocationOverview,
+  type SubscriptionCapacityPool,
+  type TenantSubscriptionRecord,
+} from "@/lib/admin-api";
+import {
+  providerLabel,
+  providerPlanLabel,
+} from "@/src/shared/providerCapabilities";
 import type { PublicTenant } from "@/src/shared/types/entities";
 
-type AllocationDraft = { tenantId: string; units: string; unitsPerCredential: string; priority: number };
-type EditDraft = { units: string; unitsPerCredential: string; priority: number; enabled: boolean };
+type AllocationDraft = {
+  tenantId: string;
+  units: string;
+  unitsPerCredential: string;
+  priority: number;
+};
+type EditDraft = {
+  units: string;
+  unitsPerCredential: string;
+  priority: number;
+  enabled: boolean;
+};
 
-const EMPTY_DRAFT: AllocationDraft = { tenantId: "", units: "1", unitsPerCredential: "1", priority: 100 };
+const EMPTY_DRAFT: AllocationDraft = {
+  tenantId: "",
+  units: "1",
+  unitsPerCredential: "1",
+  priority: 100,
+};
 
-export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTenant[] }) {
-  const [overview, setOverview] = React.useState<SubscriptionAllocationOverview | null>(null);
+export function SubscriptionAllocationSection({
+  tenants,
+}: {
+  tenants: PublicTenant[];
+}) {
+  const [overview, setOverview] =
+    React.useState<SubscriptionAllocationOverview | null>(null);
   const [selectedPoolId, setSelectedPoolId] = React.useState("");
   const [edits, setEdits] = React.useState<Record<string, EditDraft>>({});
   const [loading, setLoading] = React.useState(true);
@@ -37,7 +128,8 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
   const [createOpen, setCreateOpen] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [draft, setDraft] = React.useState(EMPTY_DRAFT);
-  const [pendingDelete, setPendingDelete] = React.useState<TenantSubscriptionRecord | null>(null);
+  const [pendingDelete, setPendingDelete] =
+    React.useState<TenantSubscriptionRecord | null>(null);
   const [deleting, setDeleting] = React.useState(false);
 
   const load = React.useCallback(async () => {
@@ -45,8 +137,18 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
     try {
       const next = await getSubscriptionAllocationOverview();
       setOverview(next);
-      setSelectedPoolId((current) => (next.pools.some((pool) => pool.id === current) ? current : next.pools[0]?.id || ""));
-      setEdits(Object.fromEntries(next.pools.flatMap((pool) => pool.subscriptions.map((item) => [item.id, editFrom(item)]))));
+      setSelectedPoolId((current) =>
+        next.pools.some((pool) => pool.id === current)
+          ? current
+          : next.pools[0]?.id || "",
+      );
+      setEdits(
+        Object.fromEntries(
+          next.pools.flatMap((pool) =>
+            pool.subscriptions.map((item) => [item.id, editFrom(item)]),
+          ),
+        ),
+      );
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -59,11 +161,16 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
     return () => window.cancelAnimationFrame(frame);
   }, [load]);
 
-  const selectedPool = overview?.pools.find((pool) => pool.id === selectedPoolId) || null;
+  const selectedPool =
+    overview?.pools.find((pool) => pool.id === selectedPoolId) || null;
   const availableTenants = tenants.filter((tenant) => tenant.enabled);
 
   function openCreate() {
-    setDraft({ ...EMPTY_DRAFT, tenantId: availableTenants[0]?.id || "", unitsPerCredential: String(selectedPool?.capacityUnits || 1) });
+    setDraft({
+      ...EMPTY_DRAFT,
+      tenantId: availableTenants[0]?.id || "",
+      unitsPerCredential: String(selectedPool?.capacityUnits || 1),
+    });
     setCreateOpen(true);
   }
 
@@ -125,7 +232,9 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
         ),
       );
       await load();
-      toast.success(`已将 ${pool.capacityUnits} 份容量均分给 ${items.length} 个启用分配`);
+      toast.success(
+        `已将 ${pool.capacityUnits} 份容量均分给 ${items.length} 个启用分配`,
+      );
     } catch (error) {
       toast.error(adminErrorMessage(error));
     } finally {
@@ -153,15 +262,29 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
       <Card>
         <CardHeader>
           <CardTitle>订阅容量工作台</CardTitle>
-          <CardDescription>统一管理 Codex 与 Grok 的容量分发；推测额度归属于每个主订阅容量池。</CardDescription>
+          <CardDescription>
+            统一管理 Codex 与 Grok 的容量分发；推测额度归属于每个主订阅容量池。
+          </CardDescription>
           <CardAction>
-            <Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load()}>
-              {loading ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={loading}
+              onClick={() => void load()}
+            >
+              {loading ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <RefreshCwIcon data-icon="inline-start" />
+              )}
               刷新
             </Button>
           </CardAction>
         </CardHeader>
-        <CardContent>{overview ? <Summary overview={overview} /> : null}</CardContent>
+        <CardContent>
+          {overview ? <Summary overview={overview} /> : null}
+        </CardContent>
       </Card>
 
       {loading && !overview ? (
@@ -179,7 +302,9 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
                   <BoxesIcon />
                 </EmptyMedia>
                 <EmptyTitle>还没有可分配凭据</EmptyTitle>
-                <EmptyDescription>先导入并启用凭据，才能建立可分配的容量池。</EmptyDescription>
+                <EmptyDescription>
+                  先导入并启用凭据，才能建立可分配的容量池。
+                </EmptyDescription>
               </EmptyHeader>
             </Empty>
           </CardContent>
@@ -193,16 +318,45 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
             </CardHeader>
             <CardContent className="flex flex-col gap-2">
               {overview.pools.map((pool) => (
-                <PoolButton key={pool.id} pool={pool} active={pool.id === selectedPoolId} onClick={() => setSelectedPoolId(pool.id)} />
+                <PoolButton
+                  key={pool.id}
+                  pool={pool}
+                  active={pool.id === selectedPoolId}
+                  onClick={() => setSelectedPoolId(pool.id)}
+                />
               ))}
             </CardContent>
           </Card>
 
-          {selectedPool ? <PoolWorkspace pool={selectedPool} edits={edits} savingId={savingId} equalizing={equalizing} onReload={load} onEdit={(id, edit) => setEdits((current) => ({ ...current, [id]: edit }))} onSave={saveAllocation} onDelete={setPendingDelete} onCreate={openCreate} onEqualize={equalizeAllocations} /> : null}
+          {selectedPool ? (
+            <PoolWorkspace
+              pool={selectedPool}
+              edits={edits}
+              savingId={savingId}
+              equalizing={equalizing}
+              onReload={load}
+              onEdit={(id, edit) =>
+                setEdits((current) => ({ ...current, [id]: edit }))
+              }
+              onSave={saveAllocation}
+              onDelete={setPendingDelete}
+              onCreate={openCreate}
+              onEqualize={equalizeAllocations}
+            />
+          ) : null}
         </div>
       )}
 
-      <CreateAllocationDialog open={createOpen} pool={selectedPool} tenants={availableTenants} draft={draft} pending={creating} onDraftChange={setDraft} onOpenChange={setCreateOpen} onSubmit={createAllocation} />
+      <CreateAllocationDialog
+        open={createOpen}
+        pool={selectedPool}
+        tenants={availableTenants}
+        draft={draft}
+        pending={creating}
+        onDraftChange={setDraft}
+        onOpenChange={setCreateOpen}
+        onSubmit={createAllocation}
+      />
       <AlertDialog
         open={Boolean(pendingDelete)}
         onOpenChange={(open) => {
@@ -212,7 +366,9 @@ export function SubscriptionAllocationSection({ tenants }: { tenants: PublicTena
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>回收这条分配？</AlertDialogTitle>
-            <AlertDialogDescription>租户将立即失去通过该父凭据获得的额度；已有用量记录会保留。</AlertDialogDescription>
+            <AlertDialogDescription>
+              租户将立即失去通过该父凭据获得的额度；已有用量记录会保留。
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel>
@@ -236,24 +392,68 @@ function Summary({ overview }: { overview: SubscriptionAllocationOverview }) {
   const { summary } = overview;
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <Metric icon={<BoxesIcon />} label="凭据容量池" value={`${summary.usableCredentialCount}/${summary.credentialCount}`} hint="可用 / 全部" />
-      <Metric icon={<GaugeIcon />} label="总容量" value={`${summary.capacityUnits} 份`} hint="由计划类型自动换算" />
-      <Metric icon={<UsersIcon />} label="已分配" value={`${summary.allocatedUnits} 份`} hint={summary.capacityUnits ? percent(summary.allocatedUnits / summary.capacityUnits) : "0%"} />
-      <Metric icon={<AlertTriangleIcon />} label="超卖风险" value={`${summary.oversoldCredentialCount} 个`} hint="已超过物理份数的凭据" danger={summary.oversoldCredentialCount > 0} />
+      <Metric
+        icon={<BoxesIcon />}
+        label="凭据容量池"
+        value={`${summary.usableCredentialCount}/${summary.credentialCount}`}
+        hint="可用 / 全部"
+      />
+      <Metric
+        icon={<GaugeIcon />}
+        label="总容量"
+        value={`${summary.capacityUnits} 份`}
+        hint="由计划类型自动换算"
+      />
+      <Metric
+        icon={<UsersIcon />}
+        label="已分配"
+        value={`${summary.allocatedUnits} 份`}
+        hint={
+          summary.capacityUnits
+            ? percent(summary.allocatedUnits / summary.capacityUnits)
+            : "0%"
+        }
+      />
+      <Metric
+        icon={<AlertTriangleIcon />}
+        label="超卖风险"
+        value={`${summary.oversoldCredentialCount} 个`}
+        hint="已超过物理份数的凭据"
+        danger={summary.oversoldCredentialCount > 0}
+      />
     </div>
   );
 }
 
-function PoolButton({ pool, active, onClick }: { pool: SubscriptionCapacityPool; active: boolean; onClick: () => void }) {
-  const ratio = pool.capacityUnits ? pool.allocatedUnits / pool.capacityUnits : 0;
+function PoolButton({
+  pool,
+  active,
+  onClick,
+}: {
+  pool: SubscriptionCapacityPool;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const ratio = pool.capacityUnits
+    ? pool.allocatedUnits / pool.capacityUnits
+    : 0;
   return (
-    <Button type="button" variant={active ? "secondary" : "outline"} className="h-auto w-full justify-start p-3" onClick={onClick}>
+    <Button
+      type="button"
+      variant={active ? "secondary" : "outline"}
+      className="h-auto w-full justify-start p-3"
+      onClick={onClick}
+    >
       <div className="flex min-w-0 flex-1 flex-col gap-2 text-left">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="truncate font-medium">{pool.email || pool.accountId || pool.id}</div>
+            <div className="truncate font-medium">
+              {pool.email || pool.accountId || pool.id}
+            </div>
             <div className="text-xs text-muted-foreground">
-            {providerLabel(pool.provider)} · {providerPlanLabel(pool.provider, pool.planType)} · {pool.activeAllocationCount} 个生效分配
+              {providerLabel(pool.provider)} ·{" "}
+              {providerPlanLabel(pool.provider, pool.planType)} ·{" "}
+              {pool.activeAllocationCount} 个生效分配
             </div>
           </div>
           <PoolStatus pool={pool} />
@@ -270,23 +470,58 @@ function PoolButton({ pool, active, onClick }: { pool: SubscriptionCapacityPool;
   );
 }
 
-function PoolWorkspace({ pool, edits, savingId, equalizing, onReload, onEdit, onSave, onDelete, onCreate, onEqualize }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; equalizing: boolean; onReload: () => Promise<void>; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void; onCreate: () => void; onEqualize: (pool: SubscriptionCapacityPool) => void }) {
+function PoolWorkspace({
+  pool,
+  edits,
+  savingId,
+  equalizing,
+  onReload,
+  onEdit,
+  onSave,
+  onDelete,
+  onCreate,
+  onEqualize,
+}: {
+  pool: SubscriptionCapacityPool;
+  edits: Record<string, EditDraft>;
+  savingId: string | null;
+  equalizing: boolean;
+  onReload: () => Promise<void>;
+  onEdit: (id: string, edit: EditDraft) => void;
+  onSave: (item: TenantSubscriptionRecord) => void;
+  onDelete: (item: TenantSubscriptionRecord) => void;
+  onCreate: () => void;
+  onEqualize: (pool: SubscriptionCapacityPool) => void;
+}) {
   const enabledCount = pool.subscriptions.filter((item) => item.enabled).length;
   return (
     <Card>
       <CardHeader>
         <div className="flex min-w-0 flex-col gap-1">
-          <CardTitle className="truncate">{pool.email || pool.accountId || pool.id}</CardTitle>
+          <CardTitle className="truncate">
+            {pool.email || pool.accountId || pool.id}
+          </CardTitle>
           <CardDescription>
-            {providerLabel(pool.provider)} · {providerPlanLabel(pool.provider, pool.planType)} · 物理容量 {pool.capacityUnits} 份 · {pool.allocationCount} 条分配
+            {providerLabel(pool.provider)} ·{" "}
+            {providerPlanLabel(pool.provider, pool.planType)} · 物理容量{" "}
+            {pool.capacityUnits} 份 · {pool.allocationCount} 条分配
           </CardDescription>
         </div>
         <CardAction>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" disabled={equalizing || enabledCount === 0} onClick={() => onEqualize(pool)}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={equalizing || enabledCount === 0}
+              onClick={() => onEqualize(pool)}
+            >
               {equalizing && <Spinner data-icon="inline-start" />}一键均分
             </Button>
-            <Button type="button" disabled={!pool.enabled || equalizing} onClick={onCreate}>
+            <Button
+              type="button"
+              disabled={!pool.enabled || equalizing}
+              onClick={onCreate}
+            >
               <PlusIcon data-icon="inline-start" />
               新增分配
             </Button>
@@ -298,8 +533,12 @@ function PoolWorkspace({ pool, edits, savingId, equalizing, onReload, onEdit, on
         {pool.allocatedUnits > pool.capacityUnits ? (
           <Alert variant="destructive">
             <AlertTriangleIcon />
-            <AlertTitle>当前超卖 {pool.allocatedUnits - pool.capacityUnits} 份</AlertTitle>
-            <AlertDescription>允许继续运行，但这些租户会竞争同一个上游账号的实际额度。</AlertDescription>
+            <AlertTitle>
+              当前超卖 {pool.allocatedUnits - pool.capacityUnits} 份
+            </AlertTitle>
+            <AlertDescription>
+              允许继续运行，但这些租户会竞争同一个上游账号的实际额度。
+            </AlertDescription>
           </Alert>
         ) : null}
         {pool.lastError ? (
@@ -316,18 +555,41 @@ function PoolWorkspace({ pool, edits, savingId, equalizing, onReload, onEdit, on
                 <UsersIcon />
               </EmptyMedia>
               <EmptyTitle>这个容量池还没有租户</EmptyTitle>
-              <EmptyDescription>创建第一条分配后，租户即可使用该凭据对应的本地额度。</EmptyDescription>
+              <EmptyDescription>
+                创建第一条分配后，租户即可使用该凭据对应的本地额度。
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (
-          <AllocationTable pool={pool} edits={edits} savingId={savingId} onEdit={onEdit} onSave={onSave} onDelete={onDelete} />
+          <AllocationTable
+            pool={pool}
+            edits={edits}
+            savingId={savingId}
+            onEdit={onEdit}
+            onSave={onSave}
+            onDelete={onDelete}
+          />
         )}
       </CardContent>
     </Card>
   );
 }
 
-function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { pool: SubscriptionCapacityPool; edits: Record<string, EditDraft>; savingId: string | null; onEdit: (id: string, edit: EditDraft) => void; onSave: (item: TenantSubscriptionRecord) => void; onDelete: (item: TenantSubscriptionRecord) => void }) {
+function AllocationTable({
+  pool,
+  edits,
+  savingId,
+  onEdit,
+  onSave,
+  onDelete,
+}: {
+  pool: SubscriptionCapacityPool;
+  edits: Record<string, EditDraft>;
+  savingId: string | null;
+  onEdit: (id: string, edit: EditDraft) => void;
+  onSave: (item: TenantSubscriptionRecord) => void;
+  onDelete: (item: TenantSubscriptionRecord) => void;
+}) {
   return (
     <Table>
       <TableHeader>
@@ -344,16 +606,26 @@ function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { 
       <TableBody>
         {pool.subscriptions.map((item) => {
           const edit = edits[item.id] || editFrom(item);
-          const dirty = Number(edit.units) !== item.units || Number(edit.unitsPerCredential) !== item.unitsPerCredential || edit.priority !== item.priority || edit.enabled !== item.enabled;
+          const dirty =
+            Number(edit.units) !== item.units ||
+            Number(edit.unitsPerCredential) !== item.unitsPerCredential ||
+            edit.priority !== item.priority ||
+            edit.enabled !== item.enabled;
           return (
             <TableRow key={item.id}>
               <TableCell>
                 <div className="flex flex-col gap-1">
-                  <div className="font-medium">{item.tenant?.name || item.tenantId}</div>
+                  <div className="font-medium">
+                    {item.tenant?.name || item.tenantId}
+                  </div>
                   <div className="flex flex-wrap items-center gap-1">
                     <LifecycleBadge lifecycle={item.lifecycle} />
-                    {item.tenant && !item.tenant.enabled ? <Badge variant="destructive">租户停用</Badge> : null}
-                    <span className="text-xs text-muted-foreground">占池 {percent(item.units / item.unitsPerCredential)}</span>
+                    {item.tenant && !item.tenant.enabled ? (
+                      <Badge variant="destructive">租户停用</Badge>
+                    ) : null}
+                    <span className="text-xs text-muted-foreground">
+                      占池 {percent(item.units / item.unitsPerCredential)}
+                    </span>
                   </div>
                 </div>
               </TableCell>
@@ -389,18 +661,48 @@ function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { 
                   min="0.01"
                   step="any"
                   value={edit.unitsPerCredential}
-                  onChange={(event) => onEdit(item.id, { ...edit, unitsPerCredential: event.target.value })}
+                  onChange={(event) =>
+                    onEdit(item.id, {
+                      ...edit,
+                      unitsPerCredential: event.target.value,
+                    })
+                  }
                 />
               </TableCell>
               <TableCell>
-                <Switch checked={edit.enabled} onCheckedChange={(checked) => onEdit(item.id, { ...edit, enabled: checked })} aria-label={`${item.tenant?.name || item.tenantId} 启用状态`} />
+                <Switch
+                  checked={edit.enabled}
+                  onCheckedChange={(checked) =>
+                    onEdit(item.id, { ...edit, enabled: checked })
+                  }
+                  aria-label={`${item.tenant?.name || item.tenantId} 启用状态`}
+                />
               </TableCell>
               <TableCell>
                 <div className="flex justify-end gap-1">
-                  <Button type="button" variant={dirty ? "default" : "ghost"} size="icon" disabled={!dirty || savingId === item.id} aria-label="保存分配" onClick={() => onSave(item)}>
-                    {savingId === item.id ? <Spinner /> : dirty ? <SaveIcon /> : <CheckIcon />}
+                  <Button
+                    type="button"
+                    variant={dirty ? "default" : "ghost"}
+                    size="icon"
+                    disabled={!dirty || savingId === item.id}
+                    aria-label="保存分配"
+                    onClick={() => onSave(item)}
+                  >
+                    {savingId === item.id ? (
+                      <Spinner />
+                    ) : dirty ? (
+                      <SaveIcon />
+                    ) : (
+                      <CheckIcon />
+                    )}
                   </Button>
-                  <Button type="button" variant="ghost" size="icon" aria-label="回收分配" onClick={() => onDelete(item)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="回收分配"
+                    onClick={() => onDelete(item)}
+                  >
                     <Trash2Icon />
                   </Button>
                 </div>
@@ -413,18 +715,45 @@ function AllocationTable({ pool, edits, savingId, onEdit, onSave, onDelete }: { 
   );
 }
 
-function CreateAllocationDialog({ open, pool, tenants, draft, pending, onDraftChange, onOpenChange, onSubmit }: { open: boolean; pool: SubscriptionCapacityPool | null; tenants: PublicTenant[]; draft: AllocationDraft; pending: boolean; onDraftChange: (draft: AllocationDraft) => void; onOpenChange: (open: boolean) => void; onSubmit: () => void }) {
+function CreateAllocationDialog({
+  open,
+  pool,
+  tenants,
+  draft,
+  pending,
+  onDraftChange,
+  onOpenChange,
+  onSubmit,
+}: {
+  open: boolean;
+  pool: SubscriptionCapacityPool | null;
+  tenants: PublicTenant[];
+  draft: AllocationDraft;
+  pending: boolean;
+  onDraftChange: (draft: AllocationDraft) => void;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: () => void;
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>新增租户分配</DialogTitle>
-          <DialogDescription>{pool ? `从 ${pool.email || pool.accountId} 的 ${pool.capacityUnits} 份容量中分配。允许超卖。` : "选择容量池后再分配。"}</DialogDescription>
+          <DialogDescription>
+            {pool
+              ? `从 ${pool.email || pool.accountId} 的 ${pool.capacityUnits} 份容量中分配。允许超卖。`
+              : "选择容量池后再分配。"}
+          </DialogDescription>
         </DialogHeader>
         <FieldGroup>
           <Field>
             <FieldLabel>租户</FieldLabel>
-            <Select value={draft.tenantId} onValueChange={(value) => onDraftChange({ ...draft, tenantId: value || "" })}>
+            <Select
+              value={draft.tenantId}
+              onValueChange={(value) =>
+                onDraftChange({ ...draft, tenantId: value || "" })
+              }
+            >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="选择租户" />
               </SelectTrigger>
@@ -454,7 +783,11 @@ function CreateAllocationDialog({ open, pool, tenants, draft, pending, onDraftCh
                 })
               }
             />
-            <FieldDescription>{pool ? `当前是 ${draft.units}/${draft.unitsPerCredential}，占父订阅 ${percent(Number(draft.units) / Math.max(1, Number(draft.unitsPerCredential)))}。` : null}</FieldDescription>
+            <FieldDescription>
+              {pool
+                ? `当前是 ${draft.units}/${draft.unitsPerCredential}，占父订阅 ${percent(Number(draft.units) / Math.max(1, Number(draft.unitsPerCredential)))}。`
+                : null}
+            </FieldDescription>
           </Field>
           <Field>
             <FieldLabel>整份拆分数</FieldLabel>
@@ -463,9 +796,16 @@ function CreateAllocationDialog({ open, pool, tenants, draft, pending, onDraftCh
               min="0.01"
               step="any"
               value={draft.unitsPerCredential}
-              onChange={(event) => onDraftChange({ ...draft, unitsPerCredential: event.target.value })}
+              onChange={(event) =>
+                onDraftChange({
+                  ...draft,
+                  unitsPerCredential: event.target.value,
+                })
+              }
             />
-            <FieldDescription>所有厂商统一用“持有份数 / 整份拆分数”计算授权比例，例如 Grok 1/5。</FieldDescription>
+            <FieldDescription>
+              所有厂商统一用“持有份数 / 整份拆分数”计算授权比例，例如 Grok 1/5。
+            </FieldDescription>
           </Field>
           <Field>
             <FieldLabel>路由优先级</FieldLabel>
@@ -479,14 +819,25 @@ function CreateAllocationDialog({ open, pool, tenants, draft, pending, onDraftCh
                 })
               }
             />
-            <FieldDescription>同一租户拥有多个可用子订阅时，优先选择数值更高的项。</FieldDescription>
+            <FieldDescription>
+              同一租户拥有多个可用子订阅时，优先选择数值更高的项。
+            </FieldDescription>
           </Field>
         </FieldGroup>
         <DialogFooter>
-          <Button type="button" variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pending}
+            onClick={() => onOpenChange(false)}
+          >
             取消
           </Button>
-          <Button type="button" disabled={pending || !draft.tenantId} onClick={onSubmit}>
+          <Button
+            type="button"
+            disabled={pending || !draft.tenantId}
+            onClick={onSubmit}
+          >
             {pending && <Spinner data-icon="inline-start" />}确认分配
           </Button>
         </DialogFooter>
@@ -502,14 +853,18 @@ function QuotaUsage({ item }: { item: TenantSubscriptionRecord }) {
         const window = item.quota?.[kind];
         if (!window)
           return (
-            <div key={kind} className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div
+              key={kind}
+              className="flex items-center gap-2 text-xs text-muted-foreground"
+            >
               <span className="w-6 font-mono">{kind}</span>
               <Progress value={0} className="flex-1" />
               <span>待产生</span>
             </div>
           );
         const limit = Number(window.limitNanoUsd);
-        const used = Number(window.settledNanoUsd) + Number(window.reservedNanoUsd);
+        const used =
+          Number(window.settledNanoUsd) + Number(window.reservedNanoUsd);
         const ratio = limit > 0 ? used / limit : 0;
         return (
           <div key={kind} className="flex items-center gap-2 text-xs">
@@ -523,39 +878,125 @@ function QuotaUsage({ item }: { item: TenantSubscriptionRecord }) {
   );
 }
 
-function PoolQuotaEstimates({ pool, onSaved }: { pool: SubscriptionCapacityPool; onSaved: () => Promise<void> }) {
-  const [fiveHour, setFiveHour] = React.useState(nanoUsdToUsd(pool.quotaEstimates["5h"].overrideNanoUsd));
-  const [sevenDay, setSevenDay] = React.useState(nanoUsdToUsd(pool.quotaEstimates["7d"].overrideNanoUsd));
+function PoolQuotaEstimates({
+  pool,
+  onSaved,
+}: {
+  pool: SubscriptionCapacityPool;
+  onSaved: () => Promise<void>;
+}) {
+  const [fiveHour, setFiveHour] = React.useState(
+    nanoUsdToUsd(pool.quotaEstimates["5h"].overrideNanoUsd),
+  );
+  const [sevenDay, setSevenDay] = React.useState(
+    nanoUsdToUsd(pool.quotaEstimates["7d"].overrideNanoUsd),
+  );
   const [pending, setPending] = React.useState(false);
   async function save() {
     setPending(true);
     try {
-      await updateSubscriptionPoolQuotaEstimates(pool.id, { "5h": usdToNanoUsd(fiveHour), "7d": usdToNanoUsd(sevenDay) });
+      await updateSubscriptionPoolQuotaEstimates(pool.id, {
+        "5h": usdToNanoUsd(fiveHour),
+        "7d": usdToNanoUsd(sevenDay),
+      });
       await onSaved();
       toast.success("主订阅推测额度已保存");
-    } catch (error) { toast.error(adminErrorMessage(error)); }
-    finally { setPending(false); }
+    } catch (error) {
+      toast.error(adminErrorMessage(error));
+    } finally {
+      setPending(false);
+    }
   }
   return (
     <Card size="sm">
       <CardHeader>
         <CardTitle>主订阅推测额度</CardTitle>
-        <CardDescription>应用于这个主账号的完整容量；所有子订阅仅按所占份额继承。</CardDescription>
-        <CardAction><Button type="button" size="sm" disabled={pending} onClick={() => void save()}>{pending && <Spinner data-icon="inline-start" />}保存</Button></CardAction>
+        <CardDescription>
+          应用于这个主账号的完整容量；所有子订阅仅按所占份额继承。
+          {pool.quotaResetStrategy === "codex-cache"
+            ? " 周期边界直接跟随上游订阅。"
+            : " 优先跟随已观测到的上游周期；尚未取得上游边界时使用本地滚动周期。"}
+        </CardDescription>
+        <CardAction>
+          <Button
+            type="button"
+            size="sm"
+            disabled={pending}
+            onClick={() => void save()}
+          >
+            {pending && <Spinner data-icon="inline-start" />}保存
+          </Button>
+        </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3 sm:grid-cols-2">
-        <Field><FieldLabel htmlFor={`pool-5h-${pool.id}`}>5 小时推测额度（USD）</FieldLabel><Input id={`pool-5h-${pool.id}`} inputMode="decimal" value={fiveHour} placeholder={nanoUsdToUsd(pool.quotaEstimates["5h"].automaticNanoUsd) || "采样中"} onChange={(event) => setFiveHour(event.target.value)} /><FieldDescription>{estimateDescription(pool.quotaEstimates["5h"])}</FieldDescription></Field>
-        <Field><FieldLabel htmlFor={`pool-7d-${pool.id}`}>7 天推测额度（USD）</FieldLabel><Input id={`pool-7d-${pool.id}`} inputMode="decimal" value={sevenDay} placeholder={nanoUsdToUsd(pool.quotaEstimates["7d"].automaticNanoUsd) || "采样中"} onChange={(event) => setSevenDay(event.target.value)} /><FieldDescription>{estimateDescription(pool.quotaEstimates["7d"])}</FieldDescription></Field>
+        <Field>
+          <FieldLabel htmlFor={`pool-5h-${pool.id}`}>
+            5 小时推测额度（USD）
+          </FieldLabel>
+          <Input
+            id={`pool-5h-${pool.id}`}
+            inputMode="decimal"
+            value={fiveHour}
+            placeholder={quotaEstimatePlaceholder(pool, "5h")}
+            onChange={(event) => setFiveHour(event.target.value)}
+          />
+          <FieldDescription>
+            {estimateDescription(pool, pool.quotaEstimates["5h"])}
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor={`pool-7d-${pool.id}`}>
+            7 天推测额度（USD）
+          </FieldLabel>
+          <Input
+            id={`pool-7d-${pool.id}`}
+            inputMode="decimal"
+            value={sevenDay}
+            placeholder={quotaEstimatePlaceholder(pool, "7d")}
+            onChange={(event) => setSevenDay(event.target.value)}
+          />
+          <FieldDescription>
+            {estimateDescription(pool, pool.quotaEstimates["7d"])}
+          </FieldDescription>
+        </Field>
       </CardContent>
     </Card>
   );
 }
 
-function estimateDescription(estimate: SubscriptionCapacityPool["quotaEstimates"]["5h"]) {
+function estimateDescription(
+  pool: SubscriptionCapacityPool,
+  estimate: SubscriptionCapacityPool["quotaEstimates"]["5h"],
+) {
+  if (!pool.automaticQuotaSupported) {
+    return "此凭据不提供上游订阅额度采样；可在这里手动设置父容量。";
+  }
   return `自动推测 ${nanoUsdToUsd(estimate.automaticNanoUsd) || "暂无"} USD · ${estimate.sampleCount} 个样本 · 置信度 ${percent(estimate.confidence)}；需两次同周期额度快照，使用后最多 5 分钟自动刷新。`;
 }
 
-function Metric({ icon, label, value, hint, danger = false }: { icon: React.ReactNode; label: string; value: string; hint: string; danger?: boolean }) {
+function quotaEstimatePlaceholder(
+  pool: SubscriptionCapacityPool,
+  kind: "5h" | "7d",
+) {
+  return (
+    nanoUsdToUsd(pool.quotaEstimates[kind].automaticNanoUsd) ||
+    (pool.automaticQuotaSupported ? "采样中" : "仅手动设置")
+  );
+}
+
+function Metric({
+  icon,
+  label,
+  value,
+  hint,
+  danger = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  hint: string;
+  danger?: boolean;
+}) {
   return (
     <Card size="sm">
       <CardHeader>
@@ -564,33 +1005,50 @@ function Metric({ icon, label, value, hint, danger = false }: { icon: React.Reac
           {label}
         </CardDescription>
         <CardTitle>{value}</CardTitle>
-        <CardAction>{danger ? <Badge variant="destructive">需处理</Badge> : null}</CardAction>
+        <CardAction>
+          {danger ? <Badge variant="destructive">需处理</Badge> : null}
+        </CardAction>
       </CardHeader>
-      <CardContent className="text-xs text-muted-foreground">{hint}</CardContent>
+      <CardContent className="text-xs text-muted-foreground">
+        {hint}
+      </CardContent>
     </Card>
   );
 }
 
 function PoolStatus({ pool }: { pool: SubscriptionCapacityPool }) {
   if (!pool.enabled) return <Badge variant="outline">停用</Badge>;
-  if (pool.allocatedUnits > pool.capacityUnits) return <Badge variant="destructive">超卖</Badge>;
-  if (pool.cooldownUntil && pool.cooldownUntil > new Date().toISOString()) return <Badge variant="outline">冷却</Badge>;
+  if (pool.allocatedUnits > pool.capacityUnits)
+    return <Badge variant="destructive">超卖</Badge>;
+  if (pool.cooldownUntil && pool.cooldownUntil > new Date().toISOString())
+    return <Badge variant="outline">冷却</Badge>;
   return <Badge variant="secondary">可用</Badge>;
 }
 
-function LifecycleBadge({ lifecycle }: { lifecycle?: TenantSubscriptionRecord["lifecycle"] }) {
+function LifecycleBadge({
+  lifecycle,
+}: {
+  lifecycle?: TenantSubscriptionRecord["lifecycle"];
+}) {
   if (lifecycle === "active") return <Badge variant="secondary">生效</Badge>;
   if (lifecycle === "scheduled") return <Badge variant="outline">待生效</Badge>;
-  if (lifecycle === "expired") return <Badge variant="destructive">已过期</Badge>;
+  if (lifecycle === "expired")
+    return <Badge variant="destructive">已过期</Badge>;
   return <Badge variant="outline">停用</Badge>;
 }
 
 function editFrom(item: TenantSubscriptionRecord): EditDraft {
-  return { units: String(item.units), unitsPerCredential: String(item.unitsPerCredential), priority: item.priority, enabled: item.enabled };
+  return {
+    units: String(item.units),
+    unitsPerCredential: String(item.unitsPerCredential),
+    priority: item.priority,
+    enabled: item.enabled,
+  };
 }
 function parsePositiveUnits(value: string) {
   const units = Number(value);
-  if (!Number.isFinite(units) || units <= 0) throw new Error("份数必须是大于 0 的数字");
+  if (!Number.isFinite(units) || units <= 0)
+    throw new Error("份数必须是大于 0 的数字");
   return units;
 }
 function equalUnits(capacity: number, count: number) {
@@ -598,10 +1056,21 @@ function equalUnits(capacity: number, count: number) {
   const total = Math.round(capacity * scale);
   const base = Math.floor(total / count);
   const remainder = total - base * count;
-  return Array.from({ length: count }, (_, index) => (base + (index < remainder ? 1 : 0)) / scale);
+  return Array.from(
+    { length: count },
+    (_, index) => (base + (index < remainder ? 1 : 0)) / scale,
+  );
 }
 function percent(value: number) {
   return `${Math.round(value * 1000) / 10}%`;
 }
-function usdToNanoUsd(value: string) { const parsed = Number(value.trim()); if (!value.trim()) return null; if (!Number.isFinite(parsed) || parsed <= 0) throw new Error("推测额度必须是大于 0 的数字"); return String(Math.round(parsed * 1_000_000_000)); }
-function nanoUsdToUsd(value?: string | null) { return value ? String(Number(value) / 1_000_000_000) : ""; }
+function usdToNanoUsd(value: string) {
+  const parsed = Number(value.trim());
+  if (!value.trim()) return null;
+  if (!Number.isFinite(parsed) || parsed <= 0)
+    throw new Error("推测额度必须是大于 0 的数字");
+  return String(Math.round(parsed * 1_000_000_000));
+}
+function nanoUsdToUsd(value?: string | null) {
+  return value ? String(Number(value) / 1_000_000_000) : "";
+}
