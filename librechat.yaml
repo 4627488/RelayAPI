@@ -38,7 +38,7 @@ endpoints:
 
       models:
         default:
-          - "gpt-5.3-codex"
+          - "gpt-5.6-sol"
           - "gpt-5.3-codex-spark"
         fetch: true
 

@@ -140,7 +140,7 @@ export const serverConfig = {
   codexBaseUrl: (
     process.env.CODEX_BASE_URL || "https://chatgpt.com/backend-api/codex"
   ).replace(/\/+$/, ""),
-  codexDefaultModel: process.env.CODEX_DEFAULT_MODEL || "gpt-5.3-codex",
+  codexDefaultModel: process.env.CODEX_DEFAULT_MODEL || "gpt-5.6-sol",
   requestTimeoutMs: intEnv("REQUEST_TIMEOUT_MS", 300_000),
   streamRequestTimeoutMs: intEnv("STREAM_REQUEST_TIMEOUT_MS", 1_800_000),
   credentialCooldown401Ms: nonNegativeIntEnv(

@@ -51,6 +51,7 @@ const FALLBACK_MODEL_BY_ID = new Map(
     model("gpt-5.4", "GPT 5.4", 1772668800),
     model("gpt-5.4-mini", "GPT 5.4 Mini", 1773705600),
     model("gpt-5.5", "GPT 5.5", 1776902400),
+    model("gpt-5.6-sol", "GPT 5.6 Sol", CREATED_2024_01_01),
     model("codex-auto-review", "Codex Auto Review", 1776902400),
     model("gpt-image-2", "GPT Image 2", CREATED_2024_01_01),
   ].map((entry) => [entry.id, entry]),
@@ -60,6 +61,7 @@ const MODEL_THINKING_SUFFIX_LEVELS = ["high", "xhigh"] as const;
 
 const FALLBACK_PLAN_MODEL_IDS: Record<string, string[]> = {
   free: [
+    "gpt-5.6-sol",
     "gpt-5.2",
     "gpt-5.3-codex",
     "gpt-5.4",
@@ -69,6 +71,7 @@ const FALLBACK_PLAN_MODEL_IDS: Record<string, string[]> = {
     "gpt-image-2",
   ],
   team: [
+    "gpt-5.6-sol",
     "gpt-5.2",
     "gpt-5.3-codex",
     "gpt-5.4",
@@ -78,6 +81,7 @@ const FALLBACK_PLAN_MODEL_IDS: Record<string, string[]> = {
     "gpt-image-2",
   ],
   plus: [
+    "gpt-5.6-sol",
     "gpt-5.2",
     "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
@@ -88,6 +92,7 @@ const FALLBACK_PLAN_MODEL_IDS: Record<string, string[]> = {
     "gpt-image-2",
   ],
   pro: [
+    "gpt-5.6-sol",
     "gpt-5.2",
     "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
@@ -205,6 +210,7 @@ export async function createCodexModelsManifest(input: { modelAllowlist?: string
           .filter((id) => id && !knownIds.has(id))
           .map((id) => ({ ...model(id, id, CREATED_2024_01_01), owned_by: "relay" })),
         templates,
+        { provider: "relay" },
       )
     : [];
   return { models: [...codexModels, ...grokModels, ...genericModels] };
@@ -435,11 +441,15 @@ export function codexManifestEntry(entry: ModelEntry, index: number) {
     supported_in_api: true,
     priority: index + 1,
     upgrade: null,
-    base_instructions: "You are a coding agent. Follow the developer and user instructions.",
+    base_instructions: modelIdentityInstructions(entry, "openai"),
   };
 }
 
-export function buildGrokCodexClientModels(models: ModelEntry[], templates: Record<string, unknown>[]): Record<string, unknown>[] {
+export function buildGrokCodexClientModels(
+  models: ModelEntry[],
+  templates: Record<string, unknown>[],
+  options: { provider?: "grok" | "relay" } = {},
+): Record<string, unknown>[] {
   const templatesBySlug = new Map<string, Record<string, unknown>>();
   for (const entry of templates) { const slug = text(entry.slug); if (slug) templatesBySlug.set(slug, entry); }
   const defaultTemplate = templatesBySlug.get("gpt-5.5");
@@ -450,12 +460,20 @@ export function buildGrokCodexClientModels(models: ModelEntry[], templates: Reco
     if (exact) {
       const entry: Record<string, unknown> = structuredClone(exact);
       if (text(model.display_name)) entry.display_name = text(model.display_name);
+      entry.base_instructions = modelIdentityInstructions(
+        model,
+        options.provider || "grok",
+      );
       return ensureCodexLocalCatalogMetadata(sanitizeReasoningMetadata(entry));
     }
     const entry: Record<string, unknown> = structuredClone(defaultTemplate);
     entry.slug = model.id;
     entry.display_name = text(model.display_name) || text(model.name) || model.id;
     entry.description = text(model.description) || model.id;
+    entry.base_instructions = modelIdentityInstructions(
+      model,
+      options.provider || "grok",
+    );
     entry.prefer_websockets = false;
     entry.service_tiers = [];
     entry.supports_search_tool = false;
@@ -477,6 +495,20 @@ export function buildGrokCodexClientModels(models: ModelEntry[], templates: Reco
   return output
     .sort((left, right) => String(left.display_name || left.slug).localeCompare(String(right.display_name || right.slug)))
     .map((entry, index) => ({ ...entry, priority: templatesBySlug.has(String(entry.slug)) ? entry.priority : maxTemplatePriority + 100 * (index + 1) }));
+}
+
+function modelIdentityInstructions(
+  model: Pick<ModelEntry, "id"> & Record<string, unknown>,
+  provider: "openai" | "grok" | "relay",
+) {
+  const displayName = text(model.display_name) || text(model.name) || model.id;
+  if (provider === "grok") {
+    return `You are ${displayName} (model ID: ${model.id}), a Grok model provided by xAI and served through RelayAPI in the Codex client. When asked about your identity or model, identify yourself as ${displayName} (${model.id}); do not claim to be GPT, ChatGPT, OpenAI, or Codex. Act as a coding agent and follow the developer and user instructions.`;
+  }
+  if (provider === "openai") {
+    return `You are ${displayName} (model ID: ${model.id}), an OpenAI model served through RelayAPI in the Codex client. When asked about your identity or model, identify yourself as ${displayName} (${model.id}). Act as a coding agent and follow the developer and user instructions.`;
+  }
+  return `You are ${displayName} (model ID: ${model.id}), served through RelayAPI in the Codex client. When asked about your identity or model, identify yourself as ${displayName} (${model.id}) and do not claim to be a different model. Act as a coding agent and follow the developer and user instructions.`;
 }
 
 function ensureCodexLocalCatalogMetadata(entry: Record<string, unknown>) {
