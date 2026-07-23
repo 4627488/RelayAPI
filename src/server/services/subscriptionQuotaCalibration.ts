@@ -2,8 +2,18 @@ import "server-only";
 
 import { HttpError } from "@/src/server/http/errors";
 import { getSubscriptionCalibrationCost } from "@/src/server/repositories/logs";
-import { calibrateSubscriptionQuota, getSubscriptionQuotaState, type QuotaWindowKind } from "@/src/server/repositories/quotaAccounting";
+import {
+  calibrateSubscriptionQuota,
+  getSubscriptionQuotaState,
+  synchronizeSubscriptionQuotaWindows,
+  type QuotaWindowKind,
+} from "@/src/server/repositories/quotaAccounting";
+import { getProviderCredential } from "@/src/server/repositories/providerCredentials";
 import { getTenantSubscription } from "@/src/server/repositories/tenantSubscriptions";
+import {
+  getProviderQuota,
+  providerCredentialSupportsQuota,
+} from "@/src/server/services/providerQuota";
 
 export type SubscriptionCalibrationTask = { subscriptionId: string; status: "idle" | "pending" | "running" | "completed" | "failed"; startedAt: string | null; completedAt: string | null; error: string | null; windows?: Record<"5h" | "7d", { startedAt: string; costNanoUsd: string; requestCount: number }> };
 const tasks = new Map<string, SubscriptionCalibrationTask>();
@@ -26,6 +36,16 @@ async function run(subscriptionId: string) {
   try {
     await Promise.resolve();
     const now = new Date();
+    const credential = getProviderCredential(subscription.credentialId);
+    if (!credential) {
+      throw new Error("Subscription credential was not found");
+    }
+    if (providerCredentialSupportsQuota(credential)) {
+      await getProviderQuota(credential.provider, credential.id, {
+        forceRefresh: true,
+      });
+    }
+    advanceStaleCalibrationWindows(subscriptionId, now);
     const quotaState = getSubscriptionQuotaState(subscriptionId);
     const windows = Object.fromEntries((["5h", "7d"] as const).map((kind) => {
       const quotaWindow = quotaState.windows[kind];
@@ -39,10 +59,48 @@ async function run(subscriptionId: string) {
   } catch (error) { tasks.set(subscriptionId, { subscriptionId, status: "failed", startedAt, completedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) }); }
 }
 
+export function advanceStaleCalibrationWindows(
+  subscriptionId: string,
+  now = new Date(),
+) {
+  const state = getSubscriptionQuotaState(subscriptionId);
+  const resetsAt = Object.fromEntries(
+    (["5h", "7d"] as const).flatMap((kind) => {
+      const window = state.windows[kind];
+      if (!window || Date.parse(window.resetsAt) > now.getTime()) return [];
+      return [[kind, nextCalibrationResetAt(kind, window.resetsAt, now)]];
+    }),
+  ) as Partial<Record<QuotaWindowKind, string>>;
+  if (Object.keys(resetsAt).length > 0) {
+    synchronizeSubscriptionQuotaWindows([subscriptionId], resetsAt, now);
+  }
+  return getSubscriptionQuotaState(subscriptionId);
+}
+
+export function nextCalibrationResetAt(
+  kind: QuotaWindowKind,
+  resetsAt: string,
+  now: Date,
+) {
+  const resetAtMs = Date.parse(resetsAt);
+  if (!Number.isFinite(resetAtMs)) {
+    throw new Error(`Subscription ${kind} quota window has an invalid reset time`);
+  }
+  const durationMs = windowDurationMs(kind);
+  const periods = Math.max(
+    1,
+    Math.floor((now.getTime() - resetAtMs) / durationMs) + 1,
+  );
+  return new Date(resetAtMs + periods * durationMs).toISOString();
+}
+
 export function calibrationWindowStartedAt(kind: QuotaWindowKind, resetsAt: string, now: Date) {
   const resetAtMs = Date.parse(resetsAt);
   if (!Number.isFinite(resetAtMs)) throw new Error(`Subscription ${kind} quota window has an invalid reset time`);
   if (resetAtMs <= now.getTime()) throw new Error(`Subscription ${kind} quota window is stale; refresh credential quota before calibrating`);
-  const duration = kind === "5h" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
-  return new Date(resetAtMs - duration).toISOString();
+  return new Date(resetAtMs - windowDurationMs(kind)).toISOString();
+}
+
+function windowDurationMs(kind: QuotaWindowKind) {
+  return kind === "5h" ? 5 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
 }
