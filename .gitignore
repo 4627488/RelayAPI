@@ -1,5 +1,5 @@
 .env
-relayapi
+/relayapi
 cliproxyapi/config.yaml
 cliproxyapi/auths/
 web/node_modules/
