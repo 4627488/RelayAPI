@@ -1,21 +1,62 @@
 services:
-  relay-api:
-    image: ghcr.io/4627488/relayapi:latest
-    container_name: relay-api
+  web:
+    build: ./web
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "8080:80"
+    depends_on:
+      - relayapi
+    networks: [relay]
+
+  relayapi:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [relay]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
     environment:
-      NODE_ENV: production
-      PORT: "3000"
-      HOSTNAME: 0.0.0.0
-      DATA_DIR: /app/data
-      # 生产环境建议改成强随机值；不设置时会在 data 卷内自动生成/保存。
-      # RELAY_WEB_ACCESS_KEY: "relay_web_change_me"
-      # RELAY_ENCRYPTION_KEY: "change_me_to_a_long_random_secret"
-      # CODEX_REDIRECT_URI: "http://localhost:1455/auth/callback"
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: change-me
+      POSTGRES_DB: relay
     volumes:
-      - relay-api-data:/app/data
+      - relay-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [relay]
+
+  # CLIProxyAPI is intentionally not exposed publicly. Supply its config and
+  # credentials under ./cliproxyapi before enabling this service.
+  cpa-plugin:
+    build: ./cliproxyapi-plugin
+    restart: "no"
+    volumes:
+      - relay-cpa-plugins:/plugins
+
+  cliproxyapi:
+    image: eceasy/cli-proxy-api:latest
+    restart: unless-stopped
+    depends_on:
+      cpa-plugin:
+        condition: service_completed_successfully
+    volumes:
+      - ./cliproxyapi/config.yaml:/CLIProxyAPI/config.yaml:ro
+      - ./cliproxyapi/auths:/root/.cli-proxy-api
+      - relay-cpa-plugins:/CLIProxyAPI/plugins:ro
+    networks: [relay]
 
 volumes:
-  relay-api-data:
+  relay-postgres:
+  relay-cpa-plugins:
+networks:
+  relay:

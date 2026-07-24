@@ -1,181 +1,107 @@
 # RelayAPI
 
-RelayAPI - 一站式管理你的 Codex OAuth
+RelayAPI 是位于 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+前面的 Go 多租户网关。CLIProxyAPI 负责模型/提供商协议互操作，RelayAPI 负责租户
+API Key、额度、计费和审计。因此 CLIProxyAPI 新增模型后无需修改 RelayAPI。
 
-[快速开始](#快速开始) | [Web 访问密钥](#web-访问密钥) | [管理后台](#web-管理后台) | [LinuxDO](https://linux.do/)
+详细设计见 [docs/architecture.md](docs/architecture.md)。
 
----
+## 启动
 
-![Dashboard](img/dashboard.png)
-![Channels](img/channel.png)
-![OAuth](img/oauth.png)
-
----
-
-## 项目简介
-
-RelayAPI 是一个基于 Next.js App Router 的分层中继服务，用于管理 Codex / OpenAI-compatible 请求流量、API Key、Codex 凭据、渠道路由、请求日志与用量状态。
-
-项目特性：
-
-- 支持 OpenAI-compatible  接口。
-- 支持 Codex OAuth 凭据接入与配额刷新。
-- 支持 API Key 管理与 Web 管理后台。
-- 支持自动渠道路由，无需前端选择“当前凭据”。
-- 使用双 SQLite 数据库存储配置、运行状态、日志、审计与用量数据。
-- 使用 `better-sqlite3` 作为 SQLite 后端。
-- 支持 imge
-
-## 环境要求
-
-- Node.js `>=24.0.0`
-- pnpm `10.33.0`
-
-本地运行：
+需要 Go 1.24+、PostgreSQL 和一个已配置的 CLIProxyAPI 实例。
 
 ```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Compose 中前端与统一 API 入口默认监听 `http://localhost:8080`，Go 后端仅在
+私有容器网络监听 3000。租户将 `base_url` 指向统一入口并使用
+`relay_*` 密钥。可用模型通过 `GET /v1/models` 实时获取。
+
+## 前端
+
+`web/` 是基于 Vite、React 19、Tailwind CSS v4 和 shadcn/ui Nova（Base UI）
+构建的独立应用。它包含受邀注册、用户工作区和管理员控制台。
+
+```bash
+cd web
 pnpm install
 pnpm dev
 ```
 
-## 快速开始
+开发服务器会将 `/api`、`/v1` 和健康检查请求代理到
+`http://localhost:3000`。生产镜像通过 Nginx 提供 SPA，并代理 HTTP、SSE 和
+WebSocket 请求到 Go 后端。
 
-```yaml
-services:
-  relay-api:
-    image: sipcink/relay-api:latest
-    container_name: relay-api
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      NODE_ENV: production
-      PORT: "3000"
-      HOSTNAME: 0.0.0.0
-      DATA_DIR: /app/data
-    volumes:
-      - relay-api-data:/app/data
+## 必需配置
 
-volumes:
-  relay-api-data:
-    name: relay-api-data
-```
+| 变量 | 用途 |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL DSN |
+| `CPA_URL` | CLIProxyAPI 私网地址 |
+| `CPA_API_KEY` | RelayAPI 访问 CLIProxyAPI 的 API Key |
+| `RELAY_ADMIN_KEY` | 管理员登录密钥（至少 16 字符） |
+| `RELAY_SESSION_SECRET` | Cookie 签名密钥（至少 32 字符） |
 
-## Web 访问密钥
+`CPA_MANAGEMENT_KEY` 用于管理员面板中的 CPA 凭据、Codex OAuth 与运行策略管理。
+`CPA_PLUGIN_SECRET` 可选，用于 CPA 薄插件向 Relay 回传凭据级用量/失败遥测。
+未知模型默认允许调用且不扣费；
+设置 `UNPRICED_MODEL_POLICY=deny` 可改为严格模式。
 
-首次启动服务时，RelayAPI 会自动生成一个 `relay_web_...` Web 访问密钥，并在首次启动日志中输出。使用 Docker Compose 部署时，可以通过以下命令查看：
+## 面板 API
+
+管理员后端：
+
+- `POST /api/auth/admin`：管理员登录
+- `GET /api/admin/overview`：用户、Key、邀请和今日用量总览
+- `GET|POST /api/admin/invitations`：查看或生成单次邀请
+- `DELETE /api/admin/invitations/{id}`：撤销邀请
+- `GET /api/admin/tenants`：用户列表
+- `GET /api/admin/providers/accounts`：CPA 脱敏凭据列表
+- `POST /api/admin/providers/codex/oauth`：发起 Codex OAuth
+- `POST /api/admin/providers/oauth/callback`：提交 OAuth 回调
+- `GET|PATCH /api/admin/providers/settings`：重试与凭据调度策略
+- `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
+- `GET /api/logs?tenant_id=...`：请求日志
+
+用户后端：
+
+- `POST /api/auth/register`：使用邀请 token 注册
+- `POST /api/auth/login`：登录
+- `GET /api/dashboard`：账户与近 30 天概览
+- `GET /api/usage?days=30`：按天、模型聚合的个人用量
+- `GET|POST /api/keys`：查看或生成个人 API Key
+- `DELETE /api/keys/{id}`：删除个人 API Key
+- `GET /api/logs`：个人请求日志
+
+创建邀请时仅在响应中返回一次明文 token。数据库只保存 SHA-256 哈希；邀请可
+限制注册邮箱，并支持过期、使用和撤销状态。
+
+## 验证
 
 ```bash
-docker logs relay-api
+go test ./...
+go vet ./...
 ```
 
-访问 Web 管理页面时必须输入该密钥；验证成功后，系统会写入 HTTP-only 会话 Cookie。
+## CPA 薄插件
 
-密钥明文只会在首次生成时显示一次，哈希会保存到：
-
-```text
-data/.relay-web-access-key
-```
-
-如果密钥丢失，可以停止服务，删除该文件后重新启动，系统会生成新的 Web 访问密钥。
-
-也可以通过环境变量指定固定 Web 访问密钥：
-
-```env
-RELAY_WEB_ACCESS_KEY=relay_web_...
-# 或
-WEB_ACCESS_KEY=relay_web_...
-```
-
-设置后不会自动生成密钥文件。
-
-## Codex User-Agent
-
-发往 Codex 上游接口和额度刷新接口的 `User-Agent` 可在 Web 管理台的“全局设置”中配置，也可在单个 Codex 凭据的设置弹窗中单独覆盖。
-
-生效优先级：凭据覆盖值 → 管理台全局设置 → `CODEX_USER_AGENT` 环境变量 → 内置默认值。
-
-```env
-CODEX_USER_AGENT="codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
-```
-
-清除管理台全局设置后，会回退到环境变量或内置默认值；清除凭据覆盖后，会使用当前全局 User-Agent。
-
-## 全局时区
-
-RelayAPI 将时间点以 UTC ISO 8601 格式存储和传输，并在界面中按管理台“全局设置”选择的 IANA 时区展示。默认时区为 `Asia/Shanghai`。
-
-全局时区同时决定“今日”、每日额度、趋势图、热力图和历史日聚合的日期边界。管理员修改时区后，系统会在后台重新构建历史每日统计；重建成功前继续使用原时区，失败不会破坏原有统计。设置界面支持运行环境提供的完整 IANA 时区列表，例如 `Asia/Shanghai`、`Europe/London` 和 `America/New_York`。
-
-SQLite 历史数据中不带时区的 `YYYY-MM-DD HH:mm:ss` 值按 UTC 解释。容器的 `TZ` 和访问者浏览器时区不会改变应用时间语义。
-
-## Codex Model Header Overrides
-
-可通过 `CODEX_MODEL_HEADER_OVERRIDES` 为全部模型或指定模型覆盖 Codex 上游兼容性 Header：
-
-```env
-CODEX_MODEL_HEADER_OVERRIDES='{"*":{"x-codex-beta-features":"responses_websockets=2026-07-10"},"gpt-5.3-codex":{"User-Agent":"codex_cli_rs/...","Originator":"codex_cli_rs"}}'
-```
-
-生效优先级：现有全局、租户或凭据 Header → `*` 通配配置 → 精确模型配置。只允许覆盖 `User-Agent`、`Originator`、`x-codex-beta-features` 和 `OpenAI-Beta`；JSON 格式错误、非法 Header 或包含控制字符的值会阻止服务启动。
-
-## 租户份额额度
-
-管理员可在“租户与密钥”中为租户设置额度份额，并在“份额与成本”中查看或覆盖每份 5 小时和 7 天额度。Plus 默认折算为 1 份，Pro 默认折算为 20 份。租户的所有 API Key 共同消耗固定窗口额度；份额留空时不启用该策略，原有每日 Token 和每分钟请求限制仍独立生效。
-
-系统按模型输入、输出、缓存读取、缓存写入和推理 Token 的价格计算成本。价格优先级为管理员覆盖、已同步的 LiteLLM 目录、内置快照。目录每天自动同步，也可从管理台手动同步。未知价格的模型不会按零成本放行启用份额额度的租户。
-
-系统每 5 分钟刷新启用的上游 Codex 凭据额度，比较同一凭据在同一重置窗口内的额度百分比变化与本地已定价成本，推算完整订阅容量。管理员可把具体凭据按 `1/20` 等比例拆成多个子订阅下发给租户；一个租户可持有任意多个子订阅。
-
-子订阅严格继承其上游凭据的 5 小时和 7 天 `resets_at`，不会创建租户自己的滚动窗口。请求只会路由到租户持有的子订阅对应凭据，并发请求先在选中的子订阅预留额度，完成后按实际模型成本结算；一个子订阅耗尽后自动切换到该租户的其他可用子订阅。
-
-## LibreChat OIDC 与租户额度
-
-RelayAPI 可以作为 LibreChat 的 OpenID Connect 身份提供方。管理员可直接在“全局设置 → LibreChat 身份认证”中填写 Client ID、回调地址并生成 Client Secret，无需修改服务配置文件。以下环境变量仅作为无人值守部署时的可选回退：
-
-```env
-RELAY_PUBLIC_URL=https://relay.example.com
-RELAY_OIDC_CLIENT_ID=librechat
-RELAY_OIDC_CLIENT_SECRET=replace-with-a-long-random-secret
-RELAY_OIDC_REDIRECT_URIS=https://chat.example.com/oauth/openid/callback
-```
-
-LibreChat 的环境变量使用同一个 issuer、client id 和 secret，并在自定义 endpoint 中配置一把无租户的 RelayAPI 管理员 API Key。该 Key 必须显式包含 `librechat:identity` scope：
+Compose 会构建 `cliproxyapi-plugin/` 并将动态库放入 CPA 的私有插件目录。
+在 CPA `config.yaml` 中启用：
 
 ```yaml
-endpoints:
-  custom:
-    - name: RelayAPI
-      apiKey: '${RELAY_LIBRECHAT_INTEGRATION_KEY}'
-      baseURL: 'https://relay.example.com/v1'
-      headers:
-        X-LibreChat-OpenID-ID: '{{LIBRECHAT_USER_OPENIDID}}'
-        X-LibreChat-User-Email: '{{LIBRECHAT_USER_EMAIL}}'
-      models:
-        default: ['gpt-5.3-codex']
-        fetch: true
+plugins:
+  enabled: true
+  dir: /CLIProxyAPI/plugins
+  configs:
+    relayapi-bridge:
+      enabled: true
+      priority: 10
+      relay_url: http://relayapi:3000
+      secret: 与 CPA_PLUGIN_SECRET 相同
+      delegate: round-robin
 ```
 
-RelayAPI 只信任 `X-LibreChat-OpenID-ID`，并要求它与专用 scope 同时出现。该值对应 OIDC `sub`（即 `tenant_users.id`）；验证用户和租户可用后，请求会消耗该用户所属租户的子订阅额度。普通 API Key 和租户 API Key不能通过伪造此请求头切换租户。
-
-## 路由与冷却
-
-凭据级冷却时间可通过环境变量配置，单位为毫秒。默认只对 `429` 做 5 分钟冷却，`401` / `403` 不再固定长时间摘除凭据，避免上游或代理短暂波动导致长期无可用通道。
-
-```env
-RELAY_CODEX_CREDENTIAL_COOLDOWN_401_MS=0
-RELAY_CODEX_CREDENTIAL_COOLDOWN_403_MS=0
-RELAY_CODEX_CREDENTIAL_COOLDOWN_429_MS=300000
-RELAY_USAGE_HEALTH_CACHE_TTL_MS=5000
-```
-
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=SIPC%2FRelayAPI&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=SIPC/RelayAPI&type=date&legend=top-left" />
- </picture>
-</a>
+插件负责 CPA 凭据选择扩展与用量/失败遥测。计费仍使用 Relay 代理层关联到具体
+请求的响应用量，避免 CPA 插件事件缺少自定义关联 ID 时发生串账。
