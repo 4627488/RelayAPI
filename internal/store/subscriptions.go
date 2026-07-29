@@ -51,6 +51,7 @@ type Admission struct {
 	ParentSubscriptionID   string
 	ChildSubscriptionID    string
 	CPAAuthID              string
+	CPAAuthIndex           string
 	BalanceReservedNanoUSD int64
 	QuotaReservedNanoUSD   int64
 }
@@ -72,9 +73,9 @@ func (s Store) GetParentSubscription(ctx context.Context, id string) (ParentSubs
 	return item, notFound(err)
 }
 
-func (s Store) GetParentSubscriptionByCPAAuthID(ctx context.Context, authID string) (ParentSubscription, error) {
+func (s Store) GetParentSubscriptionByCPAAuthIndex(ctx context.Context, authIndex string) (ParentSubscription, error) {
 	var item ParentSubscription
-	err := scoped(ctx, s.DB).First(&item, "cpa_auth_id = ?", strings.TrimSpace(authID)).Error
+	err := scoped(ctx, s.DB).First(&item, "cpa_auth_index = ?", strings.TrimSpace(authIndex)).Error
 	return item, notFound(err)
 }
 
@@ -83,6 +84,10 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 		item.ID = identity.NewID()
 	}
 	item.CPAAuthID = strings.TrimSpace(item.CPAAuthID)
+	item.CPAAuthIndex = strings.TrimSpace(item.CPAAuthIndex)
+	if item.CPAAuthIndex == "" {
+		item.CPAAuthIndex = item.CPAAuthID
+	}
 	item.CPAAuthName = strings.TrimSpace(item.CPAAuthName)
 	item.Name = strings.TrimSpace(item.Name)
 	item.Provider = strings.TrimSpace(item.Provider)
@@ -99,9 +104,9 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 		item.Metadata = json.RawMessage(`{}`)
 	}
 	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "cpa_auth_id"}},
+		Columns: []clause.Column{{Name: "cpa_auth_index"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"cpa_auth_name", "name", "provider", "plan_type", "status", "cpa_unavailable", "capacity_mode",
+			"cpa_auth_id", "cpa_auth_name", "name", "provider", "plan_type", "status", "cpa_unavailable", "capacity_mode",
 			"allocation_limit_ppm", "enabled", "model_allowlist", "metadata", "last_synced_at", "updated_at",
 		}),
 	}).Create(&item).Error
@@ -109,7 +114,7 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 		return ParentSubscription{}, err
 	}
 	var result ParentSubscription
-	err = scoped(ctx, s.DB).First(&result, "cpa_auth_id = ?", item.CPAAuthID).Error
+	err = scoped(ctx, s.DB).First(&result, "cpa_auth_index = ?", item.CPAAuthIndex).Error
 	return result, err
 }
 
@@ -118,6 +123,10 @@ func (s Store) SyncParentSubscription(ctx context.Context, item ParentSubscripti
 		item.ID = identity.NewID()
 	}
 	item.CPAAuthID = strings.TrimSpace(item.CPAAuthID)
+	item.CPAAuthIndex = strings.TrimSpace(item.CPAAuthIndex)
+	if item.CPAAuthIndex == "" {
+		item.CPAAuthIndex = item.CPAAuthID
+	}
 	item.CPAAuthName = strings.TrimSpace(item.CPAAuthName)
 	item.Name = strings.TrimSpace(item.Name)
 	if item.Name == "" {
@@ -133,16 +142,16 @@ func (s Store) SyncParentSubscription(ctx context.Context, item ParentSubscripti
 		item.AllocationLimitPPM = 1_000_000
 	}
 	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "cpa_auth_id"}},
+		Columns: []clause.Column{{Name: "cpa_auth_index"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"cpa_auth_name", "provider", "plan_type", "status", "cpa_unavailable", "cpa_model_allowlist", "metadata", "last_synced_at", "updated_at",
+			"cpa_auth_id", "cpa_auth_name", "provider", "plan_type", "status", "cpa_unavailable", "cpa_model_allowlist", "metadata", "last_synced_at", "updated_at",
 		}),
 	}).Create(&item).Error
 	if err != nil {
 		return ParentSubscription{}, err
 	}
 	var result ParentSubscription
-	err = scoped(ctx, s.DB).First(&result, "cpa_auth_id = ?", item.CPAAuthID).Error
+	err = scoped(ctx, s.DB).First(&result, "cpa_auth_index = ?", item.CPAAuthIndex).Error
 	return result, err
 }
 
@@ -150,7 +159,7 @@ func (s Store) MarkMissingParentSubscriptions(ctx context.Context, seen []string
 	query := scoped(ctx, s.DB).Model(&ParentSubscription{}).
 		Where("last_synced_at IS NOT NULL AND last_synced_at < ?", syncStartedAt)
 	if len(seen) > 0 {
-		query = query.Where("cpa_auth_id NOT IN ?", seen)
+		query = query.Where("cpa_auth_index NOT IN ?", seen)
 	}
 	return query.Updates(map[string]any{
 		"cpa_unavailable": true,
@@ -294,7 +303,7 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 					var total totals
 					if err := tx.Model(&db.RequestLog{}).Select(
 						"COALESCE(sum(cost_nano_usd),0) AS cost, COALESCE(sum(CASE WHEN pricing_complete = false AND model <> '' THEN 1 ELSE 0 END),0) AS incomplete",
-					).Where("auth_index = ? AND started_at > ? AND started_at <= ?", parent.CPAAuthID, previous.ObservedAt, observedAt).
+					).Where("auth_index = ? AND started_at > ? AND started_at <= ?", parent.CPAAuthIndex, previous.ObservedAt, observedAt).
 						Scan(&total).Error; err != nil {
 						return err
 					}
@@ -575,6 +584,7 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 			reservation.ChildSubscriptionID = &child.ID
 			reservation.ParentSubscriptionID = &parent.ID
 			reservation.CPAAuthID = parent.CPAAuthID
+			reservation.CPAAuthIndex = parent.CPAAuthIndex
 			if parent.CapacityMode != db.ParentCapacityUnmetered {
 				if input.QuotaReserve <= 0 {
 					return ErrSubscriptionPrice
@@ -805,7 +815,7 @@ func (s Store) HasActiveChildSubscriptions(ctx context.Context, now time.Time) (
 
 func admissionFromReservation(value RequestReservation) Admission {
 	result := Admission{
-		RequestID: value.RequestID, CPAAuthID: value.CPAAuthID,
+		RequestID: value.RequestID, CPAAuthID: value.CPAAuthID, CPAAuthIndex: value.CPAAuthIndex,
 		BalanceReservedNanoUSD: value.BalanceReservedNanoUSD,
 		QuotaReservedNanoUSD:   value.QuotaReservedNanoUSD,
 	}

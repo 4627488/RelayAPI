@@ -245,7 +245,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 	}
 	err := a.store.WriteLog(context.WithoutCancel(r.Context()), store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
-		AuthIndex: admission.CPAAuthID, ParentSubscriptionID: admission.ParentSubscriptionID,
+		AuthIndex: admission.CPAAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
 		ChildSubscriptionID: admission.ChildSubscriptionID,
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
 		CostNanoUSD: costPointer, PricingComplete: pricing, Settled: settled,

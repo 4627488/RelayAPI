@@ -37,7 +37,9 @@ the stable CPA AuthID and accounting metadata.
 
 `parent_subscriptions` mirrors a redacted CPA authentication identity:
 
-- stable `cpa_auth_id` used by the scheduler plugin;
+- CPA scheduler `id` stored as `cpa_auth_id` and used only for strict picks;
+- stable management `auth_index` stored separately for synchronization,
+  observations, request attribution, and credential administration;
 - CPA auth-file name, provider, display name, status, and cached model list;
 - capacity mode: `unmetered`, `manual`, or `observed`;
 - allocation/oversell limit and synchronization timestamps.

@@ -72,7 +72,7 @@ WebSocket 入口。
   保留方法、查询参数及 JSON/YAML/上传请求体
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
 - `GET /api/logs?tenant_id=...`：请求日志
-- `POST /api/admin/subscriptions/sync`：从 CPA AuthID 同步父订阅
+- `POST /api/admin/subscriptions/sync`：同步 CPA scheduler ID 与稳定 auth_index 父订阅映射
 - `/api/admin/subscriptions/parents/*`：父订阅、任意容量窗口与观测样本
 - `/api/admin/subscriptions/children/*`：向租户分配、停用或回收子订阅
 

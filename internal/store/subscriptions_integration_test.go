@@ -53,6 +53,18 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	syncedParent, err := store.SyncParentSubscription(ctx, ParentSubscription{
+		CPAAuthID: "scheduler-auth-id", CPAAuthIndex: "auth-integration", CPAAuthName: "auth.json",
+		Name: "parent", Provider: "test", CapacityMode: db.ParentCapacityUnmetered,
+		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if syncedParent.ID != parent.ID || syncedParent.CPAAuthID != "scheduler-auth-id" || syncedParent.CPAAuthIndex != "auth-integration" {
+		t.Fatalf("parent identity mapping was not updated in place: %+v", syncedParent)
+	}
+	parent = syncedParent
 	firstReset := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 	if err := store.SetParentQuotaWindows(ctx, parent.ID, []ParentQuotaWindow{{
 		Kind: "rolling", LimitNanoUSD: 1_000, ResetsAt: firstReset, Source: "manual",

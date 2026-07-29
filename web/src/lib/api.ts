@@ -130,6 +130,7 @@ export interface ParentQuotaWindow {
 export interface ParentSubscription {
   id: string
   cpa_auth_id: string
+  cpa_auth_index: string
   cpa_auth_name: string
   name: string
   provider: string

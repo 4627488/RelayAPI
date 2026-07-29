@@ -172,7 +172,7 @@ export function AdminSubscriptionsView() {
               <TableBody>
                 {parents.map((view) => (
                   <TableRow key={view.item.id}>
-                    <TableCell><div className="font-medium">{view.item.name}</div><div className="max-w-60 truncate font-mono text-xs text-muted-foreground">{view.item.cpa_auth_id}</div></TableCell>
+                    <TableCell><div className="font-medium">{view.item.name}</div><div className="max-w-60 truncate font-mono text-xs text-muted-foreground" title={`Scheduler ID: ${view.item.cpa_auth_id}`}>{view.item.cpa_auth_index}</div></TableCell>
                     <TableCell>{view.item.provider || "未知"}</TableCell>
                     <TableCell>{capacityModes.find((mode) => mode.value === view.item.capacity_mode)?.label}</TableCell>
                     <TableCell className="tabular-nums">{percent(view.allocated_ppm)} / {percent(view.item.allocation_limit_ppm)}</TableCell>

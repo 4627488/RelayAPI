@@ -41,6 +41,14 @@ var migrations = []migration{
 			`ALTER TABLE request_reservations ADD CONSTRAINT request_reservation_parent_fk FOREIGN KEY (parent_subscription_id) REFERENCES parent_subscriptions(id) ON DELETE SET NULL`,
 		},
 	},
+	{
+		version: 2,
+		name:    "separate CPA scheduler ID from auth index",
+		statements: []string{
+			`UPDATE parent_subscriptions SET cpa_auth_index = cpa_auth_id WHERE cpa_auth_index = ''`,
+			`CREATE UNIQUE INDEX parent_subscriptions_cpa_auth_index_unique ON parent_subscriptions(cpa_auth_index)`,
+		},
+	},
 }
 
 func runMigrations(ctx context.Context, database *gorm.DB) error {

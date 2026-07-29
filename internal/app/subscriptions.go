@@ -73,9 +73,10 @@ func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		CPAAuthID   string `json:"cpa_auth_id"`
-		CPAAuthName string `json:"cpa_auth_name"`
-		Provider    string `json:"provider"`
+		CPAAuthID    string `json:"cpa_auth_id"`
+		CPAAuthIndex string `json:"cpa_auth_index"`
+		CPAAuthName  string `json:"cpa_auth_name"`
+		Provider     string `json:"provider"`
 		parentSubscriptionInput
 	}
 	if !decodeJSON(w, r, &input) {
@@ -86,7 +87,7 @@ func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := a.store.UpsertParentSubscription(r.Context(), store.ParentSubscription{
-		CPAAuthID: input.CPAAuthID, CPAAuthName: input.CPAAuthName, Provider: input.Provider,
+		CPAAuthID: input.CPAAuthID, CPAAuthIndex: input.CPAAuthIndex, CPAAuthName: input.CPAAuthName, Provider: input.Provider,
 		Name: input.Name, PlanType: input.PlanType, CapacityMode: input.CapacityMode,
 		AllocationLimitPPM: input.AllocationLimitPPM, Enabled: input.Enabled, ModelAllowlist: input.ModelAllowlist,
 	})
@@ -230,16 +231,20 @@ func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Reques
 	seen := make([]string, 0, len(rows))
 	for _, raw := range rows {
 		row, _ := raw.(map[string]any)
-		authID := firstString(row, "auth_index", "auth_id", "id")
+		authID := firstString(row, "id", "name")
+		authIndex := firstString(row, "auth_index", "authIndex", "AuthIndex")
+		if authIndex == "" {
+			authIndex = authID
+		}
 		name := firstString(row, "name", "file")
-		if authID == "" {
+		if authID == "" || authIndex == "" {
 			continue
 		}
 		provider := firstString(row, "provider", "type")
 		display := firstString(row, "label", "email", "name")
 		models, modelsOK := a.cpaAuthModels(r, name)
 		if !modelsOK {
-			if existing, existingErr := a.store.GetParentSubscriptionByCPAAuthID(r.Context(), authID); existingErr == nil {
+			if existing, existingErr := a.store.GetParentSubscriptionByCPAAuthIndex(r.Context(), authIndex); existingErr == nil {
 				models = existing.CPAModelAllowlist
 			}
 		}
@@ -250,7 +255,7 @@ func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Reques
 		}
 		enabled := !boolField(row, "disabled") && !boolField(row, "unavailable")
 		item, err := a.store.SyncParentSubscription(r.Context(), store.ParentSubscription{
-			CPAAuthID: authID, CPAAuthName: name, Name: display, Provider: provider,
+			CPAAuthID: authID, CPAAuthIndex: authIndex, CPAAuthName: name, Name: display, Provider: provider,
 			PlanType: firstString(row, "plan_type", "plan", "account_type"), Status: statusValue,
 			CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
 			Enabled: true, CPAUnavailable: !enabled, CPAModelAllowlist: models, Metadata: json.RawMessage(`{}`), LastSyncedAt: &now,
@@ -260,7 +265,7 @@ func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		items = append(items, item)
-		seen = append(seen, authID)
+		seen = append(seen, authIndex)
 	}
 	if err := a.store.MarkMissingParentSubscriptions(r.Context(), seen, syncStartedAt); err != nil {
 		writeError(w, 500, "database_error", err.Error())

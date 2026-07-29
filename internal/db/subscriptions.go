@@ -23,6 +23,7 @@ const (
 type ParentSubscription struct {
 	ID                 string          `gorm:"type:uuid;primaryKey" json:"id"`
 	CPAAuthID          string          `gorm:"not null;uniqueIndex" json:"cpa_auth_id"`
+	CPAAuthIndex       string          `gorm:"not null;default:'';index" json:"cpa_auth_index"`
 	CPAAuthName        string          `gorm:"not null;default:'';index" json:"cpa_auth_name"`
 	Name               string          `gorm:"not null" json:"name"`
 	Provider           string          `gorm:"not null;default:'';index" json:"provider"`
@@ -102,6 +103,7 @@ type RequestReservation struct {
 	ChildSubscriptionID    *string         `gorm:"type:uuid;index" json:"child_subscription_id"`
 	ParentSubscriptionID   *string         `gorm:"type:uuid;index" json:"parent_subscription_id"`
 	CPAAuthID              string          `gorm:"not null;default:'';index" json:"cpa_auth_id"`
+	CPAAuthIndex           string          `gorm:"not null;default:'';index" json:"cpa_auth_index"`
 	Model                  string          `gorm:"not null;default:''" json:"model"`
 	BalanceReservedNanoUSD int64           `gorm:"not null;default:0" json:"balance_reserved_nano_usd"`
 	QuotaReservedNanoUSD   int64           `gorm:"not null;default:0" json:"quota_reserved_nano_usd"`
