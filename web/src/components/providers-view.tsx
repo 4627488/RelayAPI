@@ -4,7 +4,6 @@ import {
   BoxesIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
-  CircleGaugeIcon,
   CloudCogIcon,
   ExternalLinkIcon,
   KeyRoundIcon,
@@ -60,36 +59,8 @@ const oauthProviders: Array<{ id: OAuthProvider; label: string; description: str
   { id: "xai", label: "xAI", description: "Grok/xAI OAuth" },
 ]
 
-const providerConfigs = [
-  { path: "gemini-api-key", label: "Gemini API Key" },
-  { path: "interactions-api-key", label: "Interactions API Key" },
-  { path: "claude-api-key", label: "Claude API Key" },
-  { path: "codex-api-key", label: "Codex API Key" },
-  { path: "xai-api-key", label: "xAI API Key" },
-  { path: "vertex-api-key", label: "Vertex API Key" },
-  { path: "openai-compatibility", label: "OpenAI-compatible 端点" },
-  { path: "oauth-model-alias", label: "OAuth 模型别名" },
-  { path: "oauth-excluded-models", label: "OAuth 排除模型" },
-  { path: "proxy-url", label: "全局上游代理" },
-  { path: "ws-auth", label: "WebSocket 鉴权" },
-  { path: "force-model-prefix", label: "强制模型前缀" },
-  { path: "debug", label: "调试日志" },
-  { path: "logging-to-file", label: "文件日志" },
-  { path: "usage-statistics-enabled", label: "CPA 用量统计" },
-  { path: "quota-exceeded/switch-project", label: "额度耗尽切换项目" },
-  { path: "quota-exceeded/switch-preview-model", label: "额度耗尽切换预览模型" },
-  { path: "plugins", label: "已安装插件", readOnly: true },
-  { path: "plugin-store", label: "插件市场", readOnly: true },
-  { path: "api-key-usage", label: "CPA Key 用量", readOnly: true },
-  { path: "usage-queue", label: "用量事件队列", readOnly: true },
-] as const
-
 function isRoutingStrategy(value: unknown): value is ProviderSettings["routing_strategy"] {
   return value === "round-robin" || value === "fill-first"
-}
-
-function isProviderConfigPath(value: unknown): value is string {
-  return typeof value === "string" && providerConfigs.some((item) => item.path === value)
 }
 
 function accountName(account: ProviderAccount) {
@@ -139,11 +110,11 @@ export function ProvidersView() {
   const [gatewayKeys, setGatewayKeys] = useState("")
   const [configYAML, setConfigYAML] = useState("")
   const [advancedResult, setAdvancedResult] = useState("")
-  const [configPath, setConfigPath] = useState<string>(providerConfigs[0].path)
-  const [providerJSON, setProviderJSON] = useState("")
+  const [accountWarning, setAccountWarning] = useState("")
   const [search, setSearch] = useState("")
   const [providerFilter, setProviderFilter] = useState("all")
   const [statusFilter, setStatusFilter] = useState("all")
+  const [sourceFilter, setSourceFilter] = useState("all")
   const [selectedAccount, setSelectedAccount] = useState<ProviderAccount | null>(null)
   const [accountModels, setAccountModels] = useState<string[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -154,18 +125,21 @@ export function ProvidersView() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [value, config, keys, parentValue] = await Promise.all([
-        api<{ files: ProviderAccount[] }>("/api/admin/providers/accounts"),
+      const [accountResult, settingsResult, keysResult, parentResult] = await Promise.allSettled([
+        api<{ files: ProviderAccount[]; warning?: string }>("/api/admin/providers/accounts"),
         api<ProviderSettings>("/api/admin/providers/settings"),
         api<{ "api-keys": string[] }>("/api/admin/cpa/api-keys"),
         api<{ items: ParentSubscriptionView[] }>("/api/admin/subscriptions/parents"),
       ])
-      setAccounts(value.files ?? [])
-      setParents(parentValue.items ?? [])
-      setSettings(config)
-      setGatewayKeys((keys["api-keys"] ?? []).join("\n"))
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取 CPA 凭据")
+      if (accountResult.status === "fulfilled") {
+        setAccounts(accountResult.value.files ?? [])
+        setAccountWarning(accountResult.value.warning ?? "")
+      } else {
+        toast.error(accountResult.reason instanceof Error ? accountResult.reason.message : "无法读取模型账户")
+      }
+      if (settingsResult.status === "fulfilled") setSettings(settingsResult.value)
+      if (keysResult.status === "fulfilled") setGatewayKeys((keysResult.value["api-keys"] ?? []).join("\n"))
+      if (parentResult.status === "fulfilled") setParents(parentResult.value.items ?? [])
     } finally {
       setLoading(false)
     }
@@ -193,6 +167,8 @@ export function ProvidersView() {
     const unavailable = accounts.filter((account) => account.unavailable && !account.disabled).length
     const success = accounts.reduce((total, account) => total + (account.success ?? 0), 0)
     const failed = accounts.reduce((total, account) => total + (account.failed ?? 0), 0)
+    const oauthCount = accounts.filter((account) => account.source !== "config").length
+    const configCount = accounts.length - oauthCount
     const linked = accounts.filter((account) => {
       const keys = [account.auth_index, account.id, account.name].filter(Boolean) as string[]
       return keys.some((key) => parentByCredential.has(key))
@@ -203,6 +179,8 @@ export function ProvidersView() {
       unavailable,
       success,
       failed,
+      oauthCount,
+      configCount,
       linked,
       successRate: success + failed > 0 ? (success / (success + failed)) * 100 : 0,
     }
@@ -212,6 +190,7 @@ export function ProvidersView() {
     return accounts.filter((account) => {
       const provider = account.provider || account.type || ""
       if (providerFilter !== "all" && provider !== providerFilter) return false
+      if (sourceFilter !== "all" && (account.source || "oauth") !== sourceFilter) return false
       if (statusFilter === "healthy" && !accountHealthy(account)) return false
       if (statusFilter === "disabled" && !account.disabled) return false
       if (statusFilter === "unavailable" && !account.unavailable) return false
@@ -220,7 +199,7 @@ export function ProvidersView() {
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle))
     })
-  }, [accounts, providerFilter, search, statusFilter])
+  }, [accounts, providerFilter, search, sourceFilter, statusFilter])
 
   const selectedParent = useMemo(() => {
     if (!selectedAccount) return undefined
@@ -305,7 +284,11 @@ export function ProvidersView() {
 
   async function inspectAccount(account: ProviderAccount) {
     setSelectedAccount(account)
-    setAccountModels([])
+    setAccountModels(account.models ?? [])
+    if (account.source === "config") {
+      setModelsLoading(false)
+      return
+    }
     setModelsLoading(true)
     try {
       const value = await api<unknown>(`/api/admin/providers/accounts/${encodeURIComponent(account.name)}/models`)
@@ -331,7 +314,7 @@ export function ProvidersView() {
   }
 
   async function remove(account: ProviderAccount) {
-    if (!window.confirm(`确认从 CPA 删除凭据 ${account.name}？`)) return
+    if (!window.confirm(`确认从 CPA 删除“${accountName(account)}”？此操作会立即停止该账户的路由能力。`)) return
     try {
       await deleteRequest(`/api/admin/providers/accounts/${encodeURIComponent(account.name)}`)
       toast.success("凭据已删除")
@@ -414,28 +397,6 @@ export function ProvidersView() {
     finally { setPending(false) }
   }
 
-  async function loadProviderConfig(path = configPath) {
-    setPending(true)
-    try {
-      const text = await cpaText(path)
-      try { setProviderJSON(JSON.stringify(JSON.parse(text), null, 2)) } catch { setProviderJSON(text) }
-    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "读取提供商配置失败") }
-    finally { setPending(false) }
-  }
-
-  async function saveProviderConfig() {
-    const definition = providerConfigs.find((item) => item.path === configPath)
-    if (definition && "readOnly" in definition && definition.readOnly) return
-    setPending(true)
-    try {
-      JSON.parse(providerJSON)
-      await cpaText(configPath, { method: "PUT", headers: { "Content-Type": "application/json" }, body: providerJSON })
-      toast.success("提供商配置已保存")
-      await load()
-    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "配置 JSON 无效") }
-    finally { setPending(false) }
-  }
-
   return (
     <div className="flex flex-col gap-6">
       <Card className="relative overflow-hidden border-primary/15 bg-gradient-to-br from-primary/10 via-card to-card">
@@ -471,7 +432,7 @@ export function ProvidersView() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardContent className="flex items-center justify-between py-5">
-            <div><p className="text-xs text-muted-foreground">已接入账户</p><p className="mt-1 text-2xl font-semibold tabular-nums">{accounts.length}</p><p className="mt-1 text-xs text-muted-foreground">{providers.length} 个提供商</p></div>
+            <div><p className="text-xs text-muted-foreground">已接入账户</p><p className="mt-1 text-2xl font-semibold tabular-nums">{accounts.length}</p><p className="mt-1 text-xs text-muted-foreground">{overview.oauthCount} OAuth · {overview.configCount} Key/端点</p></div>
             <div className="rounded-xl bg-primary/10 p-3 text-primary"><Layers3Icon className="size-5" /></div>
           </CardContent>
         </Card>
@@ -483,14 +444,14 @@ export function ProvidersView() {
         </Card>
         <Card>
           <CardContent className="flex items-center justify-between py-5">
-            <div><p className="text-xs text-muted-foreground">请求成功率</p><p className="mt-1 text-2xl font-semibold tabular-nums">{overview.successRate.toFixed(1)}%</p><p className="mt-1 text-xs text-muted-foreground">{overview.success.toLocaleString()} 成功 · {overview.failed.toLocaleString()} 失败</p></div>
+            <div><p className="text-xs text-muted-foreground">OAuth 请求成功率</p><p className="mt-1 text-2xl font-semibold tabular-nums">{overview.successRate.toFixed(1)}%</p><p className="mt-1 text-xs text-muted-foreground">{overview.success.toLocaleString()} 成功 · {overview.failed.toLocaleString()} 失败</p></div>
             <div className="rounded-xl bg-sky-500/10 p-3 text-sky-600"><ActivityIcon className="size-5" /></div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="flex items-center justify-between py-5">
-            <div><p className="text-xs text-muted-foreground">已关联额度</p><p className="mt-1 text-2xl font-semibold tabular-nums">{overview.linked}</p><p className="mt-1 text-xs text-muted-foreground">{accounts.length ? Math.round((overview.linked / accounts.length) * 100) : 0}% 已纳入订阅管理</p></div>
-            <div className="rounded-xl bg-violet-500/10 p-3 text-violet-600"><CircleGaugeIcon className="size-5" /></div>
+            <div><p className="text-xs text-muted-foreground">提供商覆盖</p><p className="mt-1 text-2xl font-semibold tabular-nums">{providers.length}</p><p className="mt-1 text-xs text-muted-foreground">{overview.linked} 个账户已关联订阅额度</p></div>
+            <div className="rounded-xl bg-violet-500/10 p-3 text-violet-600"><BoxesIcon className="size-5" /></div>
           </CardContent>
         </Card>
       </div>
@@ -530,10 +491,16 @@ export function ProvidersView() {
         </Card>
       )}
 
+      {accountWarning && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
+          <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+          <span>{accountWarning}。OAuth 账户仍可管理，但 Key 账户列表可能不完整。</span>
+        </div>
+      )}
+
       <Tabs defaultValue="accounts" className="gap-4">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 sm:grid-cols-4 lg:w-fit">
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 p-1 lg:w-fit">
           <TabsTrigger value="accounts" className="px-3 py-1.5"><Layers3Icon />账户中心</TabsTrigger>
-          <TabsTrigger value="connect" className="px-3 py-1.5"><PlugIcon />接入协议</TabsTrigger>
           <TabsTrigger value="runtime" className="px-3 py-1.5"><ServerCogIcon />运行策略</TabsTrigger>
           <TabsTrigger value="advanced" className="px-3 py-1.5"><Settings2Icon />高级配置</TabsTrigger>
         </TabsList>
@@ -546,6 +513,10 @@ export function ProvidersView() {
                 <InputGroupInput value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索邮箱、凭据名、提供商或状态…" />
               </InputGroup>
               <div className="grid grid-cols-2 gap-2 sm:flex">
+                <Select value={sourceFilter} onValueChange={(value) => { if (value) setSourceFilter(value) }}>
+                  <SelectTrigger className="w-full sm:w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectGroup><SelectItem value="all">全部账户类型</SelectItem><SelectItem value="oauth">OAuth 订阅</SelectItem><SelectItem value="config">API Key / 端点</SelectItem></SelectGroup></SelectContent>
+                </Select>
                 <Select value={providerFilter} onValueChange={(value) => { if (value) setProviderFilter(value) }}>
                   <SelectTrigger className="w-full sm:w-44"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectGroup><SelectItem value="all">全部提供商</SelectItem>{providers.map((provider) => <SelectItem key={provider} value={provider}>{provider}</SelectItem>)}</SelectGroup></SelectContent>
@@ -577,8 +548,11 @@ export function ProvidersView() {
                             {(account.provider || account.type || "?").slice(0, 2)}
                           </div>
                           <div className="min-w-0">
-                            <CardTitle className="truncate">{accountName(account)}</CardTitle>
-                            <CardDescription className="mt-1 truncate font-mono text-xs">{account.name}</CardDescription>
+                            <div className="flex min-w-0 items-center gap-2">
+                              <CardTitle className="truncate">{accountName(account)}</CardTitle>
+                              <Badge variant="outline" className="shrink-0">{account.source === "config" ? account.type || "API Key" : "OAuth"}</Badge>
+                            </div>
+                            <CardDescription className="mt-1 truncate font-mono text-xs">{account.source === "config" ? account.base_url || account.config_path : account.name}</CardDescription>
                           </div>
                         </div>
                         <Badge variant={state.tone}>{state.label}</Badge>
@@ -587,28 +561,43 @@ export function ProvidersView() {
                     <CardContent className="space-y-5 pt-5">
                       <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
                         <div><p className="text-xs text-muted-foreground">提供商</p><p className="mt-1 font-medium">{account.provider || account.type || "未知"}</p></div>
-                        <div><p className="text-xs text-muted-foreground">协议类型</p><p className="mt-1 font-medium">{account.type || "OAuth"}</p></div>
-                        <div className="col-span-2 sm:col-span-1"><p className="text-xs text-muted-foreground">额度关联</p><p className="mt-1 font-medium">{parent ? parent.item.name : "尚未关联"}</p></div>
+                        <div><p className="text-xs text-muted-foreground">凭据类型</p><p className="mt-1 font-medium">{account.source === "config" ? account.type || "API Key" : "OAuth 订阅"}</p></div>
+                        <div className="col-span-2 sm:col-span-1"><p className="text-xs text-muted-foreground">{account.source === "config" ? "模型配置" : "额度关联"}</p><p className="mt-1 font-medium">{account.source === "config" ? `${account.models?.length ?? 0} 个模型` : parent ? parent.item.name : "尚未关联"}</p></div>
                       </div>
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">请求成功率</span><span className="font-medium tabular-nums">{successRate.toFixed(1)}% · {account.success ?? 0}/{total}</span></div>
-                        <Progress value={successRate} />
-                      </div>
-                      <div className="rounded-lg border bg-muted/15 p-3">
-                        <div className="mb-2 flex items-center justify-between"><span className="text-xs font-medium">上游订阅额度</span>{parent && <Badge variant="outline">{parent.item.capacity_mode}</Badge>}</div>
-                        <QuotaSnapshot snapshot={parent?.item.quota_snapshot} status={parent?.item.quota_probe_status} error={parent?.item.quota_probe_error} observedAt={parent?.item.quota_observed_at} compact />
-                      </div>
+                      {account.source === "config" ? (
+                        <div className="rounded-lg border bg-muted/15 p-3">
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+                            <span><span className="text-muted-foreground">Key 数量：</span><span className="font-medium">{account.key_count || 1}</span></span>
+                            {account.prefix && <span><span className="text-muted-foreground">模型前缀：</span><span className="font-mono font-medium">{account.prefix}</span></span>}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {account.models?.length ? account.models.slice(0, 6).map((model) => <Badge key={model} variant="outline" className="font-mono font-normal">{model}</Badge>) : <span className="text-xs text-muted-foreground">使用 CPA 提供商默认模型能力</span>}
+                            {(account.models?.length ?? 0) > 6 && <Badge variant="secondary">+{(account.models?.length ?? 0) - 6}</Badge>}
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">请求成功率</span><span className="font-medium tabular-nums">{successRate.toFixed(1)}% · {account.success ?? 0}/{total}</span></div>
+                            <Progress value={successRate} />
+                          </div>
+                          <div className="rounded-lg border bg-muted/15 p-3">
+                            <div className="mb-2 flex items-center justify-between"><span className="text-xs font-medium">上游订阅额度</span>{parent && <Badge variant="outline">{parent.item.capacity_mode}</Badge>}</div>
+                            <QuotaSnapshot snapshot={parent?.item.quota_snapshot} status={parent?.item.quota_probe_status} error={parent?.item.quota_probe_error} observedAt={parent?.item.quota_observed_at} compact />
+                          </div>
+                        </>
+                      )}
                       {account.status_message && (
                         <div className="flex gap-2 rounded-lg bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
                           <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" /><span>{account.status_message}</span>
                         </div>
                       )}
                       <div className="flex flex-wrap items-center gap-2 border-t pt-4">
-                        <Button size="sm" variant="outline" onClick={() => void inspectAccount(account)}>查看详情<ChevronRightIcon /></Button>
+                        {account.can_inspect !== false && <Button size="sm" variant="outline" onClick={() => void inspectAccount(account)}>查看详情<ChevronRightIcon /></Button>}
                         {parent && <Button size="sm" variant="outline" disabled={pending} onClick={() => void syncQuota(parent.item.id)}><RefreshCwIcon />同步额度</Button>}
                         <div className="ml-auto flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => void toggle(account)}>{account.disabled ? "启用" : "停用"}</Button>
-                          <Button size="icon-sm" variant="ghost" aria-label="删除凭据" onClick={() => void remove(account)}><Trash2Icon /></Button>
+                          {account.can_toggle !== false && <Button size="sm" variant="outline" onClick={() => void toggle(account)}>{account.disabled ? "启用" : "停用"}</Button>}
+                          {account.can_delete !== false && <Button size="icon-sm" variant="ghost" aria-label={`删除 ${accountName(account)}`} onClick={() => void remove(account)}><Trash2Icon /></Button>}
                         </div>
                       </div>
                     </CardContent>
@@ -630,42 +619,6 @@ export function ProvidersView() {
               </CardContent>
             </Card>
           )}
-        </TabsContent>
-
-        <TabsContent value="connect" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>OAuth 账户接入</CardTitle>
-              <CardDescription>使用 CLIProxyAPI 原生认证流程接入订阅账户。RelayAPI 只保存脱敏元数据，不读取 token 或 refresh token。</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {oauthProviders.map((provider) => (
-                <button
-                  type="button"
-                  key={provider.id}
-                  disabled={pending}
-                  onClick={() => openConnect(provider.id)}
-                  className="group flex min-h-28 items-start gap-3 rounded-xl border bg-card p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm disabled:pointer-events-none disabled:opacity-50"
-                >
-                  <div className="rounded-lg bg-primary/10 p-2 text-primary"><PlugIcon className="size-4" /></div>
-                  <span className="min-w-0 flex-1"><span className="block font-medium">{provider.label}</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{provider.description}</span><span className="mt-3 flex items-center gap-1 text-xs font-medium text-primary">开始授权<ChevronRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" /></span></span>
-                </button>
-              ))}
-              <button type="button" onClick={() => openConnect("codex", "openai")} className="group flex min-h-28 items-start gap-3 rounded-xl border border-dashed bg-muted/15 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm">
-                <div className="rounded-lg bg-primary/10 p-2 text-primary"><RouteIcon className="size-4" /></div>
-                <div><p className="font-medium">OpenAI-compatible 端点</p><p className="mt-1 text-xs leading-5 text-muted-foreground">添加自定义 Base URL、多 API Key、模型映射、代理和请求头。</p><span className="mt-3 flex items-center gap-1 text-xs font-medium text-primary">配置端点<ChevronRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" /></span></div>
-              </button>
-              <button type="button" onClick={() => openConnect("codex", "api-key")} className="group flex min-h-28 items-start gap-3 rounded-xl border border-dashed bg-muted/15 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-sm">
-                <div className="rounded-lg bg-primary/10 p-2 text-primary"><KeyRoundIcon className="size-4" /></div>
-                <div><p className="font-medium">原生 API Key</p><p className="mt-1 text-xs leading-5 text-muted-foreground">添加 Gemini、Interactions、Claude、Codex、xAI 或 Vertex Key。</p><span className="mt-3 flex items-center gap-1 text-xs font-medium text-primary">添加 Key<ChevronRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" /></span></div>
-              </button>
-            </CardContent>
-          </Card>
-          <div className="grid gap-4 lg:grid-cols-3">
-            <Card><CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon className="size-4 text-emerald-500" />凭据隔离</CardTitle><CardDescription>OAuth 密钥和刷新令牌始终保留在 CLIProxyAPI 内部。</CardDescription></CardHeader></Card>
-            <Card><CardHeader><CardTitle className="flex items-center gap-2"><RouteIcon className="size-4 text-sky-500" />统一调度</CardTitle><CardDescription>接入后可参与轮询或优先填满策略，并与父订阅额度关联。</CardDescription></CardHeader></Card>
-            <Card><CardHeader><CardTitle className="flex items-center gap-2"><ActivityIcon className="size-4 text-violet-500" />状态追踪</CardTitle><CardDescription>统一查看请求成功率、可用状态、模型能力和上游额度。</CardDescription></CardHeader></Card>
-          </div>
         </TabsContent>
 
         <TabsContent value="runtime" className="space-y-4">
@@ -710,24 +663,9 @@ export function ProvidersView() {
         </TabsContent>
 
         <TabsContent value="advanced" className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><BoxesIcon className="size-4" />CPA 功能配置</CardTitle><CardDescription>管理原生 API Key 提供商、兼容端点、模型规则、代理、WebSocket、日志、插件与 CPA 用量。保留 CPA 官方 JSON 结构。</CardDescription></CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Select value={configPath} onValueChange={(value) => { if (!isProviderConfigPath(value)) return; setConfigPath(value); setProviderJSON(""); void loadProviderConfig(value) }}>
-                  <SelectTrigger className="w-full sm:w-72"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectGroup>{providerConfigs.map((item) => <SelectItem key={item.path} value={item.path}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
-                </Select>
-                <Button variant="outline" onClick={() => void loadProviderConfig()} disabled={pending}>读取配置</Button>
-                <Button onClick={() => void saveProviderConfig()} disabled={pending || !providerJSON || Boolean(providerConfigs.find((item) => item.path === configPath && "readOnly" in item && item.readOnly))}><SaveIcon />保存配置</Button>
-              </div>
-              <Textarea value={providerJSON} onChange={(event) => setProviderJSON(event.target.value)} rows={14} spellCheck={false} placeholder="选择配置类型后点击读取配置" className="font-mono text-xs" />
-            </CardContent>
-          </Card>
-
           <div className="grid gap-4 xl:grid-cols-2">
             <Card>
-              <CardHeader><CardTitle className="flex items-center gap-2"><CloudCogIcon className="size-4" />完整 CPA 配置</CardTitle><CardDescription>直接编辑 config.yaml。保存会触发 CLIProxyAPI 配置重载，请谨慎操作。</CardDescription></CardHeader>
+              <CardHeader><CardTitle className="flex items-center gap-2"><CloudCogIcon className="size-4" />原始 CPA 配置</CardTitle><CardDescription>仅用于迁移和故障排查。日常账户接入请使用顶部“添加账户”；保存 YAML 会立即重载 CLIProxyAPI。</CardDescription></CardHeader>
               <CardContent className="flex flex-col gap-3">
                 <div className="flex gap-2"><Button variant="outline" onClick={() => void loadYAML()} disabled={pending}>读取 YAML</Button><Button onClick={() => void saveYAML()} disabled={pending || !configYAML}><SaveIcon />保存并重载</Button></div>
                 <Textarea value={configYAML} onChange={(event) => setConfigYAML(event.target.value)} rows={18} spellCheck={false} placeholder="点击“读取 YAML”加载当前配置" className="font-mono text-xs" />
@@ -735,7 +673,7 @@ export function ProvidersView() {
             </Card>
 
             <Card>
-              <CardHeader><CardTitle className="flex items-center gap-2"><TerminalIcon className="size-4" />高级管理接口</CardTitle><CardDescription>调用任意 /v0/management 路径，覆盖现有和未来新增的 CPA 管理能力。</CardDescription></CardHeader>
+              <CardHeader><CardTitle className="flex items-center gap-2"><TerminalIcon className="size-4" />诊断管理接口</CardTitle><CardDescription>面向故障排查调用任意 /v0/management 路径，不作为日常账户配置入口。</CardDescription></CardHeader>
               <CardContent>
                 <form onSubmit={callAdvanced} className="flex flex-col gap-3">
                   <div className="grid gap-3 md:grid-cols-[9rem_1fr]">
@@ -777,15 +715,22 @@ export function ProvidersView() {
               </DialogHeader>
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">提供商</p><p className="mt-1 font-medium">{selectedAccount.provider || selectedAccount.type || "未知"}</p></div>
-                <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Auth Index</p><p className="mt-1 truncate font-mono text-xs">{selectedAccount.auth_index || selectedAccount.id || "—"}</p></div>
-                <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">累计请求</p><p className="mt-1 font-medium tabular-nums">{((selectedAccount.success ?? 0) + (selectedAccount.failed ?? 0)).toLocaleString()}</p></div>
+                <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">{selectedAccount.source === "config" ? "凭据类型" : "Auth Index"}</p><p className="mt-1 truncate font-mono text-xs">{selectedAccount.source === "config" ? selectedAccount.type || "API Key" : selectedAccount.auth_index || selectedAccount.id || "—"}</p></div>
+                <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">{selectedAccount.source === "config" ? "Key 数量" : "累计请求"}</p><p className="mt-1 font-medium tabular-nums">{selectedAccount.source === "config" ? selectedAccount.key_count || 1 : ((selectedAccount.success ?? 0) + (selectedAccount.failed ?? 0)).toLocaleString()}</p></div>
               </div>
-              <div className="rounded-xl border bg-muted/15 p-4">
-                <div className="mb-3 flex items-center justify-between"><p className="font-medium">上游额度与订阅</p>{selectedParent && <Badge variant="outline">{selectedParent.item.name}</Badge>}</div>
-                <QuotaSnapshot snapshot={selectedParent?.item.quota_snapshot} status={selectedParent?.item.quota_probe_status} error={selectedParent?.item.quota_probe_error} observedAt={selectedParent?.item.quota_observed_at} />
-              </div>
+              {selectedAccount.source === "config" ? (
+                <div className="grid gap-3 rounded-xl border bg-muted/15 p-4 sm:grid-cols-2">
+                  <div><p className="text-xs text-muted-foreground">Base URL</p><p className="mt-1 break-all font-mono text-xs">{selectedAccount.base_url || "CPA 提供商默认端点"}</p></div>
+                  <div><p className="text-xs text-muted-foreground">模型前缀</p><p className="mt-1 font-mono text-xs">{selectedAccount.prefix || "未设置"}</p></div>
+                </div>
+              ) : (
+                <div className="rounded-xl border bg-muted/15 p-4">
+                  <div className="mb-3 flex items-center justify-between"><p className="font-medium">上游额度与订阅</p>{selectedParent && <Badge variant="outline">{selectedParent.item.name}</Badge>}</div>
+                  <QuotaSnapshot snapshot={selectedParent?.item.quota_snapshot} status={selectedParent?.item.quota_probe_status} error={selectedParent?.item.quota_probe_error} observedAt={selectedParent?.item.quota_observed_at} />
+                </div>
+              )}
               <div>
-                <div className="mb-3 flex items-center justify-between"><div><p className="font-medium">可用模型</p><p className="text-xs text-muted-foreground">由 CLIProxyAPI 实时返回的账户模型能力。</p></div><Badge variant="secondary">{accountModels.length}</Badge></div>
+                <div className="mb-3 flex items-center justify-between"><div><p className="font-medium">可用模型</p><p className="text-xs text-muted-foreground">{selectedAccount.source === "config" ? "此 Key/端点显式配置的模型；为空时使用 CPA 默认能力。" : "由 CLIProxyAPI 实时返回的账户模型能力。"}</p></div><Badge variant="secondary">{accountModels.length}</Badge></div>
                 {modelsLoading ? (
                   <div className="flex justify-center rounded-xl border py-10"><Spinner /></div>
                 ) : accountModels.length ? (
@@ -793,13 +738,13 @@ export function ProvidersView() {
                     {accountModels.map((model) => <Badge key={model} variant="outline" className="font-mono font-normal">{model}</Badge>)}
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">CPA 未返回该账户的模型列表</div>
+                  <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{selectedAccount.source === "config" ? "未显式配置模型，运行时使用 CPA 提供商默认模型能力" : "CPA 未返回该账户的模型列表"}</div>
                 )}
               </div>
               <div className="flex flex-wrap gap-2 border-t pt-4">
                 {selectedParent && <Button variant="outline" disabled={pending} onClick={() => void syncQuota(selectedParent.item.id)}><RefreshCwIcon />同步额度</Button>}
-                <Button variant="outline" onClick={() => void toggle(selectedAccount)}>{selectedAccount.disabled ? "启用账户" : "停用账户"}</Button>
-                <Button variant="ghost" className="ml-auto text-destructive hover:text-destructive" onClick={() => void remove(selectedAccount)}><Trash2Icon />删除凭据</Button>
+                {selectedAccount.can_toggle !== false && <Button variant="outline" onClick={() => void toggle(selectedAccount)}>{selectedAccount.disabled ? "启用账户" : "停用账户"}</Button>}
+                {selectedAccount.can_delete !== false && <Button variant="ghost" className="ml-auto text-destructive hover:text-destructive" onClick={() => void remove(selectedAccount)}><Trash2Icon />删除账户</Button>}
               </div>
             </>
           )}

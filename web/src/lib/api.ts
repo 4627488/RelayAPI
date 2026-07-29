@@ -217,6 +217,16 @@ export interface ProviderAccount {
   unavailable?: boolean
   success?: number
   failed?: number
+  source?: "oauth" | "config"
+  config_path?: string
+  config_index?: number
+  base_url?: string
+  prefix?: string
+  models?: string[]
+  key_count?: number
+  can_inspect?: boolean
+  can_toggle?: boolean
+  can_delete?: boolean
 }
 
 type ApiErrorBody = {

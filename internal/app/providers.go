@@ -41,13 +41,49 @@ func (a *App) relayCPA(w http.ResponseWriter, r *http.Request, method, endpoint 
 }
 
 func (a *App) adminProviderAccounts(w http.ResponseWriter, r *http.Request) {
-	a.relayCPA(w, r, http.MethodGet, "auth-files", nil)
+	if !a.requireCPAManagement(w) {
+		return
+	}
+	status, payload, err := a.cpa.Management(r.Context(), http.MethodGet, "auth-files", nil)
+	if err != nil || status < 200 || status >= 300 {
+		writeError(w, http.StatusBadGateway, "cpa_unavailable", "无法读取 CPA OAuth 凭据")
+		return
+	}
+	accounts, err := decodeProviderAccounts(payload)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "invalid_cpa_response", "CPA 返回了无效的 OAuth 凭据")
+		return
+	}
+	configWarning := ""
+	configStatus, configPayload, configErr := a.cpa.Management(r.Context(), http.MethodGet, "config", nil)
+	if configErr != nil || configStatus < 200 || configStatus >= 300 {
+		configWarning = "无法读取 CPA API Key 配置"
+	} else if configured, decodeErr := providerConfigAccounts(configPayload); decodeErr != nil {
+		configWarning = "CPA API Key 配置格式无效"
+	} else {
+		accounts = append(accounts, configured...)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": accounts, "warning": configWarning})
 }
 
 func (a *App) adminProviderModels(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "凭据名称不能为空")
+		return
+	}
+	if path, index, ok := parseConfigAccountName(name); ok {
+		items, err := a.loadProviderConfigItems(r, path)
+		if err != nil || index >= len(items) {
+			writeError(w, http.StatusNotFound, "not_found", "API Key 账户不存在")
+			return
+		}
+		var item map[string]any
+		if json.Unmarshal(items[index], &item) != nil {
+			writeError(w, http.StatusBadGateway, "invalid_cpa_response", "CPA API Key 配置格式无效")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"models": providerModelNames(item["models"])})
 		return
 	}
 	a.relayCPA(w, r, http.MethodGet, "auth-files/models?name="+url.QueryEscape(name), nil)
@@ -64,6 +100,31 @@ func (a *App) adminProviderAccountUpdate(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "validation_error", "disabled 必填")
 		return
 	}
+	if path, index, ok := parseConfigAccountName(strings.TrimSpace(r.PathValue("name"))); ok {
+		if path != "openai-compatibility" {
+			writeError(w, http.StatusBadRequest, "unsupported_operation", "该 API Key 类型不支持停用，请删除后重新配置")
+			return
+		}
+		items, err := a.loadProviderConfigItems(r, path)
+		if err != nil || index >= len(items) {
+			writeError(w, http.StatusNotFound, "not_found", "兼容端点不存在")
+			return
+		}
+		var item map[string]any
+		if json.Unmarshal(items[index], &item) != nil {
+			writeError(w, http.StatusBadGateway, "invalid_cpa_response", "CPA 兼容端点配置格式无效")
+			return
+		}
+		item["disabled"] = *input.Disabled
+		items[index], _ = json.Marshal(item)
+		status, payload, err := a.saveProviderConfigItems(r, path, items)
+		if err != nil || status < 200 || status >= 300 {
+			writeError(w, http.StatusBadGateway, "cpa_update_failed", fmt.Sprintf("CPA 配置更新失败：%s", string(payload)))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"disabled": *input.Disabled})
+		return
+	}
 	a.relayCPA(w, r, http.MethodPatch, "auth-files/status", map[string]any{
 		"name": r.PathValue("name"), "disabled": input.Disabled,
 	})
@@ -73,6 +134,21 @@ func (a *App) adminProviderAccountDelete(w http.ResponseWriter, r *http.Request)
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "validation_error", "凭据名称不能为空")
+		return
+	}
+	if path, index, ok := parseConfigAccountName(name); ok {
+		items, err := a.loadProviderConfigItems(r, path)
+		if err != nil || index >= len(items) {
+			writeError(w, http.StatusNotFound, "not_found", "API Key 账户不存在")
+			return
+		}
+		items = append(items[:index], items[index+1:]...)
+		status, payload, err := a.saveProviderConfigItems(r, path, items)
+		if err != nil || status < 200 || status >= 300 {
+			writeError(w, http.StatusBadGateway, "cpa_update_failed", fmt.Sprintf("CPA 配置更新失败：%s", string(payload)))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	a.relayCPA(w, r, http.MethodDelete, "auth-files?name="+url.QueryEscape(name), nil)
