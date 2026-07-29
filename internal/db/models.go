@@ -112,8 +112,8 @@ type RequestLog struct {
 	ServiceTier            string    `json:"service_tier,omitempty"`
 	ResponseServiceTier    string    `json:"response_service_tier,omitempty"`
 	ReasoningEffort        string    `json:"reasoning_effort,omitempty"`
-	ParentSubscriptionID   string    `gorm:"type:uuid;index" json:"parent_subscription_id,omitempty"`
-	ChildSubscriptionID    string    `gorm:"type:uuid;index" json:"child_subscription_id,omitempty"`
+	ParentSubscriptionID   *string   `gorm:"type:uuid;index" json:"parent_subscription_id,omitempty"`
+	ChildSubscriptionID    *string   `gorm:"type:uuid;index" json:"child_subscription_id,omitempty"`
 	ParentSubscriptionName string    `gorm:"not null;default:''" json:"parent_subscription_name,omitempty"`
 	ChildSubscriptionName  string    `gorm:"not null;default:''" json:"child_subscription_name,omitempty"`
 	ChannelID              string    `gorm:"not null;default:''" json:"channel_id,omitempty"`

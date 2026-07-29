@@ -103,6 +103,9 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		detailed.Detail == nil || detailed.Detail.ForwardedBody != `{"model":"actual-model"}` {
 		t.Fatalf("lifecycle enrichment missing: %+v / %+v", detailed.Log, detailed.Detail)
 	}
+	if detailed.Log.ParentSubscriptionID != nil || detailed.Log.ChildSubscriptionID != nil {
+		t.Fatalf("empty subscription IDs must be stored as NULL: %+v", detailed.Log)
+	}
 	page, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Query: "cpa-trace", PageSize: 25})
 	if err != nil || page.Total != 1 || page.Summary.Tokens != 12 {
 		t.Fatalf("log query = %+v, err=%v", page, err)

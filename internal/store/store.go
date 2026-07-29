@@ -513,6 +513,14 @@ func EncodePriceSnapshot(price ResolvedPrice) []byte {
 	return raw
 }
 
+func nullableIdentifier(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
 func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 	item := db.RequestLog{
 		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, CPARequestID: l.CPARequestID,
@@ -520,8 +528,9 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 		Model: l.Model, RequestedModel: l.RequestedModel, ActualModel: l.ActualModel, ModelAlias: l.ModelAlias,
 		Provider: l.Provider, ExecutorType: l.ExecutorType, AuthType: l.AuthType, AuthIndex: l.AuthIndex,
 		ServiceTier: l.ServiceTier, ResponseServiceTier: l.ResponseServiceTier, ReasoningEffort: l.ReasoningEffort,
-		ParentSubscriptionID: l.ParentSubscriptionID, ChildSubscriptionID: l.ChildSubscriptionID,
-		TenantName: l.TenantName, APIKeyName: l.APIKeyName, APIKeyPrefix: l.APIKeyPrefix,
+		ParentSubscriptionID: nullableIdentifier(l.ParentSubscriptionID),
+		ChildSubscriptionID:  nullableIdentifier(l.ChildSubscriptionID),
+		TenantName:           l.TenantName, APIKeyName: l.APIKeyName, APIKeyPrefix: l.APIKeyPrefix,
 		Method: l.Method, Path: l.Path, RequestType: l.RequestType, StatusCode: l.StatusCode,
 		Stream: l.Stream, PromptTokens: l.Usage.Prompt, CompletionTokens: l.Usage.Completion,
 		CachedTokens: l.Usage.Cached, CacheWriteTokens: l.Usage.CacheWrite, ReasoningTokens: l.Usage.Reasoning,
@@ -541,9 +550,9 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 		item.PriceMultiplier = l.Price.PriceMultiplier
 	}
 	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		if item.ParentSubscriptionID != "" {
+		if item.ParentSubscriptionID != nil {
 			var parent db.ParentSubscription
-			if err := tx.First(&parent, "id = ?", item.ParentSubscriptionID).Error; err == nil {
+			if err := tx.First(&parent, "id = ?", *item.ParentSubscriptionID).Error; err == nil {
 				item.ParentSubscriptionName = parent.Name
 				item.ChannelID, item.ChannelName = parent.ID, parent.Name
 				item.CredentialID, item.CredentialName = parent.CPAAuthID, parent.CPAAuthName
@@ -561,9 +570,9 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 				}
 			}
 		}
-		if item.ChildSubscriptionID != "" {
+		if item.ChildSubscriptionID != nil {
 			var child db.ChildSubscription
-			if err := tx.First(&child, "id = ?", item.ChildSubscriptionID).Error; err == nil {
+			if err := tx.First(&child, "id = ?", *item.ChildSubscriptionID).Error; err == nil {
 				item.ChildSubscriptionName = child.Name
 			}
 		}
