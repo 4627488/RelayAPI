@@ -13,8 +13,50 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { ApiError, api, deleteRequest, postJSON, type ProviderAccount } from "@/lib/api"
 
-type OAuthStart = { status: string; url: string; state: string }
+type OAuthProvider = "codex" | "anthropic" | "antigravity" | "kimi" | "xai"
+type OAuthStart = {
+  status: string
+  url: string
+  state: string
+  provider: OAuthProvider
+  label: string
+  flow?: "device"
+  user_code?: string
+  expires_in?: number
+}
 type ProviderSettings = { request_retry: number; max_retry_interval: number; routing_strategy: string }
+
+const oauthProviders: Array<{ id: OAuthProvider; label: string; description: string }> = [
+  { id: "codex", label: "OpenAI Codex", description: "ChatGPT/Codex OAuth" },
+  { id: "anthropic", label: "Anthropic", description: "Claude OAuth / setup token" },
+  { id: "antigravity", label: "Antigravity", description: "Google Antigravity OAuth" },
+  { id: "kimi", label: "Kimi", description: "Moonshot Kimi OAuth" },
+  { id: "xai", label: "xAI", description: "Grok/xAI OAuth" },
+]
+
+const providerConfigs = [
+  { path: "gemini-api-key", label: "Gemini API Key" },
+  { path: "interactions-api-key", label: "Interactions API Key" },
+  { path: "claude-api-key", label: "Claude API Key" },
+  { path: "codex-api-key", label: "Codex API Key" },
+  { path: "xai-api-key", label: "xAI API Key" },
+  { path: "vertex-api-key", label: "Vertex API Key" },
+  { path: "openai-compatibility", label: "OpenAI-compatible 端点" },
+  { path: "oauth-model-alias", label: "OAuth 模型别名" },
+  { path: "oauth-excluded-models", label: "OAuth 排除模型" },
+  { path: "proxy-url", label: "全局上游代理" },
+  { path: "ws-auth", label: "WebSocket 鉴权" },
+  { path: "force-model-prefix", label: "强制模型前缀" },
+  { path: "debug", label: "调试日志" },
+  { path: "logging-to-file", label: "文件日志" },
+  { path: "usage-statistics-enabled", label: "CPA 用量统计" },
+  { path: "quota-exceeded/switch-project", label: "额度耗尽切换项目" },
+  { path: "quota-exceeded/switch-preview-model", label: "额度耗尽切换预览模型" },
+  { path: "plugins", label: "已安装插件", readOnly: true },
+  { path: "plugin-store", label: "插件市场", readOnly: true },
+  { path: "api-key-usage", label: "CPA Key 用量", readOnly: true },
+  { path: "usage-queue", label: "用量事件队列", readOnly: true },
+] as const
 
 export function ProvidersView() {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([])
@@ -25,6 +67,8 @@ export function ProvidersView() {
   const [gatewayKeys, setGatewayKeys] = useState("")
   const [configYAML, setConfigYAML] = useState("")
   const [advancedResult, setAdvancedResult] = useState("")
+  const [configPath, setConfigPath] = useState<string>(providerConfigs[0].path)
+  const [providerJSON, setProviderJSON] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -46,14 +90,16 @@ export function ProvidersView() {
 
   useEffect(() => void load(), [load])
 
-  async function beginCodex() {
+  async function beginOAuth(provider: OAuthProvider) {
     setPending(true)
     try {
-      const value = await postJSON<OAuthStart>("/api/admin/providers/codex/oauth", {})
-      setOAuth(value)
+      const definition = oauthProviders.find((item) => item.id === provider)!
+      const value = await postJSON<Omit<OAuthStart, "provider" | "label">>(`/api/admin/providers/${provider}/oauth`, {})
+      setOAuth({ ...value, provider, label: definition.label })
       window.open(value.url, "_blank", "noopener,noreferrer")
+      if (value.flow === "device") toast.info(value.user_code ? `设备验证码：${value.user_code}` : "请在授权页完成设备验证")
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法启动 Codex 登录")
+      toast.error(cause instanceof Error ? cause.message : "无法启动 OAuth 登录")
     } finally {
       setPending(false)
     }
@@ -65,34 +111,35 @@ export function ProvidersView() {
     const form = new FormData(event.currentTarget)
     setPending(true)
     try {
-      try {
-        await postJSON("/api/admin/providers/oauth/callback", {
-          provider: "codex",
-          state: oauth.state,
-          redirect_url: String(form.get("redirect_url") ?? ""),
-        })
-      } catch (cause) {
-        // CPA returns 409 when a duplicated browser callback reaches a flow
-        // that has already completed. The status endpoint is authoritative,
-        // so continue polling instead of presenting a false failure.
-        if (!(cause instanceof ApiError) || cause.status !== 409) throw cause
+      if (oauth.flow !== "device") {
+        try {
+          await postJSON("/api/admin/providers/oauth/callback", {
+            provider: oauth.provider,
+            state: oauth.state,
+            redirect_url: String(form.get("redirect_url") ?? ""),
+          })
+        } catch (cause) {
+          // CPA returns 409 when a duplicated browser callback reaches a flow
+          // that has already completed. The status endpoint is authoritative.
+          if (!(cause instanceof ApiError) || cause.status !== 409) throw cause
+        }
       }
-      for (let attempt = 0; attempt < 15; attempt++) {
+      for (let attempt = 0; attempt < 60; attempt++) {
         const status = await api<{ status: string; error?: string }>(
           `/api/admin/providers/oauth/status?state=${encodeURIComponent(oauth.state)}`,
         )
         if (status.status === "ok") {
-          toast.success("Codex 账户已统一接入")
+          toast.success(`${oauth.label} 账户已统一接入`)
           setOAuth(null)
           await load()
           return
         }
         if (status.status === "error") throw new Error(status.error || "OAuth 登录失败")
-        await new Promise((resolve) => window.setTimeout(resolve, 1000))
+        await new Promise((resolve) => window.setTimeout(resolve, 2000))
       }
       toast.info("授权仍在处理，可稍后刷新账户列表")
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法完成 Codex 登录")
+      toast.error(cause instanceof Error ? cause.message : "无法完成 OAuth 登录")
     } finally {
       setPending(false)
     }
@@ -193,6 +240,28 @@ export function ProvidersView() {
     finally { setPending(false) }
   }
 
+  async function loadProviderConfig(path = configPath) {
+    setPending(true)
+    try {
+      const text = await cpaText(path)
+      try { setProviderJSON(JSON.stringify(JSON.parse(text), null, 2)) } catch { setProviderJSON(text) }
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "读取提供商配置失败") }
+    finally { setPending(false) }
+  }
+
+  async function saveProviderConfig() {
+    const definition = providerConfigs.find((item) => item.path === configPath)
+    if (definition && "readOnly" in definition && definition.readOnly) return
+    setPending(true)
+    try {
+      JSON.parse(providerJSON)
+      await cpaText(configPath, { method: "PUT", headers: { "Content-Type": "application/json" }, body: providerJSON })
+      toast.success("提供商配置已保存")
+      await load()
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "配置 JSON 无效") }
+    finally { setPending(false) }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
@@ -202,28 +271,32 @@ export function ProvidersView() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCwIcon />刷新</Button>
-          <Button onClick={() => void beginCodex()} disabled={pending}>
-            {pending ? <Spinner /> : <PlugIcon />}连接 Codex
-          </Button>
+          <Button onClick={() => void beginOAuth("codex")} disabled={pending}>{pending ? <Spinner /> : <PlugIcon />}连接 Codex</Button>
         </div>
       </div>
 
       {oauth && (
         <Card>
           <CardHeader>
-            <CardTitle>完成 Codex 授权</CardTitle>
-            <CardDescription>授权后复制浏览器最终跳转地址并粘贴到下方。地址只用于完成本次 OAuth。</CardDescription>
+            <CardTitle>完成 {oauth.label} 授权</CardTitle>
+            <CardDescription>{oauth.flow === "device" ? "在授权页输入设备验证码并完成登录，然后点击检查授权状态。" : "授权后复制浏览器最终跳转地址并粘贴到下方。地址只用于完成本次 OAuth。"}</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={completeOAuth}>
               <FieldGroup>
-                <Field>
+                {oauth.flow === "device" ? (
+                  <Field>
+                    <FieldLabel>设备验证码</FieldLabel>
+                    <Input readOnly value={oauth.user_code || "授权链接已包含验证码"} className="font-mono" />
+                    <FieldDescription>该流程由 CPA 在后台轮询，不需要粘贴 localhost 回调地址。</FieldDescription>
+                  </Field>
+                ) : <Field>
                   <FieldLabel htmlFor="redirect-url">回调地址</FieldLabel>
                   <Input id="redirect-url" name="redirect_url" type="url" placeholder="http://localhost:1455/auth/callback?code=…&state=…" required />
                   <FieldDescription>若授权页尚未打开，可点击右侧重新打开。</FieldDescription>
-                </Field>
+                </Field>}
                 <div className="flex flex-wrap gap-2">
-                  <Button type="submit" disabled={pending}>{pending ? <Spinner /> : null}提交并验证</Button>
+                  <Button type="submit" disabled={pending}>{pending ? <Spinner /> : null}{oauth.flow === "device" ? "检查授权状态" : "提交并验证"}</Button>
                   <Button type="button" variant="outline" onClick={() => window.open(oauth.url, "_blank", "noopener,noreferrer")}>
                     <ExternalLinkIcon />打开授权页
                   </Button>
@@ -298,10 +371,36 @@ export function ProvidersView() {
       )}
 
       <Card>
+        <CardHeader><CardTitle>OAuth 与账户验证</CardTitle><CardDescription>使用 CLIProxyAPI 原生认证流程接入不同提供商。授权页完成后，将最终 localhost 回调地址粘贴到上方。</CardDescription></CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {oauthProviders.map((provider) => (
+            <Button key={provider.id} variant="outline" className="h-auto justify-start py-3" disabled={pending} onClick={() => void beginOAuth(provider.id)}>
+              <span className="flex flex-col items-start"><span>{provider.label}</span><span className="text-xs font-normal text-muted-foreground">{provider.description}</span></span>
+            </Button>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><KeyRoundIcon className="size-4" />网关 API Keys</CardTitle><CardDescription>这些 Key 用于 RelayAPI 访问 CLIProxyAPI。每行一个；生产环境至少保留一个强随机 Key，并与 CPA_API_KEY 一致。</CardDescription></CardHeader>
         <CardContent className="flex flex-col gap-3">
           <Textarea value={gatewayKeys} onChange={(event) => setGatewayKeys(event.target.value)} rows={5} placeholder="sk-cpa-…" className="font-mono text-xs" />
           <div><Button onClick={() => void saveGatewayKeys()} disabled={pending}><SaveIcon />保存 API Keys</Button></div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>CPA 功能配置</CardTitle><CardDescription>管理原生 API Key 提供商、OpenAI-compatible 端点、模型规则、代理、WebSocket、额度切换、日志、插件与 CPA 用量。内容使用 CPA 官方 JSON 结构，可完整保留高级字段。</CardDescription></CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Select value={configPath} onValueChange={(value) => { const path = value as string; setConfigPath(path); setProviderJSON(""); void loadProviderConfig(path) }}>
+              <SelectTrigger className="w-full sm:w-72"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectGroup>{providerConfigs.map((item) => <SelectItem key={item.path} value={item.path}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
+            </Select>
+            <Button variant="outline" onClick={() => void loadProviderConfig()} disabled={pending}>读取配置</Button>
+            <Button onClick={() => void saveProviderConfig()} disabled={pending || !providerJSON || Boolean(providerConfigs.find((item) => item.path === configPath && "readOnly" in item && item.readOnly))}><SaveIcon />保存配置</Button>
+          </div>
+          <Textarea value={providerJSON} onChange={(event) => setProviderJSON(event.target.value)} rows={14} spellCheck={false} placeholder="选择配置类型后点击读取配置" className="font-mono text-xs" />
         </CardContent>
       </Card>
 

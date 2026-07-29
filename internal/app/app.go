@@ -89,6 +89,7 @@ func (a *App) routes() {
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
 	a.mux.Handle("POST /api/admin/providers/codex/oauth", a.withAdmin(http.HandlerFunc(a.adminCodexOAuth)))
+	a.mux.Handle("POST /api/admin/providers/{provider}/oauth", a.withAdmin(http.HandlerFunc(a.adminProviderOAuth)))
 	a.mux.Handle("GET /api/admin/providers/oauth/status", a.withAdmin(http.HandlerFunc(a.adminOAuthStatus)))
 	a.mux.Handle("POST /api/admin/providers/oauth/callback", a.withAdmin(http.HandlerFunc(a.adminOAuthCallback)))
 	a.mux.Handle("GET /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))

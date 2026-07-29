@@ -79,9 +79,27 @@ func (a *App) adminProviderAccountDelete(w http.ResponseWriter, r *http.Request)
 }
 
 func (a *App) adminCodexOAuth(w http.ResponseWriter, r *http.Request) {
-	// Relay handles the browser callback explicitly, so CPA does not need to open
-	// a localhost callback forwarder.
-	a.relayCPA(w, r, http.MethodGet, "codex-auth-url", nil)
+	r.SetPathValue("provider", "codex")
+	a.adminProviderOAuth(w, r)
+}
+
+func (a *App) adminProviderOAuth(w http.ResponseWriter, r *http.Request) {
+	provider := strings.ToLower(strings.TrimSpace(r.PathValue("provider")))
+	endpoints := map[string]string{
+		"anthropic":   "anthropic-auth-url",
+		"codex":       "codex-auth-url",
+		"antigravity": "antigravity-auth-url",
+		"kimi":        "kimi-auth-url",
+		"xai":         "xai-auth-url",
+	}
+	endpoint, ok := endpoints[provider]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "unsupported_provider", "该提供商不支持 OAuth 登录")
+		return
+	}
+	// Relay handles the browser callback explicitly, so CPA does not need to
+	// open a callback forwarder on the server.
+	a.relayCPA(w, r, http.MethodGet, endpoint, nil)
 }
 
 func (a *App) adminOAuthStatus(w http.ResponseWriter, r *http.Request) {

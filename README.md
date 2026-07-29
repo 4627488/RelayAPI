@@ -62,7 +62,8 @@ WebSocket 入口。
 - `DELETE /api/admin/invitations/{id}`：撤销邀请
 - `GET /api/admin/tenants`：用户列表
 - `GET /api/admin/providers/accounts`：CPA 脱敏凭据列表
-- `POST /api/admin/providers/codex/oauth`：发起 Codex OAuth
+- `POST /api/admin/providers/{provider}/oauth`：发起 Codex、Anthropic、
+  Antigravity、Kimi 或 xAI OAuth/设备授权
 - `POST /api/admin/providers/oauth/callback`：提交 OAuth 回调
 - `GET|PATCH /api/admin/providers/settings`：重试与凭据调度策略
 - `/api/admin/cpa/*`：管理员会话保护的 CLIProxyAPI Management API 完整桥接；
@@ -124,6 +125,11 @@ Keys、直接编辑完整 `config.yaml`，并调用任意 Management API。由�
 Gemini、Claude、Codex、XAI、Vertex、OpenAI-compatible 提供商、OAuth 模型
 别名/排除、代理、WebSocket、日志、插件与插件市场，以及 CPA 后续新增的管理
 能力，而不需要 RelayAPI 维护一份易过期的提供商注册表。
+
+面板同时提供结构化入口管理 Gemini、Interactions、Claude、Codex、xAI、Vertex、
+OpenAI-compatible API Key，支持 OAuth 模型别名/排除、全局代理、WebSocket 鉴权、
+额度耗尽切换、文件日志、插件市场、CPA Key 用量与事件队列。Kimi/xAI 的设备码
+授权与需要粘贴 localhost 回调地址的 OAuth 流程会采用不同交互。
 
 该桥仅允许 Relay 管理员会话访问，响应禁止缓存，CPA 本身仍应只位于私有网络。
 若启用 YAML 在线编辑，`cliproxyapi/config.yaml` 必须可写；Compose 示例已按此配置。
