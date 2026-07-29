@@ -537,36 +537,39 @@ func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model strin
 	if err != nil {
 		return nil, false, err
 	}
-	hasAssignments := len(children) > 0
+	hasModelAssignment := false
 	items := make([]SubscriptionCandidate, 0, len(children))
 	for _, child := range children {
 		var parent ParentSubscription
-		if err := scoped(ctx, s.DB).First(&parent,
-			"id = ? AND enabled = ? AND cpa_unavailable = ?", child.ParentSubscriptionID, true, false).Error; err != nil {
+		if err := scoped(ctx, s.DB).First(&parent, "id = ?", child.ParentSubscriptionID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
-			return nil, hasAssignments, err
+			return nil, hasModelAssignment, err
 		}
 		if !modelAllowed(model, child.ModelAllowlist, parent.ModelAllowlist, parent.CPAModelAllowlist) {
+			continue
+		}
+		hasModelAssignment = true
+		if !parent.Enabled || parent.CPAUnavailable {
 			continue
 		}
 		items = append(items, SubscriptionCandidate{Child: child, Parent: parent})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Child.Priority > items[j].Child.Priority })
-	return items, hasAssignments, nil
+	return items, hasModelAssignment, nil
 }
 
 func (s Store) AdmitRequest(ctx context.Context, input AdmissionInput) (Admission, error) {
 	now := time.Now()
-	candidates, hasAssignments, err := s.SubscriptionCandidates(ctx, input.Key.TenantID, input.Model, now)
+	candidates, hasModelAssignment, err := s.SubscriptionCandidates(ctx, input.Key.TenantID, input.Model, now)
 	if err != nil {
 		return Admission{}, err
 	}
-	if hasAssignments && len(candidates) == 0 {
-		return Admission{}, ErrSubscriptionRequired
-	}
 	if len(candidates) == 0 {
+		if hasModelAssignment {
+			return Admission{}, ErrSubscriptionRequired
+		}
 		return s.reserveCandidate(ctx, input, nil)
 	}
 	var capacityErr error

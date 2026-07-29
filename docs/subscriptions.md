@@ -104,6 +104,13 @@ Exhausted children are skipped before the upstream request. CPA model metadata
 is cached per parent so obviously incompatible parents are not selected; the
 strict plugin remains the final authority on candidate validity.
 
+A child subscription only claims the models allowed by its effective child,
+parent, and CPA model policies. If a tenant requests a model that is not
+claimed by any active child, Relay falls back to normal CPA scheduling and
+settles the request against the tenant's total balance. If a model is claimed
+but its assigned parent is unavailable or its child quota is exhausted, Relay
+rejects the request instead of silently bypassing the configured subscription.
+
 ## Capacity modes
 
 - `unmetered`: routing is pinned but no child quota is reserved. Balance billing
