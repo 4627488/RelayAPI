@@ -444,7 +444,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		Tokens   int64  `json:"tokens"`
 		Cost     int64  `json:"cost_nano_usd"`
 	}
-	var dailyItems []daily
+	dailyItems := make([]daily, 0)
 	dailyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
 			"to_char(started_at, 'YYYY-MM-DD') AS date, count(*) AS requests, "+
@@ -464,7 +464,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		Tokens   int64  `json:"tokens"`
 		Cost     int64  `json:"cost_nano_usd"`
 	}
-	var models []modelTotal
+	models := make([]modelTotal, 0)
 	modelQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
 			"model, count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+

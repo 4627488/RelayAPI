@@ -75,6 +75,7 @@ const chartConfig = {
 } satisfies ChartConfig
 
 export function UsageChart({ report }: { report: UsageReport }) {
+  const daily = report.daily ?? []
   return (
     <Card>
       <CardHeader>
@@ -82,9 +83,9 @@ export function UsageChart({ report }: { report: UsageReport }) {
         <CardDescription>最近 {report.days} 天的请求与 Token 消耗。</CardDescription>
       </CardHeader>
       <CardContent>
-        {report.daily.length ? (
+        {daily.length ? (
           <ChartContainer config={chartConfig} className="h-72 w-full">
-            <AreaChart data={report.daily} accessibilityLayer>
+            <AreaChart data={daily} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis
                 dataKey="date"
@@ -127,6 +128,7 @@ export function UsageChart({ report }: { report: UsageReport }) {
 }
 
 export function ModelTable({ report }: { report: UsageReport }) {
+  const models = report.models ?? []
   return (
     <Card>
       <CardHeader>
@@ -134,7 +136,7 @@ export function ModelTable({ report }: { report: UsageReport }) {
         <CardDescription>按 Token 消耗排序。</CardDescription>
       </CardHeader>
       <CardContent>
-        {report.models.length ? (
+        {models.length ? (
           <Table>
             <TableHeader>
               <TableRow>
@@ -145,7 +147,7 @@ export function ModelTable({ report }: { report: UsageReport }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {report.models.map((model) => (
+              {models.map((model) => (
                 <TableRow key={model.model}>
                   <TableCell className="font-mono text-xs">{model.model || "未识别"}</TableCell>
                   <TableCell className="text-right tabular-nums">{compact(model.requests)}</TableCell>
