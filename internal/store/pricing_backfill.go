@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/pricing"
@@ -12,6 +14,53 @@ type PendingPriceModel struct {
 	Model           string `json:"model"`
 	RequestCount    int64  `json:"request_count"`
 	LatestStartedAt string `json:"latest_started_at"`
+}
+
+type HistoricalModelPrice struct {
+	Model                      string    `json:"model"`
+	RequestCount               int64     `json:"request_count"`
+	LatestStartedAt            time.Time `json:"latest_started_at"`
+	Priced                     bool      `json:"priced"`
+	PricedModel                string    `json:"priced_model"`
+	InputNanoUSDPerToken       int64     `json:"input_nano_usd_per_token"`
+	OutputNanoUSDPerToken      int64     `json:"output_nano_usd_per_token"`
+	CachedInputNanoUSDPerToken int64     `json:"cached_input_nano_usd_per_token"`
+	CacheWriteNanoUSDPerToken  int64     `json:"cache_write_nano_usd_per_token"`
+	ReasoningNanoUSDPerToken   int64     `json:"reasoning_nano_usd_per_token"`
+	Source                     string    `json:"source"`
+	Version                    string    `json:"version"`
+	PriceMultiplier            float64   `json:"price_multiplier"`
+}
+
+func (s *Store) HistoricalModelPrices(ctx context.Context) ([]HistoricalModelPrice, error) {
+	result := make([]HistoricalModelPrice, 0)
+	if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
+		Select("model, count(*) AS request_count, max(started_at) AS latest_started_at").
+		Where("model <> ''").
+		Group("model").Order("latest_started_at DESC, model").
+		Scan(&result).Error; err != nil {
+		return nil, err
+	}
+	for index := range result {
+		resolved, err := s.ResolvePrice(ctx, pricing.Dimensions{Model: result[index].Model})
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[index].Priced = true
+		result[index].PricedModel = resolved.PricedModel
+		result[index].InputNanoUSDPerToken = resolved.InputNanoUSDPerToken
+		result[index].OutputNanoUSDPerToken = resolved.OutputNanoUSDPerToken
+		result[index].CachedInputNanoUSDPerToken = resolved.CachedInputNanoUSDPerToken
+		result[index].CacheWriteNanoUSDPerToken = resolved.CacheWriteNanoUSDPerToken
+		result[index].ReasoningNanoUSDPerToken = resolved.ReasoningNanoUSDPerToken
+		result[index].Source = resolved.Source
+		result[index].Version = resolved.Version
+		result[index].PriceMultiplier = resolved.PriceMultiplier
+	}
+	return result, nil
 }
 
 func (s *Store) PendingPricing(ctx context.Context) ([]PendingPriceModel, error) {

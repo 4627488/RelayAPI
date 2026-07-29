@@ -376,9 +376,14 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
+	history, err := a.store.HistoricalModelPrices(r.Context())
+	if err != nil {
+		writeError(w, 500, "database_error", err.Error())
+		return
+	}
 	writeJSON(w, 200, map[string]any{
 		"items": items, "catalog_items": catalog, "bundled_items": pricing.BundledPrices,
-		"pending_models": pending,
+		"pending_models": pending, "history_items": history,
 	})
 }
 

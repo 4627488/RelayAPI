@@ -25,16 +25,25 @@ import {
   type ModelPrice,
   type ModelPriceRule,
 } from "@/lib/api"
+import { dateTime } from "@/lib/format"
+
+type HistoricalModelPrice = ModelPrice & {
+  request_count: number
+  latest_started_at: string
+  priced: boolean
+  priced_model: string
+}
 
 type PricesResponse = {
   items: ModelPrice[]
   catalog_items: ModelPrice[]
   bundled_items: ModelPrice[]
   pending_models: Array<{ model: string; request_count: number; latest_started_at: string }>
+  history_items: HistoricalModelPrice[]
 }
 
 export function PricingView() {
-  const [prices, setPrices] = useState<PricesResponse>({ items: [], catalog_items: [], bundled_items: [], pending_models: [] })
+  const [prices, setPrices] = useState<PricesResponse>({ items: [], catalog_items: [], bundled_items: [], pending_models: [], history_items: [] })
   const [aliases, setAliases] = useState<ModelAlias[]>([])
   const [rules, setRules] = useState<ModelPriceRule[]>([])
   const [fields, setFields] = useState<string[]>([])
@@ -54,6 +63,7 @@ export function PricingView() {
       catalog_items: priceValue.catalog_items ?? [],
       bundled_items: priceValue.bundled_items ?? [],
       pending_models: priceValue.pending_models ?? [],
+      history_items: priceValue.history_items ?? [],
     })
     setAliases(aliasValue.items ?? [])
     setRules(ruleValue.items ?? [])
@@ -148,12 +158,39 @@ export function PricingView() {
           <Button onClick={() => setOpen(true)}><PlusIcon />添加覆盖</Button>
         </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <Stat label="历史模型" value={prices.history_items.length} hint="请求日志中出现过" />
         <Stat label="管理员覆盖" value={prices.items.length} hint="最高优先级" />
         <Stat label="在线目录" value={prices.catalog_items.length} hint="Models.dev 快照" />
         <Stat label="内置兜底" value={prices.bundled_items.length} hint="离线最后可用" />
         <Stat label="待回填模型" value={prices.pending_models.length} hint="价格更新后自动回填" />
       </div>
+      <Card>
+        <CardHeader><CardTitle>历史模型价目表</CardTitle><CardDescription>请求日志中出现过的模型及其当前有效价格，单位为 USD / 1M tokens；多维规则仍按每次请求的上下文单独应用。</CardDescription></CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader><TableRow><TableHead>模型</TableHead><TableHead>来源</TableHead><TableHead className="text-right">输入</TableHead><TableHead className="text-right">缓存读</TableHead><TableHead className="text-right">缓存写</TableHead><TableHead className="text-right">输出</TableHead><TableHead className="text-right">推理</TableHead><TableHead className="text-right">倍率</TableHead><TableHead className="text-right">请求数</TableHead><TableHead>最近出现</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {prices.history_items.map((price) => (
+                <TableRow key={price.model}>
+                  <TableCell className="font-mono text-xs">
+                    {price.model}
+                    {price.priced && price.priced_model !== price.model ? <p className="text-[10px] text-muted-foreground">按 {price.priced_model} 计价</p> : null}
+                  </TableCell>
+                  <TableCell>
+                    {price.priced ? <Badge variant="outline">{priceSourceLabel(price.source)}</Badge> : <Badge variant="secondary">未定价</Badge>}
+                  </TableCell>
+                  {[price.input_nano_usd_per_token, price.cached_input_nano_usd_per_token, price.cache_write_nano_usd_per_token, price.output_nano_usd_per_token, price.reasoning_nano_usd_per_token].map((value, index) => <TableCell key={index} className="text-right tabular-nums">{price.priced ? pricePerMillion(value) : "—"}</TableCell>)}
+                  <TableCell className="text-right tabular-nums">{price.priced ? `×${price.price_multiplier}` : "—"}</TableCell>
+                  <TableCell className="text-right tabular-nums">{price.request_count.toLocaleString()}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{dateTime(price.latest_started_at)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          {!prices.history_items.length ? <p className="py-8 text-center text-sm text-muted-foreground">请求历史中还没有模型记录。</p> : null}
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader><CardTitle>管理员价格覆盖</CardTitle><CardDescription>单位为 USD / 1M tokens；内部转换为整数 nanoUSD/token。</CardDescription></CardHeader>
         <CardContent>
@@ -214,4 +251,15 @@ export function PricingView() {
 
 function Stat({ label, value, hint }: { label: string; value: number; hint: string }) {
   return <Card><CardHeader><CardDescription>{label}</CardDescription><CardTitle className="text-2xl">{value}</CardTitle></CardHeader><CardContent><p className="text-xs text-muted-foreground">{hint}</p></CardContent></Card>
+}
+
+function pricePerMillion(value: number) {
+  return (value / 1000).toFixed(4)
+}
+
+function priceSourceLabel(source: string) {
+  if (source === "admin") return "管理员覆盖"
+  if (source === "models.dev") return "Models.dev"
+  if (source === "bundled") return "内置兜底"
+  return source || "未知"
 }

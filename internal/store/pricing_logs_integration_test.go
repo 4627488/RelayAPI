@@ -134,4 +134,23 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if !backfilled.PricingComplete || backfilled.CostNanoUSD == nil || *backfilled.CostNanoUSD != 40 {
 		t.Fatalf("pending price was not backfilled: %+v", backfilled)
 	}
+	history, err := dataStore.HistoricalModelPrices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("historical model prices = %+v", history)
+	}
+	historyByModel := make(map[string]HistoricalModelPrice, len(history))
+	for _, item := range history {
+		historyByModel[item.Model] = item
+	}
+	if item := historyByModel["alias-model"]; !item.Priced || item.PricedModel != "admin-model" ||
+		item.InputNanoUSDPerToken != 20 || item.RequestCount != 1 {
+		t.Fatalf("alias historical price = %+v", item)
+	}
+	if item := historyByModel["pending-model"]; !item.Priced ||
+		item.InputNanoUSDPerToken != 10 || item.RequestCount != 1 {
+		t.Fatalf("pending historical price = %+v", item)
+	}
 }
