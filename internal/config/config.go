@@ -24,6 +24,7 @@ type Config struct {
 	RequestTimeout      time.Duration
 	UnpricedModelPolicy string
 	CPAPluginSecret     string
+	WebDistDir          string
 }
 
 func Load() (Config, error) {
@@ -41,6 +42,7 @@ func Load() (Config, error) {
 		RequestTimeout:      time.Duration(envInt64("CPA_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
 		UnpricedModelPolicy: strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
 		CPAPluginSecret:     strings.TrimSpace(os.Getenv("CPA_PLUGIN_SECRET")),
+		WebDistDir:          strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")

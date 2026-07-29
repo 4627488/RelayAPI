@@ -1,19 +1,11 @@
 services:
-  web:
-    build: ./web
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    depends_on:
-      - relayapi
-    networks: [relay]
-
   relayapi:
+    image: ghcr.io/4627488/relayapi:latest
     build: .
     restart: unless-stopped
     env_file: .env
-    expose:
-      - "3000"
+    ports:
+      - "8080:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,28 +29,17 @@ services:
 
   # CLIProxyAPI is intentionally not exposed publicly. Supply its config and
   # credentials under ./cliproxyapi before enabling this service.
-  cpa-plugin:
-    build: ./cliproxyapi-plugin
-    restart: "no"
-    volumes:
-      - relay-cpa-plugins:/plugins
-
   cliproxyapi:
     image: eceasy/cli-proxy-api:latest
     restart: unless-stopped
-    depends_on:
-      cpa-plugin:
-        condition: service_completed_successfully
     volumes:
       # Writable so the authenticated Relay admin panel can persist CPA's
       # complete configuration through /v0/management/config.yaml.
       - ./cliproxyapi/config.yaml:/CLIProxyAPI/config.yaml
       - ./cliproxyapi/auths:/root/.cli-proxy-api
-      - relay-cpa-plugins:/CLIProxyAPI/plugins:ro
     networks: [relay]
 
 volumes:
   relay-postgres:
-  relay-cpa-plugins:
 networks:
   relay:

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -98,7 +100,35 @@ func (a *App) routes() {
 	for _, pattern := range []string{"/v1/", "/backend-api/codex/", "/openai/v1/", "/v1beta/"} {
 		a.mux.Handle(pattern, http.HandlerFunc(a.proxy))
 	}
-	a.mux.HandleFunc("GET /", a.serviceInfo)
+	a.mux.HandleFunc("GET /", a.frontend)
+}
+
+func (a *App) frontend(w http.ResponseWriter, r *http.Request) {
+	if a.cfg.WebDistDir == "" {
+		a.serviceInfo(w, r)
+		return
+	}
+	clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if clean == "." {
+		clean = "index.html"
+	}
+	root, err := filepath.Abs(a.cfg.WebDistDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "web_root_invalid", "前端目录无效")
+		return
+	}
+	requested := filepath.Join(root, clean)
+	if rel, err := filepath.Rel(root, requested); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		http.NotFound(w, r)
+		return
+	}
+	if info, err := os.Stat(requested); err != nil || info.IsDir() {
+		requested = filepath.Join(root, "index.html")
+	}
+	if filepath.Base(requested) == "index.html" {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	http.ServeFile(w, r, requested)
 }
 
 func (a *App) serviceInfo(w http.ResponseWriter, _ *http.Request) {

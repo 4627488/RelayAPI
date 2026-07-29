@@ -1,0 +1,17 @@
+services:
+  cpa-plugin:
+    image: ghcr.io/4627488/relayapi-cpa-plugin:latest
+    build: ./cliproxyapi-plugin
+    restart: "no"
+    volumes:
+      - relay-cpa-plugins:/plugins
+
+  cliproxyapi:
+    depends_on:
+      cpa-plugin:
+        condition: service_completed_successfully
+    volumes:
+      - relay-cpa-plugins:/CLIProxyAPI/plugins:ro
+
+volumes:
+  relay-cpa-plugins:

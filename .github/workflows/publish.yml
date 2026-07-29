@@ -1,10 +1,11 @@
-name: Publish images
+name: Publish image
 
 on:
   push:
     branches:
       - master
       - main
+      - "rewrite/**"
     tags:
       - "v*.*.*"
   workflow_dispatch:
@@ -30,9 +31,6 @@ jobs:
           - name: RelayAPI
             context: .
             image: relayapi
-          - name: RelayAPI Web
-            context: ./web
-            image: relayapi-web
           - name: CPA bridge
             context: ./cliproxyapi-plugin
             image: relayapi-cpa-plugin
@@ -61,7 +59,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: true
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}

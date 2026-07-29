@@ -15,14 +15,15 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Compose 中前端与统一 API 入口默认监听 `http://localhost:8080`，Go 后端仅在
-私有容器网络监听 3000。租户将 `base_url` 指向统一入口并使用
+Compose 中单个 RelayAPI 镜像同时提供前端与统一 API 入口，默认监听
+`http://localhost:8080`。租户将 `base_url` 指向统一入口并使用
 `relay_*` 密钥。可用模型通过 `GET /v1/models` 实时获取。
 
 ## 前端
 
 `web/` 是基于 Vite、React 19、Tailwind CSS v4 和 shadcn/ui Nova（Base UI）
-构建的独立应用。它包含受邀注册、用户工作区和管理员控制台。
+构建的独立源码应用。生产镜像会把其构建产物打包进 Go 服务，因此部署时不再需要
+单独的 Web/Nginx 容器。
 
 ```bash
 cd web
@@ -31,8 +32,10 @@ pnpm dev
 ```
 
 开发服务器会将 `/api`、`/v1` 和健康检查请求代理到
-`http://localhost:3000`。生产镜像通过 Nginx 提供 SPA，并代理 HTTP、SSE 和
-WebSocket 请求到 Go 后端。
+`http://localhost:3000`。生产环境由 Go 服务直接提供 SPA、HTTP、SSE 和
+WebSocket 入口。
+
+镜像、版本标签和推荐部署方式见 [docs/distribution.md](docs/distribution.md)。
 
 ## 必需配置
 
@@ -89,7 +92,13 @@ go vet ./...
 
 ## CPA 薄插件
 
-Compose 会构建 `cliproxyapi-plugin/` 并将动态库放入 CPA 的私有插件目录。
+CPA bridge 是可选增强项，发布为 `ghcr.io/4627488/relayapi-cpa-plugin`。需要
+凭据级调度遥测时，用附加 Compose 文件把动态库放入 CPA 的私有插件目录：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.plugin.yml up -d --build
+```
+
 在 CPA `config.yaml` 中启用：
 
 ```yaml
