@@ -20,6 +20,7 @@ jobs:
   backend:
     name: Go backend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17-alpine
@@ -37,39 +38,109 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://relay_test:relay_test@127.0.0.1:5432/relay_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -race ./...
-      - run: go vet ./...
-      - run: CGO_ENABLED=0 go build -trimpath ./cmd/relayapi
+          cache-dependency-path: go.sum
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Check formatting
+        shell: bash
+        run: test -z "$(gofmt -l ./cmd ./internal)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/relayapi
+
+  plugin:
+    name: CPA bridge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cliproxyapi-plugin
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cliproxyapi-plugin/go.mod
+          cache: true
+          cache-dependency-path: cliproxyapi-plugin/go.sum
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: Check formatting
+        shell: bash
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Build
+        run: go build -trimpath .
 
   frontend:
     name: Web frontend
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile --prefer-offline
-      - run: pnpm lint
-      - run: pnpm build
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
 
   images:
     name: Build ${{ matrix.name }} image
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -81,9 +152,16 @@ jobs:
             context: ./cliproxyapi-plugin
             cache_scope: relayapi-cpa-plugin
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           push: false

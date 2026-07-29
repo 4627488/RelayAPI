@@ -24,6 +24,7 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: preview
     steps:
       - name: Configure SSH
