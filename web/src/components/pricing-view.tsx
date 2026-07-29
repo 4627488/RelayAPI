@@ -49,7 +49,12 @@ export function PricingView() {
       api<{ items: ModelAlias[] }>("/api/admin/pricing/aliases"),
       api<{ items: ModelPriceRule[]; fields: string[] }>("/api/admin/pricing/rules"),
     ])
-    setPrices(priceValue)
+    setPrices({
+      items: priceValue.items ?? [],
+      catalog_items: priceValue.catalog_items ?? [],
+      bundled_items: priceValue.bundled_items ?? [],
+      pending_models: priceValue.pending_models ?? [],
+    })
     setAliases(aliasValue.items ?? [])
     setRules(ruleValue.items ?? [])
     setFields(ruleValue.fields ?? [])

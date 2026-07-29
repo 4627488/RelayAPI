@@ -288,7 +288,7 @@ func (s *Store) ResolvePrice(ctx context.Context, dimensions pricing.Dimensions)
 }
 
 func (s Store) ListPrices(ctx context.Context) ([]Price, error) {
-	var result []Price
+	result := make([]Price, 0)
 	err := scoped(ctx, s.DB).Order("model").Find(&result).Error
 	return result, err
 }
@@ -336,13 +336,13 @@ func (s *Store) DeletePrice(ctx context.Context, model string) error {
 }
 
 func (s Store) ListCatalogPrices(ctx context.Context) ([]db.ModelCatalogPrice, error) {
-	var result []db.ModelCatalogPrice
+	result := make([]db.ModelCatalogPrice, 0)
 	err := scoped(ctx, s.DB).Order("model").Find(&result).Error
 	return result, err
 }
 
 func (s Store) ListModelAliases(ctx context.Context) ([]db.ModelAlias, error) {
-	var result []db.ModelAlias
+	result := make([]db.ModelAlias, 0)
 	err := scoped(ctx, s.DB).Order("alias").Find(&result).Error
 	return result, err
 }
@@ -373,7 +373,7 @@ func (s *Store) ReplaceModelAliases(ctx context.Context, aliases []db.ModelAlias
 }
 
 func (s Store) ListPriceRules(ctx context.Context) ([]db.ModelPriceRule, error) {
-	var result []db.ModelPriceRule
+	result := make([]db.ModelPriceRule, 0)
 	err := scoped(ctx, s.DB).Order("model, field, value").Find(&result).Error
 	return result, err
 }
