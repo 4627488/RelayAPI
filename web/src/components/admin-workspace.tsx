@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react"
 import {
   ActivityIcon,
+  CircleDollarSignIcon,
   CopyIcon,
   KeyRoundIcon,
   PlusIcon,
@@ -117,7 +118,7 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
   if (!overview || !usage) {
     return <LoadErrorView message={loadError || "管理数据不完整"} onRetry={() => void load(true)} />
   }
-  if (page === "users") return <UsersView users={users} />
+  if (page === "users") return <UsersView users={users} onChanged={load} />
   if (page === "invitations") return <InvitationsView items={invitations} onChanged={load} />
   if (page === "providers") return <ProvidersView />
   if (page === "subscriptions") return <AdminSubscriptionsView />
@@ -183,7 +184,36 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
   )
 }
 
-function UsersView({ users }: { users: User[] }) {
+function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promise<void> }) {
+  const [creditUser, setCreditUser] = useState<User | null>(null)
+  const [pending, setPending] = useState(false)
+
+  async function credit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!creditUser) return
+    const data = new FormData(event.currentTarget)
+    const amountUSD = Number(data.get("amount_usd"))
+    if (!Number.isFinite(amountUSD) || amountUSD <= 0 || amountUSD > 1_000_000) {
+      toast.error("充值金额必须大于 0 且不超过 1,000,000 USD")
+      return
+    }
+    const amountNanoUSD = Math.round(amountUSD * 1_000_000_000)
+    setPending(true)
+    try {
+      await postJSON(`/api/admin/tenants/${creditUser.id}/credit`, {
+        amount_nano_usd: amountNanoUSD,
+        note: String(data.get("note") ?? "").trim() || "管理员充值",
+      })
+      await onChanged()
+      toast.success(`已为 ${creditUser.name} 充值 ${money(amountNanoUSD)}`)
+      setCreditUser(null)
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "充值失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
@@ -205,6 +235,7 @@ function UsersView({ users }: { users: User[] }) {
                   <TableHead>状态</TableHead>
                   <TableHead className="text-right">余额</TableHead>
                   <TableHead className="text-right">注册时间</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -224,6 +255,12 @@ function UsersView({ users }: { users: User[] }) {
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{money(user.balance_nano_usd)}</TableCell>
                     <TableCell className="text-right text-muted-foreground">{dateTime(user.created_at)}</TableCell>
+                    <TableCell className="text-right">
+                      <Button size="sm" variant="outline" onClick={() => setCreditUser(user)}>
+                        <CircleDollarSignIcon data-icon="inline-start" />
+                        充值
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -239,6 +276,46 @@ function UsersView({ users }: { users: User[] }) {
           )}
         </CardContent>
       </Card>
+      <Dialog open={Boolean(creditUser)} onOpenChange={(open) => { if (!open && !pending) setCreditUser(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>用户充值</DialogTitle>
+            <DialogDescription>
+              为 {creditUser?.name} 增加账户总余额。该操作会写入计费账本。
+            </DialogDescription>
+          </DialogHeader>
+          <form id="credit-user-form" onSubmit={credit}>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="credit-amount">充值金额（USD）</FieldLabel>
+                <Input
+                  id="credit-amount"
+                  name="amount_usd"
+                  type="number"
+                  min="0.000001"
+                  max="1000000"
+                  step="0.000001"
+                  placeholder="例如 10.00"
+                  autoFocus
+                  required
+                />
+                <FieldDescription>充值后余额：{creditUser ? money(creditUser.balance_nano_usd) : "$0.00"} + 本次金额</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="credit-note">备注</FieldLabel>
+                <Input id="credit-note" name="note" maxLength={200} placeholder="例如：订单号或线下收款说明" />
+              </Field>
+            </FieldGroup>
+          </form>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreditUser(null)} disabled={pending}>取消</Button>
+            <Button type="submit" form="credit-user-form" disabled={pending}>
+              {pending ? <Spinner /> : <CircleDollarSignIcon data-icon="inline-start" />}
+              确认充值
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
