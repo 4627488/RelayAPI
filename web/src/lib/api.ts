@@ -143,6 +143,10 @@ export interface ParentSubscription {
   cpa_model_allowlist: string[]
   model_allowlist: string[]
   last_synced_at?: string | null
+  quota_supported: boolean
+  quota_probe_status: "unknown" | "supported" | "unsupported" | "error"
+  quota_probe_error?: string
+  quota_observed_at?: string | null
   created_at: string
   updated_at: string
 }

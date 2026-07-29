@@ -99,6 +99,14 @@ func (c *Client) Ready(ctx context.Context) error {
 }
 
 func (c *Client) BridgeReady(ctx context.Context) (bool, string, error) {
+	return c.bridgeReadyAtLeast(ctx, 0, 2, 0)
+}
+
+func (c *Client) QuotaReady(ctx context.Context) (bool, string, error) {
+	return c.bridgeReadyAtLeast(ctx, 0, 3, 0)
+}
+
+func (c *Client) bridgeReadyAtLeast(ctx context.Context, major, minor, patch int) (bool, string, error) {
 	if strings.TrimSpace(c.ManagementKey) == "" {
 		return false, "", nil
 	}
@@ -124,7 +132,7 @@ func (c *Client) BridgeReady(ctx context.Context) (bool, string, error) {
 	}
 	for _, plugin := range response.Plugins {
 		if plugin.ID == "relayapi-bridge" {
-			return response.PluginsEnabled && plugin.EffectiveEnabled && versionAtLeast(plugin.Metadata.Version, 0, 2, 0), plugin.Metadata.Version, nil
+			return response.PluginsEnabled && plugin.EffectiveEnabled && versionAtLeast(plugin.Metadata.Version, major, minor, patch), plugin.Metadata.Version, nil
 		}
 	}
 	return false, "", nil

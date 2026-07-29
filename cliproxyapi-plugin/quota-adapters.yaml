@@ -1,0 +1,71 @@
+adapters:
+  - id: codex-wham
+    providers: [codex, codex-oauth, chatgpt]
+    source: codex-wham
+    requests:
+      - id: usage
+        method: GET
+        url: https://chatgpt.com/backend-api/wham/usage
+        headers:
+          Accept: application/json
+          Authorization: "Bearer ${auth.access_token}"
+          Chatgpt-Account-Id: "${auth.account_id}"
+          User-Agent: codex_cli_rs/0.98.0
+    plan:
+      request: usage
+      path: plan_type
+    windows:
+      - kind: 5h
+        label: 5 小时
+        request: usage
+        used_percent_path: rate_limit.primary_window.used_percent
+        reset_path: rate_limit.primary_window.reset_at
+        enforceable: true
+      - kind: 7d
+        label: 7 天
+        request: usage
+        used_percent_path: rate_limit.secondary_window.used_percent
+        reset_path: rate_limit.secondary_window.reset_at
+        enforceable: true
+
+  - id: xai-billing
+    providers: [xai, x-ai, grok]
+    source: xai-billing
+    requests:
+      - id: credits
+        method: GET
+        url: https://cli-chat-proxy.grok.com/v1/billing?format=credits
+        optional: true
+        headers: &xai_headers
+          Accept: application/json
+          Authorization: "Bearer ${auth.access_token}"
+          Content-Type: application/json
+          X-XAI-Token-Auth: xai-grok-cli
+          X-Grok-Client-Version: "0.2.93"
+          User-Agent: grok-pager/0.2.93 grok-shell/0.2.93
+      - id: billing
+        method: GET
+        url: https://cli-chat-proxy.grok.com/v1/billing
+        optional: true
+        headers: *xai_headers
+    plan:
+      request: billing
+      path: config.monthlyLimit.val
+      map:
+        "0": free
+        "15000": supergrok
+        "150000": supergrok-heavy
+    windows:
+      - kind: 7d
+        label: 7 天
+        request: credits
+        used_percent_path: config.creditUsagePercent
+        reset_path: config.currentPeriod.end
+        enforceable: true
+      - kind: monthly
+        label: 月度
+        request: billing
+        used_value_path: config.used.val
+        limit_value_path: config.monthlyLimit.val
+        reset_path: config.billingPeriodEnd
+        enforceable: true

@@ -70,6 +70,14 @@ func (a *App) maintenance() {
 	defer a.wg.Done()
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
+	quotaInterval := a.cfg.QuotaSyncInterval
+	if quotaInterval < time.Minute {
+		quotaInterval = 5 * time.Minute
+	}
+	quotaTicker := time.NewTicker(quotaInterval)
+	defer quotaTicker.Stop()
+	initialQuotaSync := time.NewTimer(15 * time.Second)
+	defer initialQuotaSync.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -79,6 +87,10 @@ func (a *App) maintenance() {
 			} else if count > 0 {
 				slog.Info("reclaimed expired reservations", "count", count)
 			}
+		case <-initialQuotaSync.C:
+			a.refreshParentQuotas(context.Background())
+		case <-quotaTicker.C:
+			a.refreshParentQuotas(context.Background())
 		case <-a.stop:
 			return
 		}
@@ -153,6 +165,8 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/subscriptions/parents/{id}/observations", a.withAdmin(http.HandlerFunc(a.adminParentObservations)))
 	a.mux.Handle("POST /api/admin/subscriptions/parents/{id}/observations", a.withAdmin(http.HandlerFunc(a.adminParentObservations)))
 	a.mux.Handle("POST /api/admin/subscriptions/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentSubscriptions)))
+	a.mux.Handle("POST /api/admin/subscriptions/quota/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentQuotas)))
+	a.mux.Handle("POST /api/admin/subscriptions/parents/{id}/quota/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentQuota)))
 	a.mux.Handle("GET /api/admin/subscriptions/children", a.withAdmin(http.HandlerFunc(a.adminChildSubscriptions)))
 	a.mux.Handle("POST /api/admin/subscriptions/children", a.withAdmin(http.HandlerFunc(a.adminChildSubscriptions)))
 	a.mux.Handle("PUT /api/admin/subscriptions/children/{id}", a.withAdmin(http.HandlerFunc(a.adminChildSubscription)))

@@ -28,7 +28,7 @@ import { dateTime, money } from "@/lib/format"
 const capacityModes: Array<{ value: CapacityMode; label: string }> = [
   { value: "unmetered", label: "不计上游额度" },
   { value: "manual", label: "手动容量窗口" },
-  { value: "observed", label: "观测/校准容量" },
+  { value: "observed", label: "自动观测/校准容量" },
 ]
 
 function isCapacityMode(value: unknown): value is CapacityMode {
@@ -68,11 +68,26 @@ export function AdminSubscriptionsView() {
   async function syncParents() {
     setPending(true)
     try {
-      const result = await postJSON<{ synced: number }>("/api/admin/subscriptions/sync", {})
-      toast.success(`已同步 ${result.synced} 个 CPA 父账户`)
+      const result = await postJSON<{ synced: number; quota?: Array<{ status: string; supported: boolean }> }>("/api/admin/subscriptions/sync", {})
+      const supported = result.quota?.filter((item) => item.supported && item.status !== "error").length ?? 0
+      toast.success(`已同步 ${result.synced} 个 CPA 父账户，${supported} 个支持自动额度`)
       await load()
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "同步失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function syncParentQuota(id: string) {
+    setPending(true)
+    try {
+      const result = await postJSON<{ status: string; supported: boolean; windows: number; error?: string }>(`/api/admin/subscriptions/parents/${id}/quota/sync`, {})
+      if (!result.supported) toast.info("这个提供商暂未暴露可自动读取的额度")
+      else toast.success(`额度观测完成，读取 ${result.windows} 个可校准窗口`)
+      await load()
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "额度同步失败")
     } finally {
       setPending(false)
     }
@@ -148,7 +163,7 @@ export function AdminSubscriptionsView() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">父订阅与子订阅</h1>
-          <p className="text-sm text-muted-foreground">将 CPA AuthID 作为父容量池，按比例严格分配给租户。</p>
+          <p className="text-sm text-muted-foreground">将 CPA AuthID 作为父容量池；上游额度由 bridge 在 CPA 内部脱敏读取，子份额由管理员分配。</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => void syncParents()} disabled={pending}>
@@ -176,8 +191,8 @@ export function AdminSubscriptionsView() {
                     <TableCell>{view.item.provider || "未知"}</TableCell>
                     <TableCell>{capacityModes.find((mode) => mode.value === view.item.capacity_mode)?.label}</TableCell>
                     <TableCell className="tabular-nums">{percent(view.allocated_ppm)} / {percent(view.item.allocation_limit_ppm)}</TableCell>
-                    <TableCell><Badge variant={view.item.enabled && !view.item.cpa_unavailable ? "secondary" : "outline"}>{!view.item.enabled ? "已停用" : view.item.cpa_unavailable ? "CPA 不可用" : view.item.status || "可用"}</Badge></TableCell>
-                    <TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => setParentEditor(view)}>配置</Button></TableCell>
+                    <TableCell><div className="flex flex-col items-start gap-1"><Badge variant={view.item.enabled && !view.item.cpa_unavailable ? "secondary" : "outline"}>{!view.item.enabled ? "已停用" : view.item.cpa_unavailable ? "CPA 不可用" : view.item.status || "可用"}</Badge><QuotaProbeBadge item={view.item} /></div></TableCell>
+                    <TableCell className="text-right"><div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={pending} onClick={() => void syncParentQuota(view.item.id)}><RefreshCwIcon />额度</Button><Button size="sm" variant="outline" onClick={() => setParentEditor(view)}>配置</Button></div></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -309,7 +324,7 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
       })
       if (mode !== "unmetered") {
         const configured = windows.filter((item) => item.kind.trim() || item.limit || item.reset)
-        if (!configured.length) throw new Error("计量父订阅至少需要一个有效容量窗口")
+        if (mode === "manual" && !configured.length) throw new Error("手动计量父订阅至少需要一个有效容量窗口")
         const names = new Set<string>()
         const items = configured.map((item) => {
           const kind = item.kind.trim()
@@ -354,7 +369,7 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
             <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel>容量模式</FieldLabel><Select value={mode} onValueChange={(next) => { if (isCapacityMode(next)) setMode(next) }}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{capacityModes.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><Field><FieldLabel htmlFor="parent-plan">计划标签</FieldLabel><Input id="parent-plan" name="plan" defaultValue={current.item.plan_type} placeholder="Plus / Pro / Team" /></Field></div>
             <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="parent-limit">可分配上限（%）</FieldLabel><Input id="parent-limit" name="allocation_limit" type="number" min="0.0001" step="0.0001" defaultValue={current.item.allocation_limit_ppm / 10_000} required /><FieldDescription>大于 100% 表示明确允许超售。</FieldDescription></Field><Field><FieldLabel htmlFor="parent-models">模型策略范围</FieldLabel><Input id="parent-models" name="models" defaultValue={(current.item.model_allowlist ?? []).join(", ")} placeholder="留空使用 CPA 同步能力" /><FieldDescription>CPA 已同步 {current.item.cpa_model_allowlist?.length ?? 0} 个模型；此处仅做额外收窄。</FieldDescription></Field></div>
             {mode !== "unmetered" ? <div className="flex flex-col gap-3 rounded-lg border p-3">
-              <div className="flex items-center justify-between gap-3"><div><p className="font-medium">额度窗口</p><p className="text-xs text-muted-foreground">可配置 5h、7d、monthly、credits 等任意上游窗口。</p></div><Button type="button" size="sm" variant="outline" onClick={() => setWindows((items) => [...items, emptyWindow("")])}><PlusIcon />添加窗口</Button></div>
+              <div className="flex items-center justify-between gap-3"><div><p className="font-medium">额度窗口</p><p className="text-xs text-muted-foreground">{mode === "observed" ? "bridge 自动读取上游百分比与重置时间，并结合本地计价消费校准 USD 容量；空窗口表示仍在学习。" : "可配置 5h、7d、monthly、credits 等任意上游窗口。"}</p></div><Button type="button" size="sm" variant="outline" onClick={() => setWindows((items) => [...items, emptyWindow("")])}><PlusIcon />添加窗口</Button></div>
               {windows.map((item) => <div key={item.key} className="grid items-end gap-3 rounded-md bg-muted/40 p-3 sm:grid-cols-[0.8fr_1fr_1.2fr_auto]">
                 <Field><FieldLabel htmlFor={`${item.key}-kind`}>名称</FieldLabel><Input id={`${item.key}-kind`} value={item.kind} onChange={(event) => updateWindow(item.key, "kind", event.target.value)} placeholder="5h / monthly" /></Field>
                 <Field><FieldLabel htmlFor={`${item.key}-limit`}>容量（USD）</FieldLabel><Input id={`${item.key}-limit`} type="number" min="0" step="0.000001" value={item.limit} onChange={(event) => updateWindow(item.key, "limit", event.target.value)} /></Field>
@@ -370,6 +385,13 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
       </DialogContent>
     </Dialog>
   )
+}
+
+function QuotaProbeBadge({ item }: { item: ParentSubscriptionView["item"] }) {
+  if (item.quota_probe_status === "supported") return <Badge variant="outline" title={item.quota_observed_at ? `最近观测：${dateTime(item.quota_observed_at)}` : undefined}>自动额度</Badge>
+  if (item.quota_probe_status === "unsupported") return <Badge variant="outline">额度需手动配置</Badge>
+  if (item.quota_probe_status === "error") return <Badge variant="destructive" title={item.quota_probe_error || "额度探测失败"}>额度探测失败</Badge>
+  return <Badge variant="outline">额度待探测</Badge>
 }
 
 type EditableWindow = { key: string; kind: string; limit: string; reset: string; usedPercent: string }

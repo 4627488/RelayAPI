@@ -43,6 +43,15 @@ func TestPercentageCapacity(t *testing.T) {
 	}
 }
 
+func TestMedianInt64RejectsSingleSampleNoise(t *testing.T) {
+	if got := medianInt64([]int64{100, 105, 10_000, 95}); got != 102 {
+		t.Fatalf("median = %d", got)
+	}
+	if got := medianInt64([]int64{7, 3, 5}); got != 5 {
+		t.Fatalf("odd median = %d", got)
+	}
+}
+
 func TestObservationRejectsInvalidTimeRangeBeforeDatabaseAccess(t *testing.T) {
 	now := time.Now()
 	var store Store

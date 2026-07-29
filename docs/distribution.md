@@ -20,7 +20,7 @@ ghcr.io/4627488/relayapi-cpa-plugin（父/子订阅必需）
 CLIProxyAPI 负责协议、提供商凭据和模型路由；RelayAPI 负责用户、计费、审计与
 管理界面。前端不再作为独立镜像发布，bridge 仅在启用附加 Compose 时运行一次，
 把动态库复制到 CPA 插件卷中。只使用余额计费时 bridge 可省略；启用严格 AuthID
-父/子订阅时必须部署 `0.2.0+`。
+父/子订阅时必须部署 `0.2.0+`；需要自动读取上游凭据额度时部署 `0.3.0+`。
 
 ## GHCR 标签
 
@@ -58,7 +58,8 @@ docker compose up -d --build
 
 ## CPA bridge
 
-`cliproxyapi-plugin/` 提供经过签名的严格凭据调度和失败/用量遥测。它作为独立
+`cliproxyapi-plugin/` 提供经过签名的严格凭据调度、失败/用量遥测和声明式额度
+adapter 运行时。它作为独立
 GHCR 镜像发布，避免把 CPA ABI 动态库塞入主镜像。启用父/子订阅时叠加：
 
 ```bash
@@ -69,3 +70,8 @@ docker compose -f docker-compose.yml -f docker-compose.plugin.yml up -d --build
 `CPA_PLUGIN_SECRET` 相同。仓库的 preview workflow 会在 bridge 镜像发布成功后
 自动刷新插件卷并仅重启 CPA；主镜像发布成功后只重建 RelayAPI。Caddy 不属于该
 发布链路。
+
+额度 adapter 随 bridge 二进制发布，不增加第三个长期运行服务。默认 adapter 包
+只是数据；自定义 provider 可直接写入 CPA 的 `plugins.configs.relayapi-bridge`
+配置，无需重编译 Relay 或 bridge。生产环境可固定 bridge 的 `sha-*` 标签，并在
+更新 adapter 后先手动调用父订阅额度同步接口验收。

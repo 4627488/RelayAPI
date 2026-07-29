@@ -80,8 +80,9 @@ API key and management key are service credentials; tenant clients receive only
 
 ## CPA v7 plugin boundary
 
-`cliproxyapi-plugin/` is a thin C-ABI plugin with usage-observer and scheduler
-capabilities. A trusted `X-Relay-CPA-Auth-ID` can select a specific candidate;
+`cliproxyapi-plugin/` is a thin C-ABI plugin with usage-observer, scheduler,
+management, and declarative quota-adapter capabilities. A trusted
+`X-Relay-CPA-Auth-ID` can select a specific candidate;
 otherwise the plugin delegates to CPA's built-in scheduler. Usage events are
 sent to Relay over the private network using a shared secret.
 
@@ -89,3 +90,11 @@ CPA v7's usage plugin record does not include arbitrary request headers, so
 those events cannot safely be the sole tenant-billing correlation source.
 Relay therefore settles from its own request-correlated terminal response and
 uses plugin events for credential/failure telemetry.
+
+Quota discovery follows the same ownership boundary. The bridge obtains one
+credential by stable CPA `auth_index`, executes adapter-declared HTTP requests
+through CPA's host client, and returns only normalized plan/window data. The Go
+runtime contains no provider aliases, endpoints, or response parsers. Bundled
+Codex/xAI definitions and administrator-supplied definitions use the same YAML
+schema and execution path. OAuth tokens, account identifiers, and raw upstream
+responses never cross into RelayAPI.

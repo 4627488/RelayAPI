@@ -43,6 +43,7 @@ the stable CPA AuthID and accounting metadata.
 - CPA auth-file name, provider, display name, status, and cached model list;
 - capacity mode: `unmetered`, `manual`, or `observed`;
 - allocation/oversell limit and synchronization timestamps.
+- normalized quota-probe capability, status, last error, and observation time.
 
 `parent_quota_windows` stores arbitrary window kinds such as `5h`, `7d`,
 `daily`, `monthly`, or `credits`. Manual windows are administrator supplied;
@@ -93,7 +94,36 @@ strict plugin remains the final authority on candidate validity.
   works for every CPA provider and API-key endpoint.
 - `observed`: Relay combines credential-attributed priced usage with upstream
   percentage/reset observations to estimate full parent capacity. Manual
-  overrides remain available when a provider exposes no normalized quota.
+  overrides remain available when a provider exposes no normalized quota. An
+  observed parent with no calibrated window is admitted in learning mode with
+  strict credential routing and normal balance billing, but no child-quota
+  reservation. A provider explicitly reported as unsupported is rejected until
+  an adapter is installed or the parent is switched to manual/unmetered mode.
+  Once accepted samples produce a capacity estimate, subsequent
+  admissions enforce the learned windows. The active estimate is the median of
+  up to 21 recent accepted samples rather than the latest sample alone.
+
+## Quota extension boundary
+
+The bridge quota runtime is provider-neutral. An adapter manifest declares:
+
+- one or more provider extension keys and upstream HTTP requests;
+- credential templates such as `${auth.access_token}`;
+- optional requests for partially available provider APIs;
+- JSON paths for plan values, used/remaining percentages, raw limit/remaining,
+  and reset timestamps;
+- which windows are safe to enforce and calibrate.
+
+The bundled Codex and xAI entries are default adapter data, not Go branches.
+Custom entries run through the exact same engine and may override or replace
+the bundled pack. A CPA credential may instead expose normalized `relay_quota`
+metadata directly. In every case the bridge response excludes credential
+fields and raw upstream payloads.
+
+Upstream quota and child share are intentionally separate. CPA/adapter data can
+discover a credential's plan, percentage consumption, reset time, and sometimes
+raw credits. Only an administrator can decide the child `allocation_ppm` policy;
+CPA scheduler weight is not a tenant allocation share.
 
 ## Migration and rollout
 

@@ -168,6 +168,29 @@ func (s Store) MarkMissingParentSubscriptions(ctx context.Context, seen []string
 	}).Error
 }
 
+func (s Store) UpdateParentQuotaProbe(ctx context.Context, parentID string, supported bool, status, message, planType string, observedAt *time.Time) error {
+	updates := map[string]any{
+		"quota_supported":    supported,
+		"quota_probe_status": strings.TrimSpace(status),
+		"quota_probe_error":  strings.TrimSpace(message),
+		"updated_at":         time.Now(),
+	}
+	if observedAt != nil && !observedAt.IsZero() {
+		updates["quota_observed_at"] = observedAt
+	}
+	if strings.TrimSpace(planType) != "" {
+		updates["plan_type"] = strings.TrimSpace(planType)
+	}
+	result := scoped(ctx, s.DB).Model(&ParentSubscription{}).Where("id = ?", parentID).Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s Store) UpdateParentSubscription(ctx context.Context, item ParentSubscription) (ParentSubscription, error) {
 	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
 		var current ParentSubscription
@@ -331,7 +354,13 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 		existing, windowErr := currentWindow, currentWindowErr
 		limit := int64(0)
 		if observation.EstimatedLimit != nil {
-			limit = *observation.EstimatedLimit
+			var estimates []int64
+			if err := tx.Model(&ParentQuotaObservation{}).
+				Where("parent_subscription_id = ? AND kind = ? AND accepted = ? AND estimated_limit IS NOT NULL", parentID, observation.Kind, true).
+				Order("observed_at DESC").Limit(21).Pluck("estimated_limit", &estimates).Error; err != nil {
+				return err
+			}
+			limit = medianInt64(estimates)
 		} else if windowErr == nil {
 			limit = existing.LimitNanoUSD
 		}
@@ -595,7 +624,9 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 					return err
 				}
 				if len(parentWindows) == 0 {
-					return ErrSubscriptionExhausted
+					if parent.CapacityMode != db.ParentCapacityObserved || parent.QuotaProbeStatus == "unsupported" {
+						return ErrSubscriptionExhausted
+					}
 				}
 				reservedWindows := make([]quotaWindowReservation, 0, len(parentWindows))
 				for _, parentWindow := range parentWindows {
@@ -635,8 +666,10 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 					}
 					reservedWindows = append(reservedWindows, quotaWindowReservation{Kind: parentWindow.Kind, ResetsAt: parentWindow.ResetsAt})
 				}
-				reservation.QuotaReservedNanoUSD = input.QuotaReserve
-				reservation.QuotaWindows, _ = json.Marshal(reservedWindows)
+				if len(reservedWindows) > 0 {
+					reservation.QuotaReservedNanoUSD = input.QuotaReserve
+					reservation.QuotaWindows, _ = json.Marshal(reservedWindows)
+				}
 			}
 		}
 
@@ -850,6 +883,25 @@ func percentageCapacity(costNanoUSD, deltaMicros int64) int64 {
 		return int64(^uint64(0) >> 1)
 	}
 	return result.Int64()
+}
+
+func medianInt64(values []int64) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	items := append([]int64(nil), values...)
+	sort.Slice(items, func(i, j int) bool { return items[i] < items[j] })
+	middle := len(items) / 2
+	if len(items)%2 == 1 {
+		return items[middle]
+	}
+	left := big.NewInt(items[middle-1])
+	left.Add(left, big.NewInt(items[middle]))
+	left.Div(left, big.NewInt(2))
+	if !left.IsInt64() {
+		return int64(^uint64(0) >> 1)
+	}
+	return left.Int64()
 }
 
 func modelAllowed(model string, lists ...[]string) bool {

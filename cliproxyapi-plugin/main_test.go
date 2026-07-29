@@ -11,6 +11,40 @@ import (
 	"time"
 )
 
+func TestRegistrationExposesGenericQuotaExtension(t *testing.T) {
+	request, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte(`
+quota_adapters_mode: replace
+quota_adapters:
+  - id: example
+    providers: [example-provider]
+    requests:
+      - id: usage
+        url: https://example.invalid/quota
+    windows:
+      - kind: daily
+        request: usage
+        used_percent_path: used
+`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handle("plugin.register", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"management_api":true`) || !strings.Contains(string(raw), `"Version":"0.3.0"`) {
+		t.Fatalf("registration = %s", raw)
+	}
+	loadedConfig := loaded()
+	if len(loadedConfig.QuotaAdapters) != 1 || loadedConfig.QuotaAdapters[0].ID != "example" {
+		t.Fatalf("loaded adapters = %+v", loadedConfig.QuotaAdapters)
+	}
+	routes, err := handle("management.register", nil)
+	if err != nil || !strings.Contains(string(routes), `"Path":"/plugins/relayapi-bridge/quota"`) {
+		t.Fatalf("management registration = %s, err = %v", routes, err)
+	}
+}
+
 func TestSchedulerPinsRequestedAuthID(t *testing.T) {
 	current.Store(config{Secret: "shared-secret"})
 	payload := signedSchedulerPayload(t, "request-1", "auth-2", "shared-secret", []string{"auth-1", "auth-2"})

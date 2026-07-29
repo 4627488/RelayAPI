@@ -272,7 +272,8 @@ func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	a.refreshBridgeStatus(r.Context())
-	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items)})
+	quota := a.syncParentQuotas(r.Context(), items)
+	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": quota})
 }
 
 func (a *App) cpaAuthModels(r *http.Request, name string) ([]string, bool) {

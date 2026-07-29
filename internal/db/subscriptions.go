@@ -37,6 +37,10 @@ type ParentSubscription struct {
 	ModelAllowlist     pq.StringArray  `gorm:"type:text[];not null;default:'{}'" json:"model_allowlist"`
 	Metadata           json.RawMessage `gorm:"type:jsonb;not null;default:'{}'" json:"metadata"`
 	LastSyncedAt       *time.Time      `json:"last_synced_at"`
+	QuotaSupported     bool            `gorm:"not null;default:false" json:"quota_supported"`
+	QuotaProbeStatus   string          `gorm:"not null;default:'unknown'" json:"quota_probe_status"`
+	QuotaProbeError    string          `gorm:"not null;default:''" json:"quota_probe_error"`
+	QuotaObservedAt    *time.Time      `json:"quota_observed_at"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
 }

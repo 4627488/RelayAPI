@@ -22,6 +22,7 @@ type Config struct {
 	SecureCookies       bool
 	ReservationNanoUSD  int64
 	RequestTimeout      time.Duration
+	QuotaSyncInterval   time.Duration
 	UnpricedModelPolicy string
 	CPAPluginSecret     string
 	WebDistDir          string
@@ -40,6 +41,7 @@ func Load() (Config, error) {
 		SecureCookies:       envBool("RELAY_SECURE_COOKIES", false),
 		ReservationNanoUSD:  envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
 		RequestTimeout:      time.Duration(envInt64("CPA_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
+		QuotaSyncInterval:   time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
 		UnpricedModelPolicy: strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
 		CPAPluginSecret:     strings.TrimSpace(os.Getenv("CPA_PLUGIN_SECRET")),
 		WebDistDir:          strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
@@ -58,6 +60,9 @@ func Load() (Config, error) {
 	}
 	if cfg.ReservationNanoUSD < 0 {
 		return Config{}, errors.New("BILLING_RESERVE_NANO_USD cannot be negative")
+	}
+	if cfg.QuotaSyncInterval < time.Minute {
+		return Config{}, errors.New("CPA_QUOTA_SYNC_INTERVAL_SECONDS must be at least 60")
 	}
 	if cfg.UnpricedModelPolicy != "allow" && cfg.UnpricedModelPolicy != "deny" {
 		return Config{}, errors.New("UNPRICED_MODEL_POLICY must be allow or deny")

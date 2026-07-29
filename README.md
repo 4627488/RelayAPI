@@ -51,6 +51,9 @@ WebSocket 入口。
 `CPA_MANAGEMENT_KEY` 用于管理员面板中的 CPA 凭据、Codex OAuth 与运行策略管理。
 `CPA_PLUGIN_SECRET` 用于 CPA bridge 与 Relay 相互认证。仅使用遥测时可不配置；
 启用父/子订阅的严格 AuthID 路由时必须配置，并与 CPA 插件配置一致。
+`CPA_QUOTA_SYNC_INTERVAL_SECONDS` 控制父订阅额度自动观测周期，默认 300 秒，最小
+60 秒。上游额度由 bridge 在 CPA 进程内读取并脱敏；子订阅 `allocation_ppm` 是
+管理员的业务分配策略，不能也不应由 CPA 自动决定。
 未知模型默认允许调用且不扣费；
 设置 `UNPRICED_MODEL_POLICY=deny` 可改为严格模式。
 
@@ -73,6 +76,8 @@ WebSocket 入口。
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
 - `GET /api/logs?tenant_id=...`：请求日志
 - `POST /api/admin/subscriptions/sync`：同步 CPA scheduler ID 与稳定 auth_index 父订阅映射
+- `POST /api/admin/subscriptions/quota/sync`：立即观测所有父订阅的扩展额度
+- `POST /api/admin/subscriptions/parents/{id}/quota/sync`：观测单个父订阅额度
 - `/api/admin/subscriptions/parents/*`：父订阅、任意容量窗口与观测样本
 - `/api/admin/subscriptions/children/*`：向租户分配、停用或回收子订阅
 
@@ -100,7 +105,7 @@ go vet ./...
 ## CPA 薄插件
 
 CPA bridge 发布为 `ghcr.io/4627488/relayapi-cpa-plugin`。普通余额计费可以不安装；
-父/子订阅的 AuthID 固定路由要求 bridge `0.2.0+`。用附加 Compose 文件把动态库
+父/子订阅的 AuthID 固定路由要求 bridge `0.2.0+`；通用额度扩展要求 `0.3.0+`。用附加 Compose 文件把动态库
 放入 CPA 的私有插件目录：
 
 ```bash
@@ -120,12 +125,20 @@ plugins:
       relay_url: http://relayapi:3000
       secret: 与 CPA_PLUGIN_SECRET 相同
       delegate: round-robin
+      quota_adapters_mode: append
 ```
 
 插件负责 CPA 凭据选择扩展与用量/失败遥测。Relay 会用短时 HMAC 签名保护内部
 AuthID 路由指令；指定凭据不在 CPA 当前候选集时，插件会拒绝请求而不会悄悄切换
 到另一账户。计费仍使用 Relay 代理层关联到具体请求的响应用量，避免 CPA 插件
 事件缺少自定义关联 ID 时发生串账。
+
+`0.3.0` 的额度探测内核没有 Codex、xAI 或其他 provider 分支。内核只执行声明式
+adapter：按 provider 扩展键匹配、从 CPA 凭据渲染请求、通过 `host.http.do` 发起
+请求，并用 JSON 路径映射 plan、百分比、原始 limit/remaining 和 reset。Codex/xAI
+只是随 bridge 发布的默认 YAML 扩展包；可通过 `quota_adapters` 增加任意提供商，
+通过 `append` 覆盖默认项、`replace` 只使用自定义包，或设为 `disabled`。完整格式见
+[cliproxyapi-plugin/README.md](cliproxyapi-plugin/README.md)。
 
 ## CLIProxyAPI 完整管理面
 

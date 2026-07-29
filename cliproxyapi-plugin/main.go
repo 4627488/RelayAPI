@@ -4,7 +4,9 @@ package main
 #include <stdint.h>
 #include <stdlib.h>
 typedef struct { void* ptr; size_t len; } cliproxy_buffer;
-typedef struct { uint32_t abi_version; void* host_ctx; void* call; void* free_buffer; } cliproxy_host_api;
+typedef int (*cliproxy_host_call_fn)(void*, const char*, const uint8_t*, size_t, cliproxy_buffer*);
+typedef void (*cliproxy_host_free_fn)(void*, size_t);
+typedef struct { uint32_t abi_version; void* host_ctx; cliproxy_host_call_fn call; cliproxy_host_free_fn free_buffer; } cliproxy_host_api;
 typedef int (*cliproxy_plugin_call_fn)(char*, uint8_t*, size_t, cliproxy_buffer*);
 typedef void (*cliproxy_plugin_free_fn)(void*, size_t);
 typedef void (*cliproxy_plugin_shutdown_fn)(void);
@@ -12,6 +14,16 @@ typedef struct { uint32_t abi_version; cliproxy_plugin_call_fn call; cliproxy_pl
 extern int cliproxyPluginCall(char*, uint8_t*, size_t, cliproxy_buffer*);
 extern void cliproxyPluginFree(void*, size_t);
 extern void cliproxyPluginShutdown(void);
+
+static const cliproxy_host_api* stored_host;
+static void store_host_api(const cliproxy_host_api* host) { stored_host = host; }
+static int call_host_api(const char* method, const uint8_t* request, size_t request_len, cliproxy_buffer* response) {
+	if (stored_host == NULL || stored_host->call == NULL) return 1;
+	return stored_host->call(stored_host->host_ctx, method, request, request_len, response);
+}
+static void free_host_buffer(void* ptr, size_t len) {
+	if (stored_host != NULL && stored_host->free_buffer != NULL && ptr != NULL) stored_host->free_buffer(ptr, len);
+}
 */
 import "C"
 
@@ -24,6 +36,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -42,9 +55,11 @@ type lifecycleRequest struct {
 	ConfigYAML []byte `json:"config_yaml"`
 }
 type config struct {
-	RelayURL string `yaml:"relay_url"`
-	Secret   string `yaml:"secret"`
-	Delegate string `yaml:"delegate"`
+	RelayURL         string         `yaml:"relay_url"`
+	Secret           string         `yaml:"secret"`
+	Delegate         string         `yaml:"delegate"`
+	QuotaAdapterMode string         `yaml:"quota_adapters_mode"`
+	QuotaAdapters    []quotaAdapter `yaml:"quota_adapters"`
 }
 type schedulerRequest struct {
 	Options struct {
@@ -55,16 +70,31 @@ type schedulerRequest struct {
 	} `json:"Candidates"`
 }
 
+type managementRequest struct {
+	Method  string
+	Path    string
+	Headers http.Header
+	Query   url.Values
+	Body    []byte
+}
+
+type managementResponse struct {
+	StatusCode int
+	Headers    http.Header
+	Body       []byte
+}
+
 var current atomic.Value
 var client = &http.Client{Timeout: 5 * time.Second}
 
 func main() {}
 
 //export cliproxy_plugin_init
-func cliproxy_plugin_init(_ *C.cliproxy_host_api, plugin *C.cliproxy_plugin_api) C.int {
+func cliproxy_plugin_init(host *C.cliproxy_host_api, plugin *C.cliproxy_plugin_api) C.int {
 	if plugin == nil {
 		return 1
 	}
+	C.store_host_api(host)
 	plugin.abi_version = 1
 	plugin.call = C.cliproxy_plugin_call_fn(C.cliproxyPluginCall)
 	plugin.free_buffer = C.cliproxy_plugin_free_fn(C.cliproxyPluginFree)
@@ -118,23 +148,50 @@ func handle(method string, raw []byte) ([]byte, error) {
 				return nil, err
 			}
 		}
+		adapters, err := loadQuotaAdapters(cfg.QuotaAdapterMode, cfg.QuotaAdapters)
+		if err != nil {
+			return nil, err
+		}
+		cfg.QuotaAdapters = adapters
 		cfg.RelayURL = strings.TrimRight(strings.TrimSpace(cfg.RelayURL), "/")
 		if cfg.Delegate != "fill-first" {
 			cfg.Delegate = "round-robin"
 		}
 		current.Store(cfg)
 		return ok(map[string]any{
-			"schema_version": 1,
-			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.2.0", "Author": "4627488",
+			"schema_version": 2,
+			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.3.0", "Author": "4627488",
 				"GitHubRepository": "https://github.com/4627488/RelayAPI",
 				"Logo":             "https://github.com/4627488.png",
 				"ConfigFields": []map[string]any{
 					{"Name": "relay_url", "Type": "string", "Description": "RelayAPI private service URL"},
 					{"Name": "secret", "Type": "string", "Description": "Shared webhook secret", "Sensitive": true},
 					{"Name": "delegate", "Type": "enum", "EnumValues": []string{"round-robin", "fill-first"}},
+					{"Name": "quota_adapters_mode", "Type": "enum", "EnumValues": []string{"append", "replace", "disabled"}, "Description": "How custom quota adapter manifests combine with the bundled extension pack"},
+					{"Name": "quota_adapters", "Type": "array", "Description": "Declarative provider quota adapter manifests"},
 				}},
-			"capabilities": map[string]bool{"usage_plugin": true, "scheduler": true},
+			"capabilities": map[string]bool{"usage_plugin": true, "scheduler": true, "management_api": true},
 		})
+	case "management.register":
+		return ok(map[string]any{"routes": []map[string]any{{
+			"Method": "GET", "Path": "/plugins/relayapi-bridge/quota",
+			"Description": "Return a normalized, secret-free quota observation for one CPA auth index.",
+		}}})
+	case "management.handle":
+		var req managementRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return nil, fmt.Errorf("decode management request: %w", err)
+		}
+		result, status, err := probeQuota(strings.TrimSpace(req.Query.Get("auth_index")), loaded().QuotaAdapters, time.Now())
+		if err != nil {
+			payload, _ := json.Marshal(map[string]any{"error": map[string]string{"code": "quota_probe_failed", "message": err.Error()}})
+			return ok(managementResponse{StatusCode: status, Headers: http.Header{"Content-Type": {"application/json; charset=utf-8"}}, Body: payload})
+		}
+		payload, err := json.Marshal(result)
+		if err != nil {
+			return nil, err
+		}
+		return ok(managementResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"application/json; charset=utf-8"}}, Body: payload})
 	case "usage.handle":
 		cfg := loaded()
 		if cfg.RelayURL == "" || cfg.Secret == "" {
@@ -207,7 +264,8 @@ func loaded() config {
 	if value, ok := current.Load().(config); ok {
 		return value
 	}
-	return config{Delegate: "round-robin"}
+	adapters, _ := loadQuotaAdapters("append", nil)
+	return config{Delegate: "round-robin", QuotaAdapters: adapters}
 }
 func ok(value any) ([]byte, error) {
 	raw, err := json.Marshal(value)
@@ -226,4 +284,42 @@ func writeResponse(response *C.cliproxy_buffer, raw []byte) {
 	}
 	response.ptr = ptr
 	response.len = C.size_t(len(raw))
+}
+
+func callHost(method string, payload any) (json.RawMessage, error) {
+	rawPayload, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal host callback %s: %w", method, err)
+	}
+	cMethod := C.CString(method)
+	defer C.free(unsafe.Pointer(cMethod))
+	var response C.cliproxy_buffer
+	var requestPtr *C.uint8_t
+	if len(rawPayload) > 0 {
+		allocated := C.CBytes(rawPayload)
+		if allocated == nil {
+			return nil, fmt.Errorf("allocate host callback %s", method)
+		}
+		defer C.free(allocated)
+		requestPtr = (*C.uint8_t)(allocated)
+	}
+	callCode := C.call_host_api(cMethod, requestPtr, C.size_t(len(rawPayload)), &response)
+	var rawResponse []byte
+	if response.ptr != nil && response.len > 0 {
+		rawResponse = C.GoBytes(response.ptr, C.int(response.len))
+	}
+	if response.ptr != nil {
+		C.free_host_buffer(response.ptr, response.len)
+	}
+	if len(rawResponse) == 0 {
+		return nil, fmt.Errorf("host callback %s returned no response, code=%d", method, int(callCode))
+	}
+	var env envelope
+	if err := json.Unmarshal(rawResponse, &env); err != nil {
+		return nil, fmt.Errorf("decode host callback %s: %w", method, err)
+	}
+	if !env.OK {
+		return nil, fmt.Errorf("host callback %s failed", method)
+	}
+	return env.Result, nil
 }

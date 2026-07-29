@@ -121,3 +121,124 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	secondSQL, _ := second.DB()
 	_ = secondSQL.Close()
 }
+
+func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err := database.Exec(`TRUNCATE request_reservations, child_quota_windows, child_subscriptions,
+		parent_quota_observations, parent_quota_windows, parent_subscriptions, billing_ledgers,
+		request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tenantID, keyID := identity.NewID(), identity.NewID()
+	if err := database.Create(&db.Tenant{
+		ID: tenantID, Name: "observed", OwnerEmail: "observed@example.test",
+		PasswordHash: "test", Enabled: true, BalanceNanoUSD: 1_000,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&db.APIKey{
+		ID: keyID, TenantID: tenantID, Name: "test", KeyHash: []byte("observed-unique-hash"), Prefix: "rk_observed", Enabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	store := Store{DB: database}
+	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
+		CPAAuthID: "observed-auth-id", CPAAuthIndex: "observed-auth-index", CPAAuthName: "observed.json",
+		Name: "observed parent", Provider: "extension-provider", CapacityMode: db.ParentCapacityObserved,
+		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.CreateChildSubscription(ctx, ChildSubscription{
+		TenantID: tenantID, ParentSubscriptionID: parent.ID, Name: "observed child",
+		AllocationPPM: 1_000_000, Priority: 100, Enabled: true, StartsAt: time.Now().Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := KeyContext{APIKey: db.APIKey{ID: keyID, TenantID: tenantID}}
+	firstID := identity.NewID()
+	first, err := store.AdmitRequest(ctx, AdmissionInput{
+		RequestID: firstID, Key: key, Model: "model", BalanceReserve: 10, QuotaReserve: 10,
+		PriceConfigured: true, PriceSnapshot: json.RawMessage(`{"model":"model"}`), ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.QuotaReservedNanoUSD != 0 || first.CPAAuthID != "observed-auth-id" {
+		t.Fatalf("learning admission = %+v", first)
+	}
+	var firstReservation RequestReservation
+	if err := database.First(&firstReservation, "request_id = ?", firstID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if firstReservation.QuotaReservedNanoUSD != 0 || string(firstReservation.QuotaWindows) != "[]" {
+		t.Fatalf("learning reservation = %+v", firstReservation)
+	}
+	if err := store.ReleaseRequestReservation(ctx, firstID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, false, "unsupported", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AdmitRequest(ctx, AdmissionInput{
+		RequestID: identity.NewID(), Key: key, Model: "model", BalanceReserve: 10, QuotaReserve: 10,
+		PriceConfigured: true, PriceSnapshot: json.RawMessage(`{"model":"model"}`), ExpiresAt: time.Now().Add(time.Minute),
+	}); err != ErrSubscriptionExhausted {
+		t.Fatalf("unsupported observed provider admission error = %v", err)
+	}
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "supported", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	if err := store.SetParentQuotaWindows(ctx, parent.ID, []ParentQuotaWindow{{
+		Kind: "daily", LimitNanoUSD: 100, ResetsAt: reset, Source: db.ParentCapacityObserved,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.AdmitRequest(ctx, AdmissionInput{
+		RequestID: identity.NewID(), Key: key, Model: "model", BalanceReserve: 10, QuotaReserve: 10,
+		PriceConfigured: true, PriceSnapshot: json.RawMessage(`{"model":"model"}`), ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.QuotaReservedNanoUSD != 10 {
+		t.Fatalf("enforced admission = %+v", second)
+	}
+
+	// The additive migration must expose the automatic probe state on an
+	// already-opened schema and preserve a supported result across a transient
+	// probe error when the caller supplies the prior capability state.
+	observedAt := time.Now().UTC()
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "supported", "", "pro", &observedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "error", "temporary upstream failure", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.GetParentSubscription(ctx, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.QuotaSupported || updated.QuotaProbeStatus != "error" || updated.QuotaObservedAt == nil || updated.PlanType != "pro" {
+		t.Fatalf("updated probe state = %+v", updated)
+	}
+}
