@@ -107,8 +107,13 @@ func (a *App) adminParentSubscriptionUpdate(w http.ResponseWriter, r *http.Reque
 		writeError(w, 400, "validation_error", "容量模式或分配上限无效")
 		return
 	}
+	current, err := a.store.GetParentSubscription(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeSubscriptionError(w, err)
+		return
+	}
 	item, err := a.store.UpdateParentSubscription(r.Context(), store.ParentSubscription{
-		ID: r.PathValue("id"), Name: input.Name, PlanType: input.PlanType,
+		ID: r.PathValue("id"), Name: input.Name, PlanType: current.PlanType,
 		CapacityMode: input.CapacityMode, AllocationLimitPPM: input.AllocationLimitPPM,
 		Enabled: input.Enabled, ModelAllowlist: input.ModelAllowlist,
 	})

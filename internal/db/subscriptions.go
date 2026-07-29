@@ -41,6 +41,7 @@ type ParentSubscription struct {
 	QuotaProbeStatus   string          `gorm:"not null;default:'unknown'" json:"quota_probe_status"`
 	QuotaProbeError    string          `gorm:"not null;default:''" json:"quota_probe_error"`
 	QuotaObservedAt    *time.Time      `json:"quota_observed_at"`
+	QuotaSnapshot      json.RawMessage `gorm:"type:jsonb;not null;default:'{}'" json:"quota_snapshot"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
 }

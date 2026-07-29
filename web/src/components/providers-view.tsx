@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react"
 import { ExternalLinkIcon, KeyRoundIcon, PlugIcon, RefreshCwIcon, SaveIcon, TerminalIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -11,7 +11,8 @@ import { Spinner } from "@/components/ui/spinner"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { ApiError, api, deleteRequest, postJSON, type ProviderAccount } from "@/lib/api"
+import { QuotaSnapshot } from "@/components/quota-snapshot"
+import { ApiError, api, deleteRequest, postJSON, type ParentSubscriptionView, type ProviderAccount } from "@/lib/api"
 
 type OAuthProvider = "codex" | "anthropic" | "antigravity" | "kimi" | "xai"
 type OAuthStart = {
@@ -68,6 +69,7 @@ function isProviderConfigPath(value: unknown): value is string {
 
 export function ProvidersView() {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([])
+  const [parents, setParents] = useState<ParentSubscriptionView[]>([])
   const [loading, setLoading] = useState(true)
   const [oauth, setOAuth] = useState<OAuthStart | null>(null)
   const [pending, setPending] = useState(false)
@@ -81,12 +83,14 @@ export function ProvidersView() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [value, config, keys] = await Promise.all([
+      const [value, config, keys, parentValue] = await Promise.all([
         api<{ files: ProviderAccount[] }>("/api/admin/providers/accounts"),
         api<ProviderSettings>("/api/admin/providers/settings"),
         api<{ "api-keys": string[] }>("/api/admin/cpa/api-keys"),
+        api<{ items: ParentSubscriptionView[] }>("/api/admin/subscriptions/parents"),
       ])
       setAccounts(value.files ?? [])
+      setParents(parentValue.items ?? [])
       setSettings(config)
       setGatewayKeys((keys["api-keys"] ?? []).join("\n"))
     } catch (cause) {
@@ -97,6 +101,29 @@ export function ProvidersView() {
   }, [])
 
   useEffect(() => void load(), [load])
+
+  const parentByCredential = useMemo(() => {
+    const result = new Map<string, ParentSubscriptionView>()
+    for (const parent of parents) {
+      for (const key of [parent.item.cpa_auth_index, parent.item.cpa_auth_id, parent.item.cpa_auth_name]) {
+        if (key) result.set(key, parent)
+      }
+    }
+    return result
+  }, [parents])
+
+  async function syncQuota(parentID: string) {
+    setPending(true)
+    try {
+      await postJSON(`/api/admin/subscriptions/parents/${parentID}/quota/sync`, {})
+      toast.success("上游额度已刷新")
+      await load()
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "额度刷新失败")
+    } finally {
+      setPending(false)
+    }
+  }
 
   async function beginOAuth(provider: OAuthProvider) {
     setPending(true)
@@ -324,18 +351,20 @@ export function ProvidersView() {
         <CardContent>
           {loading ? <div className="flex justify-center py-12"><Spinner /></div> : (
             <Table>
-              <TableHeader><TableRow><TableHead>账户</TableHead><TableHead>提供商</TableHead><TableHead>状态</TableHead><TableHead>请求</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>账户</TableHead><TableHead>提供商</TableHead><TableHead>上游订阅额度</TableHead><TableHead>状态</TableHead><TableHead>请求</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
               <TableBody>
-                {accounts.map((account) => (
-                  <TableRow key={account.auth_index || account.id || account.name}>
+                {accounts.map((account) => {
+                  const parent = parentByCredential.get(account.auth_index || "") ?? parentByCredential.get(account.id || "") ?? parentByCredential.get(account.name)
+                  return <TableRow key={account.auth_index || account.id || account.name}>
                     <TableCell><div className="font-medium">{account.email || account.label || account.name}</div><div className="max-w-64 truncate text-xs text-muted-foreground">{account.name}</div></TableCell>
                     <TableCell>{account.provider || account.type}</TableCell>
+                    <TableCell><QuotaSnapshot snapshot={parent?.item.quota_snapshot} status={parent?.item.quota_probe_status} error={parent?.item.quota_probe_error} observedAt={parent?.item.quota_observed_at} compact /></TableCell>
                     <TableCell><Badge variant={account.disabled || account.unavailable ? "secondary" : "default"}>{account.disabled ? "已停用" : account.unavailable ? "不可用" : account.status || "可用"}</Badge></TableCell>
                     <TableCell className="text-muted-foreground">{account.success ?? 0} / {account.failed ?? 0}</TableCell>
-                    <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => void toggle(account)}>{account.disabled ? "启用" : "停用"}</Button><Button size="icon-sm" variant="ghost" aria-label="删除凭据" onClick={() => void remove(account)}><Trash2Icon /></Button></div></TableCell>
+                    <TableCell><div className="flex justify-end gap-2">{parent ? <Button size="icon-sm" variant="outline" disabled={pending} aria-label="刷新上游额度" title="刷新上游额度" onClick={() => void syncQuota(parent.item.id)}><RefreshCwIcon /></Button> : null}<Button size="sm" variant="outline" onClick={() => void toggle(account)}>{account.disabled ? "启用" : "停用"}</Button><Button size="icon-sm" variant="ghost" aria-label="删除凭据" onClick={() => void remove(account)}><Trash2Icon /></Button></div></TableCell>
                   </TableRow>
-                ))}
-                {!accounts.length && <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">尚未接入模型账户</TableCell></TableRow>}
+                })}
+                {!accounts.length && <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">尚未接入模型账户</TableCell></TableRow>}
               </TableBody>
             </Table>
           )}

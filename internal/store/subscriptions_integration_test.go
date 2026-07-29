@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,7 +195,7 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	if err := store.ReleaseRequestReservation(ctx, firstID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, false, "unsupported", "", "", nil); err != nil {
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, false, "unsupported", "", "", nil, json.RawMessage(`{"supported":false,"windows":[]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.AdmitRequest(ctx, AdmissionInput{
@@ -203,7 +204,7 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	}); err != ErrSubscriptionExhausted {
 		t.Fatalf("unsupported observed provider admission error = %v", err)
 	}
-	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "supported", "", "", nil); err != nil {
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "supported", "", "", nil, json.RawMessage(`{"supported":true,"windows":[]}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -228,10 +229,10 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	// already-opened schema and preserve a supported result across a transient
 	// probe error when the caller supplies the prior capability state.
 	observedAt := time.Now().UTC()
-	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "supported", "", "pro", &observedAt); err != nil {
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "supported", "", "pro", &observedAt, json.RawMessage(`{"supported":true,"plan_type":"pro","windows":[{"kind":"daily","used_percent":25}]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "error", "temporary upstream failure", "", nil); err != nil {
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "error", "temporary upstream failure", "", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	updated, err := store.GetParentSubscription(ctx, parent.ID)
@@ -240,5 +241,8 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	}
 	if !updated.QuotaSupported || updated.QuotaProbeStatus != "error" || updated.QuotaObservedAt == nil || updated.PlanType != "pro" {
 		t.Fatalf("updated probe state = %+v", updated)
+	}
+	if !strings.Contains(string(updated.QuotaSnapshot), `"kind":"daily"`) {
+		t.Fatalf("quota snapshot was not retained across a transient error: %s", updated.QuotaSnapshot)
 	}
 }

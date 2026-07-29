@@ -43,7 +43,8 @@ the stable CPA AuthID and accounting metadata.
 - CPA auth-file name, provider, display name, status, and cached model list;
 - capacity mode: `unmetered`, `manual`, or `observed`;
 - allocation/oversell limit and synchronization timestamps.
-- normalized quota-probe capability, status, last error, and observation time.
+- normalized quota-probe capability, status, last error, observation time, and
+  the latest secret-free upstream quota snapshot used by both management views.
 
 `parent_quota_windows` stores arbitrary window kinds such as `5h`, `7d`,
 `daily`, `monthly`, or `credits`. Manual windows are administrator supplied;
@@ -119,6 +120,13 @@ Custom entries run through the exact same engine and may override or replace
 the bundled pack. A CPA credential may instead expose normalized `relay_quota`
 metadata directly. In every case the bridge response excludes credential
 fields and raw upstream payloads.
+
+The CPA credential table and parent-subscription table render the same stored
+snapshot: plan, used/remaining percentage, reset time, raw credit units, and
+non-enforceable product/model windows. Automatic/observed mode treats these
+fields as read-only. Only manual mode exposes editable quota-window inputs.
+Model policies are selected from the credential's CPA-synchronized model list;
+an empty selection means inherit all available models.
 
 Upstream quota and child share are intentionally separate. CPA/adapter data can
 discover a credential's plan, percentage consumption, reset time, and sometimes

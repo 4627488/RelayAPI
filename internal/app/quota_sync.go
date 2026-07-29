@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -132,7 +133,14 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 	if err != nil {
 		result.Status = "error"
 		result.Error = err.Error()
-		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil)
+		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
+		return result
+	}
+	snapshot, err := json.Marshal(report)
+	if err != nil {
+		result.Status = "error"
+		result.Error = fmt.Sprintf("encode normalized quota snapshot: %v", err)
+		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
 		return result
 	}
 	result.Provider = firstNonEmptyString(report.Provider, parent.Provider)
@@ -140,7 +148,7 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 	result.ObservedAt = report.Observed
 	if !report.Supported {
 		result.Status = "unsupported"
-		if err := a.store.UpdateParentQuotaProbe(ctx, parent.ID, false, result.Status, "", report.PlanType, &report.Observed); err != nil {
+		if err := a.store.UpdateParentQuotaProbe(ctx, parent.ID, false, result.Status, "", report.PlanType, &report.Observed, snapshot); err != nil {
 			result.Status, result.Error = "error", err.Error()
 		}
 		return result
@@ -165,7 +173,7 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 		result.Status = "error"
 		result.Error = strings.Join(observationErrors, "; ")
 	}
-	if err := a.store.UpdateParentQuotaProbe(ctx, parent.ID, true, result.Status, result.Error, report.PlanType, &report.Observed); err != nil {
+	if err := a.store.UpdateParentQuotaProbe(ctx, parent.ID, true, result.Status, result.Error, report.PlanType, &report.Observed, snapshot); err != nil {
 		result.Status, result.Error = "error", err.Error()
 	}
 	return result

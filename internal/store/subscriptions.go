@@ -103,6 +103,9 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 	if len(item.Metadata) == 0 {
 		item.Metadata = json.RawMessage(`{}`)
 	}
+	if len(item.QuotaSnapshot) == 0 {
+		item.QuotaSnapshot = json.RawMessage(`{}`)
+	}
 	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "cpa_auth_index"}},
 		DoUpdates: clause.AssignmentColumns([]string{
@@ -134,6 +137,9 @@ func (s Store) SyncParentSubscription(ctx context.Context, item ParentSubscripti
 	}
 	if len(item.Metadata) == 0 {
 		item.Metadata = json.RawMessage(`{}`)
+	}
+	if len(item.QuotaSnapshot) == 0 {
+		item.QuotaSnapshot = json.RawMessage(`{}`)
 	}
 	if item.CapacityMode == "" {
 		item.CapacityMode = db.ParentCapacityUnmetered
@@ -168,7 +174,7 @@ func (s Store) MarkMissingParentSubscriptions(ctx context.Context, seen []string
 	}).Error
 }
 
-func (s Store) UpdateParentQuotaProbe(ctx context.Context, parentID string, supported bool, status, message, planType string, observedAt *time.Time) error {
+func (s Store) UpdateParentQuotaProbe(ctx context.Context, parentID string, supported bool, status, message, planType string, observedAt *time.Time, snapshot json.RawMessage) error {
 	updates := map[string]any{
 		"quota_supported":    supported,
 		"quota_probe_status": strings.TrimSpace(status),
@@ -180,6 +186,9 @@ func (s Store) UpdateParentQuotaProbe(ctx context.Context, parentID string, supp
 	}
 	if strings.TrimSpace(planType) != "" {
 		updates["plan_type"] = strings.TrimSpace(planType)
+	}
+	if len(snapshot) > 0 && json.Valid(snapshot) {
+		updates["quota_snapshot"] = snapshot
 	}
 	result := scoped(ctx, s.DB).Model(&ParentSubscription{}).Where("id = ?", parentID).Updates(updates)
 	if result.Error != nil {

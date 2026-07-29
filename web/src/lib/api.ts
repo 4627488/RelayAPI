@@ -118,6 +118,28 @@ type ApiErrorBody = {
 
 export type CapacityMode = "unmetered" | "manual" | "observed"
 
+export interface UpstreamQuotaWindow {
+  kind: string
+  label?: string
+  used_percent?: number | null
+  remaining_percent?: number | null
+  resets_at?: string | null
+  enforceable: boolean
+  unit?: string
+  limit?: number | null
+  remaining?: number | null
+}
+
+export interface UpstreamQuotaReport {
+  auth_index?: string
+  provider?: string
+  plan_type?: string
+  supported: boolean
+  source?: string
+  observed_at?: string
+  windows: UpstreamQuotaWindow[]
+}
+
 export interface ParentQuotaWindow {
   parent_subscription_id: string
   kind: string
@@ -147,6 +169,7 @@ export interface ParentSubscription {
   quota_probe_status: "unknown" | "supported" | "unsupported" | "error"
   quota_probe_error?: string
   quota_observed_at?: string | null
+  quota_snapshot?: UpstreamQuotaReport | Record<string, never>
   created_at: string
   updated_at: string
 }

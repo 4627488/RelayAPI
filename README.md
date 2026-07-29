@@ -81,6 +81,10 @@ WebSocket 入口。
 - `/api/admin/subscriptions/parents/*`：父订阅、任意容量窗口与观测样本
 - `/api/admin/subscriptions/children/*`：向租户分配、停用或回收子订阅
 
+CPA 凭据页和父订阅页都会展示最近一次脱敏上游额度快照。自动观测模式不要求
+填写窗口名称、百分比或重置时间；只有手动模式才显示这些输入。父/子订阅的模型
+范围从 CPA 已同步的实际可用模型中多选，空选择表示继承全部模型。
+
 用户后端：
 
 - `POST /api/auth/register`：使用邀请 token 注册
