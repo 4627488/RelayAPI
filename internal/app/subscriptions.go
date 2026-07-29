@@ -360,10 +360,14 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		models, modelSource := effectiveSubscriptionModels(parent, item)
 		result = append(result, map[string]any{
 			"id": item.ID, "name": item.Name, "allocation_ppm": item.AllocationPPM,
 			"priority": item.Priority, "enabled": item.Enabled, "model_allowlist": item.ModelAllowlist,
 			"starts_at": item.StartsAt, "expires_at": item.ExpiresAt, "capacity_mode": parent.CapacityMode, "windows": windows,
+			"parent_name": parent.Name, "parent_plan_type": parent.PlanType,
+			"effective_model_allowlist": models, "model_source": modelSource,
+			"entitlement_windows": projectTenantEntitlements(parent, item),
 		})
 	}
 	writeJSON(w, 200, map[string]any{"items": result})

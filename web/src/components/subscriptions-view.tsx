@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react"
-import { PackageOpenIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon } from "lucide-react"
+import { BoxesIcon, ChartNoAxesCombinedIcon, Clock3Icon, PackageOpenIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -23,6 +23,7 @@ import {
   type ChildQuotaWindow,
   type ChildSubscription,
   type ParentSubscriptionView,
+  type SubscriptionEntitlementWindow,
   type User,
 } from "@/lib/api"
 import { dateTime, money } from "@/lib/format"
@@ -423,14 +424,111 @@ export function TenantSubscriptionsView() {
 }
 
 function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
-  const emptyMessage = item.capacity_mode === "unmetered" ? "此父订阅不计量上游容量，仍受账户余额和 API Key 策略限制。" : "额度窗口会在首次成功预留时初始化。"
-  return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{item.name}</CardTitle><CardDescription>父容量份额 {percent(item.allocation_ppm)} · 优先级 {item.priority}</CardDescription></div><Badge variant={item.enabled ? "secondary" : "outline"}>{item.enabled ? "可用" : "停用"}</Badge></div></CardHeader><CardContent className="flex flex-col gap-4">{item.windows?.length ? item.windows.map((window) => <QuotaProgress key={window.kind} window={window} />) : <p className="text-sm text-muted-foreground">{emptyMessage}</p>}<div className="text-xs text-muted-foreground">模型：{item.model_allowlist?.length ? item.model_allowlist.join(", ") : "继承父订阅"}{item.expires_at ? ` · 到期 ${dateTime(item.expires_at)}` : ""}</div></CardContent></Card>
+  const models = item.effective_model_allowlist ?? item.model_allowlist ?? []
+  const entitlementWindows = item.entitlement_windows ?? []
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-muted/15">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <CardTitle>{item.name}</CardTitle>
+              {item.parent_plan_type ? <Badge variant="outline">{item.parent_plan_type}</Badge> : null}
+            </div>
+            <CardDescription>{item.parent_name ? `来自 ${item.parent_name} · ` : ""}优先级 {item.priority}{item.expires_at ? ` · ${dateTime(item.expires_at)} 到期` : ""}</CardDescription>
+          </div>
+          <Badge variant={item.enabled ? "secondary" : "outline"}>{item.enabled ? "可用" : "停用"}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5 pt-5">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <SubscriptionMetric icon={ChartNoAxesCombinedIcon} label="应分父容量" value={percent(item.allocation_ppm)} hint="作用于每个上游额度窗口" />
+          <SubscriptionMetric icon={Clock3Icon} label="额度窗口" value={String(entitlementWindows.length || item.windows?.length || 0)} hint={entitlementWindows.length ? "已完成上游容量切分" : "等待上游同步"} />
+          <SubscriptionMetric icon={BoxesIcon} label="可用模型" value={String(models.length)} hint={modelSourceLabel(item.model_source)} />
+        </div>
+
+        {entitlementWindows.length ? (
+          <section className="space-y-3">
+            <div><h3 className="text-sm font-medium">上游订阅量切分</h3><p className="text-xs text-muted-foreground">你的 {percent(item.allocation_ppm)} 份额已分别应用到父订阅的全部额度窗口。</p></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {entitlementWindows.map((window, index) => <EntitlementWindow key={`${window.kind}:${window.label}:${index}`} window={window} />)}
+            </div>
+          </section>
+        ) : (
+          <div className="rounded-xl border border-dashed bg-muted/10 p-4">
+            <p className="text-sm font-medium">固定分配权：父订阅完整容量的 {percent(item.allocation_ppm)}</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">上游尚未返回可量化额度窗口；一旦 CPA 同步到窗口，总量、剩余量和重置时间会自动按该比例完整切分。</p>
+          </div>
+        )}
+
+        {item.windows?.length ? (
+          <section className="space-y-3">
+            <div><h3 className="text-sm font-medium">计费容量窗口</h3><p className="text-xs text-muted-foreground">RelayAPI 实际执行预留和结算的独立子额度。</p></div>
+            {item.windows.map((window) => <QuotaProgress key={window.kind} window={window} />)}
+          </section>
+        ) : null}
+
+        <section className="space-y-3 border-t pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <div><h3 className="text-sm font-medium">全部可用模型</h3><p className="text-xs text-muted-foreground">{modelSourceLabel(item.model_source)}，请求仍会经过 API Key 的模型策略校验。</p></div>
+            <Badge variant="secondary">{models.length} 个</Badge>
+          </div>
+          {models.length ? (
+            <div className="flex flex-wrap gap-2 rounded-xl border bg-muted/10 p-3">
+              {models.map((model) => <Badge key={model} variant="outline" className="font-mono font-normal">{model}</Badge>)}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">CPA 尚未同步完整模型清单，或当前模型策略包含无法直接枚举的通配范围；请管理员刷新模型账户。</div>
+          )}
+        </section>
+      </CardContent>
+    </Card>
+  )
 }
 
 function QuotaProgress({ window }: { window: ChildQuotaWindow }) {
   const used = window.settled_nano_usd + window.reserved_nano_usd
+  const remaining = Math.max(0, window.limit_nano_usd - used)
   const ratio = window.limit_nano_usd > 0 ? Math.min(100, used / window.limit_nano_usd * 100) : 100
-  return <Progress value={ratio}><ProgressLabel>{window.kind} · 已用 {money(used)}</ProgressLabel><span className="ml-auto text-sm tabular-nums text-muted-foreground">{ratio.toFixed(1)}%</span><p className="w-full text-xs text-muted-foreground">总额 {money(window.limit_nano_usd)} · {dateTime(window.resets_at)} 重置</p></Progress>
+  return <Progress value={ratio} className="rounded-xl border bg-muted/10 p-3"><ProgressLabel>{window.kind} · 应分 {money(window.limit_nano_usd)}</ProgressLabel><span className="ml-auto text-sm tabular-nums text-muted-foreground">剩余 {money(remaining)}</span><p className="w-full text-xs text-muted-foreground">已结算 {money(window.settled_nano_usd)} · 预留中 {money(window.reserved_nano_usd)} · {dateTime(window.resets_at)} 重置</p></Progress>
+}
+
+function SubscriptionMetric({ icon: Icon, label, value, hint }: { icon: typeof BoxesIcon; label: string; value: string; hint: string }) {
+  return <div className="flex items-start gap-3 rounded-xl border bg-muted/10 p-3"><div className="rounded-lg bg-primary/10 p-2 text-primary"><Icon className="size-4" /></div><div><p className="text-xs text-muted-foreground">{label}</p><p className="mt-0.5 text-lg font-semibold tabular-nums">{value}</p><p className="text-[11px] text-muted-foreground">{hint}</p></div></div>
+}
+
+function EntitlementWindow({ window }: { window: SubscriptionEntitlementWindow }) {
+  const used = window.upstream_used_percent
+  const share = `${formatQuotaNumber(window.share_of_parent_percent)}%`
+  const allocated = window.allocated_limit != null
+    ? formatQuotaAmount(window.allocated_limit, window.unit)
+    : `${share} 的父窗口总量`
+  const available = window.allocated_remaining != null
+    ? formatQuotaAmount(window.allocated_remaining, window.unit)
+    : window.available_share_of_parent_percent != null
+      ? `折合父窗口总量 ${formatQuotaNumber(window.available_share_of_parent_percent)}%`
+      : "等待上游剩余额度"
+  return (
+    <div className="rounded-xl border bg-muted/10 p-3">
+      <div className="flex items-start justify-between gap-3"><div><p className="font-medium">{window.label || window.kind}</p><p className="mt-1 text-xs text-muted-foreground">应分 {allocated}</p></div><Badge variant={window.enforceable ? "secondary" : "outline"}>{window.enforceable ? "参与容量" : "仅观测"}</Badge></div>
+      {used != null ? <div className="mt-3"><div className="mb-1 flex justify-between text-xs"><span className="text-muted-foreground">上游已用</span><span className="tabular-nums">{formatQuotaNumber(used)}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(0, used))}%` }} /></div></div> : null}
+      <div className="mt-3 border-t pt-3 text-xs text-muted-foreground"><p>按上游状态折算可用：<span className="font-medium text-foreground">{available}</span></p><p className="mt-1">固定份额 {share}{window.upstream_remaining_percent != null ? ` · 上游剩余 ${formatQuotaNumber(window.upstream_remaining_percent)}%` : ""}{window.resets_at ? ` · ${dateTime(window.resets_at)} 重置` : ""}</p></div>
+    </div>
+  )
+}
+
+function modelSourceLabel(source?: ChildSubscription["model_source"]) {
+  if (source === "child") return "子订阅模型策略"
+  if (source === "parent") return "父订阅模型策略"
+  return "CPA 账户完整模型能力"
+}
+
+function formatQuotaAmount(value: number, unit?: string) {
+  return `${formatQuotaNumber(value)} ${unit || "units"}`
+}
+
+function formatQuotaNumber(value: number) {
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value)
 }
 
 function percent(ppm: number) { return `${(ppm / 10_000).toFixed(ppm % 10_000 ? 2 : 0)}%` }

@@ -299,6 +299,23 @@ export interface ChildQuotaWindow {
   reserved_nano_usd: number
 }
 
+export interface SubscriptionEntitlementWindow {
+  kind: string
+  label: string
+  unit?: string
+  allocation_ppm: number
+  share_of_parent_percent: number
+  available_share_of_parent_percent?: number | null
+  parent_limit?: number | null
+  allocated_limit?: number | null
+  parent_remaining?: number | null
+  allocated_remaining?: number | null
+  upstream_used_percent?: number | null
+  upstream_remaining_percent?: number | null
+  resets_at?: string | null
+  enforceable: boolean
+}
+
 export interface ChildSubscription {
   id: string
   tenant_id: string
@@ -309,6 +326,11 @@ export interface ChildSubscription {
   enabled: boolean
   capacity_mode?: CapacityMode
   model_allowlist: string[]
+  effective_model_allowlist?: string[]
+  model_source?: "child" | "parent" | "cpa"
+  parent_name?: string
+  parent_plan_type?: string
+  entitlement_windows?: SubscriptionEntitlementWindow[]
   starts_at: string
   expires_at?: string | null
   created_at?: string
