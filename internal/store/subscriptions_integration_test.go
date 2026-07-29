@@ -253,3 +253,93 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 		t.Fatalf("quota snapshot was not retained across a transient error: %s", updated.QuotaSnapshot)
 	}
 }
+
+func TestModelWithoutChildAssignmentFallsBackToTenantBalance(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err := database.Exec(`TRUNCATE request_reservations, child_quota_windows, child_subscriptions,
+		parent_quota_observations, parent_quota_windows, parent_subscriptions, billing_ledgers,
+		request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tenantID, keyID := identity.NewID(), identity.NewID()
+	if err := database.Create(&db.Tenant{
+		ID: tenantID, Name: "balance fallback", OwnerEmail: "balance-fallback@example.test",
+		PasswordHash: "test", Enabled: true, BalanceNanoUSD: 100,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&db.APIKey{
+		ID: keyID, TenantID: tenantID, Name: "test", KeyHash: []byte("balance-fallback-unique-hash"),
+		Prefix: "rk_fallback", Enabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	store := Store{DB: database}
+	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
+		CPAAuthID: "subscription-auth", CPAAuthIndex: "subscription-index", CPAAuthName: "subscription.json",
+		Name: "subscription parent", Provider: "test", CapacityMode: db.ParentCapacityUnmetered,
+		AllocationLimitPPM: 1_000_000, Enabled: true, CPAModelAllowlist: []string{"subscription-model"},
+		Metadata: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateChildSubscription(ctx, ChildSubscription{
+		TenantID: tenantID, ParentSubscriptionID: parent.ID, Name: "subscription child",
+		AllocationPPM: 1_000_000, Priority: 100, Enabled: true,
+		ModelAllowlist: []string{"subscription-model"}, StartsAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	key := KeyContext{APIKey: db.APIKey{ID: keyID, TenantID: tenantID}}
+	requestID := identity.NewID()
+	admission, err := store.AdmitRequest(ctx, AdmissionInput{
+		RequestID: requestID, Key: key, Model: "payg-model", BalanceReserve: 10, QuotaReserve: 10,
+		PriceConfigured: true, PriceSnapshot: json.RawMessage(`{"model":"payg-model"}`),
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admission.CPAAuthID != "" || admission.ChildSubscriptionID != "" || admission.BalanceReservedNanoUSD != 10 {
+		t.Fatalf("balance fallback admission = %+v", admission)
+	}
+	if err := store.SettleRequestReservation(ctx, requestID, 7, true); err != nil {
+		t.Fatal(err)
+	}
+	var tenant db.Tenant
+	if err := database.First(&tenant, "id = ?", tenantID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tenant.BalanceNanoUSD != 93 {
+		t.Fatalf("balance = %d, want 93", tenant.BalanceNanoUSD)
+	}
+
+	assigned, err := store.AdmitRequest(ctx, AdmissionInput{
+		RequestID: identity.NewID(), Key: key, Model: "subscription-model", BalanceReserve: 10, QuotaReserve: 10,
+		PriceConfigured: true, PriceSnapshot: json.RawMessage(`{"model":"subscription-model"}`),
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assigned.CPAAuthID != "subscription-auth" || assigned.ChildSubscriptionID == "" {
+		t.Fatalf("assigned admission = %+v", assigned)
+	}
+}
