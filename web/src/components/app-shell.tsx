@@ -8,6 +8,7 @@ import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  PackageOpenIcon,
   PlugIcon,
   SendIcon,
   SunIcon,
@@ -48,7 +49,7 @@ import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
 import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
 
-export type Page = "overview" | "usage" | "keys" | "logs" | "users" | "invitations" | "providers"
+export type Page = "overview" | "usage" | "keys" | "logs" | "users" | "invitations" | "providers" | "subscriptions"
 
 interface NavigationItem {
   id: Page
@@ -60,6 +61,7 @@ const userItems: NavigationItem[] = [
   { id: "overview", label: "总览", icon: GaugeIcon },
   { id: "usage", label: "用量", icon: BarChart3Icon },
   { id: "keys", label: "API Keys", icon: KeyRoundIcon },
+  { id: "subscriptions", label: "我的订阅", icon: PackageOpenIcon },
   { id: "logs", label: "请求日志", icon: ListIcon },
 ]
 
@@ -68,6 +70,7 @@ const adminItems: NavigationItem[] = [
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "invitations", label: "邀请", icon: SendIcon },
   { id: "providers", label: "模型账户", icon: PlugIcon },
+  { id: "subscriptions", label: "订阅分配", icon: PackageOpenIcon },
   { id: "usage", label: "全局用量", icon: BarChart3Icon },
   { id: "logs", label: "请求日志", icon: ListIcon },
 ]

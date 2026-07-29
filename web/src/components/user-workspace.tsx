@@ -49,6 +49,7 @@ import {
 import { LogsTable, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
+import { TenantSubscriptionsView } from "@/components/subscriptions-view"
 import type { Page } from "@/components/app-shell"
 import {
   api,
@@ -115,6 +116,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
     )
   }
   if (page === "logs") return <LogsTable logs={logs} />
+  if (page === "subscriptions") return <TenantSubscriptionsView />
   if (page === "usage") {
     return (
       <div className="flex flex-col gap-4">

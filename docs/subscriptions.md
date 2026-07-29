@@ -1,0 +1,112 @@
+# Parent and child subscription architecture
+
+RelayAPI models every capacity-bearing CLIProxyAPI authentication identity as a
+parent subscription. Administrators split a parent into child subscriptions
+assigned to tenants. CLIProxyAPI continues to own credentials, OAuth, protocol
+translation, aliases, retries, and the provider registry; RelayAPI stores only
+the stable CPA AuthID and accounting metadata.
+
+## Invariants
+
+1. Client-supplied `X-Relay-*` headers are never trusted or forwarded.
+2. A quota-enforced request is pinned to exactly one CPA AuthID. The CPA bridge
+   must fail when that AuthID is not an eligible scheduler candidate; it must
+   never silently delegate to another credential. Routing instructions carry
+   a short-lived HMAC signature and are accepted only from Relay.
+3. Allocation shares use integer parts-per-million (`allocation_ppm`). Enabled
+   allocations may not exceed the parent's configured oversell limit.
+4. Tenant balance and child-subscription capacity are independent policies.
+   Admission atomically reserves both when both are enabled.
+5. Every request has one durable reservation keyed by request ID. Reservation,
+   settlement, release, and expiration are idempotent.
+6. Child windows inherit the parent window's reset identity. A new parent
+   `resets_at` starts a new child generation; tenant-relative windows are not
+   invented for upstream-derived quota.
+7. Monetary amounts are signed 64-bit integer nano-USD. Price information used
+   by a request is snapshotted with the reservation and request log.
+8. Missing terminal usage on a successful upstream response never becomes free
+   quota. Relay settles the conservative reservation and marks the request as
+   pricing-incomplete for later reconciliation. Rejected upstream requests
+   release their reservations.
+9. Tenants see child names, shares, usage, and reset times, but never parent
+   AuthIDs, account emails, tokens, or provider-private metadata.
+
+## Data model
+
+### Parent subscriptions
+
+`parent_subscriptions` mirrors a redacted CPA authentication identity:
+
+- stable `cpa_auth_id` used by the scheduler plugin;
+- CPA auth-file name, provider, display name, status, and cached model list;
+- capacity mode: `unmetered`, `manual`, or `observed`;
+- allocation/oversell limit and synchronization timestamps.
+
+`parent_quota_windows` stores arbitrary window kinds such as `5h`, `7d`,
+`daily`, `monthly`, or `credits`. Manual windows are administrator supplied;
+observed windows are updated by quota probes or CPA metadata. The core does not
+hard-code a provider list.
+
+### Child subscriptions
+
+`child_subscriptions` binds a tenant to one parent with an integer allocation,
+priority, lifecycle, and optional model allowlist. A tenant may own any number
+of children, including multiple children on the same parent.
+
+`child_quota_windows` holds the active counters inherited from each parent
+window. Counters are changed only while holding PostgreSQL row locks.
+
+### Request reservations
+
+`request_reservations` is the idempotency and reconciliation authority. It
+records the tenant, API key, child, parent, AuthID, balance reserve, quota
+reserve, exact quota-window generations, actual cost, status, expiration, and
+immutable price snapshot. A request crossing an upstream reset cannot be
+settled into the next generation.
+
+## Admission and routing
+
+```text
+tenant key
+  -> tenant/key/model policy
+  -> eligible child subscriptions
+  -> lock and reserve balance + child windows
+  -> set internal X-Relay-CPA-Auth-ID
+  -> CPA bridge strictly pins the parent AuthID
+  -> protocol/provider request handled by CPA
+  -> parse response usage
+  -> idempotently settle both reservations
+```
+
+Candidates are ordered by explicit priority and stable creation order.
+Exhausted children are skipped before the upstream request. CPA model metadata
+is cached per parent so obviously incompatible parents are not selected; the
+strict plugin remains the final authority on candidate validity.
+
+## Capacity modes
+
+- `unmetered`: routing is pinned but no child quota is reserved. Balance billing
+  and tenant/key limits may still apply.
+- `manual`: administrators define parent window limits and reset instants. This
+  works for every CPA provider and API-key endpoint.
+- `observed`: Relay combines credential-attributed priced usage with upstream
+  percentage/reset observations to estimate full parent capacity. Manual
+  overrides remain available when a provider exposes no normalized quota.
+
+## Migration and rollout
+
+The feature is additive. Existing tenants remain balance-only until they are
+assigned an enabled child subscription. Strict subscription routing requires a
+healthy bridge advertising the scheduler capability. Rollout order:
+
+1. deploy header isolation and strict bridge behavior;
+2. create parent/child/accounting tables;
+3. synchronize CPA AuthIDs and create parent records;
+4. assign children while enforcement is disabled;
+5. enable enforcement per tenant after model and quota validation;
+6. reconcile and monitor incomplete-pricing requests before global enablement.
+
+The legacy Next.js implementation is a behavioral reference, not a storage or
+provider abstraction to copy. This design replaces its floating-point shares,
+SQLite concurrency, in-memory calibration tasks, and Codex/Grok registry with
+PostgreSQL row locking and CPA-native identity/routing.

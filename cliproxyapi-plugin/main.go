@@ -17,9 +17,14 @@ import "C"
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -120,7 +125,7 @@ func handle(method string, raw []byte) ([]byte, error) {
 		current.Store(cfg)
 		return ok(map[string]any{
 			"schema_version": 1,
-			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.1.0", "Author": "4627488",
+			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.2.0", "Author": "4627488",
 				"GitHubRepository": "https://github.com/4627488/RelayAPI",
 				"Logo":             "https://github.com/4627488.png",
 				"ConfigFields": []map[string]any{
@@ -157,16 +162,37 @@ func handle(method string, raw []byte) ([]byte, error) {
 		}
 		wanted := firstHeader(req.Options.Headers, "X-Relay-CPA-Auth-ID")
 		if wanted != "" {
+			cfg := loaded()
+			if !validRoutingSignature(cfg.Secret, req.Options.Headers, wanted, time.Now()) {
+				return nil, errors.New("unauthenticated Relay AuthID routing request")
+			}
 			for _, candidate := range req.Candidates {
 				if candidate.ID == wanted {
 					return ok(map[string]any{"AuthID": wanted, "Handled": true})
 				}
 			}
+			return nil, fmt.Errorf("requested Relay AuthID %q is not an eligible CPA candidate", wanted)
 		}
 		return ok(map[string]any{"DelegateBuiltin": loaded().Delegate, "Handled": true})
 	default:
 		return ok(map[string]any{})
 	}
+}
+
+func validRoutingSignature(secret string, headers map[string][]string, authID string, now time.Time) bool {
+	requestID := firstHeader(headers, "X-Relay-Request-ID")
+	timestamp := firstHeader(headers, "X-Relay-Plugin-Timestamp")
+	provided, err := hex.DecodeString(firstHeader(headers, "X-Relay-Plugin-Signature"))
+	if secret == "" || requestID == "" || err != nil {
+		return false
+	}
+	unix, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || now.Sub(time.Unix(unix, 0)) > 5*time.Minute || time.Unix(unix, 0).Sub(now) > time.Minute {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(requestID + "\n" + authID + "\n" + timestamp))
+	return hmac.Equal(provided, mac.Sum(nil))
 }
 
 func firstHeader(headers map[string][]string, name string) string {

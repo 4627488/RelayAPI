@@ -18,6 +18,7 @@ import { LogsTable, MetricGrid, ModelTable, UsageChart, UsageMetrics } from "@/c
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
+import { AdminSubscriptionsView } from "@/components/subscriptions-view"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -117,6 +118,7 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
   if (page === "users") return <UsersView users={users} />
   if (page === "invitations") return <InvitationsView items={invitations} onChanged={load} />
   if (page === "providers") return <ProvidersView />
+  if (page === "subscriptions") return <AdminSubscriptionsView />
   if (page === "logs") return <LogsTable logs={logs} />
   if (page === "usage") {
     return (

@@ -97,3 +97,49 @@ func (c *Client) Ready(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (c *Client) BridgeReady(ctx context.Context) (bool, string, error) {
+	if strings.TrimSpace(c.ManagementKey) == "" {
+		return false, "", nil
+	}
+	status, payload, err := c.Management(ctx, http.MethodGet, "plugins", nil)
+	if err != nil {
+		return false, "", err
+	}
+	if status < 200 || status >= 300 {
+		return false, "", fmt.Errorf("CPA plugins returned status %d", status)
+	}
+	var response struct {
+		PluginsEnabled bool `json:"plugins_enabled"`
+		Plugins        []struct {
+			ID               string `json:"id"`
+			EffectiveEnabled bool   `json:"effective_enabled"`
+			Metadata         struct {
+				Version string `json:"version"`
+			} `json:"metadata"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return false, "", err
+	}
+	for _, plugin := range response.Plugins {
+		if plugin.ID == "relayapi-bridge" {
+			return response.PluginsEnabled && plugin.EffectiveEnabled && versionAtLeast(plugin.Metadata.Version, 0, 2, 0), plugin.Metadata.Version, nil
+		}
+	}
+	return false, "", nil
+}
+
+func versionAtLeast(value string, major, minor, patch int) bool {
+	var gotMajor, gotMinor, gotPatch int
+	if _, err := fmt.Sscanf(strings.TrimSpace(value), "%d.%d.%d", &gotMajor, &gotMinor, &gotPatch); err != nil {
+		return false
+	}
+	if gotMajor != major {
+		return gotMajor > major
+	}
+	if gotMinor != minor {
+		return gotMinor > minor
+	}
+	return gotPatch >= patch
+}

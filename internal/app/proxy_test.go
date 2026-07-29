@@ -1,8 +1,12 @@
 package app
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestRoutesRegisterWithFrontendCatchAll(t *testing.T) {
@@ -24,6 +28,19 @@ func TestReadRequestMeta(t *testing.T) {
 	}
 }
 
+func TestRequestMetadataReadsWebSocketQueryModel(t *testing.T) {
+	request, err := http.NewRequest(http.MethodGet, "http://relay.test/v1/realtime?model=gpt-realtime", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	meta := requestMetadata(nil, request)
+	if meta.Model != "gpt-realtime" || !meta.Stream {
+		t.Fatalf("metadata = %+v", meta)
+	}
+}
+
 func TestAllowedSupportsGlob(t *testing.T) {
 	if !allowed("claude-sonnet-4-6", []string{"claude-*"}) {
 		t.Fatal("glob should match")
@@ -33,5 +50,60 @@ func TestAllowedSupportsGlob(t *testing.T) {
 	}
 	if !allowed("anything", nil) {
 		t.Fatal("empty allowlist should allow all")
+	}
+}
+
+func TestCopyHeadersDropsInternalRelayHeaders(t *testing.T) {
+	source := http.Header{
+		"Content-Type":             {"application/json"},
+		"X-Relay-Cpa-Auth-Id":      {"attacker-selected-auth"},
+		"X-Relay-Plugin-Secret":    {"attacker-secret"},
+		"X-Relay-Arbitrary-Future": {"must-not-pass"},
+	}
+	destination := make(http.Header)
+	copyHeaders(destination, source)
+	if got := destination.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content type = %q", got)
+	}
+	for name := range source {
+		if name != "Content-Type" && destination.Get(name) != "" {
+			t.Fatalf("internal header %s was forwarded", name)
+		}
+	}
+}
+
+func TestStripRelayHeaders(t *testing.T) {
+	header := http.Header{
+		"X-Relay-Cpa-Auth-Id":   {"attacker-selected-auth"},
+		"X-Relay-Plugin-Secret": {"attacker-secret"},
+		"X-Api-Key":             {"public-key"},
+	}
+	stripRelayHeaders(header)
+	if header.Get("X-Relay-Cpa-Auth-Id") != "" || header.Get("X-Relay-Plugin-Secret") != "" {
+		t.Fatal("internal Relay headers were not stripped")
+	}
+	if header.Get("X-Api-Key") != "public-key" {
+		t.Fatal("non-Relay headers must be preserved")
+	}
+}
+
+func TestSetRoutingSignature(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	header := make(http.Header)
+	setRoutingSignature(header, "request-1", "auth-2", "shared-secret", now)
+	mac := hmac.New(sha256.New, []byte("shared-secret"))
+	_, _ = mac.Write([]byte("request-1\nauth-2\n1800000000"))
+	if got := header.Get("X-Relay-Plugin-Signature"); got != hex.EncodeToString(mac.Sum(nil)) {
+		t.Fatalf("signature = %q", got)
+	}
+}
+
+func TestExtractModelsFromCPAResponse(t *testing.T) {
+	models := extractModels(map[string]any{"models": []any{
+		map[string]any{"id": "gpt-5.4"},
+		map[string]any{"name": "claude-sonnet-4-6"},
+	}})
+	if len(models) != 2 || models[0] != "gpt-5.4" || models[1] != "claude-sonnet-4-6" {
+		t.Fatalf("models = %#v", models)
 	}
 }

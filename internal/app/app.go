@@ -11,6 +11,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/config"
@@ -21,10 +23,14 @@ import (
 )
 
 type App struct {
-	cfg   config.Config
-	store store.Store
-	cpa   *cpa.Client
-	mux   *http.ServeMux
+	cfg           config.Config
+	store         store.Store
+	cpa           *cpa.Client
+	mux           *http.ServeMux
+	stop          chan struct{}
+	wg            sync.WaitGroup
+	bridgeReady   atomic.Bool
+	bridgeVersion atomic.Value
 }
 
 type contextKey string
@@ -41,16 +47,55 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, store: store.Store{DB: database}, cpa: client, mux: http.NewServeMux()}
+	a := &App{cfg: cfg, store: store.Store{DB: database}, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{})}
 	a.routes()
+	a.refreshBridgeStatus(ctx)
+	a.wg.Add(1)
+	go a.maintenance()
 	return a, nil
 }
 
 func (a *App) Close() {
+	if a.stop != nil {
+		close(a.stop)
+		a.wg.Wait()
+	}
 	sqlDB, err := a.store.DB.DB()
 	if err == nil {
 		_ = sqlDB.Close()
 	}
+}
+
+func (a *App) maintenance() {
+	defer a.wg.Done()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.refreshBridgeStatus(context.Background())
+			if count, err := a.store.ReclaimExpiredReservations(context.Background(), time.Now()); err != nil {
+				slog.Error("reclaim expired reservations", "error", err)
+			} else if count > 0 {
+				slog.Info("reclaimed expired reservations", "count", count)
+			}
+		case <-a.stop:
+			return
+		}
+	}
+}
+
+func (a *App) refreshBridgeStatus(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ready, version, err := a.cpa.BridgeReady(ctx)
+	if err != nil {
+		slog.Warn("check CPA bridge", "error", err)
+		ready = false
+	}
+	ready = ready && a.cfg.CPAPluginSecret != ""
+	a.bridgeReady.Store(ready)
+	a.bridgeVersion.Store(version)
 }
 
 func (a *App) Handler() http.Handler {
@@ -67,6 +112,7 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/me", a.withSession(http.HandlerFunc(a.me)))
 	a.mux.Handle("GET /api/dashboard", a.withTenant(http.HandlerFunc(a.dashboard)))
 	a.mux.Handle("GET /api/usage", a.withTenant(http.HandlerFunc(a.usage)))
+	a.mux.Handle("GET /api/subscriptions", a.withTenant(http.HandlerFunc(a.tenantSubscriptions)))
 	a.mux.Handle("GET /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("POST /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("DELETE /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyDelete)))
@@ -99,6 +145,18 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/invitations", a.withAdmin(http.HandlerFunc(a.adminInvitations)))
 	a.mux.Handle("POST /api/admin/invitations", a.withAdmin(http.HandlerFunc(a.adminInvitations)))
 	a.mux.Handle("DELETE /api/admin/invitations/{id}", a.withAdmin(http.HandlerFunc(a.adminInvitationRevoke)))
+	a.mux.Handle("GET /api/admin/subscriptions/parents", a.withAdmin(http.HandlerFunc(a.adminParentSubscriptions)))
+	a.mux.Handle("POST /api/admin/subscriptions/parents", a.withAdmin(http.HandlerFunc(a.adminParentSubscriptions)))
+	a.mux.Handle("PATCH /api/admin/subscriptions/parents/{id}", a.withAdmin(http.HandlerFunc(a.adminParentSubscriptionUpdate)))
+	a.mux.Handle("GET /api/admin/subscriptions/parents/{id}/windows", a.withAdmin(http.HandlerFunc(a.adminParentWindows)))
+	a.mux.Handle("PUT /api/admin/subscriptions/parents/{id}/windows", a.withAdmin(http.HandlerFunc(a.adminParentWindows)))
+	a.mux.Handle("GET /api/admin/subscriptions/parents/{id}/observations", a.withAdmin(http.HandlerFunc(a.adminParentObservations)))
+	a.mux.Handle("POST /api/admin/subscriptions/parents/{id}/observations", a.withAdmin(http.HandlerFunc(a.adminParentObservations)))
+	a.mux.Handle("POST /api/admin/subscriptions/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentSubscriptions)))
+	a.mux.Handle("GET /api/admin/subscriptions/children", a.withAdmin(http.HandlerFunc(a.adminChildSubscriptions)))
+	a.mux.Handle("POST /api/admin/subscriptions/children", a.withAdmin(http.HandlerFunc(a.adminChildSubscriptions)))
+	a.mux.Handle("PUT /api/admin/subscriptions/children/{id}", a.withAdmin(http.HandlerFunc(a.adminChildSubscription)))
+	a.mux.Handle("DELETE /api/admin/subscriptions/children/{id}", a.withAdmin(http.HandlerFunc(a.adminChildSubscription)))
 
 	for _, pattern := range []string{"/v1/", "/backend-api/codex/", "/openai/v1/", "/v1beta/"} {
 		a.mux.Handle(pattern, http.HandlerFunc(a.proxy))
@@ -149,17 +207,24 @@ func (a *App) serviceInfo(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) health(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 	sqlDB, err := a.store.DB.DB()
 	if err == nil {
-		err = sqlDB.PingContext(r.Context())
+		err = sqlDB.PingContext(ctx)
 	}
-	cpaErr := a.cpa.Ready(r.Context())
+	cpaErr := a.cpa.Ready(ctx)
+	activeSubscriptions, subscriptionErr := a.store.HasActiveChildSubscriptions(ctx, time.Now())
+	bridgeRequired := subscriptionErr == nil && activeSubscriptions
+	bridgeOK := !bridgeRequired || a.bridgeReady.Load()
 	status := http.StatusOK
-	if err != nil || cpaErr != nil {
+	if err != nil || cpaErr != nil || subscriptionErr != nil || !bridgeOK {
 		status = http.StatusServiceUnavailable
 	}
+	bridgeVersion, _ := a.bridgeVersion.Load().(string)
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "cpa": errorText(cpaErr)})
+		"database": errorText(err), "cpa": errorText(cpaErr),
+		"subscriptions": errorText(subscriptionErr), "bridge": map[string]any{"required": bridgeRequired, "ready": a.bridgeReady.Load(), "version": bridgeVersion}})
 }
 
 func (a *App) adminLogin(w http.ResponseWriter, r *http.Request) {

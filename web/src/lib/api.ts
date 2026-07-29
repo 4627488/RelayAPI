@@ -116,6 +116,69 @@ type ApiErrorBody = {
   status?: string
 }
 
+export type CapacityMode = "unmetered" | "manual" | "observed"
+
+export interface ParentQuotaWindow {
+  parent_subscription_id: string
+  kind: string
+  limit_nano_usd: number
+  resets_at: string
+  source: string
+  observed_used_percent?: number | null
+}
+
+export interface ParentSubscription {
+  id: string
+  cpa_auth_id: string
+  cpa_auth_name: string
+  name: string
+  provider: string
+  plan_type: string
+  status: string
+  cpa_unavailable: boolean
+  capacity_mode: CapacityMode
+  allocation_limit_ppm: number
+  enabled: boolean
+  cpa_model_allowlist: string[]
+  model_allowlist: string[]
+  last_synced_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ParentSubscriptionView {
+  item: ParentSubscription
+  windows: ParentQuotaWindow[]
+  allocated_ppm: number
+}
+
+export interface ChildQuotaWindow {
+  child_subscription_id: string
+  kind: string
+  started_at: string
+  resets_at: string
+  limit_nano_usd: number
+  settled_nano_usd: number
+  reserved_nano_usd: number
+}
+
+export interface ChildSubscription {
+  id: string
+  tenant_id: string
+  parent_subscription_id: string
+  name: string
+  allocation_ppm: number
+  priority: number
+  enabled: boolean
+  capacity_mode?: CapacityMode
+  model_allowlist: string[]
+  starts_at: string
+  expires_at?: string | null
+  created_at?: string
+  updated_at?: string
+  windows?: ChildQuotaWindow[]
+}
+
 export class ApiError extends Error {
   status: number
   code?: string

@@ -3,6 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +43,17 @@ func readRequestMeta(body []byte, requestPath string) requestMeta {
 			value = value[:end]
 		}
 		meta.Model, _ = url.PathUnescape(value)
+	}
+	return meta
+}
+
+func requestMetadata(body []byte, r *http.Request) requestMeta {
+	meta := readRequestMeta(body, r.URL.Path)
+	if meta.Model == "" {
+		meta.Model = strings.TrimSpace(r.URL.Query().Get("model"))
+	}
+	if isWebSocketUpgrade(r) {
+		meta.Stream = true
 	}
 	return meta
 }
@@ -83,8 +98,9 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "请求体超过 64 MiB")
 		return
 	}
-	meta := readRequestMeta(body, r.URL.Path)
-	billable := r.Method != http.MethodGet && r.Method != http.MethodHead && meta.Model != ""
+	meta := requestMetadata(body, r)
+	websocket := isWebSocketUpgrade(r)
+	billable := meta.Model != "" && (websocket || (r.Method != http.MethodGet && r.Method != http.MethodHead))
 	if meta.Model != "" && !allowed(meta.Model, key.ModelAllowlist, key.TenantModels) {
 		writeError(w, http.StatusForbidden, "model_not_allowed", "该 API Key 无权使用此模型")
 		return
@@ -97,7 +113,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	var price store.Price
 	priceConfigured := false
 	requestID := identity.NewID()
-	reserved := int64(0)
+	admission := store.Admission{RequestID: requestID}
 	if billable {
 		price, err = a.store.Price(r.Context(), meta.Model)
 		if err != nil {
@@ -107,23 +123,51 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			priceConfigured = true
-			reserved = a.cfg.ReservationNanoUSD
-			if err = a.store.Reserve(r.Context(), key.TenantID, requestID, reserved); err != nil {
-				writeError(w, http.StatusPaymentRequired, "insufficient_balance", "余额不足")
-				return
+		}
+		priceSnapshot, _ := json.Marshal(price)
+		reserve := int64(0)
+		if priceConfigured {
+			reserve = a.cfg.ReservationNanoUSD
+		}
+		reservationTTL := maxDuration(30*time.Minute, a.cfg.RequestTimeout+5*time.Minute)
+		if websocket {
+			reservationTTL = 24 * time.Hour
+		}
+		admission, err = a.store.AdmitRequest(r.Context(), store.AdmissionInput{
+			RequestID: requestID, Key: key, Model: meta.Model,
+			BalanceReserve: reserve, QuotaReserve: reserve, PriceConfigured: priceConfigured,
+			PriceSnapshot: priceSnapshot, ExpiresAt: time.Now().Add(reservationTTL),
+		})
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrSubscriptionPrice):
+				writeError(w, http.StatusBadRequest, "price_not_configured", "计量子订阅要求先配置模型价格")
+			case errors.Is(err, store.ErrSubscriptionRequired):
+				writeError(w, http.StatusForbidden, "subscription_not_available", "没有可用于该模型的子订阅")
+			case errors.Is(err, store.ErrSubscriptionExhausted):
+				writeError(w, http.StatusTooManyRequests, "subscription_quota_exceeded", "所有可用子订阅额度均已耗尽")
+			default:
+				writeError(w, http.StatusPaymentRequired, "admission_failed", "余额不足或订阅不可用")
 			}
+			return
+		}
+		if admission.CPAAuthID != "" && !a.bridgeReady.Load() {
+			a.releaseReservation(requestID, true)
+			writeError(w, http.StatusServiceUnavailable, "cpa_bridge_required", "严格子订阅路由要求 CPA bridge 0.2.0 或更高版本")
+			return
 		}
 	}
 
-	if isWebSocketUpgrade(r) {
-		a.proxyWebSocket(w, r, key, requestID)
+	if websocket {
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		a.proxyWebSocket(w, r, key, requestID, admission, meta, started, billable)
 		return
 	}
 
 	target := a.cpa.URL(r.URL.RequestURI())
 	upstream, err := http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
 	if err != nil {
-		a.refund(requestID, key.TenantID, reserved)
+		a.releaseReservation(requestID, billable)
 		writeError(w, 500, "proxy_error", err.Error())
 		return
 	}
@@ -131,51 +175,64 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	upstream.Header.Set("Authorization", "Bearer "+a.cfg.CPAAPIKey)
 	upstream.Header.Del("X-API-Key")
 	upstream.Header.Set("X-Relay-Request-ID", requestID)
+	if admission.CPAAuthID != "" {
+		upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
+		setRoutingSignature(upstream.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
+	}
 	upstream.Host = a.cpa.BaseURL.Host
 
 	response, err := a.cpa.HTTP.Do(upstream)
 	if err != nil {
-		a.refund(requestID, key.TenantID, reserved)
-		a.writeRequestLog(key, requestID, meta, r, 0, started, nil, false, true, reserved, 0, err.Error())
+		a.releaseReservation(requestID, billable)
+		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error())
 		writeError(w, http.StatusBadGateway, "cpa_unavailable", "CPA 暂时不可用")
 		return
 	}
 	defer response.Body.Close()
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Relay-Request-ID", requestID)
+	if admission.ChildSubscriptionID != "" {
+		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)
+	}
 	w.WriteHeader(response.StatusCode)
 	capture := &rollingCapture{max: 2 << 20}
 	copyErr := copyStreaming(w, io.TeeReader(response.Body, capture))
 
 	parsed := billing.ParseResponse(capture.Bytes())
 	actual := int64(0)
-	settled := !billable || !priceConfigured
+	settled := !billable
 	var cost *int64
-	if billable && parsed.Found && priceConfigured {
+	if billable && response.StatusCode < http.StatusBadRequest && parsed.Found && priceConfigured {
 		actual = billing.Cost(price, parsed.Usage)
 		cost = &actual
-		if err := a.store.Settle(context.WithoutCancel(r.Context()), key.TenantID, requestID, reserved, actual); err == nil {
+		if err := a.store.SettleRequestReservation(context.WithoutCancel(r.Context()), requestID, actual, true); err == nil {
 			settled = true
 		} else {
 			slog.Error("settle request", "request_id", requestID, "error", err)
 		}
-	} else if billable && priceConfigured {
-		// CLIProxyAPI normally emits usage on the terminal JSON/SSE event. If
-		// it does not, release the reservation rather than locking tenant
-		// funds forever; the incomplete-pricing audit record remains visible.
-		a.refund(requestID, key.TenantID, reserved)
+	} else if billable && response.StatusCode < http.StatusBadRequest {
+		// Missing usage must not become free parent capacity. Conservatively
+		// settle the reservation and keep pricing_complete=false for reconciliation.
+		actual = max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
+		if err := a.store.SettleRequestReservation(context.WithoutCancel(r.Context()), requestID, actual, false); err == nil {
+			settled = true
+		} else {
+			slog.Error("settle incomplete request", "request_id", requestID, "error", err)
+		}
+	} else if billable {
+		a.releaseReservation(requestID, true)
 		settled = true
 	}
 	errorMessage := ""
 	if copyErr != nil {
 		errorMessage = copyErr.Error()
 	}
-	a.writeRequestLog(key, requestID, meta, r, response.StatusCode, started, &parsed, cost != nil, settled, reserved, actual, errorMessage)
+	a.writeRequestLog(key, requestID, admission, meta, r, response.StatusCode, started, &parsed, cost != nil, settled, actual, errorMessage)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
-func (a *App) writeRequestLog(key store.KeyContext, requestID string, meta requestMeta, r *http.Request, status int,
-	started time.Time, parsed *billing.Result, pricing, settled bool, reserved, cost int64, errorMessage string) {
+func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
+	started time.Time, parsed *billing.Result, pricing, settled bool, cost int64, errorMessage string) {
 	usage := store.Usage{}
 	cpaID := ""
 	if parsed != nil {
@@ -188,9 +245,11 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, meta reque
 	}
 	err := a.store.WriteLog(context.WithoutCancel(r.Context()), store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
-		Method: r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
+		AuthIndex: admission.CPAAuthID, ParentSubscriptionID: admission.ParentSubscriptionID,
+		ChildSubscriptionID: admission.ChildSubscriptionID,
+		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
 		CostNanoUSD: costPointer, PricingComplete: pricing, Settled: settled,
-		ReservedNanoUSD: reserved, LatencyMS: time.Since(started).Milliseconds(),
+		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: time.Since(started).Milliseconds(),
 		ErrorMessage: errorMessage, StartedAt: started, CompletedAt: time.Now(),
 	})
 	if err != nil {
@@ -224,30 +283,74 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
 }
 
-func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string) {
+func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
+	admission store.Admission, meta requestMeta, started time.Time, billable bool) {
 	proxy := httputil.NewSingleHostReverseProxy(a.cpa.BaseURL)
+	statusCode := 0
+	proxy.ModifyResponse = func(response *http.Response) error {
+		statusCode = response.StatusCode
+		return nil
+	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+		statusCode = http.StatusBadGateway
 		slog.Error("websocket proxy", "request_id", requestID, "error", err)
+		writeError(w, statusCode, "cpa_unavailable", "CPA 暂时不可用")
 	}
 	original := proxy.Director
 	proxy.Director = func(request *http.Request) {
 		original(request)
+		stripRelayHeaders(request.Header)
 		request.Header.Set("Authorization", "Bearer "+a.cfg.CPAAPIKey)
 		request.Header.Del("X-API-Key")
 		request.Header.Set("X-Relay-Request-ID", requestID)
+		if admission.CPAAuthID != "" {
+			request.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
+			setRoutingSignature(request.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
+		}
 	}
 	w.Header().Set("X-Relay-Request-ID", requestID)
 	proxy.ServeHTTP(w, r)
+	actual := max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
+	settled := !billable
+	if billable {
+		var err error
+		if statusCode == http.StatusSwitchingProtocols {
+			err = a.store.SettleRequestReservation(context.Background(), requestID, actual, false)
+		} else {
+			actual = 0
+			err = a.store.ReleaseRequestReservation(context.Background(), requestID)
+		}
+		if err == nil {
+			settled = true
+		} else {
+			slog.Error("settle websocket request", "request_id", requestID, "error", err)
+		}
+	}
+	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, nil, false, settled, actual, "")
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
-func (a *App) refund(requestID, tenantID string, reserved int64) {
-	if reserved == 0 {
+func (a *App) releaseReservation(requestID string, billable bool) {
+	if !billable {
 		return
 	}
-	if err := a.store.Settle(context.Background(), tenantID, requestID, reserved, 0); err != nil {
-		slog.Error("refund request", "request_id", requestID, "error", err)
+	if err := a.store.ReleaseRequestReservation(context.Background(), requestID); err != nil {
+		slog.Error("release request reservation", "request_id", requestID, "error", err)
 	}
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
@@ -276,7 +379,7 @@ func expired(value *time.Time) bool { return value != nil && !value.After(time.N
 
 func copyHeaders(destination, source http.Header) {
 	for name, values := range source {
-		if hopHeader(name) {
+		if hopHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-relay-") {
 			continue
 		}
 		destination.Del(name)
@@ -284,6 +387,22 @@ func copyHeaders(destination, source http.Header) {
 			destination.Add(name, value)
 		}
 	}
+}
+
+func stripRelayHeaders(header http.Header) {
+	for name := range header {
+		if strings.HasPrefix(strings.ToLower(name), "x-relay-") {
+			header.Del(name)
+		}
+	}
+}
+
+func setRoutingSignature(header http.Header, requestID, authID, secret string, now time.Time) {
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(requestID + "\n" + authID + "\n" + timestamp))
+	header.Set("X-Relay-Plugin-Timestamp", timestamp)
+	header.Set("X-Relay-Plugin-Signature", hex.EncodeToString(mac.Sum(nil)))
 }
 func hopHeader(name string) bool {
 	switch strings.ToLower(name) {

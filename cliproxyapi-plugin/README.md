@@ -21,8 +21,10 @@ plugins:
       delegate: round-robin
 ```
 
-The plugin observes CPA usage/failure events and can select an auth ID from
-the trusted `X-Relay-CPA-Auth-ID` header. Otherwise it delegates to CPA's
-built-in scheduler. Relay keeps response-correlated usage as the billing
+Version 0.2.0 adds strict AuthID pinning for parent/child subscriptions. Relay
+signs each internal routing instruction with the shared `secret`; invalid,
+expired, or unavailable AuthIDs are rejected instead of delegating to another
+credential. Requests without a Relay routing instruction still delegate to
+CPA's built-in scheduler. Relay keeps response-correlated usage as the billing
 source of truth because CPA v7's usage ABI does not currently expose custom
 request correlation headers.

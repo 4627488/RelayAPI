@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows:
       - Publish RelayAPI image
+      - Publish CPA bridge image
     types:
       - completed
   workflow_dispatch:
@@ -40,15 +41,30 @@ jobs:
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          PUBLISHED_WORKFLOW: ${{ github.event.workflow_run.name }}
         run: |
+          component=all
+          if [ "$PUBLISHED_WORKFLOW" = "Publish RelayAPI image" ]; then
+            component=relay
+          elif [ "$PUBLISHED_WORKFLOW" = "Publish CPA bridge image" ]; then
+            component=bridge
+          fi
           ssh -i ~/.ssh/deploy_key \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
-            "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
+            "$DEPLOY_USER@$DEPLOY_HOST" "bash -s -- '$component'" <<'REMOTE'
           set -euo pipefail
           cd /opt/relayapi-preview
-          docker compose -f compose.yml pull relayapi
-          docker compose -f compose.yml up -d --no-deps --force-recreate relayapi
+          component=$1
+          if [ "$component" = relay ] || [ "$component" = all ]; then
+            docker compose -f compose.yml pull relayapi
+            docker compose -f compose.yml up -d --no-deps --force-recreate relayapi
+          fi
+          if [ "$component" = bridge ] || [ "$component" = all ]; then
+            docker compose -f compose.yml pull cpa-plugin
+            docker compose -f compose.yml up --no-deps --force-recreate cpa-plugin
+            docker compose -f compose.yml up -d --no-deps --force-recreate cliproxyapi
+          fi
           for attempt in $(seq 1 40); do
             if curl --fail --silent --show-error http://127.0.0.1:18080/healthz; then
               echo

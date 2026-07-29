@@ -36,14 +36,14 @@ type KeyContext struct {
 type Usage struct{ Prompt, Completion, Cached, CacheWrite, Reasoning, Total int64 }
 
 type LogInput struct {
-	ID, TenantID, APIKeyID, CPARequestID, Model, Provider, AuthIndex, Method, Path string
-	StatusCode                                                                     int
-	Stream, PricingComplete, Settled                                               bool
-	Usage                                                                          Usage
-	CostNanoUSD                                                                    *int64
-	ReservedNanoUSD, LatencyMS                                                     int64
-	ErrorMessage                                                                   string
-	StartedAt, CompletedAt                                                         time.Time
+	ID, TenantID, APIKeyID, CPARequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
+	StatusCode                                                                                                                int
+	Stream, PricingComplete, Settled                                                                                          bool
+	Usage                                                                                                                     Usage
+	CostNanoUSD                                                                                                               *int64
+	ReservedNanoUSD, LatencyMS                                                                                                int64
+	ErrorMessage                                                                                                              string
+	StartedAt, CompletedAt                                                                                                    time.Time
 }
 
 func scoped(ctx context.Context, database *gorm.DB) *gorm.DB { return database.WithContext(ctx) }
@@ -269,7 +269,8 @@ func (s Store) UpsertPrice(ctx context.Context, price Price) error {
 func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 	return scoped(ctx, s.DB).Create(&db.RequestLog{
 		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, CPARequestID: l.CPARequestID, Model: l.Model,
-		Provider: l.Provider, AuthIndex: l.AuthIndex, Method: l.Method, Path: l.Path, StatusCode: l.StatusCode,
+		Provider: l.Provider, AuthIndex: l.AuthIndex, ParentSubscriptionID: l.ParentSubscriptionID,
+		ChildSubscriptionID: l.ChildSubscriptionID, Method: l.Method, Path: l.Path, StatusCode: l.StatusCode,
 		Stream: l.Stream, PromptTokens: l.Usage.Prompt, CompletionTokens: l.Usage.Completion,
 		CachedTokens: l.Usage.Cached, CacheWriteTokens: l.Usage.CacheWrite, ReasoningTokens: l.Usage.Reasoning,
 		TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,

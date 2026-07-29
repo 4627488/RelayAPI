@@ -60,31 +60,33 @@ type BillingLedger struct {
 }
 
 type RequestLog struct {
-	ID               string    `gorm:"type:uuid;primaryKey" json:"id"`
-	TenantID         string    `gorm:"type:uuid;not null;index:request_logs_tenant_started_idx,priority:1" json:"tenant_id"`
-	APIKeyID         string    `gorm:"type:uuid;not null;index" json:"api_key_id"`
-	CPARequestID     string    `gorm:"index" json:"cpa_request_id,omitempty"`
-	Model            string    `gorm:"not null;default:''" json:"model"`
-	Provider         string    `json:"provider,omitempty"`
-	AuthIndex        string    `gorm:"index" json:"auth_index,omitempty"`
-	Method           string    `gorm:"not null" json:"method"`
-	Path             string    `gorm:"not null" json:"path"`
-	StatusCode       int       `gorm:"not null;default:0" json:"status_code"`
-	Stream           bool      `gorm:"not null;default:false" json:"stream"`
-	PromptTokens     int64     `gorm:"not null;default:0" json:"prompt_tokens"`
-	CompletionTokens int64     `gorm:"not null;default:0" json:"completion_tokens"`
-	CachedTokens     int64     `gorm:"not null;default:0" json:"cached_tokens"`
-	CacheWriteTokens int64     `gorm:"not null;default:0" json:"cache_write_tokens"`
-	ReasoningTokens  int64     `gorm:"not null;default:0" json:"reasoning_tokens"`
-	TotalTokens      int64     `gorm:"not null;default:0" json:"total_tokens"`
-	CostNanoUSD      *int64    `json:"cost_nano_usd"`
-	PricingComplete  bool      `gorm:"not null;default:false" json:"pricing_complete"`
-	Settled          bool      `gorm:"not null;default:false;index" json:"settled"`
-	ReservedNanoUSD  int64     `gorm:"not null;default:0" json:"reserved_nano_usd"`
-	LatencyMS        int64     `gorm:"not null;default:0" json:"latency_ms"`
-	ErrorMessage     string    `json:"error_message,omitempty"`
-	StartedAt        time.Time `gorm:"index:request_logs_tenant_started_idx,priority:2,sort:desc;index" json:"started_at"`
-	CompletedAt      time.Time `json:"completed_at"`
+	ID                   string    `gorm:"type:uuid;primaryKey" json:"id"`
+	TenantID             string    `gorm:"type:uuid;not null;index:request_logs_tenant_started_idx,priority:1" json:"tenant_id"`
+	APIKeyID             string    `gorm:"type:uuid;not null;index" json:"api_key_id"`
+	CPARequestID         string    `gorm:"index" json:"cpa_request_id,omitempty"`
+	Model                string    `gorm:"not null;default:''" json:"model"`
+	Provider             string    `json:"provider,omitempty"`
+	AuthIndex            string    `gorm:"index" json:"auth_index,omitempty"`
+	ParentSubscriptionID string    `gorm:"type:uuid;index" json:"parent_subscription_id,omitempty"`
+	ChildSubscriptionID  string    `gorm:"type:uuid;index" json:"child_subscription_id,omitempty"`
+	Method               string    `gorm:"not null" json:"method"`
+	Path                 string    `gorm:"not null" json:"path"`
+	StatusCode           int       `gorm:"not null;default:0" json:"status_code"`
+	Stream               bool      `gorm:"not null;default:false" json:"stream"`
+	PromptTokens         int64     `gorm:"not null;default:0" json:"prompt_tokens"`
+	CompletionTokens     int64     `gorm:"not null;default:0" json:"completion_tokens"`
+	CachedTokens         int64     `gorm:"not null;default:0" json:"cached_tokens"`
+	CacheWriteTokens     int64     `gorm:"not null;default:0" json:"cache_write_tokens"`
+	ReasoningTokens      int64     `gorm:"not null;default:0" json:"reasoning_tokens"`
+	TotalTokens          int64     `gorm:"not null;default:0" json:"total_tokens"`
+	CostNanoUSD          *int64    `json:"cost_nano_usd"`
+	PricingComplete      bool      `gorm:"not null;default:false" json:"pricing_complete"`
+	Settled              bool      `gorm:"not null;default:false;index" json:"settled"`
+	ReservedNanoUSD      int64     `gorm:"not null;default:0" json:"reserved_nano_usd"`
+	LatencyMS            int64     `gorm:"not null;default:0" json:"latency_ms"`
+	ErrorMessage         string    `json:"error_message,omitempty"`
+	StartedAt            time.Time `gorm:"index:request_logs_tenant_started_idx,priority:2,sort:desc;index" json:"started_at"`
+	CompletedAt          time.Time `json:"completed_at"`
 }
 
 type Invitation struct {

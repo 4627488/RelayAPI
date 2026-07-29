@@ -4,7 +4,8 @@ RelayAPI 是位于 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
 前面的 Go 多租户网关。CLIProxyAPI 负责模型/提供商协议互操作，RelayAPI 负责租户
 API Key、额度、计费和审计。因此 CLIProxyAPI 新增模型后无需修改 RelayAPI。
 
-详细设计见 [docs/architecture.md](docs/architecture.md)。
+详细设计见 [docs/architecture.md](docs/architecture.md)，父/子订阅与严格凭据路由见
+[docs/subscriptions.md](docs/subscriptions.md)。
 
 ## 启动
 
@@ -48,7 +49,8 @@ WebSocket 入口。
 | `RELAY_SESSION_SECRET` | Cookie 签名密钥（至少 32 字符） |
 
 `CPA_MANAGEMENT_KEY` 用于管理员面板中的 CPA 凭据、Codex OAuth 与运行策略管理。
-`CPA_PLUGIN_SECRET` 可选，用于 CPA 薄插件向 Relay 回传凭据级用量/失败遥测。
+`CPA_PLUGIN_SECRET` 用于 CPA bridge 与 Relay 相互认证。仅使用遥测时可不配置；
+启用父/子订阅的严格 AuthID 路由时必须配置，并与 CPA 插件配置一致。
 未知模型默认允许调用且不扣费；
 设置 `UNPRICED_MODEL_POLICY=deny` 可改为严格模式。
 
@@ -70,6 +72,9 @@ WebSocket 入口。
   保留方法、查询参数及 JSON/YAML/上传请求体
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
 - `GET /api/logs?tenant_id=...`：请求日志
+- `POST /api/admin/subscriptions/sync`：从 CPA AuthID 同步父订阅
+- `/api/admin/subscriptions/parents/*`：父订阅、任意容量窗口与观测样本
+- `/api/admin/subscriptions/children/*`：向租户分配、停用或回收子订阅
 
 用户后端：
 
@@ -80,6 +85,7 @@ WebSocket 入口。
 - `GET|POST /api/keys`：查看或生成个人 API Key
 - `DELETE /api/keys/{id}`：删除个人 API Key
 - `GET /api/logs`：个人请求日志
+- `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
 
 创建邀请时仅在响应中返回一次明文 token。数据库只保存 SHA-256 哈希；邀请可
 限制注册邮箱，并支持过期、使用和撤销状态。
@@ -93,8 +99,9 @@ go vet ./...
 
 ## CPA 薄插件
 
-CPA bridge 是可选增强项，发布为 `ghcr.io/4627488/relayapi-cpa-plugin`。需要
-凭据级调度遥测时，用附加 Compose 文件把动态库放入 CPA 的私有插件目录：
+CPA bridge 发布为 `ghcr.io/4627488/relayapi-cpa-plugin`。普通余额计费可以不安装；
+父/子订阅的 AuthID 固定路由要求 bridge `0.2.0+`。用附加 Compose 文件把动态库
+放入 CPA 的私有插件目录：
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.plugin.yml up -d --build
@@ -115,8 +122,10 @@ plugins:
       delegate: round-robin
 ```
 
-插件负责 CPA 凭据选择扩展与用量/失败遥测。计费仍使用 Relay 代理层关联到具体
-请求的响应用量，避免 CPA 插件事件缺少自定义关联 ID 时发生串账。
+插件负责 CPA 凭据选择扩展与用量/失败遥测。Relay 会用短时 HMAC 签名保护内部
+AuthID 路由指令；指定凭据不在 CPA 当前候选集时，插件会拒绝请求而不会悄悄切换
+到另一账户。计费仍使用 Relay 代理层关联到具体请求的响应用量，避免 CPA 插件
+事件缺少自定义关联 ID 时发生串账。
 
 ## CLIProxyAPI 完整管理面
 

@@ -3,6 +3,9 @@ package db
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -10,8 +13,14 @@ import (
 )
 
 func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
+	databaseLogger := logger.New(log.New(os.Stderr, "", log.LstdFlags), logger.Config{
+		SlowThreshold:             time.Second,
+		LogLevel:                  logger.Warn,
+		IgnoreRecordNotFoundError: true,
+		Colorful:                  false,
+	})
 	database, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+		Logger: databaseLogger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
@@ -25,8 +34,13 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 	}
 	if err := database.WithContext(ctx).AutoMigrate(
 		&Tenant{}, &APIKey{}, &ModelPrice{}, &BillingLedger{}, &RequestLog{}, &Invitation{},
+		&ParentSubscription{}, &ParentQuotaWindow{}, &ParentQuotaObservation{},
+		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{},
 	); err != nil {
 		return nil, fmt.Errorf("gorm automigrate: %w", err)
+	}
+	if err := runMigrations(ctx, database); err != nil {
+		return nil, fmt.Errorf("schema migrations: %w", err)
 	}
 	return database, nil
 }
