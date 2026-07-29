@@ -104,6 +104,10 @@ Supported window mappings are:
 - `limit_path` and `remaining_path` for raw units;
 - `reset_path` as RFC 3339, Unix seconds, Unix milliseconds, or a duration such
   as `2h`;
+- `kind_path` plus `kind_map` to derive a window identity from response data;
+- `for_each_path`, `label_path`, and `kind_suffix` to expand product/model quota
+  arrays without provider-specific code; paths prefixed with `$root.` read from
+  the full response while iterating an item;
 - `enforceable: true` only for a window whose percentage applies to all usage
   attributed to that credential.
 

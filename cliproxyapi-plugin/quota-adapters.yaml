@@ -15,18 +15,40 @@ adapters:
       request: usage
       path: plan_type
     windows:
-      - kind: 5h
-        label: 5 小时
+      - kind: primary
+        kind_path: rate_limit.primary_window.limit_window_seconds
+        kind_map:
+          "18000": 5h
+          "604800": 7d
         request: usage
         used_percent_path: rate_limit.primary_window.used_percent
         reset_path: rate_limit.primary_window.reset_at
         enforceable: true
-      - kind: 7d
-        label: 7 天
+      - kind: secondary
+        kind_path: rate_limit.secondary_window.limit_window_seconds
+        kind_map:
+          "18000": 5h
+          "604800": 7d
         request: usage
         used_percent_path: rate_limit.secondary_window.used_percent
         reset_path: rate_limit.secondary_window.reset_at
         enforceable: true
+      - kind_path: limit_name
+        kind_suffix: primary
+        label_path: limit_name
+        for_each_path: additional_rate_limits
+        request: usage
+        used_percent_path: rate_limit.primary_window.used_percent
+        reset_path: rate_limit.primary_window.reset_at
+        enforceable: false
+      - kind_path: limit_name
+        kind_suffix: secondary
+        label_path: limit_name
+        for_each_path: additional_rate_limits
+        request: usage
+        used_percent_path: rate_limit.secondary_window.used_percent
+        reset_path: rate_limit.secondary_window.reset_at
+        enforceable: false
 
   - id: xai-billing
     providers: [xai, x-ai, grok]
@@ -69,3 +91,11 @@ adapters:
         limit_value_path: config.monthlyLimit.val
         reset_path: config.billingPeriodEnd
         enforceable: true
+      - kind_path: product
+        kind_suffix: usage
+        label_path: product
+        for_each_path: config.productUsage
+        request: credits
+        used_percent_path: usagePercent
+        reset_path: $root.config.currentPeriod.end
+        enforceable: false

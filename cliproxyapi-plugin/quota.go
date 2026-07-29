@@ -53,18 +53,23 @@ type quotaValueSpec struct {
 }
 
 type quotaWindowSpec struct {
-	Kind             string `yaml:"kind" json:"kind"`
-	Label            string `yaml:"label" json:"label"`
-	Request          string `yaml:"request" json:"request"`
-	UsedPercentPath  string `yaml:"used_percent_path,omitempty" json:"used_percent_path,omitempty"`
-	RemainingPath    string `yaml:"remaining_percent_path,omitempty" json:"remaining_percent_path,omitempty"`
-	UsedValuePath    string `yaml:"used_value_path,omitempty" json:"used_value_path,omitempty"`
-	LimitValuePath   string `yaml:"limit_value_path,omitempty" json:"limit_value_path,omitempty"`
-	ResetPath        string `yaml:"reset_path,omitempty" json:"reset_path,omitempty"`
-	Enforceable      bool   `yaml:"enforceable" json:"enforceable"`
-	Unit             string `yaml:"unit,omitempty" json:"unit,omitempty"`
-	LimitPath        string `yaml:"limit_path,omitempty" json:"limit_path,omitempty"`
-	RemainingRawPath string `yaml:"remaining_path,omitempty" json:"remaining_path,omitempty"`
+	Kind             string            `yaml:"kind" json:"kind"`
+	Label            string            `yaml:"label" json:"label"`
+	ForEachPath      string            `yaml:"for_each_path,omitempty" json:"for_each_path,omitempty"`
+	KindPath         string            `yaml:"kind_path,omitempty" json:"kind_path,omitempty"`
+	KindSuffix       string            `yaml:"kind_suffix,omitempty" json:"kind_suffix,omitempty"`
+	LabelPath        string            `yaml:"label_path,omitempty" json:"label_path,omitempty"`
+	KindMap          map[string]string `yaml:"kind_map,omitempty" json:"kind_map,omitempty"`
+	Request          string            `yaml:"request" json:"request"`
+	UsedPercentPath  string            `yaml:"used_percent_path,omitempty" json:"used_percent_path,omitempty"`
+	RemainingPath    string            `yaml:"remaining_percent_path,omitempty" json:"remaining_percent_path,omitempty"`
+	UsedValuePath    string            `yaml:"used_value_path,omitempty" json:"used_value_path,omitempty"`
+	LimitValuePath   string            `yaml:"limit_value_path,omitempty" json:"limit_value_path,omitempty"`
+	ResetPath        string            `yaml:"reset_path,omitempty" json:"reset_path,omitempty"`
+	Enforceable      bool              `yaml:"enforceable" json:"enforceable"`
+	Unit             string            `yaml:"unit,omitempty" json:"unit,omitempty"`
+	LimitPath        string            `yaml:"limit_path,omitempty" json:"limit_path,omitempty"`
+	RemainingRawPath string            `yaml:"remaining_path,omitempty" json:"remaining_path,omitempty"`
 }
 
 type quotaReport struct {
@@ -189,8 +194,8 @@ func validateQuotaAdapter(adapter quotaAdapter) error {
 		}
 	}
 	for _, window := range adapter.Windows {
-		if slug(window.Kind) == "" {
-			return errors.New("window kind is required")
+		if slug(window.Kind) == "" && strings.TrimSpace(window.KindPath) == "" {
+			return errors.New("window kind or kind_path is required")
 		}
 		if _, exists := requests[slug(window.Request)]; !exists {
 			return fmt.Errorf("window %s references unknown request %q", window.Kind, window.Request)
@@ -280,9 +285,7 @@ func runQuotaAdapter(adapter quotaAdapter, auth map[string]any, now time.Time) (
 		if !exists {
 			continue
 		}
-		if window, ok := mapQuotaWindow(spec, response, now); ok {
-			windows = append(windows, window)
-		}
+		windows = append(windows, mapQuotaWindows(spec, response, now)...)
 	}
 	if len(windows) == 0 {
 		return quotaReport{}, errors.New("responses contain no mapped quota windows")
@@ -343,12 +346,38 @@ func executeQuotaRequest(spec quotaAdapterRequest, auth map[string]any) (any, er
 	return decoded, nil
 }
 
-func mapQuotaWindow(spec quotaWindowSpec, response any, now time.Time) (quotaWindow, bool) {
-	used := percentPtr(lookupPath(response, spec.UsedPercentPath))
-	remainingPercent := percentPtr(lookupPath(response, spec.RemainingPath))
+func mapQuotaWindows(spec quotaWindowSpec, response any, now time.Time) []quotaWindow {
+	if strings.TrimSpace(spec.ForEachPath) == "" {
+		if window, ok := mapQuotaWindow(spec, response, response, now); ok {
+			return []quotaWindow{window}
+		}
+		return nil
+	}
+	items, _ := lookupPath(response, spec.ForEachPath).([]any)
+	windows := make([]quotaWindow, 0, len(items))
+	for _, item := range items {
+		if window, ok := mapQuotaWindow(spec, item, response, now); ok {
+			windows = append(windows, window)
+		}
+	}
+	return windows
+}
+
+func mapQuotaWindow(spec quotaWindowSpec, scope, root any, now time.Time) (quotaWindow, bool) {
+	kind := firstText(mappedPathValue(scope, root, spec.KindPath, spec.KindMap), spec.Kind)
+	if suffix := slug(spec.KindSuffix); suffix != "" {
+		kind = slug(kind) + "-" + suffix
+	}
+	kind = slug(kind)
+	if kind == "" {
+		return quotaWindow{}, false
+	}
+	label := firstText(spec.Label, scalarText(lookupQuotaPath(scope, root, spec.LabelPath)), kind)
+	used := percentPtr(lookupQuotaPath(scope, root, spec.UsedPercentPath))
+	remainingPercent := percentPtr(lookupQuotaPath(scope, root, spec.RemainingPath))
 	if used == nil && spec.UsedValuePath != "" && spec.LimitValuePath != "" {
-		usedValue := numericPtr(lookupPath(response, spec.UsedValuePath))
-		limitValue := numericPtr(lookupPath(response, spec.LimitValuePath))
+		usedValue := numericPtr(lookupQuotaPath(scope, root, spec.UsedValuePath))
+		limitValue := numericPtr(lookupQuotaPath(scope, root, spec.LimitValuePath))
 		if usedValue != nil && limitValue != nil && *limitValue > 0 {
 			value := clamp(*usedValue / *limitValue * 100)
 			used = &value
@@ -361,16 +390,42 @@ func mapQuotaWindow(spec quotaWindowSpec, response any, now time.Time) (quotaWin
 	if remainingPercent == nil {
 		remainingPercent = complement(used)
 	}
-	limit := numericPtr(lookupPath(response, spec.LimitPath))
-	remaining := numericPtr(lookupPath(response, spec.RemainingRawPath))
-	reset := parseTime(lookupPath(response, spec.ResetPath), now)
+	limit := numericPtr(lookupQuotaPath(scope, root, spec.LimitPath))
+	remaining := numericPtr(lookupQuotaPath(scope, root, spec.RemainingRawPath))
+	reset := parseTime(lookupQuotaPath(scope, root, spec.ResetPath), now)
 	if used == nil && remainingPercent == nil && limit == nil && remaining == nil {
 		return quotaWindow{}, false
 	}
 	return quotaWindow{
-		Kind: slug(spec.Kind), Label: firstText(spec.Label, spec.Kind), UsedPercent: used, RemainingPercent: remainingPercent,
+		Kind: kind, Label: label, UsedPercent: used, RemainingPercent: remainingPercent,
 		ResetsAt: reset, Enforceable: spec.Enforceable, Unit: strings.TrimSpace(spec.Unit), Limit: limit, Remaining: remaining,
 	}, true
+}
+
+func lookupQuotaPath(scope, root any, path string) any {
+	path = strings.TrimSpace(path)
+	if path == "$root" {
+		return root
+	}
+	if strings.HasPrefix(path, "$root.") {
+		return lookupPath(root, strings.TrimPrefix(path, "$root."))
+	}
+	return lookupPath(scope, path)
+}
+
+func mappedPathValue(scope, root any, path string, valueMap map[string]string) string {
+	value := lookupQuotaPath(scope, root, path)
+	text := scalarText(value)
+	if mapped := valueMap[text]; mapped != "" {
+		return mapped
+	}
+	if number := numericPtr(value); number != nil {
+		normalized := strconv.FormatFloat(*number, 'f', -1, 64)
+		if mapped := valueMap[normalized]; mapped != "" {
+			return mapped
+		}
+	}
+	return text
 }
 
 func mappedValue(spec quotaValueSpec, response any) string {

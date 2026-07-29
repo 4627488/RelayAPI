@@ -27,6 +27,45 @@ func TestBundledQuotaAdapterPackIsDeclarative(t *testing.T) {
 	}
 }
 
+func TestBundledAdapterDerivesWindowKindsAndExpandsArrays(t *testing.T) {
+	original := hostCallback
+	t.Cleanup(func() { hostCallback = original })
+	now := time.Date(2026, 7, 29, 10, 0, 0, 0, time.UTC)
+	adapters, err := loadQuotaAdapters("append", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, ok := matchQuotaAdapter(adapters, "codex")
+	if !ok {
+		t.Fatal("missing bundled adapter")
+	}
+	hostCallback = func(method string, payload any) (json.RawMessage, error) {
+		if method != hostHTTPDo {
+			t.Fatalf("unexpected method %q", method)
+		}
+		body := []byte(`{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":6,"reset_at":1785926400,"limit_window_seconds":604800},"secondary_window":{"used_percent":2,"reset_at":1785348000,"limit_window_seconds":18000}},"additional_rate_limits":[{"limit_name":"GPT-5 Mini","rate_limit":{"primary_window":{"used_percent":10,"reset_at":1785348000}}}]}`)
+		raw, _ := json.Marshal(hostHTTPResponse{StatusCode: 200, Body: body})
+		return raw, nil
+	}
+	report, err := runQuotaAdapter(adapter, map[string]any{"access_token": "secret", "account_id": "account"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKind := map[string]quotaWindow{}
+	for _, window := range report.Windows {
+		byKind[window.Kind] = window
+	}
+	if byKind["7d"].UsedPercent == nil || *byKind["7d"].UsedPercent != 6 || !byKind["7d"].Enforceable {
+		t.Fatalf("7d window = %+v", byKind["7d"])
+	}
+	if byKind["5h"].UsedPercent == nil || *byKind["5h"].UsedPercent != 2 || !byKind["5h"].Enforceable {
+		t.Fatalf("5h window = %+v", byKind["5h"])
+	}
+	if byKind["gpt-5-mini-primary"].UsedPercent == nil || byKind["gpt-5-mini-primary"].Enforceable {
+		t.Fatalf("additional window = %+v", byKind["gpt-5-mini-primary"])
+	}
+}
+
 func TestCustomAdapterRunsForArbitraryProviderWithoutLeakingSecrets(t *testing.T) {
 	original := hostCallback
 	t.Cleanup(func() { hostCallback = original })
