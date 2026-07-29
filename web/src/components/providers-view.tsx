@@ -58,6 +58,14 @@ const providerConfigs = [
   { path: "usage-queue", label: "用量事件队列", readOnly: true },
 ] as const
 
+function isRoutingStrategy(value: unknown): value is ProviderSettings["routing_strategy"] {
+  return value === "round-robin" || value === "fill-first"
+}
+
+function isProviderConfigPath(value: unknown): value is string {
+  return typeof value === "string" && providerConfigs.some((item) => item.path === value)
+}
+
 export function ProvidersView() {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([])
   const [loading, setLoading] = useState(true)
@@ -353,7 +361,14 @@ export function ProvidersView() {
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="routing-strategy">凭据调度策略</FieldLabel>
-                  <Select value={settings.routing_strategy} onValueChange={(value) => setSettings({ ...settings, routing_strategy: value as string })}>
+                  <Select
+                    value={settings.routing_strategy}
+                    onValueChange={(value) => {
+                      if (isRoutingStrategy(value)) {
+                        setSettings({ ...settings, routing_strategy: value })
+                      }
+                    }}
+                  >
                     <SelectTrigger id="routing-strategy" className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
@@ -393,7 +408,15 @@ export function ProvidersView() {
         <CardHeader><CardTitle>CPA 功能配置</CardTitle><CardDescription>管理原生 API Key 提供商、OpenAI-compatible 端点、模型规则、代理、WebSocket、额度切换、日志、插件与 CPA 用量。内容使用 CPA 官方 JSON 结构，可完整保留高级字段。</CardDescription></CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Select value={configPath} onValueChange={(value) => { const path = value as string; setConfigPath(path); setProviderJSON(""); void loadProviderConfig(path) }}>
+            <Select
+              value={configPath}
+              onValueChange={(value) => {
+                if (!isProviderConfigPath(value)) return
+                setConfigPath(value)
+                setProviderJSON("")
+                void loadProviderConfig(value)
+              }}
+            >
               <SelectTrigger className="w-full sm:w-72"><SelectValue /></SelectTrigger>
               <SelectContent><SelectGroup>{providerConfigs.map((item) => <SelectItem key={item.path} value={item.path}>{item.label}</SelectItem>)}</SelectGroup></SelectContent>
             </Select>

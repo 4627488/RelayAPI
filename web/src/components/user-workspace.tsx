@@ -5,6 +5,7 @@ import {
   KeyRoundIcon,
   PlusIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -47,6 +48,7 @@ import {
 } from "@/components/ui/table"
 import { LogsTable, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
 import { LoadingView } from "@/components/loading-view"
+import { LoadErrorView } from "@/components/load-error-view"
 import type { Page } from "@/components/app-shell"
 import {
   api,
@@ -58,6 +60,8 @@ import {
   type UsageReport,
 } from "@/lib/api"
 import { dateTime, money } from "@/lib/format"
+import { copyText } from "@/lib/clipboard"
+import { useSessionStorage } from "@/hooks/use-session-storage"
 
 interface UserWorkspaceProps {
   page: Page
@@ -69,9 +73,11 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
   const [logs, setLogs] = useState<RequestLog[]>([])
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true)
+    setLoadError("")
     try {
       const [usageValue, logsValue, keysValue] = await Promise.all([
         api<UsageReport>("/api/usage?days=30"),
@@ -82,19 +88,32 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
       setLogs(logsValue.items ?? [])
       setKeys(keysValue.items ?? [])
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取数据")
+      const message = cause instanceof Error ? cause.message : "无法读取数据"
+      setLoadError(message)
+      if (!showLoading) toast.error(message)
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void load()
+    void load(true)
   }, [load])
 
-  if (loading || !usage) return <LoadingView />
+  if (loading) return <LoadingView />
+  if (!usage) {
+    return <LoadErrorView message={loadError || "账户数据不完整"} onRetry={() => void load(true)} />
+  }
 
-  if (page === "keys") return <KeysView keys={keys} onChanged={load} />
+  if (page === "keys") {
+    return (
+      <KeysView
+        keys={keys}
+        onChanged={load}
+        storageKey={`relayapi.latest-api-key.${session.tenant?.id || "unknown"}`}
+      />
+    )
+  }
   if (page === "logs") return <LogsTable logs={logs} />
   if (page === "usage") {
     return (
@@ -147,9 +166,33 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
   )
 }
 
-function KeysView({ keys, onChanged }: { keys: ApiKey[]; onChanged: () => Promise<void> }) {
+type GeneratedKey = {
+  id: string
+  name: string
+  key: string
+}
+
+function isGeneratedKey(value: unknown): value is GeneratedKey {
+  if (!value || typeof value !== "object") return false
+  const item = value as Partial<GeneratedKey>
+  return typeof item.id === "string" && typeof item.name === "string" && typeof item.key === "string"
+}
+
+function KeysView({
+  keys,
+  onChanged,
+  storageKey,
+}: {
+  keys: ApiKey[]
+  onChanged: () => Promise<void>
+  storageKey: string
+}) {
   const [createOpen, setCreateOpen] = useState(false)
-  const [plainKey, setPlainKey] = useState("")
+  const [showPlainKey, setShowPlainKey] = useState(false)
+  const [generatedKey, setGeneratedKey] = useSessionStorage<GeneratedKey>(
+    storageKey,
+    isGeneratedKey,
+  )
   const [pending, setPending] = useState(false)
 
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -166,7 +209,8 @@ function KeysView({ keys, onChanged }: { keys: ApiKey[]; onChanged: () => Promis
           .map((value) => value.trim())
           .filter(Boolean),
       })
-      setPlainKey(response.key)
+      setGeneratedKey({ id: response.item.id, name: response.item.name, key: response.key })
+      setShowPlainKey(true)
       await onChanged()
       toast.success("API Key 已创建")
     } catch (cause) {
@@ -179,6 +223,7 @@ function KeysView({ keys, onChanged }: { keys: ApiKey[]; onChanged: () => Promis
   async function remove(id: string) {
     try {
       await deleteRequest(`/api/keys/${id}`)
+      if (generatedKey?.id === id) setGeneratedKey(null)
       await onChanged()
       toast.success("API Key 已删除")
     } catch (cause) {
@@ -193,11 +238,30 @@ function KeysView({ keys, onChanged }: { keys: ApiKey[]; onChanged: () => Promis
           <h1 className="text-2xl font-semibold tracking-tight">API Keys</h1>
           <p className="text-sm text-muted-foreground">为不同应用创建独立密钥与限制。</p>
         </div>
-        <Button onClick={() => { setPlainKey(""); setCreateOpen(true) }}>
+        <Button onClick={() => { setShowPlainKey(false); setCreateOpen(true) }}>
           <PlusIcon data-icon="inline-start" />
           创建 Key
         </Button>
       </div>
+
+      {generatedKey ? (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="flex-row items-start justify-between gap-4">
+            <div>
+              <CardTitle>最近创建的 API Key</CardTitle>
+              <CardDescription>
+                {generatedKey.name} 的完整密钥临时保留在当前浏览器标签页中。
+              </CardDescription>
+            </div>
+            <Button variant="ghost" size="icon-sm" aria-label="清除完整密钥" onClick={() => setGeneratedKey(null)}>
+              <XIcon />
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <PlainKeyField id="latest-plain-key" value={generatedKey.key} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -240,7 +304,7 @@ function KeysView({ keys, onChanged }: { keys: ApiKey[]; onChanged: () => Promis
                 <EmptyDescription>创建密钥后即可调用所有已授权模型。</EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
-                <Button onClick={() => setCreateOpen(true)}>
+                <Button onClick={() => { setShowPlainKey(false); setCreateOpen(true) }}>
                   <PlusIcon data-icon="inline-start" />
                   创建第一个 Key
                 </Button>
@@ -253,33 +317,13 @@ function KeysView({ keys, onChanged }: { keys: ApiKey[]; onChanged: () => Promis
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{plainKey ? "保存 API Key" : "创建 API Key"}</DialogTitle>
+            <DialogTitle>{showPlainKey && generatedKey ? "保存 API Key" : "创建 API Key"}</DialogTitle>
             <DialogDescription>
-              {plainKey ? "这是唯一一次显示完整密钥，请立即保存。" : "限制留空表示继承账户策略。"}
+              {showPlainKey && generatedKey ? "请立即保存；关闭弹窗后仍可在密钥页顶部找到。" : "限制留空表示继承账户策略。"}
             </DialogDescription>
           </DialogHeader>
-          {plainKey ? (
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="plain-key">完整密钥</FieldLabel>
-                <InputGroup>
-                  <InputGroupInput id="plain-key" readOnly value={plainKey} className="font-mono text-xs" />
-                  <InputGroupAddon align="inline-end">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="复制密钥"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(plainKey)
-                        toast.success("已复制")
-                      }}
-                    >
-                      <CopyIcon />
-                    </Button>
-                  </InputGroupAddon>
-                </InputGroup>
-              </Field>
-            </FieldGroup>
+          {showPlainKey && generatedKey ? (
+            <PlainKeyField id="dialog-plain-key" value={generatedKey.key} />
           ) : (
             <form id="create-key-form" onSubmit={create}>
               <FieldGroup>
@@ -307,9 +351,9 @@ function KeysView({ keys, onChanged }: { keys: ApiKey[]; onChanged: () => Promis
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              {plainKey ? "我已保存" : "取消"}
+              {showPlainKey && generatedKey ? "我已保存" : "取消"}
             </Button>
-            {!plainKey ? (
+            {!(showPlainKey && generatedKey) ? (
               <Button type="submit" form="create-key-form" disabled={pending}>
                 {pending ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}
                 创建
@@ -319,6 +363,33 @@ function KeysView({ keys, onChanged }: { keys: ApiKey[]; onChanged: () => Promis
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+function PlainKeyField({ id, value }: { id: string; value: string }) {
+  return (
+    <FieldGroup>
+      <Field>
+        <FieldLabel htmlFor={id}>完整密钥</FieldLabel>
+        <InputGroup>
+          <InputGroupInput id={id} readOnly value={value} className="font-mono text-xs" />
+          <InputGroupAddon align="inline-end">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="复制密钥"
+              onClick={() => {
+                copyText(value)
+                  .then(() => toast.success("已复制"))
+                  .catch(() => toast.error("复制失败，请手动选择密钥"))
+              }}
+            >
+              <CopyIcon />
+            </Button>
+          </InputGroupAddon>
+        </InputGroup>
+      </Field>
+    </FieldGroup>
   )
 }
 

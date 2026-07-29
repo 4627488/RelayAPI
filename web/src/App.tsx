@@ -28,6 +28,14 @@ export function App() {
   async function logout() {
     try {
       await api("/api/auth/logout", { method: "POST" })
+      try {
+        for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+          const key = window.sessionStorage.key(index)
+          if (key?.startsWith("relayapi.latest-")) window.sessionStorage.removeItem(key)
+        }
+      } catch {
+        // Session storage may be disabled; logout must still succeed.
+      }
       setSession(null)
       setPage("overview")
       toast.success("已退出登录")

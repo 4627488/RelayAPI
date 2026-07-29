@@ -78,6 +78,7 @@ func (a *App) adminInvitations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"item":       item,
 		"token":      token,
@@ -169,6 +170,7 @@ func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 201, map[string]any{"item": item, "key": plain})
 }
 
@@ -293,6 +295,7 @@ func (a *App) adminTenantKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 201, map[string]any{"item": item, "key": plain})
 }
 

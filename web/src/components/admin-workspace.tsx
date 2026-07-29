@@ -9,12 +9,14 @@ import {
   TriangleAlertIcon,
   UserCheckIcon,
   UsersIcon,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import type { Page } from "@/components/app-shell"
 import { LogsTable, MetricGrid, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
 import { LoadingView } from "@/components/loading-view"
+import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -63,6 +65,8 @@ import {
   type User,
 } from "@/lib/api"
 import { compact, dateTime, money } from "@/lib/format"
+import { copyText } from "@/lib/clipboard"
+import { useSessionStorage } from "@/hooks/use-session-storage"
 
 interface AdminWorkspaceProps {
   page: Page
@@ -75,9 +79,11 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [logs, setLogs] = useState<RequestLog[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true)
+    setLoadError("")
     try {
       const [overviewValue, usageValue, usersValue, invitationsValue, logsValue] = await Promise.all([
         api<AdminOverview>("/api/admin/overview"),
@@ -92,17 +98,22 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
       setInvitations(invitationsValue.items ?? [])
       setLogs(logsValue.items ?? [])
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取管理数据")
+      const message = cause instanceof Error ? cause.message : "无法读取管理数据"
+      setLoadError(message)
+      if (!showLoading) toast.error(message)
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void load()
+    void load(true)
   }, [load])
 
-  if (loading || !overview || !usage) return <LoadingView />
+  if (loading) return <LoadingView />
+  if (!overview || !usage) {
+    return <LoadErrorView message={loadError || "管理数据不完整"} onRetry={() => void load(true)} />
+  }
   if (page === "users") return <UsersView users={users} />
   if (page === "invitations") return <InvitationsView items={invitations} onChanged={load} />
   if (page === "providers") return <ProvidersView />
@@ -222,11 +233,43 @@ function UsersView({ users }: { users: User[] }) {
   )
 }
 
+type GeneratedInvitation = {
+  id: string
+  invite_url: string
+  expires_at: string
+}
+
+function isGeneratedInvitation(value: unknown): value is GeneratedInvitation {
+  if (!value || typeof value !== "object") return false
+  const item = value as Partial<GeneratedInvitation>
+  return typeof item.id === "string"
+    && typeof item.invite_url === "string"
+    && typeof item.expires_at === "string"
+    && new Date(item.expires_at).getTime() > Date.now()
+}
+
 function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged: () => Promise<void> }) {
-  const [renderedAt] = useState(() => Date.now())
+  const [renderedAt, setRenderedAt] = useState(() => Date.now())
   const [open, setOpen] = useState(false)
-  const [result, setResult] = useState<{ token: string; invite_url: string } | null>(null)
+  const [showResult, setShowResult] = useState(false)
+  const [result, setResult] = useSessionStorage<GeneratedInvitation>(
+    "relayapi.latest-invitation",
+    isGeneratedInvitation,
+  )
   const [pending, setPending] = useState(false)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setRenderedAt(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!result) return
+    const item = items.find((candidate) => candidate.id === result.id)
+    if (new Date(result.expires_at).getTime() <= Date.now() || item?.used_at || item?.revoked_at) {
+      setResult(null)
+    }
+  }, [items, result, setResult])
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -240,7 +283,12 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
           expires_in_hours: Number(data.get("hours") ?? 72),
         },
       )
-      setResult(value)
+      setResult({
+        id: value.item.id,
+        invite_url: value.invite_url,
+        expires_at: value.item.expires_at,
+      })
+      setShowResult(true)
       await onChanged()
       toast.success("邀请已生成")
     } catch (cause) {
@@ -253,6 +301,7 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
   async function revoke(id: string) {
     try {
       await deleteRequest(`/api/admin/invitations/${id}`)
+      if (result?.id === id) setResult(null)
       await onChanged()
       toast.success("邀请已撤销")
     } catch (cause) {
@@ -267,11 +316,29 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
           <h1 className="text-2xl font-semibold tracking-tight">邀请</h1>
           <p className="text-sm text-muted-foreground">生成单次邀请链接并追踪使用状态。</p>
         </div>
-        <Button onClick={() => { setResult(null); setOpen(true) }}>
+        <Button onClick={() => { setShowResult(false); setOpen(true) }}>
           <PlusIcon data-icon="inline-start" />
           生成邀请
         </Button>
       </div>
+      {result ? (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="flex-row items-start justify-between gap-4">
+            <div>
+              <CardTitle>最近生成的邀请链接</CardTitle>
+              <CardDescription>
+                已临时保留在当前浏览器标签页中，关闭标签页或清除后无法恢复。
+              </CardDescription>
+            </div>
+            <Button variant="ghost" size="icon-sm" aria-label="清除邀请链接" onClick={() => setResult(null)}>
+              <XIcon />
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <InviteLinkField id="latest-invite-url" value={result.invite_url} />
+          </CardContent>
+        </Card>
+      ) : null}
       <Card>
         <CardHeader>
           <CardTitle>邀请记录</CardTitle>
@@ -334,33 +401,13 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{result ? "邀请已生成" : "生成邀请"}</DialogTitle>
+            <DialogTitle>{showResult && result ? "邀请已生成" : "生成邀请"}</DialogTitle>
             <DialogDescription>
-              {result ? "链接只显示一次，请复制并安全发送。" : "可选填邮箱来限制邀请使用者。"}
+              {showResult && result ? "请复制并安全发送；关闭弹窗后仍可在邀请页顶部找到。" : "可选填邮箱来限制邀请使用者。"}
             </DialogDescription>
           </DialogHeader>
-          {result ? (
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="invite-url">邀请链接</FieldLabel>
-                <InputGroup>
-                  <InputGroupInput id="invite-url" readOnly value={result.invite_url} />
-                  <InputGroupAddon align="inline-end">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="复制邀请链接"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(result.invite_url)
-                        toast.success("邀请链接已复制")
-                      }}
-                    >
-                      <CopyIcon />
-                    </Button>
-                  </InputGroupAddon>
-                </InputGroup>
-              </Field>
-            </FieldGroup>
+          {showResult && result ? (
+            <InviteLinkField id="dialog-invite-url" value={result.invite_url} />
           ) : (
             <form id="invite-form" onSubmit={create}>
               <FieldGroup>
@@ -378,9 +425,9 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
-              {result ? "完成" : "取消"}
+              {showResult && result ? "完成" : "取消"}
             </Button>
-            {!result ? (
+            {!(showResult && result) ? (
               <Button type="submit" form="invite-form" disabled={pending}>
                 {pending ? <Spinner data-icon="inline-start" /> : <SendIcon data-icon="inline-start" />}
                 生成
@@ -390,5 +437,32 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+function InviteLinkField({ id, value }: { id: string; value: string }) {
+  return (
+    <FieldGroup>
+      <Field>
+        <FieldLabel htmlFor={id}>邀请链接</FieldLabel>
+        <InputGroup>
+          <InputGroupInput id={id} readOnly value={value} />
+          <InputGroupAddon align="inline-end">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="复制邀请链接"
+              onClick={() => {
+                copyText(value)
+                  .then(() => toast.success("邀请链接已复制"))
+                  .catch(() => toast.error("复制失败，请手动选择链接"))
+              }}
+            >
+              <CopyIcon />
+            </Button>
+          </InputGroupAddon>
+        </InputGroup>
+      </Field>
+    </FieldGroup>
   )
 }
