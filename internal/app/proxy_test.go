@@ -1,6 +1,14 @@
 package app
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
+
+func TestRoutesRegisterWithFrontendCatchAll(t *testing.T) {
+	a := &App{mux: http.NewServeMux()}
+	a.routes()
+}
 
 func TestReadRequestMeta(t *testing.T) {
 	tests := []struct{ body, path, model string }{

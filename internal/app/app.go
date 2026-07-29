@@ -81,7 +81,9 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/admin/tenants/{id}/keys", a.withAdmin(http.HandlerFunc(a.adminTenantKeys)))
 	a.mux.Handle("GET /api/admin/prices", a.withAdmin(http.HandlerFunc(a.adminPrices)))
 	a.mux.Handle("PUT /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceUpdate)))
-	a.mux.Handle("/api/admin/cpa/{resource...}", a.withAdmin(http.HandlerFunc(a.adminCPA)))
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		a.mux.Handle(method+" /api/admin/cpa/{resource...}", a.withAdmin(http.HandlerFunc(a.adminCPA)))
+	}
 	a.mux.Handle("GET /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/models", a.withAdmin(http.HandlerFunc(a.adminProviderModels)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
@@ -100,10 +102,15 @@ func (a *App) routes() {
 	for _, pattern := range []string{"/v1/", "/backend-api/codex/", "/openai/v1/", "/v1beta/"} {
 		a.mux.Handle(pattern, http.HandlerFunc(a.proxy))
 	}
-	a.mux.HandleFunc("GET /", a.frontend)
+	a.mux.HandleFunc("/", a.frontend)
 }
 
 func (a *App) frontend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "不支持的请求方法")
+		return
+	}
 	if a.cfg.WebDistDir == "" {
 		a.serviceInfo(w, r)
 		return

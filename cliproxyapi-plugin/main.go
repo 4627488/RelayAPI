@@ -121,6 +121,8 @@ func handle(method string, raw []byte) ([]byte, error) {
 		return ok(map[string]any{
 			"schema_version": 1,
 			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.1.0", "Author": "4627488",
+				"GitHubRepository": "https://github.com/4627488/RelayAPI",
+				"Logo":             "https://github.com/4627488.png",
 				"ConfigFields": []map[string]any{
 					{"Name": "relay_url", "Type": "string", "Description": "RelayAPI private service URL"},
 					{"Name": "secret", "Type": "string", "Description": "Shared webhook secret", "Sensitive": true},
