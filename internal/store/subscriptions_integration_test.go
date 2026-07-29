@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -242,7 +241,15 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	if !updated.QuotaSupported || updated.QuotaProbeStatus != "error" || updated.QuotaObservedAt == nil || updated.PlanType != "pro" {
 		t.Fatalf("updated probe state = %+v", updated)
 	}
-	if !strings.Contains(string(updated.QuotaSnapshot), `"kind":"daily"`) {
+	var snapshot struct {
+		Windows []struct {
+			Kind string `json:"kind"`
+		} `json:"windows"`
+	}
+	if err := json.Unmarshal(updated.QuotaSnapshot, &snapshot); err != nil {
+		t.Fatalf("decode retained quota snapshot: %v (%s)", err, updated.QuotaSnapshot)
+	}
+	if len(snapshot.Windows) != 1 || snapshot.Windows[0].Kind != "daily" {
 		t.Fatalf("quota snapshot was not retained across a transient error: %s", updated.QuotaSnapshot)
 	}
 }

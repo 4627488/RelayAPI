@@ -62,26 +62,30 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --prefer-offline
       - run: pnpm lint
       - run: pnpm build
 
   images:
-    name: Build distribution image
+    name: Build ${{ matrix.name }} image
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: RelayAPI
+            context: .
+            cache_scope: relayapi
+          - name: CPA bridge
+            context: ./cliproxyapi-plugin
+            cache_scope: relayapi-cpa-plugin
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           push: false
-          cache-from: type=gha,scope=relayapi
-          cache-to: type=gha,mode=max,scope=relayapi
-      - name: Validate optional CPA bridge image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./cliproxyapi-plugin
-          push: false
-          cache-from: type=gha,scope=cpa-bridge
-          cache-to: type=gha,mode=max,scope=cpa-bridge
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
