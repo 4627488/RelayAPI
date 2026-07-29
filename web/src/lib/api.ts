@@ -110,17 +110,26 @@ export interface ProviderAccount {
   failed?: number
 }
 
-type ApiErrorBody = { error?: { code?: string; message?: string } }
+type ApiErrorBody = {
+  error?: { code?: string; message?: string } | string
+  message?: string
+  status?: string
+}
 
 export class ApiError extends Error {
   status: number
   code?: string
 
   constructor(status: number, body: ApiErrorBody) {
-    super(body.error?.message ?? `请求失败 (${status})`)
+    const nestedError = typeof body.error === "object" ? body.error : undefined
+    const message = nestedError?.message
+      ?? (typeof body.error === "string" ? body.error : undefined)
+      ?? body.message
+      ?? `请求失败 (${status})`
+    super(message)
     this.name = "ApiError"
     this.status = status
-    this.code = body.error?.code
+    this.code = nestedError?.code
   }
 }
 

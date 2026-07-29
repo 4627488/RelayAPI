@@ -11,7 +11,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { api, deleteRequest, postJSON, type ProviderAccount } from "@/lib/api"
+import { ApiError, api, deleteRequest, postJSON, type ProviderAccount } from "@/lib/api"
 
 type OAuthStart = { status: string; url: string; state: string }
 type ProviderSettings = { request_retry: number; max_retry_interval: number; routing_strategy: string }
@@ -65,11 +65,18 @@ export function ProvidersView() {
     const form = new FormData(event.currentTarget)
     setPending(true)
     try {
-      await postJSON("/api/admin/providers/oauth/callback", {
-        provider: "codex",
-        state: oauth.state,
-        redirect_url: String(form.get("redirect_url") ?? ""),
-      })
+      try {
+        await postJSON("/api/admin/providers/oauth/callback", {
+          provider: "codex",
+          state: oauth.state,
+          redirect_url: String(form.get("redirect_url") ?? ""),
+        })
+      } catch (cause) {
+        // CPA returns 409 when a duplicated browser callback reaches a flow
+        // that has already completed. The status endpoint is authoritative,
+        // so continue polling instead of presenting a false failure.
+        if (!(cause instanceof ApiError) || cause.status !== 409) throw cause
+      }
       for (let attempt = 0; attempt < 15; attempt++) {
         const status = await api<{ status: string; error?: string }>(
           `/api/admin/providers/oauth/status?state=${encodeURIComponent(oauth.state)}`,
