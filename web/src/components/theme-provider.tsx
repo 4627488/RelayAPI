@@ -23,7 +23,7 @@ const ThemeProviderContext = React.createContext<
   ThemeProviderState | undefined
 >(undefined)
 
-function isTheme(value: string | null): value is Theme {
+export function isTheme(value: unknown): value is Theme {
   if (value === null) {
     return false
   }
@@ -95,6 +95,10 @@ export function ThemeProvider({
 
   const setTheme = React.useCallback(
     (nextTheme: Theme) => {
+      if (!isTheme(nextTheme)) {
+        return
+      }
+
       localStorage.setItem(storageKey, nextTheme)
       setThemeState(nextTheme)
     },
@@ -104,8 +108,9 @@ export function ThemeProvider({
   const applyTheme = React.useCallback(
     (nextTheme: Theme) => {
       const root = document.documentElement
+      const safeTheme = isTheme(nextTheme) ? nextTheme : defaultTheme
       const resolvedTheme =
-        nextTheme === "system" ? getSystemTheme() : nextTheme
+        safeTheme === "system" ? getSystemTheme() : safeTheme
       const restoreTransitions = disableTransitionOnChange
         ? disableTransitionsTemporarily()
         : null
@@ -117,7 +122,7 @@ export function ThemeProvider({
         restoreTransitions()
       }
     },
-    [disableTransitionOnChange]
+    [defaultTheme, disableTransitionOnChange]
   )
 
   React.useEffect(() => {

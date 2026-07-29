@@ -44,7 +44,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
-import { useTheme, type Theme } from "@/components/theme-provider"
+import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
 import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
 
@@ -88,7 +88,11 @@ function ThemeChoices({
   return (
     <DropdownMenuRadioGroup
       value={value}
-      onValueChange={(nextValue) => onValueChange(nextValue as Theme)}
+      onValueChange={(nextValue) => {
+        if (isTheme(nextValue)) {
+          onValueChange(nextValue)
+        }
+      }}
     >
       {themes.map((item) => (
         <DropdownMenuRadioItem key={item.value} value={item.value}>
