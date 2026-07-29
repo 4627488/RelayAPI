@@ -27,6 +27,10 @@ CLIProxyAPI 负责协议、提供商凭据和模型路由；RelayAPI 负责用�
 CI 在 `main` 相关源码变化、发布 `v*.*.*` 标签或手动触发时，分别构建并推送
 主镜像与 bridge 的 Linux AMD64/ARM64 镜像：
 
+AMD64 与 ARM64 分别运行在 GitHub 的原生 `ubuntu-24.04` 和
+`ubuntu-24.04-arm` runner 上并行构建，随后按 digest 合并为多架构 manifest；
+不再在 x64 runner 上通过 QEMU 串行模拟 ARM64。
+
 - `latest`：默认分支最新稳定构建
 - `1.2.3`、`1.2`：版本标签构建
 - `main`：主分支滚动构建
