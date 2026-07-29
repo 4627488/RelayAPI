@@ -13,8 +13,10 @@ the stable CPA AuthID and accounting metadata.
    must fail when that AuthID is not an eligible scheduler candidate; it must
    never silently delegate to another credential. Routing instructions carry
    a short-lived HMAC signature and are accepted only from Relay.
-3. Allocation shares use integer parts-per-million (`allocation_ppm`). Enabled
-   allocations may not exceed the parent's configured oversell limit.
+3. Metered allocation shares use integer parts-per-million (`allocation_ppm`).
+   Enabled allocations may not exceed the parent's configured oversell limit.
+   Unmetered parents use children as access grants and do not impose an
+   allocation-sum limit.
 4. Tenant balance and child-subscription capacity are independent policies.
    Admission atomically reserves both when both are enabled.
 5. Every request has one durable reservation keyed by request ID. Reservation,
@@ -60,6 +62,21 @@ of children, including multiple children on the same parent.
 `child_quota_windows` holds the active counters inherited from each parent
 window. Counters are changed only while holding PostgreSQL row locks.
 
+### Upstream API-key distribution
+
+Provider API keys follow the same redacted credential path as OAuth accounts:
+
+1. the administrator stores the secret in CPA's provider configuration;
+2. CPA exposes the runtime credential's scheduler ID and stable auth index;
+3. Relay synchronizes that identity as an `unmetered` parent subscription;
+4. the administrator creates one or more child access grants for tenants;
+5. Relay strictly pins each request to the selected CPA credential, reserves
+   the priced request cost from the tenant row, then settles the actual cost.
+
+No provider API key is copied into Relay or returned to a tenant. Creating a
+child does not transfer money into a second wallet: all children of a tenant
+share that tenant's single `balance_nano_usd` balance and billing ledger.
+
 ### Request reservations
 
 `request_reservations` is the idempotency and reconciliation authority. It
@@ -90,7 +107,10 @@ strict plugin remains the final authority on candidate validity.
 ## Capacity modes
 
 - `unmetered`: routing is pinned but no child quota is reserved. Balance billing
-  and tenant/key limits may still apply.
+  and tenant/key limits still apply. This is the normal mode for pay-as-you-go
+  upstream API keys: the key remains private in CPA, any number of child access
+  grants can be distributed, and every request is settled against the tenant's
+  total Relay balance.
 - `manual`: administrators define parent window limits and reset instants. This
   works for every CPA provider and API-key endpoint.
 - `observed`: Relay combines credential-attributed priced usage with upstream

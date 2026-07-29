@@ -29,7 +29,7 @@ import {
 import { dateTime, money } from "@/lib/format"
 
 const capacityModes: Array<{ value: CapacityMode; label: string }> = [
-  { value: "unmetered", label: "不计上游额度" },
+  { value: "unmetered", label: "账户余额计费" },
   { value: "manual", label: "手动容量窗口" },
   { value: "observed", label: "自动观测/校准容量" },
 ]
@@ -108,7 +108,9 @@ export function AdminSubscriptionsView() {
         tenant_id: String(form.get("tenant_id") || ""),
         parent_subscription_id: newChildParentID,
         name: String(form.get("name") || ""),
-        allocation_ppm: Math.round(Number(form.get("percent") || 0) * 10_000),
+        allocation_ppm: newChildParent?.item.capacity_mode === "unmetered"
+          ? 1_000_000
+          : Math.round(Number(form.get("percent") || 0) * 10_000),
         priority: Number(form.get("priority") || 100),
         enabled: true,
         model_allowlist: newChildModels,
@@ -172,7 +174,7 @@ export function AdminSubscriptionsView() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">父订阅与子订阅</h1>
-          <p className="text-sm text-muted-foreground">将 CPA AuthID 作为父容量池；上游额度由 bridge 在 CPA 内部脱敏读取，子份额由管理员分配。</p>
+          <p className="text-sm text-muted-foreground">OAuth 账户可拆分上游额度；API Key 账户可作为余额计费通道分发，密钥始终保留在 CPA 内部。</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => void syncParents()} disabled={pending}>
@@ -186,8 +188,8 @@ export function AdminSubscriptionsView() {
 
       <Card>
         <CardHeader>
-          <CardTitle>父订阅容量池</CardTitle>
-          <CardDescription>AuthID 只在管理员视图中展示；租户只能看到子订阅名称和自己的额度。</CardDescription>
+          <CardTitle>父订阅与计费通道</CardTitle>
+          <CardDescription>OAuth 父账户按额度拆分；API Key 父账户固定路由后按租户总余额结算。AuthID 只对管理员可见。</CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? <div className="flex justify-center py-12"><Spinner /></div> : parents.length ? (
@@ -200,7 +202,9 @@ export function AdminSubscriptionsView() {
                     <TableCell>{view.item.provider || "未知"}</TableCell>
                     <TableCell><QuotaSnapshot snapshot={view.item.quota_snapshot} status={view.item.quota_probe_status} error={view.item.quota_probe_error} observedAt={view.item.quota_observed_at} compact /></TableCell>
                     <TableCell>{capacityModes.find((mode) => mode.value === view.item.capacity_mode)?.label}</TableCell>
-                    <TableCell className="tabular-nums">{percent(view.allocated_ppm)} / {percent(view.item.allocation_limit_ppm)}</TableCell>
+                    <TableCell className="tabular-nums">{view.item.capacity_mode === "unmetered"
+                      ? `${children.filter((child) => child.parent_subscription_id === view.item.id && child.enabled).length} 个子订阅`
+                      : `${percent(view.allocated_ppm)} / ${percent(view.item.allocation_limit_ppm)}`}</TableCell>
                     <TableCell><div className="flex flex-col items-start gap-1"><Badge variant={view.item.enabled && !view.item.cpa_unavailable ? "secondary" : "outline"}>{!view.item.enabled ? "已停用" : view.item.cpa_unavailable ? "CPA 不可用" : view.item.status || "可用"}</Badge><QuotaProbeBadge item={view.item} /></div></TableCell>
                     <TableCell className="text-right"><div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={pending} onClick={() => void syncParentQuota(view.item.id)}><RefreshCwIcon />额度</Button><Button size="sm" variant="outline" onClick={() => setParentEditor(view)}>配置</Button></div></TableCell>
                   </TableRow>
@@ -212,7 +216,7 @@ export function AdminSubscriptionsView() {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>子订阅分配</CardTitle><CardDescription>启用后的分配总额不能超过父订阅上限。</CardDescription></CardHeader>
+        <CardHeader><CardTitle>子订阅分配</CardTitle><CardDescription>额度型父账户受分配上限约束；余额计费通道可分发给多个租户。</CardDescription></CardHeader>
         <CardContent>
           {children.length ? (
             <Table>
@@ -222,7 +226,7 @@ export function AdminSubscriptionsView() {
                   <TableCell><div className="font-medium">{child.name}</div><div className="text-xs text-muted-foreground">优先级 {child.priority}</div></TableCell>
                   <TableCell>{tenantByID.get(child.tenant_id)?.name || child.tenant_id}</TableCell>
                   <TableCell>{parentByID.get(child.parent_subscription_id)?.name || "父订阅不可用"}</TableCell>
-                  <TableCell>{percent(child.allocation_ppm)}</TableCell>
+                  <TableCell>{parentByID.get(child.parent_subscription_id)?.capacity_mode === "unmetered" ? "账户余额" : percent(child.allocation_ppm)}</TableCell>
                   <TableCell><Badge variant={child.enabled ? "secondary" : "outline"}>{child.enabled ? "启用" : "停用"}</Badge></TableCell>
                   <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setChildEditor(child)}>编辑</Button><Button size="sm" variant="outline" disabled={pending} onClick={() => void toggleChild(child)}>{child.enabled ? "停用" : "启用"}</Button><Button size="icon-sm" variant="ghost" aria-label="删除子订阅" onClick={() => void removeChild(child.id)}><Trash2Icon /></Button></div></TableCell>
                 </TableRow>
@@ -236,13 +240,13 @@ export function AdminSubscriptionsView() {
       <ChildEditor value={childEditor} parents={parents} pending={pending} onPending={setPending} onClose={() => setChildEditor(null)} onSaved={load} />
       <Dialog open={childOpen} onOpenChange={(open) => { setChildOpen(open); if (!open) { setNewChildParentID(""); setNewChildModels([]) } }}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle>分配子订阅</DialogTitle><DialogDescription>份额使用精确百万分比存储，不使用浮点计费。</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>分配子订阅</DialogTitle><DialogDescription>{newChildParent?.item.capacity_mode === "unmetered" ? "该通道不划分上游额度，实际消费统一从所选租户的账户总余额扣除。" : "份额使用精确百万分比存储，不使用浮点计费。"}</DialogDescription></DialogHeader>
           <form id="child-subscription-form" onSubmit={createChild}>
             <FieldGroup>
               <Field><FieldLabel>租户</FieldLabel><Select name="tenant_id" required><SelectTrigger className="w-full"><SelectValue placeholder="选择租户" /></SelectTrigger><SelectContent><SelectGroup>{tenants.map((tenant) => <SelectItem key={tenant.id} value={tenant.id}>{tenant.name} · {tenant.owner_email}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
-              <Field><FieldLabel>父订阅</FieldLabel><Select value={newChildParentID} onValueChange={(next) => { setNewChildParentID(next ?? ""); setNewChildModels([]) }} required><SelectTrigger className="w-full"><SelectValue placeholder="选择父订阅" /></SelectTrigger><SelectContent><SelectGroup>{parents.filter((item) => item.item.enabled && !item.item.cpa_unavailable).map((view) => <SelectItem key={view.item.id} value={view.item.id}>{view.item.name} · 剩余 {percent(view.item.allocation_limit_ppm - view.allocated_ppm)}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
+              <Field><FieldLabel>父订阅</FieldLabel><Select value={newChildParentID} onValueChange={(next) => { setNewChildParentID(next ?? ""); setNewChildModels([]) }} required><SelectTrigger className="w-full"><SelectValue placeholder="选择父订阅" /></SelectTrigger><SelectContent><SelectGroup>{parents.filter((item) => item.item.enabled && !item.item.cpa_unavailable).map((view) => <SelectItem key={view.item.id} value={view.item.id}>{view.item.name} · {view.item.capacity_mode === "unmetered" ? "账户余额计费" : `剩余 ${percent(view.item.allocation_limit_ppm - view.allocated_ppm)}`}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
               <Field><FieldLabel htmlFor="child-name">名称</FieldLabel><Input id="child-name" name="name" placeholder="例如：团队 Pro 1/20" required /></Field>
-              <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="child-percent">父容量占比（%）</FieldLabel><Input id="child-percent" name="percent" type="number" min="0.0001" step="0.0001" defaultValue="5" required /></Field><Field><FieldLabel htmlFor="child-priority">优先级</FieldLabel><Input id="child-priority" name="priority" type="number" defaultValue="100" required /></Field></div>
+              <div className="grid gap-4 sm:grid-cols-2">{newChildParent?.item.capacity_mode !== "unmetered" ? <Field><FieldLabel htmlFor="child-percent">父容量占比（%）</FieldLabel><Input id="child-percent" name="percent" type="number" min="0.0001" step="0.0001" defaultValue="5" required /></Field> : <Field><FieldLabel htmlFor="child-billing">结算账户</FieldLabel><Input id="child-billing" value="租户总余额" readOnly /><FieldDescription>子订阅本身不保存余额。</FieldDescription></Field>}<Field><FieldLabel htmlFor="child-priority">优先级</FieldLabel><Input id="child-priority" name="priority" type="number" defaultValue="100" required /></Field></div>
               <Field><FieldLabel htmlFor="child-models">模型范围</FieldLabel><ModelSelector id="child-models" options={parentModelOptions(newChildParent)} value={newChildModels} onChange={setNewChildModels} allLabel="继承父订阅全部模型" /><FieldDescription>这里只能从父订阅可用模型中收窄；不选择表示全部继承。</FieldDescription></Field>
             </FieldGroup>
           </form>
@@ -276,7 +280,9 @@ function ChildEditor({ value, parents, pending, onPending, onClose, onSaved }: {
           tenant_id: current.tenant_id,
           parent_subscription_id: parentID,
           name: String(form.get("name") || ""),
-          allocation_ppm: Math.round(Number(form.get("percent") || 0) * 10_000),
+          allocation_ppm: selectedParent?.item.capacity_mode === "unmetered"
+            ? 1_000_000
+            : Math.round(Number(form.get("percent") || 0) * 10_000),
           priority: Number(form.get("priority") || 0),
           enabled: form.get("enabled") === "on",
           model_allowlist: models,
@@ -293,10 +299,10 @@ function ChildEditor({ value, parents, pending, onPending, onClose, onSaved }: {
       onPending(false)
     }
   }
-  return <Dialog open onOpenChange={(open) => { if (!open) onClose() }}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>编辑子订阅</DialogTitle><DialogDescription>修改份额、路由优先级、生命周期和模型范围。</DialogDescription></DialogHeader><form id="child-editor-form" onSubmit={save}><FieldGroup>
+  return <Dialog open onOpenChange={(open) => { if (!open) onClose() }}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>编辑子订阅</DialogTitle><DialogDescription>{selectedParent?.item.capacity_mode === "unmetered" ? "该 API Key 通道按租户总余额结算，可修改路由优先级、生命周期和模型范围。" : "修改份额、路由优先级、生命周期和模型范围。"}</DialogDescription></DialogHeader><form id="child-editor-form" onSubmit={save}><FieldGroup>
     <Field><FieldLabel htmlFor="edit-child-name">名称</FieldLabel><Input id="edit-child-name" name="name" defaultValue={current.name} required /></Field>
     <Field><FieldLabel>父订阅</FieldLabel><Select value={parentID} onValueChange={(next) => { setParentID(next ?? ""); setModels([]) }} required><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{parents.map((view) => <SelectItem key={view.item.id} value={view.item.id} disabled={view.item.cpa_unavailable}>{view.item.name} · 已分配 {percent(view.allocated_ppm)}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
-    <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="edit-child-percent">父容量占比（%）</FieldLabel><Input id="edit-child-percent" name="percent" type="number" min="0.0001" step="0.0001" defaultValue={current.allocation_ppm / 10_000} required /></Field><Field><FieldLabel htmlFor="edit-child-priority">优先级</FieldLabel><Input id="edit-child-priority" name="priority" type="number" defaultValue={current.priority} required /></Field></div>
+    <div className="grid gap-4 sm:grid-cols-2">{selectedParent?.item.capacity_mode !== "unmetered" ? <Field><FieldLabel htmlFor="edit-child-percent">父容量占比（%）</FieldLabel><Input id="edit-child-percent" name="percent" type="number" min="0.0001" step="0.0001" defaultValue={current.allocation_ppm / 10_000} required /></Field> : <Field><FieldLabel htmlFor="edit-child-billing">结算账户</FieldLabel><Input id="edit-child-billing" value="租户总余额" readOnly /><FieldDescription>子订阅本身不保存余额。</FieldDescription></Field>}<Field><FieldLabel htmlFor="edit-child-priority">优先级</FieldLabel><Input id="edit-child-priority" name="priority" type="number" defaultValue={current.priority} required /></Field></div>
     <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel htmlFor="edit-child-start">生效时间</FieldLabel><Input id="edit-child-start" name="starts_at" type="datetime-local" step="1" defaultValue={localDateTime(current.starts_at)} required /></Field><Field><FieldLabel htmlFor="edit-child-expiry">到期时间</FieldLabel><Input id="edit-child-expiry" name="expires_at" type="datetime-local" step="1" defaultValue={localDateTime(current.expires_at ?? undefined)} /></Field></div>
     <Field><FieldLabel htmlFor="edit-child-models">模型范围</FieldLabel><ModelSelector id="edit-child-models" options={parentModelOptions(selectedParent)} value={models} onChange={setModels} allLabel="继承父订阅全部模型" /></Field>
     <label className="flex items-center gap-2 text-sm"><input name="enabled" type="checkbox" defaultChecked={current.enabled} />启用子订阅</label>
@@ -379,7 +385,7 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
           <FieldGroup>
             <Field><FieldLabel htmlFor="parent-name">名称</FieldLabel><Input id="parent-name" name="name" defaultValue={current.item.name} required /></Field>
             <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel>容量模式</FieldLabel><Select value={mode} onValueChange={(next) => { if (isCapacityMode(next)) setMode(next) }}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{capacityModes.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><Field><FieldLabel>上游计划</FieldLabel><div className="flex h-9 items-center gap-2 rounded-md border bg-muted/30 px-3"><Badge variant="secondary">{current.item.plan_type || "未识别"}</Badge><span className="text-xs text-muted-foreground">由 CPA 自动同步</span></div></Field></div>
-            <Field><FieldLabel htmlFor="parent-limit">可分配上限（%）</FieldLabel><Input id="parent-limit" name="allocation_limit" type="number" min="0.0001" step="0.0001" defaultValue={current.item.allocation_limit_ppm / 10_000} required /><FieldDescription>这是子订阅业务分配策略；100% 表示不超售，大于 100% 才表示明确允许超售。</FieldDescription></Field>
+            {mode !== "unmetered" ? <Field><FieldLabel htmlFor="parent-limit">可分配上限（%）</FieldLabel><Input id="parent-limit" name="allocation_limit" type="number" min="0.0001" step="0.0001" defaultValue={current.item.allocation_limit_ppm / 10_000} required /><FieldDescription>这是子订阅业务分配策略；100% 表示不超售，大于 100% 才表示明确允许超售。</FieldDescription></Field> : <Field><FieldLabel htmlFor="parent-billing-source">结算方式</FieldLabel><Input id="parent-billing-source" value="按租户账户总余额结算" readOnly /><FieldDescription>适用于按量付费的上游 API Key。可创建多个子订阅，实际请求按模型价格预扣并结算。</FieldDescription></Field>}
             <Field><FieldLabel htmlFor="parent-models">模型策略范围</FieldLabel><ModelSelector id="parent-models" options={current.item.cpa_model_allowlist ?? []} value={models} onChange={setModels} /><FieldDescription>CPA 已同步 {current.item.cpa_model_allowlist?.length ?? 0} 个模型；不选择表示允许该凭据的全部模型。</FieldDescription></Field>
             {mode === "observed" ? <div className="flex flex-col gap-3 rounded-lg border p-3">
               <div><p className="font-medium">自动额度</p><p className="text-xs text-muted-foreground">以下数据由 bridge 从 CPA 凭据自动读取。这里不再要求手填百分比、窗口名称或重置时间。</p></div>
@@ -420,7 +426,7 @@ export function TenantSubscriptionsView() {
   useEffect(() => {
     api<{ items: ChildSubscription[] }>("/api/subscriptions").then((value) => setItems(value.items ?? [])).catch((cause) => toast.error(cause instanceof Error ? cause.message : "无法读取订阅")).finally(() => setLoading(false))
   }, [])
-  return <div className="flex flex-col gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">我的订阅</h1><p className="text-sm text-muted-foreground">每个子订阅独立继承父账户的容量窗口和重置时间。</p></div>{loading ? <div className="flex justify-center py-12"><Spinner /></div> : items.length ? <div className="grid gap-4 xl:grid-cols-2">{items.map((item) => <TenantSubscriptionCard key={item.id} item={item} />)}</div> : <Empty><EmptyHeader><EmptyMedia variant="icon"><PackageOpenIcon /></EmptyMedia><EmptyTitle>尚未分配子订阅</EmptyTitle><EmptyDescription>当前账户继续使用余额计费；管理员分配后将启用严格父账户路由。</EmptyDescription></EmptyHeader></Empty>}</div>
+  return <div className="flex flex-col gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">我的订阅</h1><p className="text-sm text-muted-foreground">额度型子订阅继承父账户窗口；API Key 通道按你的账户总余额结算。</p></div>{loading ? <div className="flex justify-center py-12"><Spinner /></div> : items.length ? <div className="grid gap-4 xl:grid-cols-2">{items.map((item) => <TenantSubscriptionCard key={item.id} item={item} />)}</div> : <Empty><EmptyHeader><EmptyMedia variant="icon"><PackageOpenIcon /></EmptyMedia><EmptyTitle>尚未分配子订阅</EmptyTitle><EmptyDescription>当前账户继续使用余额计费；管理员分配后将启用严格父账户路由。</EmptyDescription></EmptyHeader></Empty>}</div>
 }
 
 function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {

@@ -209,14 +209,16 @@ func (s Store) UpdateParentSubscription(ctx context.Context, item ParentSubscrip
 		if item.AllocationLimitPPM <= 0 {
 			return errors.New("allocation_limit_ppm must be positive")
 		}
-		var allocated int64
-		if err := tx.Model(&ChildSubscription{}).
-			Where("parent_subscription_id = ? AND enabled = ?", item.ID, true).
-			Select("COALESCE(sum(allocation_ppm), 0)").Scan(&allocated).Error; err != nil {
-			return err
-		}
-		if allocated > item.AllocationLimitPPM {
-			return ErrAllocationExceeded
+		if enforcesAllocationLimit(item.CapacityMode) {
+			var allocated int64
+			if err := tx.Model(&ChildSubscription{}).
+				Where("parent_subscription_id = ? AND enabled = ?", item.ID, true).
+				Select("COALESCE(sum(allocation_ppm), 0)").Scan(&allocated).Error; err != nil {
+				return err
+			}
+			if allocated > item.AllocationLimitPPM {
+				return ErrAllocationExceeded
+			}
 		}
 		return tx.Model(&current).Updates(map[string]any{
 			"name": strings.TrimSpace(item.Name), "plan_type": strings.TrimSpace(item.PlanType),
@@ -438,7 +440,7 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 		if err := tx.First(&tenant, "id = ?", item.TenantID).Error; err != nil {
 			return notFound(err)
 		}
-		if item.Enabled {
+		if item.Enabled && enforcesAllocationLimit(parent.CapacityMode) {
 			var allocated int64
 			if err := tx.Model(&ChildSubscription{}).
 				Where("parent_subscription_id = ? AND enabled = ?", item.ParentSubscriptionID, true).
@@ -475,7 +477,7 @@ func (s Store) UpdateChildSubscription(ctx context.Context, item ChildSubscripti
 		if item.Enabled && (!parent.Enabled || parent.CPAUnavailable) {
 			return errors.New("enabled child subscription requires an available parent")
 		}
-		if item.Enabled {
+		if item.Enabled && enforcesAllocationLimit(parent.CapacityMode) {
 			var allocated int64
 			if err := tx.Model(&ChildSubscription{}).
 				Where("parent_subscription_id = ? AND enabled = ? AND id <> ?", item.ParentSubscriptionID, true, item.ID).
@@ -517,6 +519,14 @@ func (s Store) DeleteChildSubscription(ctx context.Context, id string) error {
 		}
 		return result.Error
 	})
+}
+
+// Unmetered parents represent credentials such as pay-as-you-go upstream API
+// keys. Their children are access grants, not slices of a finite upstream
+// quota, so any number of tenants may share them while each tenant continues
+// to settle usage against its own account balance.
+func enforcesAllocationLimit(capacityMode string) bool {
+	return capacityMode != db.ParentCapacityUnmetered
 }
 
 func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model string, now time.Time) ([]SubscriptionCandidate, bool, error) {
