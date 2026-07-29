@@ -39,6 +39,11 @@ type CatalogEntry struct {
 	RawJSON       string `json:"-"`
 }
 
+type modelsDevCatalogCandidate struct {
+	entry      CatalogEntry
+	providerID string
+}
+
 type SyncResult struct {
 	Source  string         `json:"source"`
 	Version string         `json:"version"`
@@ -75,7 +80,7 @@ func FetchModelsDev(ctx context.Context, client *http.Client, rawURL string) (Sy
 	}
 	hash := sha256.Sum256(raw)
 	version := "sha256:" + hex.EncodeToString(hash[:])
-	entries := make([]CatalogEntry, 0, 1024)
+	candidates := make(map[string]modelsDevCatalogCandidate, 1024)
 	for providerKey, provider := range providers {
 		providerID := strings.TrimSpace(provider.ID)
 		if providerID == "" {
@@ -105,24 +110,59 @@ func FetchModelsDev(ctx context.Context, client *http.Client, rawURL string) (Sy
 			if providerID != "" && !strings.Contains(name, "/") {
 				name = providerID + "/" + name
 			}
-			entries = append(entries, CatalogEntry{
-				Price: Price{
-					Model: name, InputNanoUSDPerToken: perMillionToNano(*model.Cost.Input),
-					OutputNanoUSDPerToken:      perMillionToNano(*model.Cost.Output),
-					CachedInputNanoUSDPerToken: perMillionToNano(cacheRead),
-					CacheWriteNanoUSDPerToken:  perMillionToNano(cacheWrite),
-					ReasoningNanoUSDPerToken:   perMillionToNano(*model.Cost.Output),
-					Source:                     SourceCatalog, Version: version, PriceMultiplier: 1,
+			candidate := modelsDevCatalogCandidate{
+				providerID: providerID,
+				entry: CatalogEntry{
+					Price: Price{
+						Model: name, InputNanoUSDPerToken: perMillionToNano(*model.Cost.Input),
+						OutputNanoUSDPerToken:      perMillionToNano(*model.Cost.Output),
+						CachedInputNanoUSDPerToken: perMillionToNano(cacheRead),
+						CacheWriteNanoUSDPerToken:  perMillionToNano(cacheWrite),
+						ReasoningNanoUSDPerToken:   perMillionToNano(*model.Cost.Output),
+						Source:                     SourceCatalog, Version: version, PriceMultiplier: 1,
+					},
+					SourceModelID: providerID + "/" + modelID, RawJSON: string(rawModel),
 				},
-				SourceModelID: providerID + "/" + modelID, RawJSON: string(rawModel),
-			})
+			}
+			// Aggregators commonly expose already-qualified IDs such as
+			// "anthropic/claude-*". Without deduplication those collide with
+			// the direct Anthropic provider (and with other aggregators) when
+			// the catalog is inserted using Model as its primary key.
+			key := strings.ToLower(name)
+			if current, ok := candidates[key]; !ok || preferCatalogCandidate(candidate, current) {
+				candidates[key] = candidate
+			}
 		}
+	}
+	entries := make([]CatalogEntry, 0, len(candidates))
+	for _, candidate := range candidates {
+		entries = append(entries, candidate.entry)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Model < entries[j].Model })
 	if len(entries) < 10 {
 		return SyncResult{}, fmt.Errorf("models.dev catalog contains only %d priced models", len(entries))
 	}
 	return SyncResult{Source: SourceCatalog, Version: version, URL: rawURL, Entries: entries}, nil
+}
+
+func preferCatalogCandidate(candidate, current modelsDevCatalogCandidate) bool {
+	candidateDirect := catalogProviderMatchesModel(candidate.providerID, candidate.entry.Model)
+	currentDirect := catalogProviderMatchesModel(current.providerID, current.entry.Model)
+	if candidateDirect != currentDirect {
+		return candidateDirect
+	}
+	if candidate.providerID != current.providerID {
+		return candidate.providerID < current.providerID
+	}
+	if candidate.entry.SourceModelID != current.entry.SourceModelID {
+		return candidate.entry.SourceModelID < current.entry.SourceModelID
+	}
+	return candidate.entry.RawJSON < current.entry.RawJSON
+}
+
+func catalogProviderMatchesModel(providerID, model string) bool {
+	prefix, _, ok := strings.Cut(model, "/")
+	return ok && strings.EqualFold(strings.TrimSpace(providerID), strings.TrimSpace(prefix))
 }
 
 func validCatalogCost(value float64) bool {
