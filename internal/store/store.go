@@ -686,12 +686,15 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if input.MinLatencyMS > 0 {
 		query = query.Where("latency_ms >= ?", input.MinLatencyMS)
 	}
+	countQuery := query.Session(&gorm.Session{})
+	summaryQuery := query.Session(&gorm.Session{})
+	itemsQuery := query.Session(&gorm.Session{})
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := countQuery.Count(&total).Error; err != nil {
 		return LogPage{}, err
 	}
 	var summary LogSummary
-	if err := query.Select(
+	if err := summaryQuery.Select(
 		"count(*) AS requests, COALESCE(sum(CASE WHEN status_code = 0 OR status_code >= 400 THEN 1 ELSE 0 END),0) AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
 			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, COALESCE(avg(latency_ms),0) AS average_latency",
@@ -699,7 +702,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 		return LogPage{}, err
 	}
 	var items []db.RequestLog
-	if err := query.Order("started_at DESC").Offset((input.Page - 1) * input.PageSize).Limit(input.PageSize).Find(&items).Error; err != nil {
+	if err := itemsQuery.Order("started_at DESC").Offset((input.Page - 1) * input.PageSize).Limit(input.PageSize).Find(&items).Error; err != nil {
 		return LogPage{}, err
 	}
 	return LogPage{Items: items, Page: input.Page, PageSize: input.PageSize, Total: total, Summary: summary}, nil
