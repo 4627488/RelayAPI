@@ -50,7 +50,9 @@ services:
       cpa-plugin:
         condition: service_completed_successfully
     volumes:
-      - ./cliproxyapi/config.yaml:/CLIProxyAPI/config.yaml:ro
+      # Writable so the authenticated Relay admin panel can persist CPA's
+      # complete configuration through /v0/management/config.yaml.
+      - ./cliproxyapi/config.yaml:/CLIProxyAPI/config.yaml
       - ./cliproxyapi/auths:/root/.cli-proxy-api
       - relay-cpa-plugins:/CLIProxyAPI/plugins:ro
     networks: [relay]

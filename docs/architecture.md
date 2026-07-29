@@ -62,8 +62,13 @@ CLIProxyAPI without silently inventing prices.
 - Responses without usage are refunded and remain visibly marked as
   pricing-incomplete, so missing provider usage cannot lock tenant funds.
 - Request bodies and captured response tails are bounded.
-- Management endpoints expose typed, validated credential/OAuth/runtime-policy
-  operations and never reveal CLIProxyAPI secrets.
+- Routine management endpoints expose typed, validated credential/OAuth and
+  runtime-policy operations using CPA's redacted responses. Full configuration
+  access is explicitly confined to authenticated Relay administrators.
+- Administrators additionally get a no-store, session-protected transparent
+  Management API bridge. This is the compatibility escape hatch for the full
+  CPA configuration and future providers/plugins; it is never exposed to
+  tenant sessions or public API keys.
 - Health checks test both PostgreSQL and authenticated CLIProxyAPI model
   discovery.
 

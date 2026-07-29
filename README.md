@@ -62,6 +62,8 @@ WebSocket 请求到 Go 后端。
 - `POST /api/admin/providers/codex/oauth`：发起 Codex OAuth
 - `POST /api/admin/providers/oauth/callback`：提交 OAuth 回调
 - `GET|PATCH /api/admin/providers/settings`：重试与凭据调度策略
+- `/api/admin/cpa/*`：管理员会话保护的 CLIProxyAPI Management API 完整桥接；
+  保留方法、查询参数及 JSON/YAML/上传请求体
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
 - `GET /api/logs?tenant_id=...`：请求日志
 
@@ -105,3 +107,14 @@ plugins:
 
 插件负责 CPA 凭据选择扩展与用量/失败遥测。计费仍使用 Relay 代理层关联到具体
 请求的响应用量，避免 CPA 插件事件缺少自定义关联 ID 时发生串账。
+
+## CLIProxyAPI 完整管理面
+
+“模型账户”面板不仅提供脱敏凭据列表和常用路由策略，还能维护 CPA 网关 API
+Keys、直接编辑完整 `config.yaml`，并调用任意 Management API。由此可以配置
+Gemini、Claude、Codex、XAI、Vertex、OpenAI-compatible 提供商、OAuth 模型
+别名/排除、代理、WebSocket、日志、插件与插件市场，以及 CPA 后续新增的管理
+能力，而不需要 RelayAPI 维护一份易过期的提供商注册表。
+
+该桥仅允许 Relay 管理员会话访问，响应禁止缓存，CPA 本身仍应只位于私有网络。
+若启用 YAML 在线编辑，`cliproxyapi/config.yaml` 必须可写；Compose 示例已按此配置。

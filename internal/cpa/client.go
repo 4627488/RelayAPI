@@ -60,6 +60,27 @@ func (c *Client) Management(ctx context.Context, method, path string, body any) 
 	return resp.StatusCode, payload, err
 }
 
+// ManagementRaw intentionally does not impose a schema on CLIProxyAPI's
+// management surface. CPA can add providers, plugins and protocol controls
+// independently while RelayAPI remains a stable authenticated panel wrapper.
+func (c *Client) ManagementRaw(ctx context.Context, method, path, contentType string, body io.Reader) (int, http.Header, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.URL("/v0/management/"+strings.TrimLeft(path, "/")), body)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.ManagementKey)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	return resp.StatusCode, resp.Header.Clone(), payload, err
+}
+
 func (c *Client) Ready(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL("/v1/models"), nil)
 	if err != nil {

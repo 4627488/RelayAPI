@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react"
-import { ExternalLinkIcon, PlugIcon, RefreshCwIcon, Trash2Icon } from "lucide-react"
+import { ExternalLinkIcon, KeyRoundIcon, PlugIcon, RefreshCwIcon, SaveIcon, TerminalIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Textarea } from "@/components/ui/textarea"
 import { api, deleteRequest, postJSON, type ProviderAccount } from "@/lib/api"
 
 type OAuthStart = { status: string; url: string; state: string }
@@ -21,16 +22,21 @@ export function ProvidersView() {
   const [oauth, setOAuth] = useState<OAuthStart | null>(null)
   const [pending, setPending] = useState(false)
   const [settings, setSettings] = useState<ProviderSettings | null>(null)
+  const [gatewayKeys, setGatewayKeys] = useState("")
+  const [configYAML, setConfigYAML] = useState("")
+  const [advancedResult, setAdvancedResult] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [value, config] = await Promise.all([
+      const [value, config, keys] = await Promise.all([
         api<{ files: ProviderAccount[] }>("/api/admin/providers/accounts"),
         api<ProviderSettings>("/api/admin/providers/settings"),
+        api<{ "api-keys": string[] }>("/api/admin/cpa/api-keys"),
       ])
       setAccounts(value.files ?? [])
       setSettings(config)
+      setGatewayKeys((keys["api-keys"] ?? []).join("\n"))
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "无法读取 CPA 凭据")
     } finally {
@@ -130,12 +136,62 @@ export function ProvidersView() {
     }
   }
 
+  async function cpaText(path: string, init?: RequestInit) {
+    const response = await fetch(`/api/admin/cpa/${path}`, { ...init, credentials: "include" })
+    const text = await response.text()
+    if (!response.ok) throw new Error(text || `CPA 请求失败 (${response.status})`)
+    return text
+  }
+
+  async function saveGatewayKeys() {
+    setPending(true)
+    try {
+      const keys = gatewayKeys.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
+      await api("/api/admin/cpa/api-keys", { method: "PUT", body: JSON.stringify(keys) })
+      toast.success("CLIProxyAPI 网关 API Keys 已保存")
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "保存失败")
+    } finally { setPending(false) }
+  }
+
+  async function loadYAML() {
+    setPending(true)
+    try { setConfigYAML(await cpaText("config.yaml")) }
+    catch (cause) { toast.error(cause instanceof Error ? cause.message : "读取配置失败") }
+    finally { setPending(false) }
+  }
+
+  async function saveYAML() {
+    if (!window.confirm("完整配置会立即重载 CLIProxyAPI，确认继续？")) return
+    setPending(true)
+    try {
+      await cpaText("config.yaml", { method: "PUT", headers: { "Content-Type": "application/yaml" }, body: configYAML })
+      toast.success("CLIProxyAPI 完整配置已保存")
+      await load()
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "保存配置失败") }
+    finally { setPending(false) }
+  }
+
+  async function callAdvanced(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const method = String(form.get("method") || "GET")
+    const path = String(form.get("path") || "").replace(/^\/+/, "")
+    const body = String(form.get("body") || "").trim()
+    setPending(true)
+    try {
+      const text = await cpaText(path, { method, headers: body ? { "Content-Type": "application/json" } : undefined, body: body || undefined })
+      try { setAdvancedResult(JSON.stringify(JSON.parse(text), null, 2)) } catch { setAdvancedResult(text) }
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "CPA 请求失败") }
+    finally { setPending(false) }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">模型账户</h1>
-          <p className="text-sm text-muted-foreground">统一管理 CPA 凭据、状态与 Codex OAuth。</p>
+          <p className="text-sm text-muted-foreground">CLIProxyAPI 的凭据、协议、插件与运行配置中心。</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCwIcon />刷新</Button>
@@ -202,7 +258,7 @@ export function ProvidersView() {
         <Card>
           <CardHeader>
             <CardTitle>CPA 运行策略</CardTitle>
-            <CardDescription>Relay 只开放经过校验的常用配置，不暴露完整 CPA 配置文件。</CardDescription>
+            <CardDescription>常用调度参数；下方高级区域可管理 CLIProxyAPI 的完整能力。</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={saveSettings}>
@@ -233,6 +289,37 @@ export function ProvidersView() {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><KeyRoundIcon className="size-4" />网关 API Keys</CardTitle><CardDescription>这些 Key 用于 RelayAPI 访问 CLIProxyAPI。每行一个；生产环境至少保留一个强随机 Key，并与 CPA_API_KEY 一致。</CardDescription></CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <Textarea value={gatewayKeys} onChange={(event) => setGatewayKeys(event.target.value)} rows={5} placeholder="sk-cpa-…" className="font-mono text-xs" />
+          <div><Button onClick={() => void saveGatewayKeys()} disabled={pending}><SaveIcon />保存 API Keys</Button></div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>完整 CPA 配置</CardTitle><CardDescription>直接编辑 config.yaml，可配置所有协议提供商、模型映射、OAuth 排除/别名、代理、插件和日志。敏感字段仅对管理员可见。</CardDescription></CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex gap-2"><Button variant="outline" onClick={() => void loadYAML()} disabled={pending}>读取 YAML</Button><Button onClick={() => void saveYAML()} disabled={pending || !configYAML}><SaveIcon />保存并重载</Button></div>
+          <Textarea value={configYAML} onChange={(event) => setConfigYAML(event.target.value)} rows={18} spellCheck={false} placeholder="点击“读取 YAML”加载当前配置" className="font-mono text-xs" />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><TerminalIcon className="size-4" />高级管理接口</CardTitle><CardDescription>调用任意 /v0/management 路径，覆盖 Gemini、Claude、Codex、XAI、Vertex、OpenAI-compatible、插件市场、日志、模型别名及未来新增能力。</CardDescription></CardHeader>
+        <CardContent>
+          <form onSubmit={callAdvanced} className="flex flex-col gap-3">
+            <div className="grid gap-3 md:grid-cols-[10rem_1fr]">
+              <Select name="method" defaultValue="GET"><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{["GET", "POST", "PUT", "PATCH", "DELETE"].map((method) => <SelectItem key={method} value={method}>{method}</SelectItem>)}</SelectGroup></SelectContent></Select>
+              <Input name="path" required placeholder="例如 claude-api-key、plugins 或 oauth-model-alias" className="font-mono" />
+            </div>
+            <Textarea name="body" rows={7} spellCheck={false} placeholder={'可选 JSON 请求体，例如 {"value": true}'} className="font-mono text-xs" />
+            <div><Button type="submit" disabled={pending}>{pending ? <Spinner /> : <TerminalIcon />}执行</Button></div>
+            {advancedResult && <Textarea readOnly value={advancedResult} rows={12} className="font-mono text-xs" />}
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }

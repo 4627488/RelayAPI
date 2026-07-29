@@ -79,7 +79,7 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/admin/tenants/{id}/keys", a.withAdmin(http.HandlerFunc(a.adminTenantKeys)))
 	a.mux.Handle("GET /api/admin/prices", a.withAdmin(http.HandlerFunc(a.adminPrices)))
 	a.mux.Handle("PUT /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceUpdate)))
-	a.mux.Handle("GET /api/admin/cpa/{resource}", a.withAdmin(http.HandlerFunc(a.adminCPA)))
+	a.mux.Handle("/api/admin/cpa/{resource...}", a.withAdmin(http.HandlerFunc(a.adminCPA)))
 	a.mux.Handle("GET /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/models", a.withAdmin(http.HandlerFunc(a.adminProviderModels)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))

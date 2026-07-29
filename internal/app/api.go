@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -328,25 +329,32 @@ func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) adminCPA(w http.ResponseWriter, r *http.Request) {
-	if a.cfg.CPAManagementKey == "" {
-		writeError(w, 503, "cpa_management_disabled", "未配置 CPA_MANAGEMENT_KEY")
+	if !a.requireCPAManagement(w) {
 		return
 	}
-	allowedResources := map[string]string{"config": "config", "auth-files": "auth-files", "usage": "api-key-usage", "version": "latest-version"}
-	path, ok := allowedResources[r.PathValue("resource")]
-	if !ok {
-		writeError(w, 404, "not_found", "不支持的 CPA 资源")
+	resource := strings.TrimSpace(r.PathValue("resource"))
+	if resource == "" || strings.Contains(resource, "..") || strings.ContainsAny(resource, "\\\x00") {
+		writeError(w, http.StatusBadRequest, "invalid_cpa_path", "CPA 管理路径无效")
 		return
 	}
-	status, payload, err := a.cpa.Management(r.Context(), http.MethodGet, path, nil)
+	if r.URL.RawQuery != "" {
+		resource += "?" + r.URL.RawQuery
+	}
+	var body io.Reader
+	if r.Body != nil {
+		body = http.MaxBytesReader(w, r.Body, 32<<20)
+	}
+	status, headers, payload, err := a.cpa.ManagementRaw(r.Context(), r.Method, resource, r.Header.Get("Content-Type"), body)
 	if err != nil {
-		writeError(w, 502, "cpa_unavailable", err.Error())
+		writeError(w, http.StatusBadGateway, "cpa_unavailable", err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	if !json.Valid(payload) {
-		payload = []byte(`{"error":"invalid CPA response"}`)
+	if value := headers.Get("Content-Type"); value != "" {
+		w.Header().Set("Content-Type", value)
+	} else if json.Valid(payload) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
 	_, _ = w.Write(payload)
 }
