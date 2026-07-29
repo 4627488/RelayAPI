@@ -36,6 +36,17 @@ func TestModelAllowedCombinesParentAndChildPolicies(t *testing.T) {
 	}
 }
 
+func TestUnmeteredParentDoesNotEnforceAllocationLimit(t *testing.T) {
+	if enforcesAllocationLimit("unmetered") {
+		t.Fatal("unmetered API-key parent must allow multiple balance-backed child grants")
+	}
+	for _, mode := range []string{"manual", "observed"} {
+		if !enforcesAllocationLimit(mode) {
+			t.Fatalf("%s parent must enforce its allocation limit", mode)
+		}
+	}
+}
+
 func TestPercentageCapacity(t *testing.T) {
 	// $2 priced cost across a 4% upstream movement estimates a $50 window.
 	if got := percentageCapacity(2_000_000_000, 4_000_000); got != 50_000_000_000 {
