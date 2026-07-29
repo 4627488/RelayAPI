@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -192,23 +195,67 @@ func (a *App) keyDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) logs(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := a.store.RecentLogs(r.Context(), currentSession(r).TenantID, limit)
+	query := requestLogQuery(r)
+	query.TenantID = currentSession(r).TenantID
+	page, err := a.store.QueryLogs(r.Context(), query)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	writeJSON(w, 200, page)
 }
 
 func (a *App) adminLogs(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := a.store.RecentLogs(r.Context(), strings.TrimSpace(r.URL.Query().Get("tenant_id")), limit)
+	query := requestLogQuery(r)
+	query.TenantID = strings.TrimSpace(r.URL.Query().Get("tenant_id"))
+	page, err := a.store.QueryLogs(r.Context(), query)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	writeJSON(w, 200, page)
+}
+
+func requestLogQuery(r *http.Request) store.LogQuery {
+	values := r.URL.Query()
+	page, _ := strconv.Atoi(values.Get("page"))
+	pageSize, _ := strconv.Atoi(values.Get("page_size"))
+	if pageSize == 0 {
+		pageSize, _ = strconv.Atoi(values.Get("limit"))
+	}
+	minLatency, _ := strconv.ParseInt(values.Get("min_latency_ms"), 10, 64)
+	return store.LogQuery{
+		Page: page, PageSize: pageSize, Query: strings.TrimSpace(values.Get("query")),
+		Status: strings.TrimSpace(values.Get("status")), Method: strings.TrimSpace(values.Get("method")),
+		Model: strings.TrimSpace(values.Get("model")), From: parseQueryTime(values.Get("from")),
+		To: parseQueryTime(values.Get("to")), MinLatencyMS: minLatency,
+	}
+}
+
+func parseQueryTime(value string) *time.Time {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
+func (a *App) logDetail(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.RequestLogDetail(r.Context(), r.PathValue("id"), currentSession(r).TenantID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "请求日志不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (a *App) adminLogDetail(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.RequestLogDetail(r.Context(), r.PathValue("id"), "")
+	if err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "请求日志不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
 }
 
 func (a *App) adminTenants(w http.ResponseWriter, r *http.Request) {
@@ -319,12 +366,32 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items})
+	catalog, err := a.store.ListCatalogPrices(r.Context())
+	if err != nil {
+		writeError(w, 500, "database_error", err.Error())
+		return
+	}
+	pending, err := a.store.PendingPricing(r.Context())
+	if err != nil {
+		writeError(w, 500, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"items": items, "catalog_items": catalog, "bundled_items": pricing.BundledPrices,
+		"pending_models": pending,
+	})
 }
 
 func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
-	var price store.Price
-	if !decodeJSON(w, r, &price) {
+	var input struct {
+		InputNanoUSDPerToken       int64    `json:"input_nano_usd_per_token"`
+		OutputNanoUSDPerToken      int64    `json:"output_nano_usd_per_token"`
+		CachedInputNanoUSDPerToken int64    `json:"cached_input_nano_usd_per_token"`
+		CacheWriteNanoUSDPerToken  int64    `json:"cache_write_nano_usd_per_token"`
+		ReasoningNanoUSDPerToken   int64    `json:"reasoning_nano_usd_per_token"`
+		PriceMultiplier            *float64 `json:"price_multiplier"`
+	}
+	if !decodeJSON(w, r, &input) {
 		return
 	}
 	model, err := url.PathUnescape(r.PathValue("model"))
@@ -332,17 +399,115 @@ func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "validation_error", "模型名无效")
 		return
 	}
-	price.Model = model
+	multiplier := 1.0
+	if input.PriceMultiplier != nil {
+		multiplier = *input.PriceMultiplier
+	}
+	price := store.Price{
+		Model: model, InputNanoUSDPerToken: input.InputNanoUSDPerToken,
+		OutputNanoUSDPerToken:      input.OutputNanoUSDPerToken,
+		CachedInputNanoUSDPerToken: input.CachedInputNanoUSDPerToken,
+		CacheWriteNanoUSDPerToken:  input.CacheWriteNanoUSDPerToken,
+		ReasoningNanoUSDPerToken:   input.ReasoningNanoUSDPerToken, PriceMultiplier: multiplier,
+	}
 	if min(price.InputNanoUSDPerToken, price.OutputNanoUSDPerToken, price.CachedInputNanoUSDPerToken,
-		price.CacheWriteNanoUSDPerToken, price.ReasoningNanoUSDPerToken) < 0 {
-		writeError(w, 400, "validation_error", "价格不能为负数")
+		price.CacheWriteNanoUSDPerToken, price.ReasoningNanoUSDPerToken) < 0 || multiplier < 0 {
+		writeError(w, 400, "validation_error", "价格和倍率不能为负数")
 		return
 	}
 	if err := a.store.UpsertPrice(r.Context(), price); err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, price)
+	stored, err := a.store.AdminPrice(r.Context(), model)
+	if err != nil {
+		writeError(w, 500, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, stored)
+}
+
+func (a *App) adminPriceDelete(w http.ResponseWriter, r *http.Request) {
+	model, err := url.PathUnescape(r.PathValue("model"))
+	if err != nil || strings.TrimSpace(model) == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "模型名无效")
+		return
+	}
+	if err := a.store.DeletePrice(r.Context(), model); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "管理员价格覆盖不存在")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *App) adminPricingAliases(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		items, err := a.store.ListModelAliases(r.Context())
+		if err != nil {
+			writeError(w, 500, "database_error", err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items})
+		return
+	}
+	var input struct {
+		Items []db.ModelAlias `json:"items"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := a.store.ReplaceModelAliases(r.Context(), input.Items); err != nil {
+		writeError(w, 400, "validation_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": input.Items})
+}
+
+func (a *App) adminPricingRules(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		items, err := a.store.ListPriceRules(r.Context())
+		if err != nil {
+			writeError(w, 500, "database_error", err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]any{"items": items, "fields": pricing.SortedRuleFields()})
+		return
+	}
+	var input struct {
+		Items []db.ModelPriceRule `json:"items"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := a.store.ReplacePriceRules(r.Context(), input.Items); err != nil {
+		writeError(w, 400, "validation_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": input.Items})
+}
+
+func (a *App) adminPricingSync(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	result, err := pricing.FetchModelsDev(ctx, nil, pricing.ModelsDevURL)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "pricing_sync_failed", err.Error())
+		return
+	}
+	if r.Method == http.MethodPost {
+		if err := a.store.ApplyCatalog(r.Context(), result); err != nil {
+			writeError(w, 500, "database_error", err.Error())
+			return
+		}
+	}
+	samples := result.Entries
+	if len(samples) > 20 {
+		samples = samples[:20]
+	}
+	writeJSON(w, 200, map[string]any{
+		"source": result.Source, "version": result.Version, "url": result.URL,
+		"count": len(result.Entries), "applied": r.Method == http.MethodPost, "samples": samples,
+	})
 }
 
 func (a *App) adminCPA(w http.ResponseWriter, r *http.Request) {

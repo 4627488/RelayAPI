@@ -20,17 +20,26 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/identity"
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
 type requestMeta struct {
-	Model  string `json:"model"`
-	Stream bool   `json:"stream"`
+	Model           string `json:"model"`
+	Stream          bool   `json:"stream"`
+	ServiceTier     string `json:"service_tier"`
+	ReasoningEffort string `json:"reasoning_effort"`
+	Reasoning       struct {
+		Effort string `json:"effort"`
+	} `json:"reasoning"`
 }
 
 func readRequestMeta(body []byte, requestPath string) requestMeta {
 	var meta requestMeta
 	_ = json.Unmarshal(body, &meta)
+	if meta.ReasoningEffort == "" {
+		meta.ReasoningEffort = meta.Reasoning.Effort
+	}
 	if meta.Model != "" {
 		return meta
 	}
@@ -59,14 +68,24 @@ func requestMetadata(body []byte, r *http.Request) requestMeta {
 }
 
 type rollingCapture struct {
-	mu  sync.Mutex
-	buf []byte
-	max int
+	mu     sync.Mutex
+	buf    []byte
+	detail []byte
+	max    int
+	total  int64
 }
 
 func (c *rollingCapture) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.total += int64(len(p))
+	if len(c.detail) < requestLogDetailLimit {
+		remaining := requestLogDetailLimit - len(c.detail)
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		c.detail = append(c.detail, p[:remaining]...)
+	}
 	if len(p) >= c.max {
 		c.buf = append(c.buf[:0], p[len(p)-c.max:]...)
 	} else {
@@ -83,6 +102,19 @@ func (c *rollingCapture) Bytes() []byte {
 	defer c.mu.Unlock()
 	return append([]byte(nil), c.buf...)
 }
+func (c *rollingCapture) Info() ([]byte, bool, int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]byte(nil), c.detail...), c.total > int64(len(c.detail)), c.total
+}
+
+type requestLogContext struct {
+	price      *store.ResolvedPrice
+	detail     *store.LogDetailInput
+	ttftMS     *int64
+	cpaTraceID string
+	errorCode  string
+}
 
 func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
@@ -98,6 +130,8 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "请求体超过 64 MiB")
 		return
 	}
+	bodyReadAt := time.Now()
+	logContext := requestLogContext{detail: baseRequestDetail(r, body)}
 	meta := requestMetadata(body, r)
 	websocket := isWebSocketUpgrade(r)
 	billable := meta.Model != "" && (websocket || (r.Method != http.MethodGet && r.Method != http.MethodHead))
@@ -110,12 +144,15 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var price store.Price
+	var price store.ResolvedPrice
 	priceConfigured := false
 	requestID := identity.NewID()
 	admission := store.Admission{RequestID: requestID}
 	if billable {
-		price, err = a.store.Price(r.Context(), meta.Model)
+		price, err = a.store.ResolvePrice(r.Context(), pricing.Dimensions{
+			APIGroupKey: key.ID, Model: meta.Model, ServiceTier: meta.ServiceTier,
+			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+		})
 		if err != nil {
 			if a.cfg.UnpricedModelPolicy == "deny" {
 				writeError(w, http.StatusBadRequest, "price_not_configured", "模型尚未配置价格")
@@ -124,7 +161,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		} else {
 			priceConfigured = true
 		}
-		priceSnapshot, _ := json.Marshal(price)
+		priceSnapshot := store.EncodePriceSnapshot(price)
 		reserve := int64(0)
 		if priceConfigured {
 			reserve = a.cfg.ReservationNanoUSD
@@ -156,11 +193,21 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "cpa_bridge_required", "严格子订阅路由要求 CPA bridge 0.2.0 或更高版本")
 			return
 		}
+		if priceConfigured {
+			if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
+				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
+				ServiceTier: meta.ServiceTier, ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+			}); resolveErr == nil {
+				price = resolved
+				_ = a.store.UpdateReservationPriceSnapshot(r.Context(), requestID, store.EncodePriceSnapshot(price))
+			}
+			logContext.price = &price
+		}
 	}
 
 	if websocket {
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		a.proxyWebSocket(w, r, key, requestID, admission, meta, started, billable)
+		a.proxyWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
 		return
 	}
 
@@ -168,6 +215,13 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	upstream, err := http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
 	if err != nil {
 		a.releaseReservation(requestID, billable)
+		logContext.errorCode = "proxy_error"
+		logContext.detail.ErrorName = "proxy_error"
+		logContext.detail.ErrorMessage = err.Error()
+		logContext.detail.StageTimings = timingJSON(map[string]int64{
+			"read_body_ms": bodyReadAt.Sub(started).Milliseconds(), "total_ms": time.Since(started).Milliseconds(),
+		})
+		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
 		writeError(w, 500, "proxy_error", err.Error())
 		return
 	}
@@ -180,14 +234,23 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		setRoutingSignature(upstream.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
 	}
 	upstream.Host = a.cpa.BaseURL.Host
+	logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
+	logContext.detail.ForwardedBody, logContext.detail.ForwardedBodyTruncated, logContext.detail.ForwardedBodyBytes = boundedDetail(body)
 
 	response, err := a.cpa.HTTP.Do(upstream)
 	if err != nil {
 		a.releaseReservation(requestID, billable)
-		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error())
+		logContext.errorCode = "cpa_unavailable"
+		logContext.detail.ErrorName = "upstream_error"
+		logContext.detail.ErrorMessage = err.Error()
+		logContext.detail.StageTimings = timingJSON(map[string]int64{
+			"read_body_ms": bodyReadAt.Sub(started).Milliseconds(), "total_ms": time.Since(started).Milliseconds(),
+		})
+		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
 		writeError(w, http.StatusBadGateway, "cpa_unavailable", "CPA 暂时不可用")
 		return
 	}
+	upstreamHeadersAt := time.Now()
 	defer response.Body.Close()
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Relay-Request-ID", requestID)
@@ -196,7 +259,12 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(response.StatusCode)
 	capture := &rollingCapture{max: 2 << 20}
-	copyErr := copyStreaming(w, io.TeeReader(response.Body, capture))
+	var firstByteAt time.Time
+	copyErr := copyStreaming(w, io.TeeReader(response.Body, capture), func() {
+		if firstByteAt.IsZero() {
+			firstByteAt = time.Now()
+		}
+	})
 
 	parsed := billing.ParseResponse(capture.Bytes())
 	actual := int64(0)
@@ -226,13 +294,40 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	errorMessage := ""
 	if copyErr != nil {
 		errorMessage = copyErr.Error()
+		logContext.errorCode = "stream_copy_error"
 	}
-	a.writeRequestLog(key, requestID, admission, meta, r, response.StatusCode, started, &parsed, cost != nil, settled, actual, errorMessage)
+	rawResponse, responseTruncated, responseBytes := capture.Info()
+	logContext.cpaTraceID = strings.TrimSpace(response.Header.Get("X-CPA-TRACE-ID"))
+	logContext.detail.UpstreamStatus = response.StatusCode
+	logContext.detail.UpstreamHeaders = sanitizedHeaders(response.Header)
+	logContext.detail.UpstreamBody, _, _ = boundedDetail(rawResponse)
+	logContext.detail.UpstreamBodyTruncated = responseTruncated || responseBytes > requestLogDetailLimit
+	logContext.detail.UpstreamBodyBytes = responseBytes
+	if !firstByteAt.IsZero() {
+		ttft := firstByteAt.Sub(started).Milliseconds()
+		logContext.ttftMS = &ttft
+	}
+	logContext.detail.StageTimings = timingJSON(map[string]int64{
+		"read_body_ms":        bodyReadAt.Sub(started).Milliseconds(),
+		"upstream_headers_ms": upstreamHeadersAt.Sub(started).Milliseconds(),
+		"first_byte_ms":       valueOrZero(logContext.ttftMS), "total_ms": time.Since(started).Milliseconds(),
+	})
+	if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
+		logContext.errorCode = "upstream_http_error"
+		logContext.detail.ErrorName = "upstream_http_error"
+		logContext.detail.ErrorDetail = logContext.detail.UpstreamBody
+		errorMessage = upstreamErrorMessage(response.StatusCode, rawResponse)
+	}
+	if copyErr != nil {
+		logContext.detail.ErrorName = "stream_copy_error"
+		logContext.detail.ErrorMessage = copyErr.Error()
+	}
+	a.writeRequestLog(key, requestID, admission, meta, r, response.StatusCode, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
 func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
-	started time.Time, parsed *billing.Result, pricing, settled bool, cost int64, errorMessage string) {
+	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) {
 	usage := store.Usage{}
 	cpaID := ""
 	if parsed != nil {
@@ -240,29 +335,37 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 		cpaID = parsed.RequestID
 	}
 	var costPointer *int64
-	if pricing {
+	if pricingComplete {
 		costPointer = &cost
 	}
 	err := a.store.WriteLog(context.WithoutCancel(r.Context()), store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
+		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.Model, TenantName: key.TenantName,
+		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path),
+		ServiceTier: meta.ServiceTier, ReasoningEffort: meta.ReasoningEffort,
 		AuthIndex: admission.CPAAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
 		ChildSubscriptionID: admission.ChildSubscriptionID,
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
-		CostNanoUSD: costPointer, PricingComplete: pricing, Settled: settled,
+		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
 		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: time.Since(started).Milliseconds(),
-		ErrorMessage: errorMessage, StartedAt: started, CompletedAt: time.Now(),
+		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
+		StartedAt: started, CompletedAt: time.Now(), Detail: logContext.detail,
 	})
 	if err != nil {
 		slog.Error("write request log", "request_id", requestID, "error", err)
 	}
 }
 
-func copyStreaming(w http.ResponseWriter, source io.Reader) error {
+func copyStreaming(w http.ResponseWriter, source io.Reader, onFirstByte func()) error {
 	buffer := make([]byte, 32<<10)
 	flusher, _ := w.(http.Flusher)
 	for {
 		n, err := source.Read(buffer)
 		if n > 0 {
+			if onFirstByte != nil {
+				onFirstByte()
+				onFirstByte = nil
+			}
 			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
 				return writeErr
 			}
@@ -284,7 +387,7 @@ func isWebSocketUpgrade(r *http.Request) bool {
 }
 
 func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
-	admission store.Admission, meta requestMeta, started time.Time, billable bool) {
+	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
 	proxy := httputil.NewSingleHostReverseProxy(a.cpa.BaseURL)
 	statusCode := 0
 	proxy.ModifyResponse = func(response *http.Response) error {
@@ -326,7 +429,11 @@ func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.K
 			slog.Error("settle websocket request", "request_id", requestID, "error", err)
 		}
 	}
-	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, nil, false, settled, actual, "")
+	logContext.detail.StageTimings = timingJSON(map[string]int64{"total_ms": time.Since(started).Milliseconds()})
+	if statusCode != http.StatusSwitchingProtocols {
+		logContext.errorCode = "websocket_proxy_error"
+	}
+	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, nil, false, settled, actual, "", logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
@@ -344,6 +451,13 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func valueOrZero(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func maxDuration(a, b time.Duration) time.Duration {

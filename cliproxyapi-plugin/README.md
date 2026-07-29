@@ -39,6 +39,21 @@ The bridge reads the selected credential through `host.auth.get`, uses CPA's
 proxy-aware `host.http.do` callback, and returns only a normalized quota report.
 Tokens, account identifiers, and raw upstream responses never leave CPA.
 
+Version 0.4.0 adds CPA v7 request/response lifecycle integration. The bridge
+correlates CPA execution `RequestID`/`TraceID` with Relay's signed
+`X-Relay-Request-ID`, then sends bounded lifecycle events to Relay:
+
+- request interception before and after credential selection;
+- non-streaming upstream responses;
+- stream initialization and the first stream chunk for TTFT context;
+- terminal completion outcome and error information.
+
+The synchronous hooks never wait for Relay. Events enter a bounded background
+queue, and per-chunk forwarding is intentionally disabled after the first
+chunk so observability cannot add steady-state streaming latency. Relay
+persists structured, redacted detail and keeps its own proxy capture as the
+fallback when events are dropped or the bridge is unavailable.
+
 ## Adapter modes
 
 - `append` (default): load the bundled adapter pack, then custom adapters.
@@ -139,5 +154,7 @@ adapters:
 
 Relay keeps response-correlated usage as the billing source of truth because
 CPA v7's usage ABI does not currently expose custom request correlation
-headers. Quota observations only calibrate parent capacity; tenant child shares
-remain an administrator policy.
+headers. The request lifecycle ABI does expose headers and execution IDs, so
+it enriches logs but does not independently debit tenants. Quota observations
+only calibrate parent capacity; tenant child shares remain an administrator
+policy.

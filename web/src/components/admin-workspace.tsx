@@ -18,6 +18,8 @@ import { LogsTable, MetricGrid, ModelTable, UsageChart, UsageMetrics } from "@/c
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
+import { PricingView } from "@/components/pricing-view"
+import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { AdminSubscriptionsView } from "@/components/subscriptions-view"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -119,7 +121,8 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
   if (page === "invitations") return <InvitationsView items={invitations} onChanged={load} />
   if (page === "providers") return <ProvidersView />
   if (page === "subscriptions") return <AdminSubscriptionsView />
-  if (page === "logs") return <LogsTable logs={logs} />
+  if (page === "logs") return <RequestLogsWorkbench admin />
+  if (page === "pricing") return <PricingView />
   if (page === "usage") {
     return (
       <div className="flex flex-col gap-4">

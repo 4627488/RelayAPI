@@ -11,38 +11,42 @@ import (
 )
 
 type Config struct {
-	ListenAddr          string
-	DatabaseURL         string
-	CPAURL              string
-	CPAAPIKey           string
-	CPAManagementKey    string
-	SessionSecret       string
-	PublicURL           string
-	SecureCookies       bool
-	ReservationNanoUSD  int64
-	RequestTimeout      time.Duration
-	QuotaSyncInterval   time.Duration
-	UnpricedModelPolicy string
-	CPAPluginSecret     string
-	WebDistDir          string
+	ListenAddr                 string
+	DatabaseURL                string
+	CPAURL                     string
+	CPAAPIKey                  string
+	CPAManagementKey           string
+	SessionSecret              string
+	PublicURL                  string
+	SecureCookies              bool
+	ReservationNanoUSD         int64
+	RequestTimeout             time.Duration
+	QuotaSyncInterval          time.Duration
+	UnpricedModelPolicy        string
+	CPAPluginSecret            string
+	WebDistDir                 string
+	RequestLogRetentionDays    int
+	RequestDetailRetentionDays int
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		ListenAddr:          env("LISTEN_ADDR", ":3000"),
-		DatabaseURL:         strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		CPAURL:              strings.TrimRight(env("CPA_URL", "http://cliproxyapi:8317"), "/"),
-		CPAAPIKey:           strings.TrimSpace(os.Getenv("CPA_API_KEY")),
-		CPAManagementKey:    strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
-		SessionSecret:       strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),
-		PublicURL:           strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
-		SecureCookies:       envBool("RELAY_SECURE_COOKIES", false),
-		ReservationNanoUSD:  envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
-		RequestTimeout:      time.Duration(envInt64("CPA_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
-		QuotaSyncInterval:   time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
-		UnpricedModelPolicy: strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
-		CPAPluginSecret:     strings.TrimSpace(os.Getenv("CPA_PLUGIN_SECRET")),
-		WebDistDir:          strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
+		ListenAddr:                 env("LISTEN_ADDR", ":3000"),
+		DatabaseURL:                strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		CPAURL:                     strings.TrimRight(env("CPA_URL", "http://cliproxyapi:8317"), "/"),
+		CPAAPIKey:                  strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		CPAManagementKey:           strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
+		SessionSecret:              strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),
+		PublicURL:                  strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
+		SecureCookies:              envBool("RELAY_SECURE_COOKIES", false),
+		ReservationNanoUSD:         envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
+		RequestTimeout:             time.Duration(envInt64("CPA_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
+		QuotaSyncInterval:          time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
+		UnpricedModelPolicy:        strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
+		CPAPluginSecret:            strings.TrimSpace(os.Getenv("CPA_PLUGIN_SECRET")),
+		WebDistDir:                 strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
+		RequestLogRetentionDays:    int(envInt64("REQUEST_LOG_RETENTION_DAYS", 90)),
+		RequestDetailRetentionDays: int(envInt64("REQUEST_LOG_DETAIL_RETENTION_DAYS", 30)),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
@@ -61,6 +65,9 @@ func Load() (Config, error) {
 	}
 	if cfg.UnpricedModelPolicy != "allow" && cfg.UnpricedModelPolicy != "deny" {
 		return Config{}, errors.New("UNPRICED_MODEL_POLICY must be allow or deny")
+	}
+	if cfg.RequestLogRetentionDays < 0 || cfg.RequestDetailRetentionDays < 0 {
+		return Config{}, errors.New("request log retention days cannot be negative")
 	}
 	for name, value := range map[string]string{"CPA_URL": cfg.CPAURL, "RELAY_PUBLIC_URL": cfg.PublicURL} {
 		if parsed, err := url.Parse(value); err != nil || parsed.Scheme == "" || parsed.Host == "" {

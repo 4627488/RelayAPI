@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -137,7 +138,7 @@ func maxInt(values ...int64) int64 {
 	return result
 }
 
-func Cost(price store.Price, usage store.Usage) int64 {
+func Cost(price pricing.SnapshotPrice, usage store.Usage) int64 {
 	uncached := usage.Prompt - usage.Cached
 	if uncached < 0 {
 		uncached = 0

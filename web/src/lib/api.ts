@@ -50,17 +50,120 @@ export interface RequestLog {
   id: string
   tenant_id: string
   model: string
+  requested_model: string
+  actual_model: string
+  model_alias?: string
+  provider?: string
+  executor_type?: string
+  auth_type?: string
+  auth_index?: string
+  cpa_request_id?: string
+  cpa_trace_id?: string
+  cpa_execution_id?: string
+  tenant_name?: string
+  api_key_name?: string
+  api_key_prefix?: string
+  parent_subscription_name?: string
+  child_subscription_name?: string
+  channel_id?: string
+  channel_name?: string
+  credential_id?: string
+  credential_name?: string
+  credential_email?: string
+  request_type?: string
   method: string
   path: string
   status_code: number
   stream: boolean
   prompt_tokens: number
   completion_tokens: number
+  cached_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
   total_tokens: number
   cost_nano_usd: number | null
+  price_model?: string
+  price_source?: string
+  price_version?: string
+  input_price_nano_usd_per_token?: number
+  output_price_nano_usd_per_token?: number
+  cached_input_price_nano_usd_per_token?: number
+  cache_write_price_nano_usd_per_token?: number
+  reasoning_price_nano_usd_per_token?: number
+  price_multiplier?: number
+  pricing_complete: boolean
+  settled: boolean
+  reserved_nano_usd: number
   latency_ms: number
+  ttft_ms?: number
+  error_code?: string
   error_message?: string
   started_at: string
+  completed_at: string
+}
+
+export interface RequestLogDetail {
+  request_log_id: string
+  request_headers: string
+  request_body: string
+  request_body_truncated: boolean
+  request_body_bytes: number
+  forwarded_headers: string
+  forwarded_body: string
+  forwarded_body_truncated: boolean
+  forwarded_body_bytes: number
+  upstream_status: number
+  upstream_headers: string
+  upstream_body: string
+  upstream_body_truncated: boolean
+  upstream_body_bytes: number
+  error_name?: string
+  error_message?: string
+  error_stack?: string
+  error_cause?: string
+  error_detail?: string
+  stage_timings: string
+}
+
+export interface RequestLogPage {
+  items: RequestLog[]
+  page: number
+  page_size: number
+  total: number
+  summary: {
+    requests: number
+    errors: number
+    tokens: number
+    cached_tokens: number
+    cost_nano_usd: number
+    average_latency_ms: number
+  }
+}
+
+export interface ModelPrice {
+  model: string
+  input_nano_usd_per_token: number
+  output_nano_usd_per_token: number
+  cached_input_nano_usd_per_token: number
+  cache_write_nano_usd_per_token: number
+  reasoning_nano_usd_per_token: number
+  source: string
+  version: string
+  price_multiplier: number
+  updated_at?: string
+}
+
+export interface ModelAlias {
+  alias: string
+  model: string
+}
+
+export interface ModelPriceRule {
+  id?: string
+  model: string
+  field: string
+  value: string
+  multiplier: number
 }
 
 export interface UsageReport {

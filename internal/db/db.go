@@ -33,7 +33,8 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 	if err := database.WithContext(ctx).AutoMigrate(
-		&Tenant{}, &APIKey{}, &ModelPrice{}, &BillingLedger{}, &RequestLog{}, &Invitation{},
+		&Tenant{}, &APIKey{}, &ModelPrice{}, &ModelCatalogPrice{}, &ModelAlias{}, &ModelPriceRule{},
+		&BillingLedger{}, &RequestLog{}, &RequestLogDetail{}, &CPALifecycleEvent{}, &Invitation{},
 		&ParentSubscription{}, &ParentQuotaWindow{}, &ParentQuotaObservation{},
 		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{},
 	); err != nil {

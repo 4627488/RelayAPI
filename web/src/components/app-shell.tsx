@@ -9,6 +9,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PackageOpenIcon,
+  CircleDollarSignIcon,
   PlugIcon,
   SendIcon,
   ShieldCheckIcon,
@@ -51,7 +52,7 @@ import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
 import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
 
-export type Page = "overview" | "usage" | "keys" | "logs" | "users" | "invitations" | "providers" | "subscriptions"
+export type Page = "overview" | "usage" | "keys" | "logs" | "users" | "invitations" | "providers" | "subscriptions" | "pricing"
 export type Workspace = "user" | "admin"
 
 interface NavigationItem {
@@ -75,6 +76,7 @@ const adminItems: NavigationItem[] = [
   { id: "providers", label: "模型账户", icon: PlugIcon },
   { id: "subscriptions", label: "订阅分配", icon: PackageOpenIcon },
   { id: "usage", label: "全局用量", icon: BarChart3Icon },
+  { id: "pricing", label: "模型定价", icon: CircleDollarSignIcon },
   { id: "logs", label: "请求日志", icon: ListIcon },
 ]
 

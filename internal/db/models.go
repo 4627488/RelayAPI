@@ -46,7 +46,41 @@ type ModelPrice struct {
 	CacheWriteNanoUSDPerToken  int64     `gorm:"not null" json:"cache_write_nano_usd_per_token"`
 	ReasoningNanoUSDPerToken   int64     `gorm:"not null" json:"reasoning_nano_usd_per_token"`
 	Source                     string    `gorm:"not null;default:admin" json:"source"`
+	Version                    string    `gorm:"not null;default:''" json:"version"`
+	PriceMultiplier            float64   `gorm:"not null;default:1" json:"price_multiplier"`
 	UpdatedAt                  time.Time `json:"updated_at"`
+}
+
+// ModelCatalogPrice stores replaceable catalog data separately from administrator
+// overrides. This preserves the resolution order admin > live catalog > bundled.
+type ModelCatalogPrice struct {
+	Model                      string    `gorm:"primaryKey" json:"model"`
+	InputNanoUSDPerToken       int64     `gorm:"not null" json:"input_nano_usd_per_token"`
+	OutputNanoUSDPerToken      int64     `gorm:"not null" json:"output_nano_usd_per_token"`
+	CachedInputNanoUSDPerToken int64     `gorm:"not null" json:"cached_input_nano_usd_per_token"`
+	CacheWriteNanoUSDPerToken  int64     `gorm:"not null" json:"cache_write_nano_usd_per_token"`
+	ReasoningNanoUSDPerToken   int64     `gorm:"not null" json:"reasoning_nano_usd_per_token"`
+	Source                     string    `gorm:"not null" json:"source"`
+	Version                    string    `gorm:"not null" json:"version"`
+	SourceModelID              string    `gorm:"not null;default:''" json:"source_model_id"`
+	RawJSON                    string    `gorm:"type:text;not null;default:''" json:"-"`
+	UpdatedAt                  time.Time `json:"updated_at"`
+}
+
+type ModelAlias struct {
+	Alias     string    `gorm:"primaryKey" json:"alias"`
+	Model     string    `gorm:"not null;index" json:"model"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ModelPriceRule struct {
+	ID         string    `gorm:"type:uuid;primaryKey" json:"id"`
+	Model      string    `gorm:"not null;uniqueIndex:model_price_rule_identity,priority:1" json:"model"`
+	Field      string    `gorm:"not null;uniqueIndex:model_price_rule_identity,priority:2" json:"field"`
+	Value      string    `gorm:"not null;uniqueIndex:model_price_rule_identity,priority:3" json:"value"`
+	Multiplier float64   `gorm:"not null;default:1" json:"multiplier"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type BillingLedger struct {
@@ -61,33 +95,122 @@ type BillingLedger struct {
 }
 
 type RequestLog struct {
-	ID                   string    `gorm:"type:uuid;primaryKey" json:"id"`
-	TenantID             string    `gorm:"type:uuid;not null;index:request_logs_tenant_started_idx,priority:1" json:"tenant_id"`
-	APIKeyID             string    `gorm:"type:uuid;not null;index" json:"api_key_id"`
-	CPARequestID         string    `gorm:"index" json:"cpa_request_id,omitempty"`
-	Model                string    `gorm:"not null;default:''" json:"model"`
-	Provider             string    `json:"provider,omitempty"`
-	AuthIndex            string    `gorm:"index" json:"auth_index,omitempty"`
-	ParentSubscriptionID string    `gorm:"type:uuid;index" json:"parent_subscription_id,omitempty"`
-	ChildSubscriptionID  string    `gorm:"type:uuid;index" json:"child_subscription_id,omitempty"`
-	Method               string    `gorm:"not null" json:"method"`
-	Path                 string    `gorm:"not null" json:"path"`
-	StatusCode           int       `gorm:"not null;default:0" json:"status_code"`
-	Stream               bool      `gorm:"not null;default:false" json:"stream"`
-	PromptTokens         int64     `gorm:"not null;default:0" json:"prompt_tokens"`
-	CompletionTokens     int64     `gorm:"not null;default:0" json:"completion_tokens"`
-	CachedTokens         int64     `gorm:"not null;default:0" json:"cached_tokens"`
-	CacheWriteTokens     int64     `gorm:"not null;default:0" json:"cache_write_tokens"`
-	ReasoningTokens      int64     `gorm:"not null;default:0" json:"reasoning_tokens"`
-	TotalTokens          int64     `gorm:"not null;default:0" json:"total_tokens"`
-	CostNanoUSD          *int64    `json:"cost_nano_usd"`
-	PricingComplete      bool      `gorm:"not null;default:false" json:"pricing_complete"`
-	Settled              bool      `gorm:"not null;default:false;index" json:"settled"`
-	ReservedNanoUSD      int64     `gorm:"not null;default:0" json:"reserved_nano_usd"`
-	LatencyMS            int64     `gorm:"not null;default:0" json:"latency_ms"`
-	ErrorMessage         string    `json:"error_message,omitempty"`
-	StartedAt            time.Time `gorm:"index:request_logs_tenant_started_idx,priority:2,sort:desc;index" json:"started_at"`
-	CompletedAt          time.Time `json:"completed_at"`
+	ID                     string    `gorm:"type:uuid;primaryKey" json:"id"`
+	TenantID               string    `gorm:"type:uuid;not null;index:request_logs_tenant_started_idx,priority:1" json:"tenant_id"`
+	APIKeyID               string    `gorm:"type:uuid;not null;index" json:"api_key_id"`
+	CPARequestID           string    `gorm:"index" json:"cpa_request_id,omitempty"`
+	CPATraceID             string    `gorm:"index" json:"cpa_trace_id,omitempty"`
+	CPAExecutionID         string    `gorm:"index" json:"cpa_execution_id,omitempty"`
+	Model                  string    `gorm:"not null;default:''" json:"model"`
+	RequestedModel         string    `gorm:"not null;default:''" json:"requested_model"`
+	ActualModel            string    `gorm:"not null;default:'';index" json:"actual_model"`
+	ModelAlias             string    `gorm:"not null;default:''" json:"model_alias"`
+	Provider               string    `json:"provider,omitempty"`
+	ExecutorType           string    `json:"executor_type,omitempty"`
+	AuthType               string    `json:"auth_type,omitempty"`
+	AuthIndex              string    `gorm:"index" json:"auth_index,omitempty"`
+	ServiceTier            string    `json:"service_tier,omitempty"`
+	ResponseServiceTier    string    `json:"response_service_tier,omitempty"`
+	ReasoningEffort        string    `json:"reasoning_effort,omitempty"`
+	ParentSubscriptionID   string    `gorm:"type:uuid;index" json:"parent_subscription_id,omitempty"`
+	ChildSubscriptionID    string    `gorm:"type:uuid;index" json:"child_subscription_id,omitempty"`
+	ParentSubscriptionName string    `gorm:"not null;default:''" json:"parent_subscription_name,omitempty"`
+	ChildSubscriptionName  string    `gorm:"not null;default:''" json:"child_subscription_name,omitempty"`
+	ChannelID              string    `gorm:"not null;default:''" json:"channel_id,omitempty"`
+	ChannelName            string    `gorm:"not null;default:''" json:"channel_name,omitempty"`
+	CredentialID           string    `gorm:"not null;default:''" json:"credential_id,omitempty"`
+	CredentialName         string    `gorm:"not null;default:''" json:"credential_name,omitempty"`
+	CredentialEmail        string    `gorm:"not null;default:''" json:"credential_email,omitempty"`
+	TenantName             string    `gorm:"not null;default:''" json:"tenant_name"`
+	APIKeyName             string    `gorm:"not null;default:''" json:"api_key_name"`
+	APIKeyPrefix           string    `gorm:"not null;default:''" json:"api_key_prefix"`
+	Method                 string    `gorm:"not null" json:"method"`
+	Path                   string    `gorm:"not null" json:"path"`
+	RequestType            string    `gorm:"not null;default:'';index" json:"request_type"`
+	StatusCode             int       `gorm:"not null;default:0" json:"status_code"`
+	Stream                 bool      `gorm:"not null;default:false" json:"stream"`
+	PromptTokens           int64     `gorm:"not null;default:0" json:"prompt_tokens"`
+	CompletionTokens       int64     `gorm:"not null;default:0" json:"completion_tokens"`
+	CachedTokens           int64     `gorm:"not null;default:0" json:"cached_tokens"`
+	CacheWriteTokens       int64     `gorm:"not null;default:0" json:"cache_write_tokens"`
+	ReasoningTokens        int64     `gorm:"not null;default:0" json:"reasoning_tokens"`
+	TotalTokens            int64     `gorm:"not null;default:0" json:"total_tokens"`
+	CostNanoUSD            *int64    `json:"cost_nano_usd"`
+	PriceModel             string    `gorm:"not null;default:''" json:"price_model"`
+	PriceSource            string    `gorm:"not null;default:''" json:"price_source"`
+	PriceVersion           string    `gorm:"not null;default:''" json:"price_version"`
+	InputPriceNanoUSD      int64     `gorm:"not null;default:0" json:"input_price_nano_usd_per_token"`
+	OutputPriceNanoUSD     int64     `gorm:"not null;default:0" json:"output_price_nano_usd_per_token"`
+	CachedPriceNanoUSD     int64     `gorm:"not null;default:0" json:"cached_input_price_nano_usd_per_token"`
+	CacheWritePriceNanoUSD int64     `gorm:"not null;default:0" json:"cache_write_price_nano_usd_per_token"`
+	ReasoningPriceNanoUSD  int64     `gorm:"not null;default:0" json:"reasoning_price_nano_usd_per_token"`
+	PriceMultiplier        float64   `gorm:"not null;default:1" json:"price_multiplier"`
+	PricingComplete        bool      `gorm:"not null;default:false" json:"pricing_complete"`
+	Settled                bool      `gorm:"not null;default:false;index" json:"settled"`
+	ReservedNanoUSD        int64     `gorm:"not null;default:0" json:"reserved_nano_usd"`
+	LatencyMS              int64     `gorm:"not null;default:0" json:"latency_ms"`
+	TTFTMS                 *int64    `json:"ttft_ms,omitempty"`
+	ErrorCode              string    `json:"error_code,omitempty"`
+	ErrorMessage           string    `json:"error_message,omitempty"`
+	StartedAt              time.Time `gorm:"index:request_logs_tenant_started_idx,priority:2,sort:desc;index" json:"started_at"`
+	CompletedAt            time.Time `json:"completed_at"`
+}
+
+type RequestLogDetail struct {
+	RequestLogID           string    `gorm:"type:uuid;primaryKey" json:"request_log_id"`
+	RequestHeaders         string    `gorm:"type:text;not null;default:'{}'" json:"request_headers"`
+	RequestBody            string    `gorm:"type:text;not null;default:''" json:"request_body"`
+	RequestBodyTruncated   bool      `gorm:"not null;default:false" json:"request_body_truncated"`
+	RequestBodyBytes       int64     `gorm:"not null;default:0" json:"request_body_bytes"`
+	ForwardedHeaders       string    `gorm:"type:text;not null;default:'{}'" json:"forwarded_headers"`
+	ForwardedBody          string    `gorm:"type:text;not null;default:''" json:"forwarded_body"`
+	ForwardedBodyTruncated bool      `gorm:"not null;default:false" json:"forwarded_body_truncated"`
+	ForwardedBodyBytes     int64     `gorm:"not null;default:0" json:"forwarded_body_bytes"`
+	UpstreamStatus         int       `gorm:"not null;default:0" json:"upstream_status"`
+	UpstreamHeaders        string    `gorm:"type:text;not null;default:'{}'" json:"upstream_headers"`
+	UpstreamBody           string    `gorm:"type:text;not null;default:''" json:"upstream_body"`
+	UpstreamBodyTruncated  bool      `gorm:"not null;default:false" json:"upstream_body_truncated"`
+	UpstreamBodyBytes      int64     `gorm:"not null;default:0" json:"upstream_body_bytes"`
+	ErrorName              string    `json:"error_name,omitempty"`
+	ErrorMessage           string    `json:"error_message,omitempty"`
+	ErrorStack             string    `gorm:"type:text" json:"error_stack,omitempty"`
+	ErrorCause             string    `gorm:"type:text" json:"error_cause,omitempty"`
+	ErrorDetail            string    `gorm:"type:text" json:"error_detail,omitempty"`
+	StageTimings           string    `gorm:"type:text;not null;default:'{}'" json:"stage_timings"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
+}
+
+type CPALifecycleEvent struct {
+	ID                  string     `gorm:"type:uuid;primaryKey" json:"id"`
+	RequestLogID        string     `gorm:"type:uuid;not null;index:cpa_lifecycle_request_idx,priority:1" json:"request_log_id"`
+	Event               string     `gorm:"not null;index:cpa_lifecycle_request_idx,priority:2" json:"event"`
+	CPAExecutionID      string     `gorm:"not null;default:'';index" json:"cpa_execution_id"`
+	CPATraceID          string     `gorm:"not null;default:'';index" json:"cpa_trace_id"`
+	SourceFormat        string     `gorm:"not null;default:''" json:"source_format"`
+	ToFormat            string     `gorm:"not null;default:''" json:"to_format"`
+	Model               string     `gorm:"not null;default:''" json:"model"`
+	RequestedModel      string     `gorm:"not null;default:''" json:"requested_model"`
+	ModelAlias          string     `gorm:"not null;default:''" json:"model_alias"`
+	Provider            string     `gorm:"not null;default:''" json:"provider"`
+	ExecutorType        string     `gorm:"not null;default:''" json:"executor_type"`
+	AuthType            string     `gorm:"not null;default:''" json:"auth_type"`
+	AuthIndex           string     `gorm:"not null;default:''" json:"auth_index"`
+	ServiceTier         string     `gorm:"not null;default:''" json:"service_tier"`
+	ResponseServiceTier string     `gorm:"not null;default:''" json:"response_service_tier"`
+	ReasoningEffort     string     `gorm:"not null;default:''" json:"reasoning_effort"`
+	StatusCode          int        `gorm:"not null;default:0" json:"status_code"`
+	Outcome             string     `gorm:"not null;default:''" json:"outcome"`
+	ErrorMessage        string     `gorm:"type:text;not null;default:''" json:"error_message"`
+	Headers             string     `gorm:"type:text;not null;default:'{}'" json:"headers"`
+	ResponseHeaders     string     `gorm:"type:text;not null;default:'{}'" json:"response_headers"`
+	Body                string     `gorm:"type:text;not null;default:''" json:"body"`
+	OriginalRequest     string     `gorm:"type:text;not null;default:''" json:"original_request"`
+	RequestBody         string     `gorm:"type:text;not null;default:''" json:"request_body"`
+	RawJSON             string     `gorm:"type:text;not null;default:''" json:"-"`
+	Processed           bool       `gorm:"not null;default:false;index" json:"processed"`
+	CreatedAt           time.Time  `json:"created_at"`
+	ProcessedAt         *time.Time `json:"processed_at,omitempty"`
 }
 
 type Invitation struct {

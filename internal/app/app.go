@@ -46,7 +46,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, store: store.Store{DB: database}, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{})}
+	dataStore, err := store.New(database)
+	if err != nil {
+		return nil, err
+	}
+	a := &App{cfg: cfg, store: dataStore, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{})}
 	a.routes()
 	a.refreshBridgeStatus(ctx)
 	a.wg.Add(1)
@@ -77,6 +81,8 @@ func (a *App) maintenance() {
 	defer quotaTicker.Stop()
 	initialQuotaSync := time.NewTimer(15 * time.Second)
 	defer initialQuotaSync.Stop()
+	retentionTicker := time.NewTicker(time.Hour)
+	defer retentionTicker.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -90,6 +96,12 @@ func (a *App) maintenance() {
 			a.refreshParentQuotas(context.Background())
 		case <-quotaTicker.C:
 			a.refreshParentQuotas(context.Background())
+		case <-retentionTicker.C:
+			if err := a.store.PruneRequestLogs(
+				context.Background(), time.Now(), a.cfg.RequestLogRetentionDays, a.cfg.RequestDetailRetentionDays,
+			); err != nil {
+				slog.Error("prune request logs", "error", err)
+			}
 		case <-a.stop:
 			return
 		}
@@ -116,6 +128,7 @@ func (a *App) Handler() http.Handler {
 func (a *App) routes() {
 	a.mux.HandleFunc("GET /healthz", a.health)
 	a.mux.HandleFunc("POST /internal/cpa/usage", a.cpaPluginUsage)
+	a.mux.HandleFunc("POST /internal/cpa/lifecycle", a.cpaPluginLifecycle)
 	a.mux.HandleFunc("GET /api/auth/status", a.authStatus)
 	a.mux.HandleFunc("POST /api/auth/login", a.tenantLogin)
 	a.mux.HandleFunc("POST /api/auth/register", a.register)
@@ -128,6 +141,7 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("DELETE /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyDelete)))
 	a.mux.Handle("GET /api/logs", a.withTenant(http.HandlerFunc(a.logs)))
+	a.mux.Handle("GET /api/logs/{id}", a.withTenant(http.HandlerFunc(a.logDetail)))
 
 	a.mux.Handle("GET /api/admin/tenants", a.withAdmin(http.HandlerFunc(a.adminTenants)))
 	a.mux.Handle("POST /api/admin/tenants", a.withAdmin(http.HandlerFunc(a.adminTenants)))
@@ -138,6 +152,13 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/admin/tenants/{id}/keys", a.withAdmin(http.HandlerFunc(a.adminTenantKeys)))
 	a.mux.Handle("GET /api/admin/prices", a.withAdmin(http.HandlerFunc(a.adminPrices)))
 	a.mux.Handle("PUT /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceUpdate)))
+	a.mux.Handle("DELETE /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceDelete)))
+	a.mux.Handle("GET /api/admin/pricing/aliases", a.withAdmin(http.HandlerFunc(a.adminPricingAliases)))
+	a.mux.Handle("PUT /api/admin/pricing/aliases", a.withAdmin(http.HandlerFunc(a.adminPricingAliases)))
+	a.mux.Handle("GET /api/admin/pricing/rules", a.withAdmin(http.HandlerFunc(a.adminPricingRules)))
+	a.mux.Handle("PUT /api/admin/pricing/rules", a.withAdmin(http.HandlerFunc(a.adminPricingRules)))
+	a.mux.Handle("GET /api/admin/pricing/sync", a.withAdmin(http.HandlerFunc(a.adminPricingSync)))
+	a.mux.Handle("POST /api/admin/pricing/sync", a.withAdmin(http.HandlerFunc(a.adminPricingSync)))
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 		a.mux.Handle(method+" /api/admin/cpa/{resource...}", a.withAdmin(http.HandlerFunc(a.adminCPA)))
 	}
@@ -154,6 +175,7 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/overview", a.withAdmin(http.HandlerFunc(a.adminOverview)))
 	a.mux.Handle("GET /api/admin/usage", a.withAdmin(http.HandlerFunc(a.adminUsage)))
 	a.mux.Handle("GET /api/admin/logs", a.withAdmin(http.HandlerFunc(a.adminLogs)))
+	a.mux.Handle("GET /api/admin/logs/{id}", a.withAdmin(http.HandlerFunc(a.adminLogDetail)))
 	a.mux.Handle("GET /api/admin/invitations", a.withAdmin(http.HandlerFunc(a.adminInvitations)))
 	a.mux.Handle("POST /api/admin/invitations", a.withAdmin(http.HandlerFunc(a.adminInvitations)))
 	a.mux.Handle("DELETE /api/admin/invitations/{id}", a.withAdmin(http.HandlerFunc(a.adminInvitationRevoke)))

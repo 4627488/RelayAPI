@@ -39,6 +39,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -70,6 +71,39 @@ type schedulerRequest struct {
 	} `json:"Candidates"`
 }
 
+type interceptorPayload struct {
+	RequestID       string
+	TraceID         string
+	SourceFormat    string
+	ToFormat        string
+	Model           string
+	RequestedModel  string
+	Stream          bool
+	Headers         http.Header
+	RequestHeaders  http.Header
+	ResponseHeaders http.Header
+	Body            []byte
+	OriginalRequest []byte
+	RequestBody     []byte
+	StatusCode      int
+	ChunkIndex      int
+	Metadata        map[string]any
+}
+
+type completionPayload struct {
+	RequestID, TraceID, SourceFormat, Model, RequestedModel, Outcome, Error string
+	Stream                                                                  bool
+	StatusCode                                                              int
+	StartedAt, CompletedAt                                                  time.Time
+	Metadata                                                                map[string]any
+}
+
+type relayLifecycleEvent struct {
+	Event          string `json:"event"`
+	RelayRequestID string `json:"relay_request_id"`
+	Payload        any    `json:"payload"`
+}
+
 type managementRequest struct {
 	Method  string
 	Path    string
@@ -86,6 +120,21 @@ type managementResponse struct {
 
 var current atomic.Value
 var client = &http.Client{Timeout: 5 * time.Second}
+var requestCorrelations sync.Map
+var lifecycleQueue = make(chan lifecycleJob, 256)
+
+type lifecycleJob struct {
+	URL, Secret string
+	Event       relayLifecycleEvent
+}
+
+func init() {
+	go func() {
+		for job := range lifecycleQueue {
+			postLifecycle(job)
+		}
+	}()
+}
 
 func main() {}
 
@@ -160,7 +209,7 @@ func handle(method string, raw []byte) ([]byte, error) {
 		current.Store(cfg)
 		return ok(map[string]any{
 			"schema_version": 2,
-			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.3.0", "Author": "4627488",
+			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.4.0", "Author": "4627488",
 				"GitHubRepository": "https://github.com/4627488/RelayAPI",
 				"Logo":             "https://github.com/4627488.png",
 				"ConfigFields": []map[string]any{
@@ -170,7 +219,11 @@ func handle(method string, raw []byte) ([]byte, error) {
 					{"Name": "quota_adapters_mode", "Type": "enum", "EnumValues": []string{"append", "replace", "disabled"}, "Description": "How custom quota adapter manifests combine with the bundled extension pack"},
 					{"Name": "quota_adapters", "Type": "array", "Description": "Declarative provider quota adapter manifests"},
 				}},
-			"capabilities": map[string]bool{"usage_plugin": true, "scheduler": true, "management_api": true},
+			"capabilities": map[string]bool{
+				"usage_plugin": true, "scheduler": true, "management_api": true,
+				"request_interceptor": true, "request_lifecycle_plugin": true,
+				"response_interceptor": true, "response_stream_interceptor": true,
+			},
 		})
 	case "management.register":
 		return ok(map[string]any{"routes": []map[string]any{{
@@ -212,6 +265,52 @@ func handle(method string, raw []byte) ([]byte, error) {
 			return nil, errors.New("RelayAPI rejected usage event")
 		}
 		return ok(map[string]any{})
+	case "request.intercept_before", "request.intercept_after":
+		var payload interceptorPayload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, fmt.Errorf("decode request lifecycle: %w", err)
+		}
+		relayID := firstHTTPHeader(payload.Headers, "X-Relay-Request-ID")
+		if relayID != "" && payload.RequestID != "" {
+			requestCorrelations.Store(payload.RequestID, relayID)
+		}
+		payload = boundedInterceptorPayload(payload)
+		enqueueLifecycle(method, relayID, payload)
+		return ok(map[string]any{})
+	case "response.intercept_after":
+		var payload interceptorPayload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, fmt.Errorf("decode response lifecycle: %w", err)
+		}
+		relayID := correlatedRelayID(payload.RequestID, payload.RequestHeaders)
+		payload = boundedInterceptorPayload(payload)
+		enqueueLifecycle(method, relayID, payload)
+		return ok(map[string]any{})
+	case "response.intercept_stream_chunk":
+		var payload interceptorPayload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, fmt.Errorf("decode stream lifecycle: %w", err)
+		}
+		// The synchronous stream hook is kept deliberately cheap. Header
+		// initialization and the first payload chunk are sufficient for TTFT
+		// and diagnostic context; completion carries the terminal outcome.
+		if payload.ChunkIndex <= 0 {
+			relayID := correlatedRelayID(payload.RequestID, payload.RequestHeaders)
+			payload = boundedInterceptorPayload(payload)
+			enqueueLifecycle(method, relayID, payload)
+		}
+		return ok(map[string]any{})
+	case "request.complete":
+		var payload completionPayload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, fmt.Errorf("decode request completion: %w", err)
+		}
+		relayID := ""
+		if value, ok := requestCorrelations.LoadAndDelete(payload.RequestID); ok {
+			relayID, _ = value.(string)
+		}
+		enqueueLifecycle(method, relayID, payload)
+		return ok(map[string]any{})
 	case "scheduler.pick":
 		var req schedulerRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
@@ -234,6 +333,84 @@ func handle(method string, raw []byte) ([]byte, error) {
 	default:
 		return ok(map[string]any{})
 	}
+}
+
+func enqueueLifecycle(event, relayID string, payload any) {
+	cfg := loaded()
+	if cfg.RelayURL == "" || cfg.Secret == "" || strings.TrimSpace(relayID) == "" {
+		return
+	}
+	job := lifecycleJob{
+		URL: cfg.RelayURL, Secret: cfg.Secret,
+		Event: relayLifecycleEvent{Event: event, RelayRequestID: relayID, Payload: payload},
+	}
+	select {
+	case lifecycleQueue <- job:
+	default:
+		// Observability must never stall model traffic.
+	}
+}
+
+func postLifecycle(job lifecycleJob) {
+	raw, err := json.Marshal(job.Event)
+	if err != nil {
+		return
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		req, requestErr := http.NewRequest(http.MethodPost, job.URL+"/internal/cpa/lifecycle", bytes.NewReader(raw))
+		if requestErr != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Relay-Plugin-Secret", job.Secret)
+		response, requestErr := client.Do(req)
+		if requestErr == nil {
+			response.Body.Close()
+			if response.StatusCode == http.StatusNoContent {
+				return
+			}
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(100*(1<<attempt)) * time.Millisecond)
+		}
+	}
+}
+
+func correlatedRelayID(requestID string, headers http.Header) string {
+	if relayID := firstHTTPHeader(headers, "X-Relay-Request-ID"); relayID != "" {
+		if requestID != "" {
+			requestCorrelations.Store(requestID, relayID)
+		}
+		return relayID
+	}
+	if value, ok := requestCorrelations.Load(requestID); ok {
+		relayID, _ := value.(string)
+		return relayID
+	}
+	return ""
+}
+
+func firstHTTPHeader(headers http.Header, name string) string {
+	for key, values := range headers {
+		if strings.EqualFold(key, name) && len(values) > 0 {
+			return strings.TrimSpace(values[0])
+		}
+	}
+	return ""
+}
+
+func boundedInterceptorPayload(payload interceptorPayload) interceptorPayload {
+	payload.Body = boundedBytes(payload.Body, 512<<10)
+	payload.OriginalRequest = boundedBytes(payload.OriginalRequest, 512<<10)
+	payload.RequestBody = boundedBytes(payload.RequestBody, 512<<10)
+	return payload
+}
+
+func boundedBytes(value []byte, limit int) []byte {
+	if len(value) <= limit {
+		return value
+	}
+	return append([]byte(nil), value[:limit]...)
 }
 
 func validRoutingSignature(secret string, headers map[string][]string, authID string, now time.Time) bool {

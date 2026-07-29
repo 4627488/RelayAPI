@@ -47,7 +47,12 @@ preserved. Hop-by-hop headers are removed. WebSocket upgrades are tunneled.
 model is immediately available. Empty tenant/key allowlists mean all models;
 allowlists support exact names, `*`, and glob patterns.
 
-Prices are local accounting metadata, not a model allowlist:
+Prices are local accounting metadata, not a model allowlist. Resolution is
+administrator override > synced Models.dev catalog > bundled last-known-good
+catalog. Aliases are resolved before lookup, and CPA dimensions may apply
+validated multipliers for API group, auth index, service tier, reasoning
+effort, endpoint, executor, or model alias. The resolved five-part integer
+price and catalog version are snapshotted with every request:
 
 - `UNPRICED_MODEL_POLICY=allow` (default): forward an unknown model, record its
   usage, mark pricing incomplete, and charge zero.
@@ -83,15 +88,26 @@ API key and management key are service credentials; tenant clients receive only
 ## CPA v7 plugin boundary
 
 `cliproxyapi-plugin/` is a thin C-ABI plugin with usage-observer, scheduler,
-management, and declarative quota-adapter capabilities. A trusted
+request/response lifecycle, management, and declarative quota-adapter
+capabilities. A trusted
 `X-Relay-CPA-Auth-ID` can select a specific candidate;
 otherwise the plugin delegates to CPA's built-in scheduler. Usage events are
 sent to Relay over the private network using a shared secret.
 
 CPA v7's usage plugin record does not include arbitrary request headers, so
 those events cannot safely be the sole tenant-billing correlation source.
-Relay therefore settles from its own request-correlated terminal response and
-uses plugin events for credential/failure telemetry.
+CPA's lifecycle ABI does provide execution IDs, trace IDs, headers, translated
+requests, upstream responses, stream initialization, and terminal outcomes.
+Bridge 0.4 correlates these with `X-Relay-Request-ID` and sends bounded events
+asynchronously. Relay persists them for detailed diagnostics while continuing
+to settle from its own request-correlated terminal response.
+
+Relay request logs have separate summary and detail retention. Sensitive
+headers are redacted; bodies carry original byte counts and truncation flags.
+The summary stores tenant/key display snapshots, CPA execution identity, TTFT,
+token breakdown, errors, and the immutable five-part pricing snapshot. Detail
+stores client and translated requests, upstream response, stage timings, and
+structured error context.
 
 Quota discovery follows the same ownership boundary. The bridge obtains one
 credential by stable CPA `auth_index`, executes adapter-declared HTTP requests

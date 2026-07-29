@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,7 +34,12 @@ quota_adapters:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"management_api":true`) || !strings.Contains(string(raw), `"Version":"0.3.0"`) {
+	if !strings.Contains(string(raw), `"management_api":true`) ||
+		!strings.Contains(string(raw), `"request_interceptor":true`) ||
+		!strings.Contains(string(raw), `"request_lifecycle_plugin":true`) ||
+		!strings.Contains(string(raw), `"response_interceptor":true`) ||
+		!strings.Contains(string(raw), `"response_stream_interceptor":true`) ||
+		!strings.Contains(string(raw), `"Version":"0.4.0"`) {
 		t.Fatalf("registration = %s", raw)
 	}
 	loadedConfig := loaded()
@@ -85,6 +92,41 @@ func TestRoutingSignatureExpires(t *testing.T) {
 	}
 	if validRoutingSignature("shared-secret", headers, "auth-1", time.Now()) {
 		t.Fatal("expected stale routing signature to be rejected")
+	}
+}
+
+func TestLifecycleCorrelatesExecutionWithoutMutatingTraffic(t *testing.T) {
+	current.Store(config{})
+	request := interceptorPayload{
+		RequestID: "cpa-exec-1", TraceID: "cpa-trace-1",
+		Headers: http.Header{"X-Relay-Request-ID": {"relay-request-1"}},
+		Body:    []byte(`{"model":"gpt-test"}`),
+	}
+	raw, _ := json.Marshal(request)
+	response, err := handle("request.intercept_before", raw)
+	if err != nil || !strings.Contains(string(response), `"ok":true`) {
+		t.Fatalf("request interception response=%s err=%v", response, err)
+	}
+	if relayID := correlatedRelayID("cpa-exec-1", nil); relayID != "relay-request-1" {
+		t.Fatalf("correlated Relay ID = %q", relayID)
+	}
+	completion, _ := json.Marshal(completionPayload{RequestID: "cpa-exec-1", Outcome: "succeeded"})
+	if _, err := handle("request.complete", completion); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := requestCorrelations.Load("cpa-exec-1"); ok {
+		t.Fatal("completion did not release request correlation")
+	}
+}
+
+func TestLifecyclePayloadIsBounded(t *testing.T) {
+	payload := boundedInterceptorPayload(interceptorPayload{
+		Body:            bytes.Repeat([]byte("a"), 600<<10),
+		OriginalRequest: bytes.Repeat([]byte("b"), 600<<10),
+		RequestBody:     bytes.Repeat([]byte("c"), 600<<10),
+	})
+	if len(payload.Body) != 512<<10 || len(payload.OriginalRequest) != 512<<10 || len(payload.RequestBody) != 512<<10 {
+		t.Fatalf("payload was not bounded: %d/%d/%d", len(payload.Body), len(payload.OriginalRequest), len(payload.RequestBody))
 	}
 }
 

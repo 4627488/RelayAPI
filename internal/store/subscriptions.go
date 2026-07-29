@@ -581,6 +581,19 @@ func (s Store) AdmitRequest(ctx context.Context, input AdmissionInput) (Admissio
 	return Admission{}, ErrSubscriptionRequired
 }
 
+func (s Store) UpdateReservationPriceSnapshot(ctx context.Context, requestID string, snapshot json.RawMessage) error {
+	if len(snapshot) == 0 {
+		snapshot = json.RawMessage(`{}`)
+	}
+	result := scoped(ctx, s.DB).Model(&RequestReservation{}).
+		Where("request_id = ? AND status = ?", requestID, db.ReservationActive).
+		Update("price_snapshot", snapshot)
+	if result.Error == nil && result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return result.Error
+}
+
 func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candidate *SubscriptionCandidate) (Admission, error) {
 	var result Admission
 	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {

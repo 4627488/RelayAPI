@@ -55,6 +55,9 @@ WebSocket 入口。
 管理员的业务分配策略，不能也不应由 CPA 自动决定。
 未知模型默认允许调用且不扣费；
 设置 `UNPRICED_MODEL_POLICY=deny` 可改为严格模式。
+定价按“管理员覆盖 > Models.dev 在线目录 > 内置最后可用目录”解析，支持模型别名、
+CPA 多维倍率规则和五段费率快照。`REQUEST_LOG_RETENTION_DAYS` 与
+`REQUEST_LOG_DETAIL_RETENTION_DAYS` 分别控制摘要和详细请求内容留存，默认 90/30 天。
 
 ## 面板 API
 
@@ -74,7 +77,11 @@ WebSocket 入口。
 - `/api/admin/cpa/*`：管理员会话保护的 CLIProxyAPI Management API 完整桥接；
   保留方法、查询参数及 JSON/YAML/上传请求体
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
-- `GET /api/admin/logs?tenant_id=...`：全局或指定用户请求日志
+- `GET /api/admin/logs?tenant_id=...&page=1&page_size=50`：可搜索、筛选和分页的请求日志
+- `GET /api/admin/logs/{id}`：脱敏请求、CPA 转发、上游响应、耗时与历史计费详情
+- `/api/admin/prices`：管理员五段价格覆盖
+- `/api/admin/pricing/aliases`、`/api/admin/pricing/rules`：模型别名与 CPA 多维倍率
+- `GET|POST /api/admin/pricing/sync`：预览或应用 Models.dev 价格目录
 - `POST /api/admin/subscriptions/sync`：同步 CPA scheduler ID 与稳定 auth_index 父订阅映射
 - `POST /api/admin/subscriptions/quota/sync`：立即观测所有父订阅的扩展额度
 - `POST /api/admin/subscriptions/parents/{id}/quota/sync`：观测单个父订阅额度
@@ -94,7 +101,7 @@ CPA 凭据页和父订阅页都会展示最近一次脱敏上游额度快照。�
 - `GET /api/usage?days=30`：按天、模型聚合的个人用量
 - `GET|POST /api/keys`：查看或生成个人 API Key
 - `DELETE /api/keys/{id}`：删除个人 API Key
-- `GET /api/logs`：个人请求日志
+- `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
 
 创建邀请时仅在响应中返回一次明文 token。数据库只保存 SHA-256 哈希；邀请可
@@ -110,7 +117,8 @@ go vet ./...
 ## CPA 薄插件
 
 CPA bridge 发布为 `ghcr.io/4627488/relayapi-cpa-plugin`。普通余额计费可以不安装；
-父/子订阅的 AuthID 固定路由要求 bridge `0.2.0+`；通用额度扩展要求 `0.3.0+`。用附加 Compose 文件把动态库
+父/子订阅的 AuthID 固定路由要求 bridge `0.2.0+`；通用额度扩展要求 `0.3.0+`；
+详细 CPA 请求生命周期要求 `0.4.0+`。用附加 Compose 文件把动态库
 放入 CPA 的私有插件目录：
 
 ```bash
@@ -133,10 +141,12 @@ plugins:
       quota_adapters_mode: append
 ```
 
-插件负责 CPA 凭据选择扩展与用量/失败遥测。Relay 会用短时 HMAC 签名保护内部
+插件负责 CPA 凭据选择扩展、请求/响应生命周期与用量/失败遥测。Relay 会用短时 HMAC 签名保护内部
 AuthID 路由指令；指定凭据不在 CPA 当前候选集时，插件会拒绝请求而不会悄悄切换
 到另一账户。计费仍使用 Relay 代理层关联到具体请求的响应用量，避免 CPA 插件
-事件缺少自定义关联 ID 时发生串账。
+事件缺少自定义关联 ID 时发生串账。生命周期事件通过
+`X-Relay-Request-ID` 与 CPA RequestID/TraceID 精确关联，只负责补充实际模型、
+转换后请求、上游响应、TTFT 和终态错误。
 
 `0.3.0` 的额度探测内核没有 Codex、xAI 或其他 provider 分支。内核只执行声明式
 adapter：按 provider 扩展键匹配、从 CPA 凭据渲染请求、通过 `host.http.do` 发起

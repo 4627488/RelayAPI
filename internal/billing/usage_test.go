@@ -3,6 +3,7 @@ package billing
 import (
 	"testing"
 
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -42,10 +43,11 @@ func TestParseResponseProtocols(t *testing.T) {
 }
 
 func TestCostAvoidsChargingCachedInputTwice(t *testing.T) {
-	price := store.Price{
+	price := pricing.SnapshotPrice{Price: pricing.Price{
 		InputNanoUSDPerToken: 10, OutputNanoUSDPerToken: 20,
 		CachedInputNanoUSDPerToken: 2, CacheWriteNanoUSDPerToken: 4,
 		ReasoningNanoUSDPerToken: 3,
+	},
 	}
 	usage := store.Usage{Prompt: 10, Completion: 5, Cached: 4, CacheWrite: 2, Reasoning: 1}
 	if got, want := Cost(price, usage), int64(179); got != want {

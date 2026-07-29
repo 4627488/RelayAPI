@@ -50,6 +50,7 @@ import { LogsTable, ModelTable, UsageChart, UsageMetrics } from "@/components/da
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { TenantSubscriptionsView } from "@/components/subscriptions-view"
+import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import type { Page } from "@/components/app-shell"
 import {
   api,
@@ -115,7 +116,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
       />
     )
   }
-  if (page === "logs") return <LogsTable logs={logs} />
+  if (page === "logs") return <RequestLogsWorkbench />
   if (page === "subscriptions") return <TenantSubscriptionsView />
   if (page === "usage") {
     return (
