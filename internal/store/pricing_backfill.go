@@ -15,7 +15,7 @@ type PendingPriceModel struct {
 }
 
 func (s *Store) PendingPricing(ctx context.Context) ([]PendingPriceModel, error) {
-	var result []PendingPriceModel
+	result := make([]PendingPriceModel, 0)
 	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select("model, count(*) AS request_count, max(started_at)::text AS latest_started_at").
 		Where("pricing_complete = ? AND model <> '' AND status_code >= 200 AND status_code < 400", false).
