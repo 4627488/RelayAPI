@@ -118,6 +118,12 @@ func (s Store) Login(ctx context.Context, email, password string) (Tenant, error
 	return tenant, nil
 }
 
+func (s Store) SetupRequired(ctx context.Context) (bool, error) {
+	var count int64
+	err := scoped(ctx, s.DB).Model(&Tenant{}).Count(&count).Error
+	return count == 0, err
+}
+
 func (s Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error) {
 	var result []APIKey
 	err := scoped(ctx, s.DB).Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&result).Error
@@ -335,18 +341,34 @@ func (s Store) RevokeInvitation(ctx context.Context, id string) error {
 	return result.Error
 }
 
-func (s Store) RegisterWithInvitation(ctx context.Context, token, name, email, password string) (Tenant, error) {
+func (s Store) Register(ctx context.Context, token, name, email, password string) (Tenant, error) {
 	token = strings.TrimSpace(token)
 	email = strings.ToLower(strings.TrimSpace(email))
-	if token == "" {
-		return Tenant{}, ErrNotFound
-	}
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
 		return Tenant{}, err
 	}
 	var user Tenant
 	err = scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		// Serialize the empty-database check so two simultaneous setup requests
+		// cannot both become the first administrator.
+		if err := tx.Exec(`SELECT pg_advisory_xact_lock(?)`, int64(0x52656c6179415049)).Error; err != nil {
+			return err
+		}
+		var userCount int64
+		if err := tx.Model(&Tenant{}).Count(&userCount).Error; err != nil {
+			return err
+		}
+		if userCount == 0 {
+			user = Tenant{
+				ID: identity.NewID(), Name: strings.TrimSpace(name), OwnerEmail: email,
+				PasswordHash: string(passwordHash), Enabled: true, IsAdmin: true,
+			}
+			return tx.Create(&user).Error
+		}
+		if token == "" {
+			return ErrNotFound
+		}
 		var invitation Invitation
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("token_hash = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?", identity.HashKey(token), time.Now()).
@@ -358,7 +380,7 @@ func (s Store) RegisterWithInvitation(ctx context.Context, token, name, email, p
 		}
 		user = Tenant{
 			ID: identity.NewID(), Name: strings.TrimSpace(name), OwnerEmail: email,
-			PasswordHash: string(passwordHash), Enabled: true,
+			PasswordHash: string(passwordHash), Enabled: true, IsAdmin: false,
 		}
 		if err := tx.Create(&user).Error; err != nil {
 			return err

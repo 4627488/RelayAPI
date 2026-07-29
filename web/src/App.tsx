@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import { AppShell, type Page } from "@/components/app-shell"
+import { AppShell, type Page, type Workspace } from "@/components/app-shell"
 import { AuthPage } from "@/components/auth-page"
 import { LoadingView } from "@/components/loading-view"
 import { api, type Session } from "@/lib/api"
@@ -17,6 +17,7 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [checking, setChecking] = useState(true)
   const [page, setPage] = useState<Page>("overview")
+  const [workspace, setWorkspace] = useState<Workspace>("user")
 
   useEffect(() => {
     api<Session>("/api/me")
@@ -38,6 +39,7 @@ export function App() {
       }
       setSession(null)
       setPage("overview")
+      setWorkspace("user")
       toast.success("已退出登录")
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "退出失败")
@@ -49,18 +51,23 @@ export function App() {
   }
 
   if (!session) {
-    return <AuthPage onAuthenticated={(value) => { setSession(value); setPage("overview") }} />
+    return <AuthPage onAuthenticated={(value) => { setSession(value); setPage("overview"); setWorkspace("user") }} />
   }
 
   return (
     <AppShell
       session={session}
+      workspace={workspace}
       page={page}
       onPageChange={setPage}
+      onWorkspaceChange={(value) => {
+        setWorkspace(value)
+        setPage("overview")
+      }}
       onLogout={() => void logout()}
     >
       <Suspense fallback={<LoadingView />}>
-        {session.role === "admin" ? (
+        {workspace === "admin" && session.is_admin ? (
           <AdminWorkspace page={page} />
         ) : (
           <UserWorkspace page={page} session={session} />

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { ArrowRightIcon, KeyRoundIcon, ShieldCheckIcon, SparklesIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -14,8 +14,7 @@ import {
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { postJSON, type Session } from "@/lib/api"
+import { api, postJSON, type AuthStatus, type Session } from "@/lib/api"
 
 interface AuthPageProps {
   onAuthenticated: (session: Session) => void
@@ -60,6 +59,16 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState("")
   const [mode, setMode] = useState(token ? "register" : "login")
+  const [setupRequired, setSetupRequired] = useState(false)
+
+  useEffect(() => {
+    api<AuthStatus>("/api/auth/status")
+      .then((status) => {
+        setSetupRequired(status.setup_required)
+        if (status.setup_required) setMode("register")
+      })
+      .catch(() => undefined)
+  }, [])
 
   async function submit(path: string, payload: Record<string, string>) {
     setPending(true)
@@ -84,12 +93,6 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
     })
   }
 
-  function adminLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const data = new FormData(event.currentTarget)
-    void submit("/api/auth/admin", { key: String(data.get("key") ?? "") })
-  }
-
   function register(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
@@ -109,11 +112,13 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
           <div className="flex flex-col gap-2">
             <p className="text-sm text-muted-foreground">账户中心</p>
             <h1 className="text-3xl font-semibold tracking-tight">
-              {mode === "register" ? "接受邀请" : "登录 RelayAPI"}
+              {mode === "register" ? (setupRequired ? "初始化 RelayAPI" : "接受邀请") : "登录 RelayAPI"}
             </h1>
             <p className="text-sm text-muted-foreground">
               {mode === "register"
-                ? "完成资料后即可创建自己的 API Key。"
+                ? setupRequired
+                  ? "创建首个用户。该用户会同时获得管理员权限。"
+                  : "完成资料后即可创建自己的 API Key。"
                 : "访问你的模型、密钥和用量数据。"}
             </p>
           </div>
@@ -129,15 +134,19 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
             <Card>
               <CardHeader>
                 <CardTitle>创建账户</CardTitle>
-                <CardDescription>邀请为单次使用，提交后会自动登录。</CardDescription>
+                <CardDescription>
+                  {setupRequired ? "管理员是该普通用户的附加身份，提交后默认进入个人面板。" : "邀请为单次使用，提交后会自动登录。"}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={register}>
                   <FieldGroup>
-                    <Field>
-                      <FieldLabel htmlFor="token">邀请 Token</FieldLabel>
-                      <Input id="token" name="token" defaultValue={token ?? ""} required />
-                    </Field>
+                    {!setupRequired ? (
+                      <Field>
+                        <FieldLabel htmlFor="token">邀请 Token</FieldLabel>
+                        <Input id="token" name="token" defaultValue={token ?? ""} required />
+                      </Field>
+                    ) : null}
                     <Field>
                       <FieldLabel htmlFor="name">显示名称</FieldLabel>
                       <Input id="name" name="name" autoComplete="name" required />
@@ -168,64 +177,36 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
               </CardContent>
             </Card>
           ) : (
-            <Tabs defaultValue="user">
-              <TabsList className="w-full">
-                <TabsTrigger value="user" className="flex-1">用户</TabsTrigger>
-                <TabsTrigger value="admin" className="flex-1">管理员</TabsTrigger>
-              </TabsList>
-              <TabsContent value="user">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>用户登录</CardTitle>
-                    <CardDescription>使用受邀注册时设置的邮箱和密码。</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <form onSubmit={login}>
-                      <FieldGroup>
-                        <Field>
-                          <FieldLabel htmlFor="email">邮箱</FieldLabel>
-                          <Input id="email" name="email" type="email" autoComplete="username" required />
-                        </Field>
-                        <Field>
-                          <FieldLabel htmlFor="password">密码</FieldLabel>
-                          <Input id="password" name="password" type="password" autoComplete="current-password" required />
-                        </Field>
-                        <Button type="submit" disabled={pending}>
-                          {pending ? <Spinner data-icon="inline-start" /> : null}
-                          登录
-                        </Button>
-                      </FieldGroup>
-                    </form>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-              <TabsContent value="admin">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>管理员登录</CardTitle>
-                    <CardDescription>使用服务端配置的管理员访问密钥。</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <form onSubmit={adminLogin}>
-                      <FieldGroup>
-                        <Field>
-                          <FieldLabel htmlFor="admin-key">访问密钥</FieldLabel>
-                          <Input id="admin-key" name="key" type="password" autoComplete="current-password" required />
-                        </Field>
-                        <Button type="submit" disabled={pending}>
-                          {pending ? <Spinner data-icon="inline-start" /> : null}
-                          进入管理台
-                        </Button>
-                      </FieldGroup>
-                    </form>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
+            <Card>
+              <CardHeader>
+                <CardTitle>账户登录</CardTitle>
+                <CardDescription>管理员也使用自己的普通用户邮箱和密码登录。</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={login}>
+                  <FieldGroup>
+                    <Field>
+                      <FieldLabel htmlFor="email">邮箱</FieldLabel>
+                      <Input id="email" name="email" type="email" autoComplete="username" required />
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="password">密码</FieldLabel>
+                      <Input id="password" name="password" type="password" autoComplete="current-password" required />
+                    </Field>
+                    <Button type="submit" disabled={pending}>
+                      {pending ? <Spinner data-icon="inline-start" /> : null}
+                      登录
+                    </Button>
+                  </FieldGroup>
+                </form>
+              </CardContent>
+            </Card>
           )}
 
           <Button variant="ghost" onClick={() => setMode(mode === "register" ? "login" : "register")}>
-            {mode === "register" ? "已有账户？返回登录" : "已有邀请？创建账户"}
+            {mode === "register"
+              ? "已有账户？返回登录"
+              : setupRequired ? "首次使用？创建首个用户" : "已有邀请？创建账户"}
           </Button>
         </div>
       </section>

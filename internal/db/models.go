@@ -12,6 +12,7 @@ type Tenant struct {
 	OwnerEmail         string         `gorm:"uniqueIndex;not null" json:"owner_email"`
 	PasswordHash       string         `gorm:"not null" json:"-"`
 	Enabled            bool           `gorm:"not null;default:true" json:"enabled"`
+	IsAdmin            bool           `gorm:"not null;default:false;index" json:"is_admin"`
 	BalanceNanoUSD     int64          `gorm:"not null;default:0" json:"balance_nano_usd"`
 	RateLimitPerMinute *int           `json:"rate_limit_per_minute"`
 	TokenLimitDaily    *int64         `json:"token_limit_daily"`

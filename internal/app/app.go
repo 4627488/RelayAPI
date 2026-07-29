@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -117,18 +116,18 @@ func (a *App) Handler() http.Handler {
 func (a *App) routes() {
 	a.mux.HandleFunc("GET /healthz", a.health)
 	a.mux.HandleFunc("POST /internal/cpa/usage", a.cpaPluginUsage)
-	a.mux.HandleFunc("POST /api/auth/admin", a.adminLogin)
+	a.mux.HandleFunc("GET /api/auth/status", a.authStatus)
 	a.mux.HandleFunc("POST /api/auth/login", a.tenantLogin)
 	a.mux.HandleFunc("POST /api/auth/register", a.register)
 	a.mux.HandleFunc("POST /api/auth/logout", a.logout)
-	a.mux.Handle("GET /api/me", a.withSession(http.HandlerFunc(a.me)))
+	a.mux.Handle("GET /api/me", a.withTenant(http.HandlerFunc(a.me)))
 	a.mux.Handle("GET /api/dashboard", a.withTenant(http.HandlerFunc(a.dashboard)))
 	a.mux.Handle("GET /api/usage", a.withTenant(http.HandlerFunc(a.usage)))
 	a.mux.Handle("GET /api/subscriptions", a.withTenant(http.HandlerFunc(a.tenantSubscriptions)))
 	a.mux.Handle("GET /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("POST /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("DELETE /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyDelete)))
-	a.mux.Handle("GET /api/logs", a.withSession(http.HandlerFunc(a.logs)))
+	a.mux.Handle("GET /api/logs", a.withTenant(http.HandlerFunc(a.logs)))
 
 	a.mux.Handle("GET /api/admin/tenants", a.withAdmin(http.HandlerFunc(a.adminTenants)))
 	a.mux.Handle("POST /api/admin/tenants", a.withAdmin(http.HandlerFunc(a.adminTenants)))
@@ -154,6 +153,7 @@ func (a *App) routes() {
 	a.mux.Handle("PATCH /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
 	a.mux.Handle("GET /api/admin/overview", a.withAdmin(http.HandlerFunc(a.adminOverview)))
 	a.mux.Handle("GET /api/admin/usage", a.withAdmin(http.HandlerFunc(a.adminUsage)))
+	a.mux.Handle("GET /api/admin/logs", a.withAdmin(http.HandlerFunc(a.adminLogs)))
 	a.mux.Handle("GET /api/admin/invitations", a.withAdmin(http.HandlerFunc(a.adminInvitations)))
 	a.mux.Handle("POST /api/admin/invitations", a.withAdmin(http.HandlerFunc(a.adminInvitations)))
 	a.mux.Handle("DELETE /api/admin/invitations/{id}", a.withAdmin(http.HandlerFunc(a.adminInvitationRevoke)))
@@ -241,21 +241,6 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 		"subscriptions": errorText(subscriptionErr), "bridge": map[string]any{"required": bridgeRequired, "ready": a.bridgeReady.Load(), "version": bridgeVersion}})
 }
 
-func (a *App) adminLogin(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Key string `json:"key"`
-	}
-	if !decodeJSON(w, r, &input) {
-		return
-	}
-	if subtle.ConstantTimeCompare([]byte(input.Key), []byte(a.cfg.AdminAccessKey)) != 1 {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", "访问密钥错误")
-		return
-	}
-	a.setSession(w, identity.Session{Role: "admin", Expires: time.Now().Add(12 * time.Hour).Unix()})
-	writeJSON(w, http.StatusOK, map[string]string{"role": "admin"})
-}
-
 func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {
 	var input struct{ Email, Password string }
 	if !decodeJSON(w, r, &input) {
@@ -267,7 +252,7 @@ func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setSession(w, identity.Session{Role: "tenant", TenantID: tenant.ID, Expires: time.Now().Add(12 * time.Hour).Unix()})
-	writeJSON(w, http.StatusOK, map[string]any{"role": "tenant", "tenant": tenant})
+	writeJSON(w, http.StatusOK, map[string]any{"role": "tenant", "is_admin": tenant.IsAdmin, "tenant": tenant})
 }
 
 func (a *App) logout(w http.ResponseWriter, _ *http.Request) {
@@ -303,7 +288,9 @@ func (a *App) withSession(next http.Handler) http.Handler {
 
 func (a *App) withAdmin(next http.Handler) http.Handler {
 	return a.withSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if currentSession(r).Role != "admin" {
+		session := currentSession(r)
+		tenant, err := a.store.GetTenant(r.Context(), session.TenantID)
+		if err != nil || !tenant.Enabled || !tenant.IsAdmin {
 			writeError(w, http.StatusForbidden, "forbidden", "需要管理员权限")
 			return
 		}
@@ -313,7 +300,7 @@ func (a *App) withAdmin(next http.Handler) http.Handler {
 
 func (a *App) withTenant(next http.Handler) http.Handler {
 	return a.withSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if currentSession(r).Role != "tenant" {
+		if currentSession(r).TenantID == "" {
 			writeError(w, http.StatusForbidden, "forbidden", "需要租户权限")
 			return
 		}
@@ -328,13 +315,12 @@ func currentSession(r *http.Request) identity.Session {
 
 func (a *App) me(w http.ResponseWriter, r *http.Request) {
 	session := currentSession(r)
-	result := map[string]any{"role": session.Role}
-	if session.TenantID != "" {
-		if tenant, err := a.store.GetTenant(r.Context(), session.TenantID); err == nil {
-			result["tenant"] = tenant
-		}
+	tenant, err := a.store.GetTenant(r.Context(), session.TenantID)
+	if err != nil || !tenant.Enabled {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "账户不存在或已停用")
+		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, map[string]any{"role": "tenant", "is_admin": tenant.IsAdmin, "tenant": tenant})
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {

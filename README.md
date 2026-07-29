@@ -45,7 +45,6 @@ WebSocket 入口。
 | `DATABASE_URL` | PostgreSQL DSN |
 | `CPA_URL` | CLIProxyAPI 私网地址 |
 | `CPA_API_KEY` | RelayAPI 访问 CLIProxyAPI 的 API Key |
-| `RELAY_ADMIN_KEY` | 管理员登录密钥（至少 16 字符） |
 | `RELAY_SESSION_SECRET` | Cookie 签名密钥（至少 32 字符） |
 
 `CPA_MANAGEMENT_KEY` 用于管理员面板中的 CPA 凭据、Codex OAuth 与运行策略管理。
@@ -61,7 +60,8 @@ WebSocket 入口。
 
 管理员后端：
 
-- `POST /api/auth/admin`：管理员登录
+- 首个注册用户自动获得管理员身份；已有数据库升级时，最早创建的用户会成为管理员
+- 管理员使用普通用户邮箱和密码登录，再从左下角用户信息块切换到管理员面板
 - `GET /api/admin/overview`：用户、Key、邀请和今日用量总览
 - `GET|POST /api/admin/invitations`：查看或生成单次邀请
 - `DELETE /api/admin/invitations/{id}`：撤销邀请
@@ -74,7 +74,7 @@ WebSocket 入口。
 - `/api/admin/cpa/*`：管理员会话保护的 CLIProxyAPI Management API 完整桥接；
   保留方法、查询参数及 JSON/YAML/上传请求体
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
-- `GET /api/logs?tenant_id=...`：请求日志
+- `GET /api/admin/logs?tenant_id=...`：全局或指定用户请求日志
 - `POST /api/admin/subscriptions/sync`：同步 CPA scheduler ID 与稳定 auth_index 父订阅映射
 - `POST /api/admin/subscriptions/quota/sync`：立即观测所有父订阅的扩展额度
 - `POST /api/admin/subscriptions/parents/{id}/quota/sync`：观测单个父订阅额度
@@ -87,7 +87,8 @@ CPA 凭据页和父订阅页都会展示最近一次脱敏上游额度快照。�
 
 用户后端：
 
-- `POST /api/auth/register`：使用邀请 token 注册
+- `GET /api/auth/status`：判断全新实例是否需要创建首个管理员用户
+- `POST /api/auth/register`：首用户无邀请初始化；后续用户使用邀请 token 注册
 - `POST /api/auth/login`：登录
 - `GET /api/dashboard`：账户与近 30 天概览
 - `GET /api/usage?days=30`：按天、模型聚合的个人用量

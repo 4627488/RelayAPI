@@ -49,6 +49,18 @@ var migrations = []migration{
 			`CREATE UNIQUE INDEX parent_subscriptions_cpa_auth_index_unique ON parent_subscriptions(cpa_auth_index)`,
 		},
 	},
+	{
+		version: 3,
+		name:    "promote first user to administrator",
+		statements: []string{
+			`UPDATE tenants
+			 SET is_admin = TRUE
+			 WHERE id = (
+				 SELECT id FROM tenants ORDER BY created_at ASC, id ASC LIMIT 1
+			 )
+			 AND NOT EXISTS (SELECT 1 FROM tenants WHERE is_admin = TRUE)`,
+		},
+	},
 }
 
 func runMigrations(ctx context.Context, database *gorm.DB) error {

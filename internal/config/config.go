@@ -16,7 +16,6 @@ type Config struct {
 	CPAURL              string
 	CPAAPIKey           string
 	CPAManagementKey    string
-	AdminAccessKey      string
 	SessionSecret       string
 	PublicURL           string
 	SecureCookies       bool
@@ -35,7 +34,6 @@ func Load() (Config, error) {
 		CPAURL:              strings.TrimRight(env("CPA_URL", "http://cliproxyapi:8317"), "/"),
 		CPAAPIKey:           strings.TrimSpace(os.Getenv("CPA_API_KEY")),
 		CPAManagementKey:    strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
-		AdminAccessKey:      strings.TrimSpace(firstEnv("RELAY_ADMIN_KEY", "RELAY_WEB_ACCESS_KEY")),
 		SessionSecret:       strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),
 		PublicURL:           strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
 		SecureCookies:       envBool("RELAY_SECURE_COOKIES", false),
@@ -51,9 +49,6 @@ func Load() (Config, error) {
 	}
 	if cfg.CPAAPIKey == "" {
 		return Config{}, errors.New("CPA_API_KEY is required")
-	}
-	if len(cfg.AdminAccessKey) < 16 {
-		return Config{}, errors.New("RELAY_ADMIN_KEY must contain at least 16 characters")
 	}
 	if len(cfg.SessionSecret) < 32 {
 		return Config{}, errors.New("RELAY_SESSION_SECRET must contain at least 32 characters")
@@ -80,15 +75,6 @@ func env(name, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func firstEnv(names ...string) string {
-	for _, name := range names {
-		if value := os.Getenv(name); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func envInt64(name string, fallback int64) int64 {

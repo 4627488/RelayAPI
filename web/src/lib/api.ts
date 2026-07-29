@@ -1,10 +1,11 @@
-export type Role = "admin" | "tenant"
+export type Role = "tenant"
 
 export interface User {
   id: string
   name: string
   owner_email: string
   enabled: boolean
+  is_admin: boolean
   balance_nano_usd: number
   rate_limit_per_minute: number | null
   token_limit_daily: number | null
@@ -15,7 +16,12 @@ export interface User {
 
 export interface Session {
   role: Role
-  tenant?: User
+  is_admin: boolean
+  tenant: User
+}
+
+export interface AuthStatus {
+  setup_required: boolean
 }
 
 export interface ApiKey {

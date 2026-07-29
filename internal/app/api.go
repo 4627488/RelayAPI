@@ -27,7 +27,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", "名称、邮箱必填，密码至少 8 位")
 		return
 	}
-	user, err := a.store.RegisterWithInvitation(r.Context(), input.Token, input.Name, input.Email, input.Password)
+	user, err := a.store.Register(r.Context(), input.Token, input.Name, input.Email, input.Password)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_invitation", "邀请无效、已过期或已使用")
 		return
@@ -35,7 +35,16 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	a.setSession(w, identity.Session{
 		Role: "tenant", TenantID: user.ID, Expires: time.Now().Add(12 * time.Hour).Unix(),
 	})
-	writeJSON(w, http.StatusCreated, map[string]any{"role": "tenant", "tenant": user})
+	writeJSON(w, http.StatusCreated, map[string]any{"role": "tenant", "is_admin": user.IsAdmin, "tenant": user})
+}
+
+func (a *App) authStatus(w http.ResponseWriter, r *http.Request) {
+	setupRequired, err := a.store.SetupRequired(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"setup_required": setupRequired})
 }
 
 func (a *App) adminOverview(w http.ResponseWriter, r *http.Request) {
@@ -183,13 +192,18 @@ func (a *App) keyDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) logs(w http.ResponseWriter, r *http.Request) {
-	session := currentSession(r)
-	tenantID := session.TenantID
-	if session.Role == "admin" {
-		tenantID = strings.TrimSpace(r.URL.Query().Get("tenant_id"))
-	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := a.store.RecentLogs(r.Context(), tenantID, limit)
+	items, err := a.store.RecentLogs(r.Context(), currentSession(r).TenantID, limit)
+	if err != nil {
+		writeError(w, 500, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
+func (a *App) adminLogs(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := a.store.RecentLogs(r.Context(), strings.TrimSpace(r.URL.Query().Get("tenant_id")), limit)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return

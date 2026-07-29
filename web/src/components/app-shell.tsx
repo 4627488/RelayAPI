@@ -11,7 +11,9 @@ import {
   PackageOpenIcon,
   PlugIcon,
   SendIcon,
+  ShieldCheckIcon,
   SunIcon,
+  UserRoundIcon,
   UsersIcon,
 } from "lucide-react"
 
@@ -50,6 +52,7 @@ import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
 
 export type Page = "overview" | "usage" | "keys" | "logs" | "users" | "invitations" | "providers" | "subscriptions"
+export type Workspace = "user" | "admin"
 
 interface NavigationItem {
   id: Page
@@ -109,17 +112,19 @@ function ThemeChoices({
 
 interface AppShellProps {
   session: Session
+  workspace: Workspace
   page: Page
   onPageChange: (page: Page) => void
+  onWorkspaceChange: (workspace: Workspace) => void
   onLogout: () => void
   children: ReactNode
 }
 
-export function AppShell({ session, page, onPageChange, onLogout, children }: AppShellProps) {
+export function AppShell({ session, workspace, page, onPageChange, onWorkspaceChange, onLogout, children }: AppShellProps) {
   const { theme, setTheme } = useTheme()
-  const admin = session.role === "admin"
-  const name = admin ? "管理员" : session.tenant?.name || "用户"
-  const subtitle = admin ? "系统管理" : session.tenant?.owner_email || ""
+  const admin = workspace === "admin" && session.is_admin
+  const name = session.tenant.name || "用户"
+  const subtitle = session.tenant.owner_email || ""
   const items = admin ? adminItems : userItems
 
   return (
@@ -180,6 +185,18 @@ export function AppShell({ session, page, onPageChange, onLogout, children }: Ap
                 <DropdownMenuContent side="top" align="end" className="w-56">
                   <DropdownMenuLabel>{name}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
+                  {session.is_admin ? (
+                    <>
+                      <DropdownMenuLabel>工作区</DropdownMenuLabel>
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem onClick={() => onWorkspaceChange(admin ? "user" : "admin")}>
+                          {admin ? <UserRoundIcon /> : <ShieldCheckIcon />}
+                          {admin ? "返回个人面板" : "进入管理员面板"}
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                      <DropdownMenuSeparator />
+                    </>
+                  ) : null}
                   <DropdownMenuLabel>外观</DropdownMenuLabel>
                   <ThemeChoices value={theme} onValueChange={setTheme} />
                   <DropdownMenuSeparator />

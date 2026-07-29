@@ -7,10 +7,12 @@ RelayAPI is a multi-tenant policy and accounting gateway in front of
 provider credentials, protocol translation, model aliases, retries, and
 provider selection. RelayAPI must not contain a provider/model registry.
 
-The backend also owns the product-facing user lifecycle: administrator
-sessions, single-use invitations, invited registration, user sessions,
-user-created API keys, and administrator/user usage reports. It intentionally
-contains no frontend assets.
+The backend also owns the product-facing user lifecycle: first-user setup,
+single-use invitations, invited registration, user sessions, user-created API
+keys, administrator capabilities, and administrator/user usage reports. An
+administrator is a normal user with an additional permission flag, not a
+separate account or access-key session. It intentionally contains no frontend
+assets.
 
 ## Request flow
 

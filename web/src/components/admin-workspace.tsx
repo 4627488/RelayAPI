@@ -91,7 +91,7 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
         api<UsageReport>("/api/admin/usage?days=30"),
         api<{ items: User[] }>("/api/admin/tenants"),
         api<{ items: Invitation[] }>("/api/admin/invitations"),
-        api<{ items: RequestLog[] }>("/api/logs?limit=100"),
+        api<{ items: RequestLog[] }>("/api/admin/logs?limit=100"),
       ])
       setOverview(overviewValue)
       setUsage(usageValue)
@@ -207,7 +207,12 @@ function UsersView({ users }: { users: User[] }) {
               <TableBody>
                 {users.map((user) => (
                   <TableRow key={user.id}>
-                    <TableCell className="font-medium">{user.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <span className="inline-flex items-center gap-2">
+                        {user.name}
+                        {user.is_admin ? <Badge variant="outline">管理员</Badge> : null}
+                      </span>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{user.owner_email}</TableCell>
                     <TableCell>
                       <Badge variant={user.enabled ? "secondary" : "destructive"}>
