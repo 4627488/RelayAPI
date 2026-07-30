@@ -120,16 +120,21 @@ rejects the request instead of silently bypassing the configured subscription.
   total Relay balance.
 - `manual`: administrators define parent window limits and reset instants. This
   works for every CPA provider and API-key endpoint.
-- `observed`: Relay combines credential-attributed priced usage with upstream
-  percentage/reset observations to estimate full parent capacity. Manual
+- `observed`: Relay uses a differential method: between two observations in
+  the same upstream generation it divides credential-attributed USD cost by
+  the upstream used-percentage increase to estimate the full parent capacity.
+  Every upstream window (`5h`, `7d`, monthly, and future provider-defined
+  kinds) is calibrated independently. Manual
   overrides remain available when a provider exposes no normalized quota. An
   observed parent with no calibrated window is admitted in learning mode with
   strict credential routing and normal balance billing, but no child-quota
   reservation. A provider explicitly reported as unsupported is rejected until
   an adapter is installed or the parent is switched to manual/unmetered mode.
-  Once accepted samples produce a capacity estimate, subsequent
-  admissions enforce the learned windows. The active estimate is the median of
-  up to 21 recent accepted samples rather than the latest sample alone.
+  Once accepted samples produce a capacity estimate, subsequent admissions
+  enforce the learned nano-USD windows. Movements of 0.01 percentage points or
+  more can produce a sample; incomplete pricing and cross-reset samples are
+  rejected. The active estimate is the median of up to 21 recent accepted
+  samples rather than the latest sample alone.
 
 ## Quota extension boundary
 

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react"
-import { CircleDollarSignIcon, CloudDownloadIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react"
+import { AlertTriangleIcon, CircleDollarSignIcon, CloudDownloadIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -14,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -40,6 +42,7 @@ type PricesResponse = {
   bundled_items: ModelPrice[]
   pending_models: Array<{ model: string; request_count: number; latest_started_at: string }>
   history_items: HistoricalModelPrice[]
+  catalog_sync_error?: string
 }
 
 export function PricingView() {
@@ -49,32 +52,50 @@ export function PricingView() {
   const [fields, setFields] = useState<string[]>([])
   const [open, setOpen] = useState(false)
   const [pending, setPending] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
+  const [catalogQuery, setCatalogQuery] = useState("")
   const [aliasText, setAliasText] = useState("[]")
   const [ruleText, setRuleText] = useState("[]")
 
   const load = useCallback(async () => {
-    const [priceValue, aliasValue, ruleValue] = await Promise.all([
-      api<PricesResponse>("/api/admin/prices"),
-      api<{ items: ModelAlias[] }>("/api/admin/pricing/aliases"),
-      api<{ items: ModelPriceRule[]; fields: string[] }>("/api/admin/pricing/rules"),
-    ])
-    setPrices({
-      items: priceValue.items ?? [],
-      catalog_items: priceValue.catalog_items ?? [],
-      bundled_items: priceValue.bundled_items ?? [],
-      pending_models: priceValue.pending_models ?? [],
-      history_items: priceValue.history_items ?? [],
-    })
-    setAliases(aliasValue.items ?? [])
-    setRules(ruleValue.items ?? [])
-    setFields(ruleValue.fields ?? [])
-    setAliasText(JSON.stringify(aliasValue.items ?? [], null, 2))
-    setRuleText(JSON.stringify((ruleValue.items ?? []).map(({ model, field, value, multiplier }) => ({ model, field, value, multiplier })), null, 2))
+    setLoadError("")
+    try {
+      const [priceValue, aliasValue, ruleValue] = await Promise.all([
+        api<PricesResponse>("/api/admin/prices"),
+        api<{ items: ModelAlias[] }>("/api/admin/pricing/aliases"),
+        api<{ items: ModelPriceRule[]; fields: string[] }>("/api/admin/pricing/rules"),
+      ])
+      setPrices({
+        items: priceValue.items ?? [],
+        catalog_items: priceValue.catalog_items ?? [],
+        bundled_items: priceValue.bundled_items ?? [],
+        pending_models: priceValue.pending_models ?? [],
+        history_items: priceValue.history_items ?? [],
+        catalog_sync_error: priceValue.catalog_sync_error,
+      })
+      setAliases(aliasValue.items ?? [])
+      setRules(ruleValue.items ?? [])
+      setFields(ruleValue.fields ?? [])
+      setAliasText(JSON.stringify(aliasValue.items ?? [], null, 2))
+      setRuleText(JSON.stringify((ruleValue.items ?? []).map(({ model, field, value, multiplier }) => ({ model, field, value, multiplier })), null, 2))
+    } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : "读取定价失败")
+      throw cause
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => {
     void load().catch((cause) => toast.error(cause instanceof Error ? cause.message : "读取定价失败"))
   }, [load])
+
+  const effectiveCatalog = prices.catalog_items.length ? prices.catalog_items : prices.bundled_items
+  const filteredCatalog = useMemo(() => {
+    const query = catalogQuery.trim().toLowerCase()
+    return effectiveCatalog.filter((price) => !query || price.model.toLowerCase().includes(query)).slice(0, 200)
+  }, [catalogQuery, effectiveCatalog])
 
   async function savePrice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -165,6 +186,57 @@ export function PricingView() {
         <Stat label="内置兜底" value={prices.bundled_items.length} hint="离线最后可用" />
         <Stat label="待回填模型" value={prices.pending_models.length} hint="价格更新后自动回填" />
       </div>
+      {loadError ? (
+        <Alert variant="destructive">
+          <AlertTriangleIcon />
+          <AlertTitle>定价数据加载失败</AlertTitle>
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+      ) : null}
+      {prices.catalog_sync_error ? (
+        <Alert>
+          <AlertTriangleIcon />
+          <AlertTitle>Models.dev 暂时不可用，当前使用内置目录</AlertTitle>
+          <AlertDescription>{prices.catalog_sync_error}</AlertDescription>
+        </Alert>
+      ) : null}
+      <Card>
+        <CardHeader>
+          <CardTitle>有效模型目录</CardTitle>
+          <CardDescription>
+            {prices.catalog_items.length ? `已自动加载 Models.dev 的 ${prices.catalog_items.length} 个模型。` : `在线目录不可用，展示 ${prices.bundled_items.length} 个内置兜底模型。`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="relative max-w-sm">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground" />
+            <Input value={catalogQuery} onChange={(event) => setCatalogQuery(event.target.value)} placeholder="搜索模型" className="pl-9" />
+          </div>
+          {loading ? (
+            <Empty>
+              <EmptyHeader><EmptyMedia variant="icon"><Spinner /></EmptyMedia><EmptyTitle>正在加载模型价格</EmptyTitle></EmptyHeader>
+            </Empty>
+          ) : filteredCatalog.length ? (
+            <Table>
+              <TableHeader><TableRow><TableHead>模型</TableHead><TableHead>来源</TableHead><TableHead className="text-right">输入</TableHead><TableHead className="text-right">缓存读</TableHead><TableHead className="text-right">缓存写</TableHead><TableHead className="text-right">输出</TableHead><TableHead className="text-right">推理</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {filteredCatalog.map((price) => (
+                  <TableRow key={price.model}>
+                    <TableCell className="font-mono text-xs">{price.model}</TableCell>
+                    <TableCell><Badge variant="outline">{priceSourceLabel(price.source)}</Badge></TableCell>
+                    {[price.input_nano_usd_per_token, price.cached_input_nano_usd_per_token, price.cache_write_nano_usd_per_token, price.output_nano_usd_per_token, price.reasoning_nano_usd_per_token].map((value, index) => <TableCell key={index} className="text-right tabular-nums">{pricePerMillion(value)}</TableCell>)}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <Empty>
+              <EmptyHeader><EmptyMedia variant="icon"><SearchIcon /></EmptyMedia><EmptyTitle>没有匹配的模型</EmptyTitle><EmptyDescription>换一个模型名称，或重新应用 Models.dev 目录。</EmptyDescription></EmptyHeader>
+            </Empty>
+          )}
+          {effectiveCatalog.length > 200 && filteredCatalog.length === 200 ? <p className="text-xs text-muted-foreground">当前最多显示 200 条，请通过搜索缩小范围。</p> : null}
+        </CardContent>
+      </Card>
       <Card>
         <CardHeader><CardTitle>历史模型价目表</CardTitle><CardDescription>请求日志中出现过的模型及其当前有效价格，单位为 USD / 1M tokens；多维规则仍按每次请求的上下文单独应用。</CardDescription></CardHeader>
         <CardContent>

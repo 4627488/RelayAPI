@@ -11,9 +11,10 @@ import (
 )
 
 type Result struct {
-	RequestID string
-	Usage     store.Usage
-	Found     bool
+	RequestID           string
+	ResponseServiceTier string
+	Usage               store.Usage
+	Found               bool
 }
 
 func ParseResponse(payload []byte) Result {
@@ -33,6 +34,12 @@ func ParseResponse(payload []byte) Result {
 			readUsage(response["usage"], &result)
 			readUsageMetadata(response["usageMetadata"], &result)
 			readUsageMetadata(response["cpaUsageMetadata"], &result)
+			if tier := stringValue(response["service_tier"]); tier != "" {
+				result.ResponseServiceTier = tier
+			}
+		}
+		if tier := stringValue(value["service_tier"]); tier != "" {
+			result.ResponseServiceTier = tier
 		}
 		readUsage(value["usage"], &result)
 		readUsageMetadata(value["usageMetadata"], &result)
@@ -139,13 +146,8 @@ func maxInt(values ...int64) int64 {
 }
 
 func Cost(price pricing.SnapshotPrice, usage store.Usage) int64 {
-	uncached := usage.Prompt - usage.Cached
-	if uncached < 0 {
-		uncached = 0
-	}
-	return uncached*price.InputNanoUSDPerToken +
-		usage.Cached*price.CachedInputNanoUSDPerToken +
-		usage.Completion*price.OutputNanoUSDPerToken +
-		usage.CacheWrite*price.CacheWriteNanoUSDPerToken +
-		usage.Reasoning*price.ReasoningNanoUSDPerToken
+	return pricing.CostNanoUSD(price, pricing.Usage{
+		Prompt: usage.Prompt, Completion: usage.Completion, Cached: usage.Cached,
+		CacheWrite: usage.CacheWrite, Reasoning: usage.Reasoning, Total: usage.Total,
+	})
 }

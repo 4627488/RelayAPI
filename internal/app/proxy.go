@@ -267,6 +267,17 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	})
 
 	parsed := billing.ParseResponse(capture.Bytes())
+	if priceConfigured && parsed.ResponseServiceTier != "" {
+		if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
+			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
+			ServiceTier: meta.ServiceTier, ResponseServiceTier: parsed.ResponseServiceTier,
+			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+		}); resolveErr == nil {
+			price = resolved
+			logContext.price = &price
+			_ = a.store.UpdateReservationPriceSnapshot(r.Context(), requestID, store.EncodePriceSnapshot(price))
+		}
+	}
 	actual := int64(0)
 	settled := !billable
 	var cost *int64
@@ -342,7 +353,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
 		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.Model, TenantName: key.TenantName,
 		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path),
-		ServiceTier: meta.ServiceTier, ReasoningEffort: meta.ReasoningEffort,
+		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
 		AuthIndex: admission.CPAAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
 		ChildSubscriptionID: admission.ChildSubscriptionID,
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
@@ -354,6 +365,13 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 	if err != nil {
 		slog.Error("write request log", "request_id", requestID, "error", err)
 	}
+}
+
+func parsedResponseServiceTier(parsed *billing.Result) string {
+	if parsed == nil {
+		return ""
+	}
+	return parsed.ResponseServiceTier
 }
 
 func copyStreaming(w http.ResponseWriter, source io.Reader, onFirstByte func()) error {

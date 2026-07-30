@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"math"
 	"testing"
 
 	"github.com/4627488/RelayAPI/internal/pricing"
@@ -42,6 +43,13 @@ func TestParseResponseProtocols(t *testing.T) {
 	}
 }
 
+func TestParseResponseServiceTier(t *testing.T) {
+	result := ParseResponse([]byte(`{"response":{"service_tier":"priority","usage":{"input_tokens":1,"output_tokens":1}}}`))
+	if result.ResponseServiceTier != "priority" {
+		t.Fatalf("response service tier = %q", result.ResponseServiceTier)
+	}
+}
+
 func TestCostAvoidsChargingCachedInputTwice(t *testing.T) {
 	price := pricing.SnapshotPrice{Price: pricing.Price{
 		InputNanoUSDPerToken: 10, OutputNanoUSDPerToken: 20,
@@ -50,7 +58,25 @@ func TestCostAvoidsChargingCachedInputTwice(t *testing.T) {
 	},
 	}
 	usage := store.Usage{Prompt: 10, Completion: 5, Cached: 4, CacheWrite: 2, Reasoning: 1}
-	if got, want := Cost(price, usage), int64(179); got != want {
+	if got, want := Cost(price, usage), int64(159); got != want {
 		t.Fatalf("cost = %d, want %d", got, want)
+	}
+}
+
+func TestCostChargesSeparatelyReportedReasoning(t *testing.T) {
+	price := pricing.SnapshotPrice{Price: pricing.Price{
+		InputNanoUSDPerToken: 10, OutputNanoUSDPerToken: 20, ReasoningNanoUSDPerToken: 3,
+	}}
+	usage := store.Usage{Prompt: 10, Completion: 5, Reasoning: 2, Total: 17}
+	if got, want := Cost(price, usage), int64(206); got != want {
+		t.Fatalf("cost = %d, want %d", got, want)
+	}
+}
+
+func TestCostSaturatesInsteadOfOverflowing(t *testing.T) {
+	price := pricing.SnapshotPrice{Price: pricing.Price{OutputNanoUSDPerToken: 2}}
+	usage := store.Usage{Completion: math.MaxInt64, Total: math.MaxInt64}
+	if got := Cost(price, usage); got != math.MaxInt64 {
+		t.Fatalf("cost = %d, want MaxInt64", got)
 	}
 }

@@ -37,7 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { RequestLog, UsageReport } from "@/lib/api"
-import { compact, dateTime, money } from "@/lib/format"
+import { compact, compactTokens, dateTime, money } from "@/lib/format"
 
 interface Metric {
   label: string
@@ -151,7 +151,7 @@ export function ModelTable({ report }: { report: UsageReport }) {
                 <TableRow key={model.model}>
                   <TableCell className="font-mono text-xs">{model.model || "未识别"}</TableCell>
                   <TableCell className="text-right tabular-nums">{compact(model.requests)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{compact(model.tokens)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{compactTokens(model.tokens)}</TableCell>
                   <TableCell className="text-right tabular-nums">{money(model.cost_nano_usd)}</TableCell>
                 </TableRow>
               ))}
@@ -201,7 +201,7 @@ export function LogsTable({ logs }: { logs: RequestLog[] }) {
                     </Badge>
                   </TableCell>
                   <TableCell className="max-w-52 truncate font-mono text-xs">{log.model || log.path}</TableCell>
-                  <TableCell className="text-right tabular-nums">{compact(log.total_tokens)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{compactTokens(log.total_tokens)}</TableCell>
                   <TableCell className="text-right tabular-nums">{log.latency_ms} ms</TableCell>
                   <TableCell className="text-right tabular-nums">{money(log.cost_nano_usd)}</TableCell>
                 </TableRow>
@@ -227,7 +227,7 @@ export function UsageMetrics({ report }: { report: UsageReport }) {
     <MetricGrid
       items={[
         { label: "请求", value: compact(report.summary.requests), hint: `最近 ${report.days} 天`, icon: ActivityIcon },
-        { label: "Tokens", value: compact(report.summary.tokens), hint: "输入与输出合计", icon: CoinsIcon },
+        { label: "Tokens", value: compactTokens(report.summary.tokens), hint: "输入与输出合计", icon: CoinsIcon },
         { label: "错误", value: compact(report.summary.errors), hint: "HTTP 错误或中断", icon: TriangleAlertIcon },
         { label: "费用", value: money(report.summary.cost_nano_usd), hint: "仅统计已配置价格模型", icon: CircleDollarSignIcon },
       ]}

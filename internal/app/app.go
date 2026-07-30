@@ -18,6 +18,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -30,6 +31,7 @@ type App struct {
 	wg            sync.WaitGroup
 	bridgeReady   atomic.Bool
 	bridgeVersion atomic.Value
+	pricingSyncMu sync.Mutex
 }
 
 type contextKey string
@@ -83,6 +85,10 @@ func (a *App) maintenance() {
 	defer initialQuotaSync.Stop()
 	retentionTicker := time.NewTicker(time.Hour)
 	defer retentionTicker.Stop()
+	pricingTicker := time.NewTicker(24 * time.Hour)
+	defer pricingTicker.Stop()
+	initialPricingSync := time.NewTimer(2 * time.Second)
+	defer initialPricingSync.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -94,8 +100,16 @@ func (a *App) maintenance() {
 			}
 		case <-initialQuotaSync.C:
 			a.refreshParentQuotas(context.Background())
+		case <-initialPricingSync.C:
+			if err := a.refreshPricingCatalog(context.Background(), true); err != nil {
+				slog.Warn("initial pricing catalog sync", "error", err)
+			}
 		case <-quotaTicker.C:
 			a.refreshParentQuotas(context.Background())
+		case <-pricingTicker.C:
+			if err := a.refreshPricingCatalog(context.Background(), false); err != nil {
+				slog.Warn("periodic pricing catalog sync", "error", err)
+			}
 		case <-retentionTicker.C:
 			if err := a.store.PruneRequestLogs(
 				context.Background(), time.Now(), a.cfg.RequestLogRetentionDays, a.cfg.RequestDetailRetentionDays,
@@ -106,6 +120,27 @@ func (a *App) maintenance() {
 			return
 		}
 	}
+}
+
+func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error {
+	a.pricingSyncMu.Lock()
+	defer a.pricingSyncMu.Unlock()
+	if onlyIfEmpty {
+		items, err := a.store.ListCatalogPrices(ctx)
+		if err != nil {
+			return err
+		}
+		if len(items) > 0 {
+			return nil
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result, err := pricing.FetchModelsDev(ctx, nil, pricing.ModelsDevURL)
+	if err != nil {
+		return err
+	}
+	return a.store.ApplyCatalog(ctx, result)
 }
 
 func (a *App) refreshBridgeStatus(ctx context.Context) {

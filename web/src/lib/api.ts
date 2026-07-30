@@ -311,19 +311,16 @@ export interface ChildQuotaWindow {
 
 export interface SubscriptionEntitlementWindow {
   kind: string
-  label: string
-  unit?: string
   allocation_ppm: number
-  share_of_parent_percent: number
-  available_share_of_parent_percent?: number | null
-  parent_limit?: number | null
-  allocated_limit?: number | null
-  parent_remaining?: number | null
-  allocated_remaining?: number | null
+  parent_limit_nano_usd: number
+  limit_nano_usd: number
+  settled_nano_usd: number
+  reserved_nano_usd: number
+  remaining_nano_usd: number
   upstream_used_percent?: number | null
-  upstream_remaining_percent?: number | null
-  resets_at?: string | null
-  enforceable: boolean
+  resets_at: string
+  source: string
+  observed_at?: string | null
 }
 
 export interface ChildSubscription {

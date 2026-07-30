@@ -94,15 +94,13 @@ func (s *Store) backfillPendingPricing(ctx context.Context) (int, error) {
 			if !ok {
 				continue
 			}
-			uncached := item.PromptTokens - item.CachedTokens
-			if uncached < 0 {
-				uncached = 0
+			cost := pricing.CostNanoUSD(price, pricing.Usage{
+				Prompt: item.PromptTokens, Completion: item.CompletionTokens, Cached: item.CachedTokens,
+				CacheWrite: item.CacheWriteTokens, Reasoning: item.ReasoningTokens, Total: item.TotalTokens,
+			})
+			if err := reconcileSettledReservation(tx, item.ID, cost); err != nil {
+				return err
 			}
-			cost := uncached*price.InputNanoUSDPerToken +
-				item.CachedTokens*price.CachedInputNanoUSDPerToken +
-				item.CompletionTokens*price.OutputNanoUSDPerToken +
-				item.CacheWriteTokens*price.CacheWriteNanoUSDPerToken +
-				item.ReasoningTokens*price.ReasoningNanoUSDPerToken
 			if err := tx.Model(&db.RequestLog{}).Where("id = ? AND pricing_complete = ?", item.ID, false).
 				Updates(map[string]any{
 					"cost_nano_usd": cost, "price_model": price.PricedModel,

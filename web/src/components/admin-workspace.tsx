@@ -68,7 +68,7 @@ import {
   type UsageReport,
   type User,
 } from "@/lib/api"
-import { compact, dateTime, money } from "@/lib/format"
+import { compact, compactTokens, dateTime, money } from "@/lib/format"
 import { copyText } from "@/lib/clipboard"
 import { useSessionStorage } from "@/hooks/use-session-storage"
 
@@ -144,7 +144,7 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
         items={[
           { label: "用户", value: compact(overview.users), hint: `${overview.enabled_users} 个账户正常`, icon: UsersIcon },
           { label: "有效 Keys", value: compact(overview.active_api_keys), hint: "用户创建的访问凭据", icon: KeyRoundIcon },
-          { label: "今日请求", value: compact(overview.today.requests), hint: `${compact(overview.today.tokens)} tokens`, icon: ActivityIcon },
+          { label: "今日请求", value: compact(overview.today.requests), hint: `${compactTokens(overview.today.tokens)} tokens`, icon: ActivityIcon },
           { label: "今日错误", value: compact(overview.today.errors), hint: `费用 ${money(overview.today.cost_nano_usd)}`, icon: TriangleAlertIcon },
         ]}
       />

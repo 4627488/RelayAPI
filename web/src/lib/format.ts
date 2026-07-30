@@ -5,6 +5,14 @@ export function compact(value: number) {
   }).format(value)
 }
 
+export function compactTokens(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    notation: value >= 1_000 ? "compact" : "standard",
+    compactDisplay: "short",
+    maximumFractionDigits: 1,
+  }).format(value)
+}
+
 export function money(nanoUsd: number | null | undefined) {
   if (nanoUsd == null) return "—"
   return new Intl.NumberFormat("zh-CN", {

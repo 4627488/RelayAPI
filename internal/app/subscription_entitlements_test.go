@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -45,33 +44,17 @@ func TestEffectiveSubscriptionModels(t *testing.T) {
 
 func TestProjectTenantEntitlements(t *testing.T) {
 	reset := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-	snapshot, err := json.Marshal(map[string]any{
-		"supported": true,
-		"windows": []map[string]any{
-			{
-				"kind": "five_hour", "label": "5 小时", "limit": 1000, "remaining": 600,
-				"unit": "tokens", "used_percent": 40, "resets_at": reset, "enforceable": true,
-			},
-			{"kind": "weekly", "label": "每周", "used_percent": 20, "enforceable": false},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	used := 40.0
 	items := projectTenantEntitlements(
-		store.ParentSubscription{QuotaSnapshot: snapshot},
+		[]store.ParentQuotaWindow{{Kind: "5h", LimitNanoUSD: 10_000_000_000, ResetsAt: reset, Source: "observed", ObservedUsedPercent: &used}},
 		store.ChildSubscription{AllocationPPM: 50_000},
+		[]store.ChildQuotaWindow{{Kind: "5h", LimitNanoUSD: 500_000_000, SettledNanoUSD: 100_000_000, ReservedNanoUSD: 20_000_000, ResetsAt: reset}},
 	)
-	if len(items) != 2 {
+	if len(items) != 1 {
 		t.Fatalf("entitlements = %+v", items)
 	}
-	if items[0].AllocatedLimit == nil || *items[0].AllocatedLimit != 50 ||
-		items[0].AllocatedRemaining == nil || *items[0].AllocatedRemaining != 30 ||
-		items[0].AvailableShareOfParentPercent == nil || *items[0].AvailableShareOfParentPercent != 3 {
-		t.Fatalf("absolute entitlement = %+v", items[0])
-	}
-	if items[1].UpstreamRemainingPercent == nil || *items[1].UpstreamRemainingPercent != 80 ||
-		items[1].AvailableShareOfParentPercent == nil || *items[1].AvailableShareOfParentPercent != 4 {
-		t.Fatalf("percentage entitlement = %+v", items[1])
+	if items[0].ParentLimitNanoUSD != 10_000_000_000 || items[0].LimitNanoUSD != 500_000_000 ||
+		items[0].RemainingNanoUSD != 380_000_000 || items[0].UpstreamUsedPercent == nil || *items[0].UpstreamUsedPercent != 40 {
+		t.Fatalf("entitlement = %+v", items[0])
 	}
 }

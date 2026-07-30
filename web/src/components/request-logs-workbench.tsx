@@ -29,7 +29,7 @@ import {
   type RequestLogDetail,
   type RequestLogPage,
 } from "@/lib/api"
-import { compact, dateTime, money } from "@/lib/format"
+import { compact, compactTokens, dateTime, money } from "@/lib/format"
 
 const emptyPage: RequestLogPage = {
   items: [],
@@ -99,7 +99,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       <MetricGrid
         items={[
           { label: "请求", value: compact(data.summary.requests), hint: `${data.summary.errors} 个错误`, icon: ActivityIcon },
-          { label: "Tokens", value: compact(data.summary.tokens), hint: `缓存命中 ${(cacheRate * 100).toFixed(1)}%`, icon: CoinsIcon },
+          { label: "Tokens", value: compactTokens(data.summary.tokens), hint: `缓存命中 ${(cacheRate * 100).toFixed(1)}%`, icon: CoinsIcon },
           { label: "平均耗时", value: `${Math.round(data.summary.average_latency_ms)} ms`, hint: "当前筛选范围", icon: Clock3Icon },
           { label: "错误率", value: data.summary.requests ? `${(data.summary.errors / data.summary.requests * 100).toFixed(1)}%` : "0%", hint: money(data.summary.cost_nano_usd), icon: TriangleAlertIcon },
         ]}
@@ -179,9 +179,9 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                     <p className="max-w-44 truncate font-mono text-[11px] text-muted-foreground">{log.cpa_trace_id || log.cpa_execution_id || "—"}</p>
                   </TableCell>
                   <TableCell className="text-right">
-                    <p className="tabular-nums">{compact(log.total_tokens)}</p>
+                    <p className="tabular-nums">{compactTokens(log.total_tokens)}</p>
                     <p className="text-[11px] text-muted-foreground">
-                      {compact(log.prompt_tokens)} / {compact(log.completion_tokens)} · C {compact(log.cached_tokens)}
+                      {compactTokens(log.prompt_tokens)} / {compactTokens(log.completion_tokens)} · C {compactTokens(log.cached_tokens)}
                     </p>
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-right tabular-nums">

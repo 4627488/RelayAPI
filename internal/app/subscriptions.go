@@ -353,8 +353,14 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		windows := []store.ChildQuotaWindow(nil)
+		parentWindows := []store.ParentQuotaWindow(nil)
 		if parent.CapacityMode != db.ParentCapacityUnmetered {
 			windows, err = a.store.ProjectedChildQuotaState(r.Context(), item)
+			if err != nil {
+				writeError(w, 500, "database_error", err.Error())
+				return
+			}
+			parentWindows, err = a.store.ListParentQuotaWindows(r.Context(), parent.ID)
 			if err != nil {
 				writeError(w, 500, "database_error", err.Error())
 				return
@@ -367,7 +373,7 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 			"starts_at": item.StartsAt, "expires_at": item.ExpiresAt, "capacity_mode": parent.CapacityMode, "windows": windows,
 			"parent_name": parent.Name, "parent_plan_type": parent.PlanType,
 			"effective_model_allowlist": models, "model_source": modelSource,
-			"entitlement_windows": projectTenantEntitlements(parent, item),
+			"entitlement_windows": projectTenantEntitlements(parentWindows, item, windows),
 		})
 	}
 	writeJSON(w, 200, map[string]any{"items": result})

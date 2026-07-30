@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"math/big"
 	"path"
 	"sort"
@@ -326,8 +327,11 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 			} else if usedPercent < previous.UsedPercent {
 				observation.Reason = "percentage_decreased"
 			} else {
-				deltaMicros := int64((usedPercent - previous.UsedPercent) * 1_000_000)
-				if deltaMicros < 1_000_000 {
+				deltaMicros := int64(math.Round((usedPercent - previous.UsedPercent) * 1_000_000))
+				// Upstream providers commonly expose one or two decimal places. A
+				// 0.01% movement is enough for a differential sample; the rolling
+				// median below rejects isolated noisy estimates.
+				if deltaMicros < 10_000 {
 					observation.Reason = "percentage_delta_too_small"
 				} else {
 					type totals struct {
@@ -775,8 +779,8 @@ func (s Store) finishReservation(ctx context.Context, requestID string, actual i
 		if status != db.ReservationSettled {
 			balanceActual = 0
 		}
-		if reservation.BalanceReservedNanoUSD > 0 {
-			delta := reservation.BalanceReservedNanoUSD - balanceActual
+		delta := reservation.BalanceReservedNanoUSD - balanceActual
+		if delta != 0 {
 			tenant.BalanceNanoUSD += delta
 			if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
 				return err
@@ -834,6 +838,68 @@ func (s Store) finishReservation(ctx context.Context, requestID string, actual i
 			"status": status, "settled_at": &now,
 		}).Error
 	})
+}
+
+func reconcileSettledReservation(tx *gorm.DB, requestID string, actual int64) error {
+	var reservation RequestReservation
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&reservation, "request_id = ?", requestID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if reservation.Status != db.ReservationSettled {
+		return nil
+	}
+	previous := int64(0)
+	if reservation.ActualNanoUSD != nil {
+		previous = *reservation.ActualNanoUSD
+	}
+	delta := previous - actual
+	if delta != 0 {
+		var tenant Tenant
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", reservation.TenantID).Error; err != nil {
+			return err
+		}
+		tenant.BalanceNanoUSD += delta
+		if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&db.BillingLedger{
+			ID: identity.NewID(), TenantID: tenant.ID, RequestID: &requestID, Kind: "reconciliation",
+			AmountNanoUSD: delta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD, Note: "pricing backfill reconciliation",
+		}).Error; err != nil {
+			return err
+		}
+	}
+	if reservation.ChildSubscriptionID != nil && delta != 0 {
+		var windows []quotaWindowReservation
+		if err := json.Unmarshal(reservation.QuotaWindows, &windows); err != nil {
+			return err
+		}
+		for _, reservedWindow := range windows {
+			var window ChildQuotaWindow
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&window,
+				"child_subscription_id = ? AND kind = ? AND resets_at = ?",
+				*reservation.ChildSubscriptionID, reservedWindow.Kind, reservedWindow.ResetsAt).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			settled := window.SettledNanoUSD - delta
+			if settled < 0 {
+				settled = 0
+			}
+			if err := tx.Model(&window).Update("settled_nano_usd", settled).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Model(&reservation).Updates(map[string]any{
+		"actual_nano_usd": actual, "pricing_complete": true,
+	}).Error
 }
 
 func (s Store) ChildQuotaState(ctx context.Context, childID string) ([]ChildQuotaWindow, error) {

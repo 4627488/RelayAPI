@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 )
@@ -51,6 +52,13 @@ func TestPercentageCapacity(t *testing.T) {
 	// $2 priced cost across a 4% upstream movement estimates a $50 window.
 	if got := percentageCapacity(2_000_000_000, 4_000_000); got != 50_000_000_000 {
 		t.Fatalf("capacity = %d", got)
+	}
+}
+
+func TestDifferentialPercentagePrecision(t *testing.T) {
+	deltaMicros := int64(math.Round((10.01 - 10.0) * 1_000_000))
+	if deltaMicros != 10_000 {
+		t.Fatalf("delta micros = %d", deltaMicros)
 	}
 }
 

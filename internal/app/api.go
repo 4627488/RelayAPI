@@ -371,6 +371,15 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
+	catalogSyncError := ""
+	if len(catalog) == 0 {
+		if syncErr := a.refreshPricingCatalog(r.Context(), true); syncErr != nil {
+			catalogSyncError = syncErr.Error()
+		} else if catalog, err = a.store.ListCatalogPrices(r.Context()); err != nil {
+			writeError(w, 500, "database_error", err.Error())
+			return
+		}
+	}
 	pending, err := a.store.PendingPricing(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
@@ -383,7 +392,7 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{
 		"items": items, "catalog_items": catalog, "bundled_items": pricing.BundledPrices,
-		"pending_models": pending, "history_items": history,
+		"pending_models": pending, "history_items": history, "catalog_sync_error": catalogSyncError,
 	})
 }
 
@@ -500,7 +509,10 @@ func (a *App) adminPricingSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		if err := a.store.ApplyCatalog(r.Context(), result); err != nil {
+		a.pricingSyncMu.Lock()
+		err := a.store.ApplyCatalog(r.Context(), result)
+		a.pricingSyncMu.Unlock()
+		if err != nil {
 			writeError(w, 500, "database_error", err.Error())
 			return
 		}
