@@ -13,7 +13,6 @@ import (
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -97,13 +96,13 @@ func (s Store) GetTenant(ctx context.Context, id string) (Tenant, error) {
 }
 
 func (s Store) CreateTenant(ctx context.Context, name, email, password string, rate *int, tokens *int64, models []string) (Tenant, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := hashPassword(password)
 	if err != nil {
 		return Tenant{}, err
 	}
 	item := Tenant{
 		ID: identity.NewID(), Name: strings.TrimSpace(name), OwnerEmail: strings.ToLower(strings.TrimSpace(email)),
-		PasswordHash: string(hash), Enabled: true, RateLimitPerMinute: rate, TokenLimitDaily: tokens,
+		PasswordHash: hash, Enabled: true, RateLimitPerMinute: rate, TokenLimitDaily: tokens,
 		ModelAllowlist: models,
 	}
 	err = scoped(ctx, s.DB).Create(&item).Error
@@ -126,12 +125,12 @@ func (s Store) UpdateTenant(ctx context.Context, id, name, email string, enabled
 }
 
 func (s Store) ResetPassword(ctx context.Context, tenantID, password string) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}
 	result := scoped(ctx, s.DB).Model(&Tenant{}).Where("id = ?", tenantID).
-		Updates(map[string]any{"password_hash": string(hash), "updated_at": time.Now()})
+		Updates(map[string]any{"password_hash": hash, "updated_at": time.Now()})
 	if result.Error == nil && result.RowsAffected == 0 {
 		return ErrNotFound
 	}
@@ -145,14 +144,14 @@ func (s Store) Login(ctx context.Context, email, password string) (Tenant, error
 	if err != nil {
 		return Tenant{}, ErrNotFound
 	}
-	valid, legacy := verifyPassword(tenant.PasswordHash, password)
+	valid, needsRehash := verifyPassword(tenant.PasswordHash, password)
 	if !valid {
 		return Tenant{}, ErrNotFound
 	}
-	if legacy {
-		if hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), 12); hashErr == nil {
+	if needsRehash {
+		if hash, hashErr := hashPassword(password); hashErr == nil {
 			scoped(ctx, s.DB).Model(&Tenant{}).Where("id = ?", tenant.ID).Updates(map[string]any{
-				"password_hash": string(hash), "updated_at": time.Now(),
+				"password_hash": hash, "updated_at": time.Now(),
 			})
 		}
 	}
@@ -804,7 +803,7 @@ func (s Store) RevokeInvitation(ctx context.Context, id string) error {
 func (s Store) Register(ctx context.Context, token, name, email, password string) (Tenant, error) {
 	token = strings.TrimSpace(token)
 	email = strings.ToLower(strings.TrimSpace(email))
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	passwordHash, err := hashPassword(password)
 	if err != nil {
 		return Tenant{}, err
 	}
@@ -822,7 +821,7 @@ func (s Store) Register(ctx context.Context, token, name, email, password string
 		if userCount == 0 {
 			user = Tenant{
 				ID: identity.NewID(), Name: strings.TrimSpace(name), OwnerEmail: email,
-				PasswordHash: string(passwordHash), Enabled: true, IsAdmin: true,
+				PasswordHash: passwordHash, Enabled: true, IsAdmin: true,
 			}
 			return tx.Create(&user).Error
 		}
@@ -840,7 +839,7 @@ func (s Store) Register(ctx context.Context, token, name, email, password string
 		}
 		user = Tenant{
 			ID: identity.NewID(), Name: strings.TrimSpace(name), OwnerEmail: email,
-			PasswordHash: string(passwordHash), Enabled: true, IsAdmin: false,
+			PasswordHash: passwordHash, Enabled: true, IsAdmin: false,
 		}
 		if err := tx.Create(&user).Error; err != nil {
 			return err
