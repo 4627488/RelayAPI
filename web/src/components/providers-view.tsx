@@ -107,6 +107,7 @@ export function ProvidersView() {
   const [oauth, setOAuth] = useState<OAuthStart | null>(null)
   const [pending, setPending] = useState(false)
   const [settings, setSettings] = useState<ProviderSettings | null>(null)
+  const [proxyURL, setProxyURL] = useState("")
   const [gatewayKeys, setGatewayKeys] = useState("")
   const [configYAML, setConfigYAML] = useState("")
   const [advancedResult, setAdvancedResult] = useState("")
@@ -125,11 +126,12 @@ export function ProvidersView() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [accountResult, settingsResult, keysResult, parentResult] = await Promise.allSettled([
+      const [accountResult, settingsResult, keysResult, parentResult, proxyResult] = await Promise.allSettled([
         api<{ files: ProviderAccount[]; warning?: string }>("/api/admin/providers/accounts"),
         api<ProviderSettings>("/api/admin/providers/settings"),
         api<{ "api-keys": string[] }>("/api/admin/cpa/api-keys"),
         api<{ items: ParentSubscriptionView[] }>("/api/admin/subscriptions/parents"),
+        api<{ "proxy-url": string }>("/api/admin/cpa/proxy-url"),
       ])
       if (accountResult.status === "fulfilled") {
         setAccounts(accountResult.value.files ?? [])
@@ -140,6 +142,7 @@ export function ProvidersView() {
       if (settingsResult.status === "fulfilled") setSettings(settingsResult.value)
       if (keysResult.status === "fulfilled") setGatewayKeys((keysResult.value["api-keys"] ?? []).join("\n"))
       if (parentResult.status === "fulfilled") setParents(parentResult.value.items ?? [])
+      if (proxyResult.status === "fulfilled") setProxyURL(proxyResult.value["proxy-url"] ?? "")
     } finally {
       setLoading(false)
     }
@@ -352,6 +355,43 @@ export function ProvidersView() {
     const text = await response.text()
     if (!response.ok) throw new Error(text || `CPA 请求失败 (${response.status})`)
     return text
+  }
+
+  async function saveProxyURL(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const value = proxyURL.trim()
+    if (!value) {
+      toast.error("请输入代理地址；如需停用代理，请使用“清除代理”")
+      return
+    }
+    if (value !== "direct" && value !== "none" && !/^(socks5h?|https?):\/\//i.test(value)) {
+      toast.error("代理地址需使用 socks5://、socks5h://、http://、https://，或填写 direct")
+      return
+    }
+    setPending(true)
+    try {
+      await api("/api/admin/cpa/proxy-url", { method: "PUT", body: JSON.stringify({ value }) })
+      setProxyURL(value)
+      toast.success("CPA 全局代理已保存；请重新发起尚未完成的 OAuth 验证")
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "代理保存失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function clearProxyURL() {
+    if (!window.confirm("确认清除 CPA 全局代理？后续出站请求将改为使用服务器默认网络。")) return
+    setPending(true)
+    try {
+      await api("/api/admin/cpa/proxy-url", { method: "DELETE" })
+      setProxyURL("")
+      toast.success("CPA 全局代理已清除")
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "代理清除失败")
+    } finally {
+      setPending(false)
+    }
   }
 
   async function saveGatewayKeys() {
@@ -657,6 +697,24 @@ export function ProvidersView() {
               <CardContent className="flex flex-col gap-3">
                 <Textarea value={gatewayKeys} onChange={(event) => setGatewayKeys(event.target.value)} rows={8} placeholder="sk-cpa-…" className="font-mono text-xs" />
                 <div className="flex items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{gatewayKeys.split(/\r?\n/).filter((item) => item.trim()).length} 个 Key</p><Button onClick={() => void saveGatewayKeys()} disabled={pending}><SaveIcon />保存 Keys</Button></div>
+              </CardContent>
+            </Card>
+            <Card className="xl:col-span-2">
+              <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon className="size-4" />CPA 全局代理</CardTitle><CardDescription>用于 OAuth 换取令牌、账户验证及 CPA 的其他出站请求。请在发起 OAuth 前配置。</CardDescription></CardHeader>
+              <CardContent>
+                <form onSubmit={saveProxyURL}>
+                  <FieldGroup>
+                    <Field>
+                      <FieldLabel htmlFor="global-proxy-url">代理地址</FieldLabel>
+                      <Input id="global-proxy-url" value={proxyURL} onChange={(event) => setProxyURL(event.target.value)} placeholder="socks5://用户名:密码@代理地址:1080" autoComplete="off" spellCheck={false} className="font-mono" />
+                      <FieldDescription>支持 socks5://、socks5h://、http://、https://；填写 direct 可强制直连。代理凭据会保存到 CPA 配置。</FieldDescription>
+                    </Field>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="submit" disabled={pending}>{pending ? <Spinner /> : <SaveIcon />}保存全局代理</Button>
+                      <Button type="button" variant="outline" onClick={() => void clearProxyURL()} disabled={pending || !proxyURL}><Trash2Icon />清除代理</Button>
+                    </div>
+                  </FieldGroup>
+                </form>
               </CardContent>
             </Card>
           </div>
