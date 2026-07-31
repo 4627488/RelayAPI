@@ -173,11 +173,12 @@ export function AddProviderAccountDialog({
   onOpenChange: (open: boolean) => void
   initialOAuthProvider?: OAuthProvider
   initialMode?: AddProviderMode
-  onStartOAuth: (provider: OAuthProvider) => void
+  onStartOAuth: (provider: OAuthProvider, proxyURL: string) => void
   onSaved: () => void | Promise<void>
 }) {
   const [mode, setMode] = useState<AddProviderMode>(initialMode)
   const [oauthProvider, setOAuthProvider] = useState<OAuthProvider>(initialOAuthProvider)
+  const [oauthProxyURL, setOAuthProxyURL] = useState("")
   const [keyProviderPath, setKeyProviderPath] = useState(keyProviders[0].path)
   const [pending, setPending] = useState(false)
   const keyProvider = keyProviders.find((item) => item.path === keyProviderPath) ?? keyProviders[0]
@@ -188,7 +189,7 @@ export function AddProviderAccountDialog({
 
   function startOAuth() {
     onOpenChange(false)
-    onStartOAuth(oauthProvider)
+    onStartOAuth(oauthProvider, oauthProxyURL.trim())
   }
 
   async function saveOpenAI(event: FormEvent<HTMLFormElement>) {
@@ -314,6 +315,11 @@ export function AddProviderAccountDialog({
                 <InfoTile icon={ExternalLinkIcon} title="浏览器授权" description="打开提供商官方认证页面。" />
                 <InfoTile icon={CloudCogIcon} title="自动同步" description="完成后加载账户、模型和状态。" />
               </div>
+              <Field>
+                <FieldLabel htmlFor="oauth-proxy-url">认证与凭据代理</FieldLabel>
+                <Input id="oauth-proxy-url" value={oauthProxyURL} onChange={(event) => setOAuthProxyURL(event.target.value)} placeholder="可选，socks5://用户名:密码@代理地址:1080" autoComplete="off" spellCheck={false} className="font-mono" />
+                <FieldDescription>在打开授权前应用，覆盖回调换取令牌、账户验证和设备轮询；认证成功后继续作为该凭据的长期代理。</FieldDescription>
+              </Field>
             </div>
             <DialogFooter className="mx-0 mb-0 rounded-none">
               <Button variant="outline" onClick={close}>取消</Button>

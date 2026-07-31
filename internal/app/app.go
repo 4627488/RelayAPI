@@ -32,6 +32,8 @@ type App struct {
 	bridgeReady   atomic.Bool
 	bridgeVersion atomic.Value
 	pricingSyncMu sync.Mutex
+	oauthMu       sync.Mutex
+	oauthSession  *managedOAuthSession
 }
 
 type contextKey string

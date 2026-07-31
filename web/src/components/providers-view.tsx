@@ -224,11 +224,11 @@ export function ProvidersView() {
     }
   }
 
-  async function beginOAuth(provider: OAuthProvider) {
+  async function beginOAuth(provider: OAuthProvider, proxyURL = "") {
     setPending(true)
     try {
       const definition = oauthProviders.find((item) => item.id === provider)!
-      const value = await postJSON<Omit<OAuthStart, "provider" | "label">>(`/api/admin/providers/${provider}/oauth`, {})
+      const value = await postJSON<Omit<OAuthStart, "provider" | "label">>(`/api/admin/providers/${provider}/oauth`, { proxy_url: proxyURL })
       setOAuth({ ...value, provider, label: definition.label })
       window.open(value.url, "_blank", "noopener,noreferrer")
       if (value.flow === "device") toast.info(value.user_code ? `设备验证码：${value.user_code}` : "请在授权页完成设备验证")
@@ -754,7 +754,7 @@ export function ProvidersView() {
         onOpenChange={setConnectOpen}
         initialOAuthProvider={connectProvider}
         initialMode={connectMode}
-        onStartOAuth={(provider) => void beginOAuth(provider)}
+        onStartOAuth={(provider, proxyURL) => void beginOAuth(provider, proxyURL)}
         onSaved={() => load()}
       />
 
