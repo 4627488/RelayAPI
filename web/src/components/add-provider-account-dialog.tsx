@@ -265,7 +265,7 @@ export function AddProviderAccountDialog({
 
   return (
     <Dialog open={open} onOpenChange={(value) => { if (!value) close(); else onOpenChange(true) }}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto p-0 sm:max-w-4xl">
+      <DialogContent className="p-0 sm:max-w-4xl">
         <div className="border-b bg-gradient-to-br from-primary/10 via-background to-background p-5 sm:p-6">
           <DialogHeader>
             <div className="mb-2 flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm"><Layers3Icon className="size-5" /></div>

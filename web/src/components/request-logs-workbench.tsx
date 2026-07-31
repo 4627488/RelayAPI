@@ -238,7 +238,7 @@ function LogDetailDialog({
   }, [log])
   return (
     <Dialog open={Boolean(value)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-5xl">
+      <DialogContent className="sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>请求详情</DialogTitle>
           <DialogDescription className="font-mono">{log?.id}</DialogDescription>

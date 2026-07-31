@@ -759,7 +759,7 @@ export function ProvidersView() {
       />
 
       <Dialog open={Boolean(selectedAccount)} onOpenChange={(open) => { if (!open) setSelectedAccount(null) }}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl">
           {selectedAccount && (
             <>
               <DialogHeader>
