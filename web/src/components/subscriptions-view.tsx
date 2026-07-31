@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react"
-import { AlertTriangleIcon, BoxesIcon, ChartNoAxesCombinedIcon, CheckCircle2Icon, Clock3Icon, GaugeIcon, PackageOpenIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon } from "lucide-react"
+import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { AlertTriangleIcon, BoxesIcon, ChartNoAxesCombinedIcon, CheckCircle2Icon, Clock3Icon, GaugeIcon, PackageOpenIcon, PlusIcon, RefreshCwIcon, SaveIcon, Trash2Icon, UsersIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -35,6 +35,8 @@ const capacityModes: Array<{ value: CapacityMode; label: string }> = [
   { value: "observed", label: "自动观测/校准容量" },
 ]
 
+type DistributionDraft = { id: string; tenantID: string; name: string; percent: string; priority: string }
+
 function isCapacityMode(value: unknown): value is CapacityMode {
   return capacityModes.some((item) => item.value === value)
 }
@@ -51,6 +53,7 @@ export function AdminSubscriptionsView() {
   const [newChildParentID, setNewChildParentID] = useState("")
   const [newChildPercent, setNewChildPercent] = useState("5")
   const [newChildModels, setNewChildModels] = useState<string[]>([])
+  const [distributionDrafts, setDistributionDrafts] = useState<Record<string, DistributionDraft[]>>({})
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -168,8 +171,56 @@ export function AdminSubscriptionsView() {
     }
   }
 
-  const parentByID = useMemo(() => new Map(parents.map((item) => [item.item.id, item.item])), [parents])
-  const tenantByID = useMemo(() => new Map(tenants.map((item) => [item.id, item])), [tenants])
+  function addDistributionRow(parentID: string) {
+    setDistributionDrafts((current) => ({
+      ...current,
+      [parentID]: [...(current[parentID] ?? []), { id: crypto.randomUUID(), tenantID: "", name: "", percent: "5", priority: "100" }],
+    }))
+  }
+
+  function updateDistributionRow(parentID: string, rowID: string, field: keyof Omit<DistributionDraft, "id">, value: string) {
+    setDistributionDrafts((current) => ({
+      ...current,
+      [parentID]: (current[parentID] ?? []).map((row) => row.id === rowID ? { ...row, [field]: value } : row),
+    }))
+  }
+
+  function removeDistributionRow(parentID: string, rowID: string) {
+    setDistributionDrafts((current) => ({ ...current, [parentID]: (current[parentID] ?? []).filter((row) => row.id !== rowID) }))
+  }
+
+  async function saveDistribution(parent: ParentSubscriptionView) {
+    const rows = distributionDrafts[parent.item.id] ?? []
+    if (!rows.length) return
+    const draftPPM = rows.reduce((sum, row) => sum + Math.round(Number(row.percent || 0) * 10_000), 0)
+    if (parent.item.capacity_mode !== "unmetered" && parent.allocated_ppm + draftPPM > parent.item.allocation_limit_ppm) {
+      toast.error("本次批量分配超过父订阅可分配上限")
+      return
+    }
+    if (rows.some((row) => !row.tenantID || !row.name.trim() || Number(row.percent) <= 0)) {
+      toast.error("请完整填写每一行的租户、名称和份额")
+      return
+    }
+    setPending(true)
+    try {
+      await Promise.all(rows.map((row) => postJSON("/api/admin/subscriptions/children", {
+        tenant_id: row.tenantID,
+        parent_subscription_id: parent.item.id,
+        name: row.name.trim(),
+        allocation_ppm: parent.item.capacity_mode === "unmetered" ? 1_000_000 : Math.round(Number(row.percent) * 10_000),
+        priority: Number(row.priority || 100), enabled: true, model_allowlist: [],
+        starts_at: new Date().toISOString(), expires_at: "",
+      })))
+      setDistributionDrafts((current) => ({ ...current, [parent.item.id]: [] }))
+      toast.success(`已从 ${parent.item.name} 分配 ${rows.length} 个子订阅`)
+      await load()
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "批量分配失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
   const newChildParent = parents.find((item) => item.item.id === newChildParentID)
   const newChildPPM = Math.round(Number(newChildPercent || 0) * 10_000)
   const newChildRemainingPPM = newChildParent
@@ -190,9 +241,6 @@ export function AdminSubscriptionsView() {
           <Button variant="outline" onClick={() => void syncParents()} disabled={pending}>
             {pending ? <Spinner /> : <RefreshCwIcon />}同步 CPA 父账户
           </Button>
-          <Button onClick={() => setChildOpen(true)} disabled={!parents.length || !tenants.length}>
-            <PlusIcon />分配子订阅
-          </Button>
         </div>
       </div>
 
@@ -202,55 +250,14 @@ export function AdminSubscriptionsView() {
         <AlertDescription>自动额度需要至少两次同一重置周期内的有效观测。学习期间可继续同步和产生计价请求，形成样本后会自动得到美元容量。</AlertDescription>
       </Alert> : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>父订阅与计费通道</CardTitle>
-          <CardDescription>OAuth 父账户按额度拆分；API Key 父账户固定路由后按租户总余额结算。AuthID 只对管理员可见。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? <TableSkeleton columns={7} /> : parents.length ? (
-            <Table>
-              <TableHeader><TableRow><TableHead>父订阅</TableHead><TableHead>提供商</TableHead><TableHead>上游额度</TableHead><TableHead>计费策略</TableHead><TableHead>已分配</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
-              <TableBody>
-                {parents.map((view) => (
-                  <TableRow key={view.item.id}>
-                    <TableCell><div className="font-medium">{view.item.name}</div><div className="max-w-60 truncate font-mono text-xs text-muted-foreground" title={`Scheduler ID: ${view.item.cpa_auth_id}`}>{view.item.cpa_auth_index}</div></TableCell>
-                    <TableCell>{view.item.provider || "未知"}</TableCell>
-                    <TableCell><QuotaSnapshot snapshot={view.item.quota_snapshot} status={view.item.quota_probe_status} error={view.item.quota_probe_error} observedAt={view.item.quota_observed_at} compact /></TableCell>
-                    <TableCell><div className="flex flex-col items-start gap-1"><span>{capacityModes.find((mode) => mode.value === view.item.capacity_mode)?.label}</span><ParentReadiness view={view} /></div></TableCell>
-                    <TableCell className="tabular-nums">{view.item.capacity_mode === "unmetered"
-                      ? `${children.filter((child) => child.parent_subscription_id === view.item.id && child.enabled).length} 个子订阅`
-                      : `${percent(view.allocated_ppm)} / ${percent(view.item.allocation_limit_ppm)}`}</TableCell>
-                    <TableCell><div className="flex flex-col items-start gap-1"><Badge variant={view.item.enabled && !view.item.cpa_unavailable ? "secondary" : "outline"}>{!view.item.enabled ? "已停用" : view.item.cpa_unavailable ? "CPA 不可用" : view.item.status || "可用"}</Badge><QuotaProbeBadge item={view.item} /></div></TableCell>
-                    <TableCell className="text-right"><div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={pending} onClick={() => void syncParentQuota(view.item.id)}><RefreshCwIcon />额度</Button><Button size="sm" variant="outline" onClick={() => setParentEditor(view)}>配置</Button></div></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : <Empty><EmptyHeader><EmptyMedia variant="icon"><PackageOpenIcon /></EmptyMedia><EmptyTitle>还没有父订阅</EmptyTitle><EmptyDescription>先同步 CPA 凭据，再配置容量窗口。</EmptyDescription></EmptyHeader></Empty>}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>子订阅分配</CardTitle><CardDescription>额度型父账户受分配上限约束；余额计费通道可分发给多个租户。</CardDescription></CardHeader>
-        <CardContent>
-          {loading ? <TableSkeleton columns={6} /> : children.length ? (
-            <Table>
-              <TableHeader><TableRow><TableHead>子订阅</TableHead><TableHead>租户</TableHead><TableHead>父订阅</TableHead><TableHead>份额</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
-              <TableBody>{children.map((child) => (
-                <TableRow key={child.id}>
-                  <TableCell><div className="font-medium">{child.name}</div><div className="text-xs text-muted-foreground">优先级 {child.priority}</div></TableCell>
-                  <TableCell>{tenantByID.get(child.tenant_id)?.name || child.tenant_id}</TableCell>
-                  <TableCell>{parentByID.get(child.parent_subscription_id)?.name || "父订阅不可用"}</TableCell>
-                  <TableCell>{parentByID.get(child.parent_subscription_id)?.capacity_mode === "unmetered" ? "账户余额" : percent(child.allocation_ppm)}</TableCell>
-                  <TableCell><Badge variant={child.enabled ? "secondary" : "outline"}>{child.enabled ? "启用" : "停用"}</Badge></TableCell>
-                  <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setChildEditor(child)}>编辑</Button><Button size="sm" variant="outline" disabled={pending} onClick={() => void toggleChild(child)}>{child.enabled ? "停用" : "启用"}</Button><Button size="icon-sm" variant="ghost" aria-label="删除子订阅" onClick={() => void removeChild(child.id)}><Trash2Icon /></Button></div></TableCell>
-                </TableRow>
-              ))}</TableBody>
-            </Table>
-          ) : <Empty><EmptyHeader><EmptyMedia variant="icon"><PackageOpenIcon /></EmptyMedia><EmptyTitle>还没有子订阅</EmptyTitle><EmptyDescription>从任意父账户划分容量给租户。</EmptyDescription></EmptyHeader></Empty>}
-        </CardContent>
-      </Card>
+      {loading ? <Card><CardContent className="pt-6"><TableSkeleton columns={6} /></CardContent></Card> : parents.length ? <div className="flex flex-col gap-4">{parents.map((view) => <ParentDistributionCard
+        key={view.item.id} view={view} children={children.filter((child) => child.parent_subscription_id === view.item.id)} tenants={tenants}
+        drafts={distributionDrafts[view.item.id] ?? []} pending={pending}
+        onAdd={() => addDistributionRow(view.item.id)} onDraftChange={(rowID, field, value) => updateDistributionRow(view.item.id, rowID, field, value)}
+        onDraftRemove={(rowID) => removeDistributionRow(view.item.id, rowID)} onSave={() => void saveDistribution(view)}
+        onSync={() => void syncParentQuota(view.item.id)} onConfigure={() => setParentEditor(view)} onEdit={setChildEditor}
+        onToggle={(child) => void toggleChild(child)} onRemove={(id) => void removeChild(id)}
+      />)}</div> : <Empty><EmptyHeader><EmptyMedia variant="icon"><PackageOpenIcon /></EmptyMedia><EmptyTitle>还没有父订阅</EmptyTitle><EmptyDescription>先同步 CPA 凭据，再从父订阅直接分配给多个租户。</EmptyDescription></EmptyHeader></Empty>}
 
       <ParentEditor value={parentEditor} pending={pending} onPending={setPending} onClose={() => setParentEditor(null)} onSaved={load} />
       <ChildEditor value={childEditor} parents={parents} pending={pending} onPending={setPending} onClose={() => setChildEditor(null)} onSaved={load} />
@@ -425,6 +432,67 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
       </DialogContent>
     </Dialog>
   )
+}
+
+function ParentDistributionCard({ view, children, tenants, drafts, pending, onAdd, onDraftChange, onDraftRemove, onSave, onSync, onConfigure, onEdit, onToggle, onRemove }: {
+  view: ParentSubscriptionView
+  children: ChildSubscription[]
+  tenants: User[]
+  drafts: DistributionDraft[]
+  pending: boolean
+  onAdd: () => void
+  onDraftChange: (rowID: string, field: keyof Omit<DistributionDraft, "id">, value: string) => void
+  onDraftRemove: (rowID: string) => void
+  onSave: () => void
+  onSync: () => void
+  onConfigure: () => void
+  onEdit: (child: ChildSubscription) => void
+  onToggle: (child: ChildSubscription) => void
+  onRemove: (id: string) => void
+}) {
+  const tenantByID = new Map(tenants.map((tenant) => [tenant.id, tenant]))
+  const draftPPM = drafts.reduce((sum, row) => sum + Math.round(Number(row.percent || 0) * 10_000), 0)
+  const projectedPPM = view.allocated_ppm + (view.item.capacity_mode === "unmetered" ? 0 : draftPPM)
+  const overAllocated = view.item.capacity_mode !== "unmetered" && projectedPPM > view.item.allocation_limit_ppm
+  const selectableTenants = tenants.filter((tenant) => tenant.enabled)
+  return <Card>
+    <CardHeader>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2"><CardTitle>{view.item.name}</CardTitle><Badge variant="outline">{view.item.provider || "未知提供商"}</Badge><ParentReadiness view={view} /><QuotaProbeBadge item={view.item} /></div>
+          <CardDescription>{capacityModes.find((mode) => mode.value === view.item.capacity_mode)?.label} · {view.item.plan_type || "未识别计划"} · {view.windows.length ? view.windows.map((window) => `${quotaWindowLabel(window.kind)} ${money(window.limit_nano_usd)}`).join(" · ") : "尚无美元额度窗口"}</CardDescription>
+        </div>
+        <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={pending} onClick={onSync}><RefreshCwIcon data-icon="inline-start" />同步额度</Button><Button size="sm" variant="outline" onClick={onConfigure}>配置父订阅</Button></div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-sm"><Badge variant="secondary"><UsersIcon data-icon="inline-start" />{children.length} 个子订阅</Badge>{view.item.capacity_mode !== "unmetered" ? <span className="text-muted-foreground">已分 {percent(view.allocated_ppm)}{drafts.length ? `，保存后 ${percent(projectedPPM)}` : ""} / 上限 {percent(view.item.allocation_limit_ppm)}</span> : <span className="text-muted-foreground">所有子订阅按各自租户余额结算</span>}</div>
+    </CardHeader>
+    <CardContent className="flex flex-col gap-4">
+      <Table>
+        <TableHeader><TableRow><TableHead>租户</TableHead><TableHead>子订阅名称</TableHead>{view.item.capacity_mode !== "unmetered" ? <TableHead>父容量份额</TableHead> : null}<TableHead>优先级</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+        <TableBody>
+          {children.map((child) => <TableRow key={child.id}>
+            <TableCell><div className="font-medium">{tenantByID.get(child.tenant_id)?.name || child.tenant_id}</div><div className="text-xs text-muted-foreground">{tenantByID.get(child.tenant_id)?.owner_email}</div></TableCell>
+            <TableCell>{child.name}</TableCell>
+            {view.item.capacity_mode !== "unmetered" ? <TableCell className="tabular-nums">{percent(child.allocation_ppm)}</TableCell> : null}
+            <TableCell className="tabular-nums">{child.priority}</TableCell>
+            <TableCell><Badge variant={child.enabled ? "secondary" : "outline"}>{child.enabled ? "启用" : "停用"}</Badge></TableCell>
+            <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => onEdit(child)}>编辑</Button><Button size="sm" variant="outline" disabled={pending} onClick={() => onToggle(child)}>{child.enabled ? "停用" : "启用"}</Button><Button size="icon-sm" variant="ghost" aria-label="删除子订阅" onClick={() => onRemove(child.id)}><Trash2Icon /></Button></div></TableCell>
+          </TableRow>)}
+          {drafts.map((row) => <TableRow key={row.id}>
+            <TableCell><Select value={row.tenantID} onValueChange={(value) => onDraftChange(row.id, "tenantID", value ?? "")}><SelectTrigger className="min-w-44"><SelectValue placeholder="选择租户" /></SelectTrigger><SelectContent><SelectGroup>{selectableTenants.map((tenant) => <SelectItem key={tenant.id} value={tenant.id}>{tenant.name} · {tenant.owner_email}</SelectItem>)}</SelectGroup></SelectContent></Select></TableCell>
+            <TableCell><Input value={row.name} onChange={(event) => onDraftChange(row.id, "name", event.target.value)} placeholder="例如：研发团队" /></TableCell>
+            {view.item.capacity_mode !== "unmetered" ? <TableCell><Input className="min-w-28" type="number" min="0.0001" step="0.0001" value={row.percent} onChange={(event) => onDraftChange(row.id, "percent", event.target.value)} aria-label="父容量份额百分比" /></TableCell> : null}
+            <TableCell><Input className="min-w-24" type="number" value={row.priority} onChange={(event) => onDraftChange(row.id, "priority", event.target.value)} aria-label="路由优先级" /></TableCell>
+            <TableCell><Badge variant="outline">待创建</Badge></TableCell>
+            <TableCell className="text-right"><Button size="icon-sm" variant="ghost" aria-label="移除待分配行" onClick={() => onDraftRemove(row.id)}><Trash2Icon /></Button></TableCell>
+          </TableRow>)}
+        </TableBody>
+      </Table>
+      {!children.length && !drafts.length ? <Alert><UsersIcon /><AlertTitle>这个父订阅还没有分配给任何人</AlertTitle><AlertDescription>点击下方“添加分配行”，可以连续选择多个租户并一次保存。</AlertDescription></Alert> : null}
+      {overAllocated ? <Alert variant="destructive"><AlertTriangleIcon /><AlertTitle>批量分配超出上限</AlertTitle><AlertDescription>当前填写后将达到 {percent(projectedPPM)}，父订阅上限为 {percent(view.item.allocation_limit_ppm)}。</AlertDescription></Alert> : null}
+    </CardContent>
+    <CardFooter className="flex flex-wrap justify-between gap-2"><Button variant="outline" onClick={onAdd} disabled={pending || !selectableTenants.length}><PlusIcon data-icon="inline-start" />添加分配行</Button>{drafts.length ? <Button onClick={onSave} disabled={pending || overAllocated}>{pending ? <Spinner /> : <SaveIcon data-icon="inline-start" />}保存 {drafts.length} 个子订阅</Button> : null}</CardFooter>
+  </Card>
 }
 
 function QuotaProbeBadge({ item }: { item: ParentSubscriptionView["item"] }) {
