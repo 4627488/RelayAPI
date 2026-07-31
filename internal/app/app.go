@@ -138,7 +138,11 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	result, err := pricing.FetchModelsDev(ctx, nil, pricing.ModelsDevURL)
+	client, err := a.cpa.OutboundHTTPClient(ctx, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	result, err := pricing.FetchModelsDev(ctx, client, pricing.ModelsDevURL)
 	if err != nil {
 		return err
 	}
