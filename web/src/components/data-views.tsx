@@ -229,7 +229,12 @@ export function UsageMetrics({ report }: { report: UsageReport }) {
         { label: "请求", value: compact(report.summary.requests), hint: `最近 ${report.days} 天`, icon: ActivityIcon },
         { label: "Tokens", value: compactTokens(report.summary.tokens), hint: "输入与输出合计", icon: CoinsIcon },
         { label: "错误", value: compact(report.summary.errors), hint: "HTTP 错误或中断", icon: TriangleAlertIcon },
-        { label: "费用", value: money(report.summary.cost_nano_usd), hint: "仅统计已配置价格模型", icon: CircleDollarSignIcon },
+        {
+          label: "模型成本",
+          value: money(report.summary.cost_nano_usd),
+          hint: `订阅承担 ${money(report.summary.subscription_covered_nano_usd)} · 余额支付 ${money(report.summary.balance_charged_nano_usd)}`,
+          icon: CircleDollarSignIcon,
+        },
       ]}
     />
   )

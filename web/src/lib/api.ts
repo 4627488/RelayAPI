@@ -174,6 +174,8 @@ export interface UsageReport {
     errors: number
     tokens: number
     cost_nano_usd: number
+    subscription_covered_nano_usd: number
+    balance_charged_nano_usd: number
   }
   daily: Array<{
     date: string

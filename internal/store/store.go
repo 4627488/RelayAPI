@@ -906,16 +906,20 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		base = base.Where("tenant_id = ?", tenantID)
 	}
 	type summary struct {
-		Requests int64 `json:"requests"`
-		Errors   int64 `json:"errors"`
-		Tokens   int64 `json:"tokens"`
-		Cost     int64 `json:"cost_nano_usd"`
+		Requests            int64 `json:"requests"`
+		Errors              int64 `json:"errors"`
+		Tokens              int64 `json:"tokens"`
+		Cost                int64 `json:"cost_nano_usd"`
+		SubscriptionCovered int64 `json:"subscription_covered_nano_usd"`
+		BalanceCharged      int64 `json:"balance_charged_nano_usd"`
 	}
 	var total summary
-	if err := base.Select(
+	if err := base.Joins("LEFT JOIN parent_subscriptions ON parent_subscriptions.id = request_logs.parent_subscription_id").Select(
 		"count(*) AS requests, " +
 			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 THEN 1 ELSE 0 END),0) AS errors, " +
-			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
+			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
+			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode IN ('manual','observed') THEN cost_nano_usd ELSE 0 END),0) AS subscription_covered, " +
+			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode IN ('manual','observed') THEN 0 ELSE cost_nano_usd END),0) AS balance_charged",
 	).Scan(&total).Error; err != nil {
 		return nil, err
 	}
