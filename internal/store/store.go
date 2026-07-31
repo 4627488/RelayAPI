@@ -142,8 +142,19 @@ func (s Store) Login(ctx context.Context, email, password string) (Tenant, error
 	var tenant Tenant
 	err := scoped(ctx, s.DB).Where("lower(owner_email) = lower(?)", strings.TrimSpace(email)).
 		Where("enabled = ? AND (expires_at IS NULL OR expires_at > ?)", true, time.Now()).First(&tenant).Error
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(tenant.PasswordHash), []byte(password)) != nil {
+	if err != nil {
 		return Tenant{}, ErrNotFound
+	}
+	valid, legacy := verifyPassword(tenant.PasswordHash, password)
+	if !valid {
+		return Tenant{}, ErrNotFound
+	}
+	if legacy {
+		if hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), 12); hashErr == nil {
+			scoped(ctx, s.DB).Model(&Tenant{}).Where("id = ?", tenant.ID).Updates(map[string]any{
+				"password_hash": string(hash), "updated_at": time.Now(),
+			})
+		}
 	}
 	return tenant, nil
 }
