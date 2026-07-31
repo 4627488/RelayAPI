@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from "react"
 import {
   BarChart3Icon,
+  BookOpenIcon,
   ChevronsUpDownIcon,
   GaugeIcon,
   KeyRoundIcon,
@@ -52,7 +53,7 @@ import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
 import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
 
-export type Page = "overview" | "usage" | "keys" | "logs" | "users" | "invitations" | "providers" | "subscriptions" | "pricing"
+export type Page = "overview" | "usage" | "keys" | "logs" | "guide" | "users" | "invitations" | "providers" | "subscriptions" | "pricing"
 export type Workspace = "user" | "admin"
 
 interface NavigationItem {
@@ -65,6 +66,7 @@ const userItems: NavigationItem[] = [
   { id: "overview", label: "总览", icon: GaugeIcon },
   { id: "usage", label: "用量", icon: BarChart3Icon },
   { id: "keys", label: "API Keys", icon: KeyRoundIcon },
+  { id: "guide", label: "接入指南", icon: BookOpenIcon },
   { id: "subscriptions", label: "我的订阅", icon: PackageOpenIcon },
   { id: "logs", label: "请求日志", icon: ListIcon },
 ]

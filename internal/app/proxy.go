@@ -228,6 +228,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	copyHeaders(upstream.Header, r.Header)
 	upstream.Header.Set("Authorization", "Bearer "+a.cfg.CPAAPIKey)
 	upstream.Header.Del("X-API-Key")
+	upstream.Header.Del("X-Goog-API-Key")
 	upstream.Header.Set("X-Relay-Request-ID", requestID)
 	if admission.CPAAuthID != "" {
 		upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
@@ -423,6 +424,7 @@ func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.K
 		stripRelayHeaders(request.Header)
 		request.Header.Set("Authorization", "Bearer "+a.cfg.CPAAPIKey)
 		request.Header.Del("X-API-Key")
+		request.Header.Del("X-Goog-API-Key")
 		request.Header.Set("X-Relay-Request-ID", requestID)
 		if admission.CPAAuthID != "" {
 			request.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)

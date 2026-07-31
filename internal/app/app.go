@@ -440,7 +440,10 @@ func bearer(r *http.Request) string {
 	if len(value) > 7 && strings.EqualFold(value[:7], "Bearer ") {
 		return strings.TrimSpace(value[7:])
 	}
-	return strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if value = strings.TrimSpace(r.Header.Get("X-API-Key")); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.Header.Get("X-Goog-API-Key"))
 }
 
 func allowed(model string, lists ...[]string) bool {

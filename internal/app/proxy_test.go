@@ -53,6 +53,27 @@ func TestAllowedSupportsGlob(t *testing.T) {
 	}
 }
 
+func TestBearerSupportsCompatibleClientHeaders(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name   string
+		header http.Header
+		want   string
+	}{
+		{name: "bearer", header: http.Header{"Authorization": {"Bearer relay_auth"}}, want: "relay_auth"},
+		{name: "anthropic", header: http.Header{"X-Api-Key": {"relay_anthropic"}}, want: "relay_anthropic"},
+		{name: "gemini", header: http.Header{"X-Goog-Api-Key": {"relay_gemini"}}, want: "relay_gemini"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := &http.Request{Header: test.header}
+			if got := bearer(request); got != test.want {
+				t.Fatalf("bearer() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCopyHeadersDropsInternalRelayHeaders(t *testing.T) {
 	source := http.Header{
 		"Content-Type":             {"application/json"},
