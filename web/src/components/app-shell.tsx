@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from "react"
+import { useEffect, useState, type ComponentType, type ReactNode } from "react"
 import {
   BarChart3Icon,
   BookOpenIcon,
@@ -19,7 +19,7 @@ import {
   UsersIcon,
 } from "lucide-react"
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -70,6 +70,33 @@ const userItems: NavigationItem[] = [
   { id: "subscriptions", label: "我的订阅", icon: PackageOpenIcon },
   { id: "logs", label: "请求日志", icon: ListIcon },
 ]
+
+function EmailAvatar({ email, name }: { email: string; name: string }) {
+  const [source, setSource] = useState("")
+
+  useEffect(() => {
+    let active = true
+    const normalized = email.trim().toLowerCase()
+    setSource("")
+    if (!normalized || !globalThis.crypto?.subtle) {
+      setSource("")
+      return () => { active = false }
+    }
+    void crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized)).then((buffer) => {
+      if (!active) return
+      const hash = Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, "0")).join("")
+      setSource(`https://www.gravatar.com/avatar/${hash}?d=404&s=128`)
+    }).catch(() => { if (active) setSource("") })
+    return () => { active = false }
+  }, [email])
+
+  return (
+    <Avatar className="size-8 rounded-lg">
+      {source ? <AvatarImage src={source} alt={`${name} 的头像`} className="rounded-lg" /> : null}
+      <AvatarFallback className="rounded-lg">{initials(name)}</AvatarFallback>
+    </Avatar>
+  )
+}
 
 const adminItems: NavigationItem[] = [
   { id: "overview", label: "管理总览", icon: GaugeIcon },
@@ -177,9 +204,7 @@ export function AppShell({ session, workspace, page, onPageChange, onWorkspaceCh
                 <DropdownMenuTrigger
                   render={<SidebarMenuButton size="lg" />}
                 >
-                  <Avatar className="size-8 rounded-lg">
-                    <AvatarFallback className="rounded-lg">{initials(name)}</AvatarFallback>
-                  </Avatar>
+                  <EmailAvatar email={subtitle} name={name} />
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-medium">{name}</span>
                     <span className="truncate text-xs text-muted-foreground">{subtitle}</span>
