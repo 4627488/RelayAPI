@@ -23,6 +23,7 @@ import {
   postJSON,
   type CapacityMode,
   type ChildSubscription,
+  type ParentSubscription,
   type ParentSubscriptionView,
   type SubscriptionEntitlementWindow,
   type User,
@@ -51,6 +52,7 @@ export function AdminSubscriptionsView() {
   const [childEditor, setChildEditor] = useState<ChildSubscription | null>(null)
   const [childOpen, setChildOpen] = useState(false)
   const [newChildParentID, setNewChildParentID] = useState("")
+  const [newChildName, setNewChildName] = useState("")
   const [newChildPercent, setNewChildPercent] = useState("5")
   const [newChildModels, setNewChildModels] = useState<string[]>([])
   const [distributionDrafts, setDistributionDrafts] = useState<Record<string, DistributionDraft[]>>({})
@@ -124,6 +126,7 @@ export function AdminSubscriptionsView() {
       })
       setChildOpen(false)
       setNewChildParentID("")
+      setNewChildName("")
       setNewChildPercent("5")
       setNewChildModels([])
       toast.success("子订阅已分配")
@@ -171,10 +174,10 @@ export function AdminSubscriptionsView() {
     }
   }
 
-  function addDistributionRow(parentID: string) {
+  function addDistributionRow(parent: ParentSubscriptionView) {
     setDistributionDrafts((current) => ({
       ...current,
-      [parentID]: [...(current[parentID] ?? []), { id: crypto.randomUUID(), tenantID: "", name: "", percent: "5", priority: "100" }],
+      [parent.item.id]: [...(current[parent.item.id] ?? []), { id: crypto.randomUUID(), tenantID: "", name: defaultChildName(parent.item), percent: "5", priority: "100" }],
     }))
   }
 
@@ -253,7 +256,7 @@ export function AdminSubscriptionsView() {
       {loading ? <Card><CardContent className="pt-6"><TableSkeleton columns={6} /></CardContent></Card> : parents.length ? <div className="flex flex-col gap-4">{parents.map((view) => <ParentDistributionCard
         key={view.item.id} view={view} children={children.filter((child) => child.parent_subscription_id === view.item.id)} tenants={tenants}
         drafts={distributionDrafts[view.item.id] ?? []} pending={pending}
-        onAdd={() => addDistributionRow(view.item.id)} onDraftChange={(rowID, field, value) => updateDistributionRow(view.item.id, rowID, field, value)}
+        onAdd={() => addDistributionRow(view)} onDraftChange={(rowID, field, value) => updateDistributionRow(view.item.id, rowID, field, value)}
         onDraftRemove={(rowID) => removeDistributionRow(view.item.id, rowID)} onSave={() => void saveDistribution(view)}
         onSync={() => void syncParentQuota(view.item.id)} onConfigure={() => setParentEditor(view)} onEdit={setChildEditor}
         onToggle={(child) => void toggleChild(child)} onRemove={(id) => void removeChild(id)}
@@ -261,14 +264,14 @@ export function AdminSubscriptionsView() {
 
       <ParentEditor value={parentEditor} pending={pending} onPending={setPending} onClose={() => setParentEditor(null)} onSaved={load} />
       <ChildEditor value={childEditor} parents={parents} pending={pending} onPending={setPending} onClose={() => setChildEditor(null)} onSaved={load} />
-      <Dialog open={childOpen} onOpenChange={(open) => { setChildOpen(open); if (!open) { setNewChildParentID(""); setNewChildPercent("5"); setNewChildModels([]) } }}>
+      <Dialog open={childOpen} onOpenChange={(open) => { setChildOpen(open); if (!open) { setNewChildParentID(""); setNewChildName(""); setNewChildPercent("5"); setNewChildModels([]) } }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader><DialogTitle>分配子订阅</DialogTitle><DialogDescription>{newChildParent?.item.capacity_mode === "unmetered" ? "该通道不划分上游额度，实际消费统一从所选租户的账户总余额扣除。" : "份额使用精确百万分比存储，不使用浮点计费。"}</DialogDescription></DialogHeader>
           <form id="child-subscription-form" onSubmit={createChild}>
             <FieldGroup>
               <Field><FieldLabel>租户</FieldLabel><Select name="tenant_id" required><SelectTrigger className="w-full"><SelectValue placeholder="选择租户" /></SelectTrigger><SelectContent><SelectGroup>{tenants.map((tenant) => <SelectItem key={tenant.id} value={tenant.id}>{tenant.name} · {tenant.owner_email}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
-              <Field><FieldLabel>父订阅</FieldLabel><Select value={newChildParentID} onValueChange={(next) => { setNewChildParentID(next ?? ""); setNewChildModels([]) }} required><SelectTrigger className="w-full"><SelectValue placeholder="选择父订阅" /></SelectTrigger><SelectContent><SelectGroup>{parents.filter((item) => item.item.enabled && !item.item.cpa_unavailable).map((view) => <SelectItem key={view.item.id} value={view.item.id}>{view.item.name} · {view.item.capacity_mode === "unmetered" ? "账户余额计费" : view.windows.length ? `可分 ${percent(view.item.allocation_limit_ppm - view.allocated_ppm)}` : "额度学习中"}</SelectItem>)}</SelectGroup></SelectContent></Select>{newChildParent ? <FieldDescription>{parentSelectionHint(newChildParent)}</FieldDescription> : null}</Field>
-              <Field><FieldLabel htmlFor="child-name">名称</FieldLabel><Input id="child-name" name="name" placeholder="例如：团队 Pro 1/20" required /></Field>
+              <Field><FieldLabel>父订阅</FieldLabel><Select value={newChildParentID} onValueChange={(next) => { const parentID = next ?? ""; setNewChildParentID(parentID); setNewChildName(defaultChildName(parents.find((item) => item.item.id === parentID)?.item)); setNewChildModels([]) }} required><SelectTrigger className="w-full"><SelectValue placeholder="选择父订阅" /></SelectTrigger><SelectContent><SelectGroup>{parents.filter((item) => item.item.enabled && !item.item.cpa_unavailable).map((view) => <SelectItem key={view.item.id} value={view.item.id}>{view.item.name} · {view.item.capacity_mode === "unmetered" ? "账户余额计费" : view.windows.length ? `可分 ${percent(view.item.allocation_limit_ppm - view.allocated_ppm)}` : "额度学习中"}</SelectItem>)}</SelectGroup></SelectContent></Select>{newChildParent ? <FieldDescription>{parentSelectionHint(newChildParent)}</FieldDescription> : null}</Field>
+              <Field><FieldLabel htmlFor="child-name">名称</FieldLabel><Input id="child-name" name="name" value={newChildName} onChange={(event) => setNewChildName(event.target.value)} placeholder="选择父订阅后自动生成" required /></Field>
               <div className="grid gap-4 sm:grid-cols-2">{newChildParent?.item.capacity_mode !== "unmetered" ? <Field data-invalid={newChildOverAllocated || undefined}><FieldLabel htmlFor="child-percent">父容量占比（%）</FieldLabel><Input id="child-percent" name="percent" type="number" min="0.0001" max={newChildParent ? Math.max(0, (newChildParent.item.allocation_limit_ppm - newChildParent.allocated_ppm) / 10_000) : undefined} step="0.0001" value={newChildPercent} onChange={(event) => setNewChildPercent(event.target.value)} aria-invalid={newChildOverAllocated || undefined} required /><FieldDescription>{newChildParent ? `分配后父订阅剩余 ${percent(Math.max(0, newChildRemainingPPM))}` : "先选择父订阅"}</FieldDescription></Field> : <Field><FieldLabel htmlFor="child-billing">结算账户</FieldLabel><Input id="child-billing" value="租户总余额" readOnly /><FieldDescription>子订阅本身不保存余额。</FieldDescription></Field>}<Field><FieldLabel htmlFor="child-priority">优先级</FieldLabel><Input id="child-priority" name="priority" type="number" defaultValue="100" required /><FieldDescription>数值越大，越优先用于路由。</FieldDescription></Field></div>
               {newChildParent && newChildParent.item.capacity_mode !== "unmetered" && newChildParent.windows.length ? <Alert><CheckCircle2Icon /><AlertTitle>将同时获得 {newChildParent.windows.length} 个独立额度窗口</AlertTitle><AlertDescription>{newChildParent.windows.map((window) => `${window.kind} ${money(Math.floor(window.limit_nano_usd * newChildPPM / 1_000_000))}`).join(" · ")}</AlertDescription></Alert> : null}
               <Field><FieldLabel htmlFor="child-models">模型范围</FieldLabel><ModelSelector id="child-models" options={parentModelOptions(newChildParent)} value={newChildModels} onChange={setNewChildModels} allLabel="继承父订阅全部模型" /><FieldDescription>这里只能从父订阅可用模型中收窄；不选择表示全部继承。</FieldDescription></Field>
@@ -617,3 +620,24 @@ function resetDescription(value: string) {
 function percent(ppm: number) { return `${(ppm / 10_000).toFixed(ppm % 10_000 ? 2 : 0)}%` }
 function localDateTime(value?: string) { if (!value) return ""; const date = new Date(value); const offset = date.getTimezoneOffset() * 60_000; return new Date(date.getTime() - offset).toISOString().slice(0, 19) }
 function parentModelOptions(parent?: ParentSubscriptionView) { return parent?.item.model_allowlist?.length ? parent.item.model_allowlist : parent?.item.cpa_model_allowlist ?? [] }
+
+function defaultChildName(parent?: ParentSubscription) {
+  if (!parent) return ""
+  const provider = parent.provider.trim().toLowerCase()
+  const product = provider.includes("openai") || provider.includes("codex") || provider.includes("chatgpt")
+    ? "ChatGPT"
+    : provider.includes("anthropic") || provider.includes("claude")
+      ? "Claude"
+      : provider.includes("google") || provider.includes("gemini")
+        ? "Gemini"
+        : ""
+  const plan = parent.plan_type.trim()
+  if (!product || !plan || ["unknown", "default", "api", "api-key"].includes(plan.toLowerCase())) {
+    return parent.name.trim() || product || "子订阅"
+  }
+  const knownPlans: Record<string, string> = {
+    free: "Free", plus: "Plus", pro: "Pro", max: "Max", team: "Team", business: "Business", enterprise: "Enterprise",
+  }
+  const planLabel = knownPlans[plan.toLowerCase()] ?? plan
+  return planLabel.toLowerCase() === product.toLowerCase() ? product : `${product} ${planLabel}`
+}
