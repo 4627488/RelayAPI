@@ -626,7 +626,7 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", input.Key.TenantID).Error; err != nil {
 			return err
 		}
-		if !tenant.Enabled || tenant.BalanceNanoUSD < input.BalanceReserve {
+		if !tenant.Enabled {
 			return errors.New("insufficient balance")
 		}
 
@@ -654,6 +654,7 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 			reservation.CPAAuthID = parent.CPAAuthID
 			reservation.CPAAuthIndex = parent.CPAAuthIndex
 			if parent.CapacityMode != db.ParentCapacityUnmetered {
+				reservation.BalanceReservedNanoUSD = 0
 				if input.QuotaReserve <= 0 {
 					return ErrSubscriptionPrice
 				}
@@ -712,14 +713,17 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 			}
 		}
 
-		if input.BalanceReserve > 0 {
-			tenant.BalanceNanoUSD -= input.BalanceReserve
+		if tenant.BalanceNanoUSD < reservation.BalanceReservedNanoUSD {
+			return errors.New("insufficient balance")
+		}
+		if reservation.BalanceReservedNanoUSD > 0 {
+			tenant.BalanceNanoUSD -= reservation.BalanceReservedNanoUSD
 			if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
 				return err
 			}
 			if err := tx.Create(&db.BillingLedger{
 				ID: identity.NewID(), TenantID: tenant.ID, RequestID: &input.RequestID, Kind: "reservation",
-				AmountNanoUSD: -input.BalanceReserve, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
+				AmountNanoUSD: -reservation.BalanceReservedNanoUSD, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
 				Note: "request reserve",
 			}).Error; err != nil {
 				return err
@@ -762,6 +766,17 @@ func (s Store) ReclaimExpiredReservations(ctx context.Context, now time.Time) (i
 	return reclaimed, nil
 }
 
+func reservationUsesBalance(tx *gorm.DB, reservation RequestReservation) (bool, error) {
+	if reservation.ParentSubscriptionID == nil {
+		return true, nil
+	}
+	var parent ParentSubscription
+	if err := tx.Select("capacity_mode").First(&parent, "id = ?", *reservation.ParentSubscriptionID).Error; err != nil {
+		return false, err
+	}
+	return parent.CapacityMode == db.ParentCapacityUnmetered, nil
+}
+
 func (s Store) finishReservation(ctx context.Context, requestID string, actual int64, pricingComplete bool, status string) error {
 	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
 		var reservation RequestReservation
@@ -775,8 +790,14 @@ func (s Store) finishReservation(ctx context.Context, requestID string, actual i
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", reservation.TenantID).Error; err != nil {
 			return err
 		}
-		balanceActual := actual
-		if status != db.ReservationSettled {
+		usesBalance, err := reservationUsesBalance(tx, reservation)
+		if err != nil {
+			return err
+		}
+		balanceActual := int64(0)
+		if status == db.ReservationSettled && usesBalance {
+			balanceActual = actual
+		} else if status != db.ReservationSettled {
 			balanceActual = 0
 		}
 		delta := reservation.BalanceReservedNanoUSD - balanceActual
@@ -855,24 +876,32 @@ func reconcileSettledReservation(tx *gorm.DB, requestID string, actual int64) er
 	if reservation.ActualNanoUSD != nil {
 		previous = *reservation.ActualNanoUSD
 	}
-	delta := previous - actual
-	if delta != 0 {
+	costDelta := previous - actual
+	usesBalance, err := reservationUsesBalance(tx, reservation)
+	if err != nil {
+		return err
+	}
+	balanceDelta := int64(0)
+	if usesBalance {
+		balanceDelta = costDelta
+	}
+	if balanceDelta != 0 {
 		var tenant Tenant
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", reservation.TenantID).Error; err != nil {
 			return err
 		}
-		tenant.BalanceNanoUSD += delta
+		tenant.BalanceNanoUSD += balanceDelta
 		if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&db.BillingLedger{
 			ID: identity.NewID(), TenantID: tenant.ID, RequestID: &requestID, Kind: "reconciliation",
-			AmountNanoUSD: delta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD, Note: "pricing backfill reconciliation",
+			AmountNanoUSD: balanceDelta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD, Note: "pricing backfill reconciliation",
 		}).Error; err != nil {
 			return err
 		}
 	}
-	if reservation.ChildSubscriptionID != nil && delta != 0 {
+	if reservation.ChildSubscriptionID != nil && costDelta != 0 {
 		var windows []quotaWindowReservation
 		if err := json.Unmarshal(reservation.QuotaWindows, &windows); err != nil {
 			return err
@@ -888,7 +917,7 @@ func reconcileSettledReservation(tx *gorm.DB, requestID string, actual int64) er
 			if err != nil {
 				return err
 			}
-			settled := window.SettledNanoUSD - delta
+			settled := window.SettledNanoUSD - costDelta
 			if settled < 0 {
 				settled = 0
 			}

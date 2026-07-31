@@ -35,7 +35,7 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	tenantID, keyID := identity.NewID(), identity.NewID()
 	if err := database.Create(&db.Tenant{
 		ID: tenantID, Name: "integration", OwnerEmail: "integration@example.test",
-		PasswordHash: "test", Enabled: true, BalanceNanoUSD: 100,
+		PasswordHash: "test", Enabled: true, BalanceNanoUSD: 0,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -109,8 +109,8 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	if err := database.First(&tenant, "id = ?", tenantID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if tenant.BalanceNanoUSD != 93 {
-		t.Fatalf("balance = %d, want 93", tenant.BalanceNanoUSD)
+	if tenant.BalanceNanoUSD != 0 {
+		t.Fatalf("metered subscription changed balance: %d", tenant.BalanceNanoUSD)
 	}
 
 	// Opening the already-migrated schema again must remain idempotent.
@@ -191,6 +191,9 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	if firstReservation.QuotaReservedNanoUSD != 0 || string(firstReservation.QuotaWindows) != "[]" {
 		t.Fatalf("learning reservation = %+v", firstReservation)
 	}
+	if firstReservation.BalanceReservedNanoUSD != 0 {
+		t.Fatalf("learning subscription reserved balance: %+v", firstReservation)
+	}
 	if err := store.ReleaseRequestReservation(ctx, firstID); err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +223,7 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.QuotaReservedNanoUSD != 10 {
+	if second.QuotaReservedNanoUSD != 10 || second.BalanceReservedNanoUSD != 0 {
 		t.Fatalf("enforced admission = %+v", second)
 	}
 
@@ -339,7 +342,7 @@ func TestModelWithoutChildAssignmentFallsBackToTenantBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assigned.CPAAuthID != "subscription-auth" || assigned.ChildSubscriptionID == "" {
+	if assigned.CPAAuthID != "subscription-auth" || assigned.ChildSubscriptionID == "" || assigned.BalanceReservedNanoUSD != 10 {
 		t.Fatalf("assigned admission = %+v", assigned)
 	}
 }
