@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { BookOpenIcon, CheckIcon, ClipboardIcon, CodeXmlIcon, KeyRoundIcon, MonitorCogIcon, TerminalIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Skeleton } from "@/components/ui/skeleton"
+import { api, type ChildSubscription } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
 
 type CodeSampleProps = {
@@ -14,10 +16,33 @@ type CodeSampleProps = {
   label: string
 }
 
-export function ConnectionGuide() {
+export function ConnectionGuide({ tenantModels }: { tenantModels: string[] }) {
   const origin = window.location.origin
   const openAIBase = `${origin}/v1`
-  const samples = useMemo(() => guideSamples(origin), [origin])
+  const [subscriptionModels, setSubscriptionModels] = useState<string[]>([])
+  const [modelsLoading, setModelsLoading] = useState(true)
+
+  useEffect(() => {
+    let active = true
+    void api<{ items: ChildSubscription[] }>("/api/subscriptions")
+      .then((value) => {
+        if (!active) return
+        const now = Date.now()
+        const models = value.items
+          .filter((item) => item.enabled && Date.parse(item.starts_at) <= now && (!item.expires_at || Date.parse(item.expires_at) > now))
+          .flatMap((item) => item.effective_model_allowlist ?? item.model_allowlist ?? [])
+        setSubscriptionModels(Array.from(new Set(models)).sort())
+      })
+      .catch(() => {})
+      .finally(() => { if (active) setModelsLoading(false) })
+    return () => { active = false }
+  }, [])
+
+  const models = useMemo(() => {
+    const source = subscriptionModels.length ? subscriptionModels : tenantModels
+    return Array.from(new Set(source.map((model) => model.trim()).filter(Boolean))).sort()
+  }, [subscriptionModels, tenantModels])
+  const samples = useMemo(() => guideSamples(origin, models), [origin, models])
 
   return (
     <div className="flex flex-col gap-6">
@@ -29,7 +54,7 @@ export function ConnectionGuide() {
       <div className="grid gap-4 lg:grid-cols-3">
         <GuideStep icon={KeyRoundIcon} number="1" title="创建 API Key">在“API Keys”页面创建密钥。完整密钥只在创建后显示。</GuideStep>
         <GuideStep icon={MonitorCogIcon} number="2" title="填写服务地址">OpenAI-compatible 客户端使用 <code>{openAIBase}</code>。Claude Code 和 Gemini 原生协议使用 <code>{origin}</code>。</GuideStep>
-        <GuideStep icon={CheckIcon} number="3" title="验证模型">先请求 <code>GET /v1/models</code>，再从返回结果中复制模型名称。</GuideStep>
+        <GuideStep icon={CheckIcon} number="3" title="使用可用模型">本页已把当前账户的模型写入配置。接入后可用 <code>GET /v1/models</code> 核对客户端读取结果。</GuideStep>
       </div>
 
       <Card>
@@ -48,8 +73,20 @@ export function ConnectionGuide() {
       <Alert>
         <BookOpenIcon />
         <AlertTitle>模型名称必须来自本站</AlertTitle>
-        <AlertDescription>客户端内置的模型列表可能与本站不同。调用前用下方命令读取当前可用模型。</AlertDescription>
+        <AlertDescription>客户端内置的模型列表可能与本站不同。本页按当前订阅生成模型配置，<code>GET /v1/models</code> 可用于核对接入结果。</AlertDescription>
       </Alert>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>当前可用模型</CardTitle>
+          <CardDescription>下方配置已使用第一个模型；支持模型列表的客户端已写入全部模型。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {modelsLoading ? <div className="flex flex-col gap-2"><Skeleton className="h-6 w-full" /><Skeleton className="h-6 w-2/3" /></div> : models.length ? (
+            <div className="flex flex-wrap gap-1.5">{models.map((model) => <Badge key={model} variant="outline" className="font-mono font-normal">{model}</Badge>)}</div>
+          ) : <p className="text-sm text-muted-foreground">当前账户没有已同步的模型。订阅同步模型后，本页会自动生成配置。</p>}
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="quick" className="gap-4">
         <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 lg:w-fit lg:grid-cols-4">
@@ -63,7 +100,7 @@ export function ConnectionGuide() {
           <SampleCard title="读取模型" description="成功时返回 data 数组。401 表示 Key 不正确或已停用。">
             <CodeSample label="复制 curl 命令" code={samples.models} />
           </SampleCard>
-          <SampleCard title="发送一条消息" description="把模型名称替换为 /v1/models 返回的值。">
+          <SampleCard title="发送一条消息" description="命令已使用当前账户的可用模型。">
             <CodeSample label="复制 curl 命令" code={samples.chat} />
           </SampleCard>
         </TabsContent>
@@ -142,13 +179,17 @@ export function ConnectionGuide() {
   )
 }
 
-function guideSamples(origin: string) {
+function guideSamples(origin: string, models: string[]) {
   const base = `${origin}/v1`
+  const model = models[0] ?? "当前账户暂无可用模型"
+  const openCodeModels = models.length
+    ? models.map((item) => `        ${JSON.stringify(item)}: { "name": ${JSON.stringify(item)} }`).join(",\n")
+    : `        "当前账户暂无可用模型": { "name": "当前账户暂无可用模型" }`
   return {
     models: `curl ${origin}/v1/models \\\n  -H "Authorization: Bearer relay_你的密钥"`,
-    chat: `curl ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer relay_你的密钥" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"从模型列表复制","messages":[{"role":"user","content":"你好"}]}'`,
+    chat: `curl ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer relay_你的密钥" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
     relayEnv: `export RELAY_API_KEY="relay_你的密钥"`,
-    codex: `model = "从模型列表复制"
+    codex: `model = ${JSON.stringify(model)}
 model_provider = "relayapi"
 
 [model_providers.relayapi]
@@ -158,7 +199,7 @@ env_key = "RELAY_API_KEY"
 wire_api = "responses"`,
     claudeCode: `export ANTHROPIC_BASE_URL="${origin}"
 export ANTHROPIC_AUTH_TOKEN="relay_你的密钥"
-export ANTHROPIC_MODEL="从模型列表复制"
+export ANTHROPIC_MODEL=${JSON.stringify(model)}
 
 claude`,
     opencode: `{
@@ -172,14 +213,14 @@ claude`,
         "apiKey": "{env:RELAY_API_KEY}"
       },
       "models": {
-        "从模型列表复制": { "name": "从模型列表复制" }
+${openCodeModels}
       }
     }
   }
 }`,
     aider: `export OPENAI_API_KEY="relay_你的密钥"
 export OPENAI_API_BASE="${base}"
-aider --model openai/从模型列表复制`,
+aider --model openai/${model}`,
     python: `from openai import OpenAI
 
 client = OpenAI(
@@ -188,7 +229,7 @@ client = OpenAI(
 )
 
 response = client.responses.create(
-    model="从模型列表复制",
+    model=${JSON.stringify(model)},
     input="你好",
 )
 print(response.output_text)`,
@@ -200,12 +241,12 @@ const client = new OpenAI({
 });
 
 const response = await client.responses.create({
-  model: "从模型列表复制",
+  model: ${JSON.stringify(model)},
   input: "你好",
 });
 console.log(response.output_text);`,
-    anthropic: `curl ${origin}/v1/messages \\\n  -H "x-api-key: relay_你的密钥" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"从模型列表复制","max_tokens":256,"messages":[{"role":"user","content":"你好"}]}'`,
-    gemini: `curl "${origin}/v1beta/models/从模型列表复制:generateContent" \\\n  -H "x-goog-api-key: relay_你的密钥" \\\n  -H "content-type: application/json" \\\n  -d '{"contents":[{"role":"user","parts":[{"text":"你好"}]}]}'`,
+    anthropic: `curl ${origin}/v1/messages \\\n  -H "x-api-key: relay_你的密钥" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"${model}","max_tokens":256,"messages":[{"role":"user","content":"你好"}]}'`,
+    gemini: `curl "${origin}/v1beta/models/${encodeURIComponent(model)}:generateContent" \\\n  -H "x-goog-api-key: relay_你的密钥" \\\n  -H "content-type: application/json" \\\n  -d '{"contents":[{"role":"user","parts":[{"text":"你好"}]}]}'`,
   }
 }
 

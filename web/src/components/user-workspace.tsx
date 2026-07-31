@@ -118,7 +118,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
     )
   }
   if (page === "logs") return <RequestLogsWorkbench />
-  if (page === "guide") return <ConnectionGuide />
+  if (page === "guide") return <ConnectionGuide tenantModels={session.tenant?.model_allowlist ?? []} />
   if (page === "subscriptions") return <TenantSubscriptionsView />
   if (page === "usage") {
     return (
