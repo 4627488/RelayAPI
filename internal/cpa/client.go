@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -96,6 +97,45 @@ func (c *Client) Ready(ctx context.Context) error {
 		return fmt.Errorf("CPA returned %s", resp.Status)
 	}
 	return nil
+}
+
+func (c *Client) Models(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL("/v1/models"), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("CPA returned %s", resp.Status)
+	}
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&payload); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(payload.Data))
+	models := make([]string, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		model := strings.TrimSpace(item.ID)
+		if model == "" {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return models, nil
 }
 
 func (c *Client) BridgeReady(ctx context.Context) (bool, string, error) {

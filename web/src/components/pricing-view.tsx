@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react"
-import { AlertTriangleIcon, CircleDollarSignIcon, CloudDownloadIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react"
+import { AlertTriangleIcon, CircleDollarSignIcon, CloudDownloadIcon, PencilIcon, SearchIcon, Trash2Icon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -27,30 +27,23 @@ import {
   type ModelPrice,
   type ModelPriceRule,
 } from "@/lib/api"
-import { dateTime } from "@/lib/format"
-
-type HistoricalModelPrice = ModelPrice & {
-  request_count: number
-  latest_started_at: string
+type AvailableModelPrice = ModelPrice & {
   priced: boolean
   priced_model: string
 }
 
 type PricesResponse = {
-  items: ModelPrice[]
-  catalog_items: ModelPrice[]
-  bundled_items: ModelPrice[]
-  pending_models: Array<{ model: string; request_count: number; latest_started_at: string }>
-  history_items: HistoricalModelPrice[]
+  available_models: AvailableModelPrice[]
   catalog_sync_error?: string
+  available_models_error?: string
 }
 
 export function PricingView() {
-  const [prices, setPrices] = useState<PricesResponse>({ items: [], catalog_items: [], bundled_items: [], pending_models: [], history_items: [] })
+  const [prices, setPrices] = useState<PricesResponse>({ available_models: [] })
   const [aliases, setAliases] = useState<ModelAlias[]>([])
   const [rules, setRules] = useState<ModelPriceRule[]>([])
   const [fields, setFields] = useState<string[]>([])
-  const [open, setOpen] = useState(false)
+  const [editingPrice, setEditingPrice] = useState<AvailableModelPrice | null>(null)
   const [pending, setPending] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("")
@@ -67,12 +60,9 @@ export function PricingView() {
         api<{ items: ModelPriceRule[]; fields: string[] }>("/api/admin/pricing/rules"),
       ])
       setPrices({
-        items: priceValue.items ?? [],
-        catalog_items: priceValue.catalog_items ?? [],
-        bundled_items: priceValue.bundled_items ?? [],
-        pending_models: priceValue.pending_models ?? [],
-        history_items: priceValue.history_items ?? [],
+        available_models: priceValue.available_models ?? [],
         catalog_sync_error: priceValue.catalog_sync_error,
+        available_models_error: priceValue.available_models_error,
       })
       setAliases(aliasValue.items ?? [])
       setRules(ruleValue.items ?? [])
@@ -91,11 +81,10 @@ export function PricingView() {
     void load().catch((cause) => toast.error(cause instanceof Error ? cause.message : "读取定价失败"))
   }, [load])
 
-  const effectiveCatalog = prices.catalog_items.length ? prices.catalog_items : prices.bundled_items
-  const filteredCatalog = useMemo(() => {
+  const filteredModels = useMemo(() => {
     const query = catalogQuery.trim().toLowerCase()
-    return effectiveCatalog.filter((price) => !query || price.model.toLowerCase().includes(query)).slice(0, 200)
-  }, [catalogQuery, effectiveCatalog])
+    return prices.available_models.filter((price) => !query || price.model.toLowerCase().includes(query))
+  }, [catalogQuery, prices.available_models])
 
   async function savePrice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -116,7 +105,7 @@ export function PricingView() {
           price_multiplier: Number(data.get("multiplier") || 1),
         }),
       })
-      setOpen(false)
+      setEditingPrice(null)
       await load()
       toast.success("管理员价格覆盖已保存")
     } catch (cause) {
@@ -159,6 +148,7 @@ export function PricingView() {
   async function remove(model: string) {
     try {
       await deleteRequest(`/api/admin/prices/${encodeURIComponent(model)}`)
+      setEditingPrice(null)
       await load()
       toast.success("已移除管理员覆盖，将回退到目录价格")
     } catch (cause) {
@@ -171,20 +161,18 @@ export function PricingView() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">模型定价</h1>
-          <p className="text-sm text-muted-foreground">管理员覆盖 &gt; Models.dev 在线目录 &gt; 内置最后可用目录；每个请求保存不可变五段价格快照。</p>
+          <p className="text-sm text-muted-foreground">这里只列出本站当前可调用的模型。价格按管理员覆盖、Models.dev、内置目录的顺序解析。</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" disabled={pending} onClick={() => void syncCatalog(false)}><CloudDownloadIcon />预览同步</Button>
           <Button variant="outline" disabled={pending} onClick={() => void syncCatalog(true)}><CloudDownloadIcon />应用 Models.dev</Button>
-          <Button onClick={() => setOpen(true)}><PlusIcon />添加覆盖</Button>
         </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <Stat label="历史模型" value={prices.history_items.length} hint="请求日志中出现过" />
-        <Stat label="管理员覆盖" value={prices.items.length} hint="最高优先级" />
-        <Stat label="在线目录" value={prices.catalog_items.length} hint="Models.dev 快照" />
-        <Stat label="内置兜底" value={prices.bundled_items.length} hint="离线最后可用" />
-        <Stat label="待回填模型" value={prices.pending_models.length} hint="价格更新后自动回填" />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat label="已接入模型" value={prices.available_models.length} hint="CPA 当前可调用" />
+        <Stat label="已定价" value={prices.available_models.filter((item) => item.priced).length} hint="可计算请求费用" />
+        <Stat label="未定价" value={prices.available_models.filter((item) => !item.priced).length} hint="需要配置价格" />
+        <Stat label="管理员覆盖" value={prices.available_models.filter((item) => item.source === "admin").length} hint="本站手动价格" />
       </div>
       {loadError ? (
         <Alert variant="destructive">
@@ -200,12 +188,17 @@ export function PricingView() {
           <AlertDescription>{prices.catalog_sync_error}</AlertDescription>
         </Alert>
       ) : null}
+      {prices.available_models_error ? (
+        <Alert variant="destructive">
+          <AlertTriangleIcon />
+          <AlertTitle>无法读取本站模型</AlertTitle>
+          <AlertDescription>{prices.available_models_error}</AlertDescription>
+        </Alert>
+      ) : null}
       <Card>
         <CardHeader>
-          <CardTitle>有效模型目录</CardTitle>
-          <CardDescription>
-            {prices.catalog_items.length ? `已自动加载 Models.dev 的 ${prices.catalog_items.length} 个模型。` : `在线目录不可用，展示 ${prices.bundled_items.length} 个内置兜底模型。`}
-          </CardDescription>
+          <CardTitle>已接入模型价目表</CardTitle>
+          <CardDescription>模型来自 CPA 当前模型列表。价格单位为 USD / 1M tokens。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="relative max-w-sm">
@@ -216,105 +209,61 @@ export function PricingView() {
             <Empty>
               <EmptyHeader><EmptyMedia variant="icon"><Spinner /></EmptyMedia><EmptyTitle>正在加载模型价格</EmptyTitle></EmptyHeader>
             </Empty>
-          ) : filteredCatalog.length ? (
+          ) : filteredModels.length ? (
             <Table>
-              <TableHeader><TableRow><TableHead>模型</TableHead><TableHead>来源</TableHead><TableHead className="text-right">输入</TableHead><TableHead className="text-right">缓存读</TableHead><TableHead className="text-right">缓存写</TableHead><TableHead className="text-right">输出</TableHead><TableHead className="text-right">推理</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>模型</TableHead><TableHead>来源</TableHead><TableHead className="text-right">输入</TableHead><TableHead className="text-right">缓存读</TableHead><TableHead className="text-right">缓存写</TableHead><TableHead className="text-right">输出</TableHead><TableHead className="text-right">推理</TableHead><TableHead className="text-right">倍率</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
               <TableBody>
-                {filteredCatalog.map((price) => (
+                {filteredModels.map((price) => (
                   <TableRow key={price.model}>
-                    <TableCell className="font-mono text-xs">{price.model}</TableCell>
-                    <TableCell><Badge variant="outline">{priceSourceLabel(price.source)}</Badge></TableCell>
-                    {[price.input_nano_usd_per_token, price.cached_input_nano_usd_per_token, price.cache_write_nano_usd_per_token, price.output_nano_usd_per_token, price.reasoning_nano_usd_per_token].map((value, index) => <TableCell key={index} className="text-right tabular-nums">{pricePerMillion(value)}</TableCell>)}
+                    <TableCell className="font-mono text-xs">{price.model}{price.priced && price.priced_model !== price.model ? <p className="text-[10px] text-muted-foreground">按 {price.priced_model} 计价</p> : null}</TableCell>
+                    <TableCell>{price.priced ? <Badge variant="outline">{priceSourceLabel(price.source)}</Badge> : <Badge variant="secondary">未定价</Badge>}</TableCell>
+                    {[price.input_nano_usd_per_token, price.cached_input_nano_usd_per_token, price.cache_write_nano_usd_per_token, price.output_nano_usd_per_token, price.reasoning_nano_usd_per_token].map((value, index) => <TableCell key={index} className="text-right tabular-nums">{price.priced ? pricePerMillion(value) : "—"}</TableCell>)}
+                    <TableCell className="text-right tabular-nums">{price.priced ? `×${price.price_multiplier}` : "—"}</TableCell>
+                    <TableCell className="text-right"><span className="inline-flex gap-1"><Button variant="ghost" size="icon-sm" aria-label={`配置 ${price.model} 的价格`} onClick={() => setEditingPrice(price)}><PencilIcon /></Button>{price.source === "admin" ? <Button variant="ghost" size="icon-sm" aria-label={`删除 ${price.model} 的管理员价格`} onClick={() => void remove(price.model)}><Trash2Icon /></Button> : null}</span></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           ) : (
             <Empty>
-              <EmptyHeader><EmptyMedia variant="icon"><SearchIcon /></EmptyMedia><EmptyTitle>没有匹配的模型</EmptyTitle><EmptyDescription>换一个模型名称，或重新应用 Models.dev 目录。</EmptyDescription></EmptyHeader>
+              <EmptyHeader><EmptyMedia variant="icon"><SearchIcon /></EmptyMedia><EmptyTitle>{prices.available_models.length ? "没有匹配的模型" : "本站尚未接入模型"}</EmptyTitle><EmptyDescription>{prices.available_models.length ? "换一个模型名称。" : "在提供商页面接入账户后，模型会自动出现在这里。"}</EmptyDescription></EmptyHeader>
             </Empty>
           )}
-          {effectiveCatalog.length > 200 && filteredCatalog.length === 200 ? <p className="text-xs text-muted-foreground">当前最多显示 200 条，请通过搜索缩小范围。</p> : null}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader><CardTitle>历史模型价目表</CardTitle><CardDescription>请求日志中出现过的模型及其当前有效价格，单位为 USD / 1M tokens；多维规则仍按每次请求的上下文单独应用。</CardDescription></CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader><TableRow><TableHead>模型</TableHead><TableHead>来源</TableHead><TableHead className="text-right">输入</TableHead><TableHead className="text-right">缓存读</TableHead><TableHead className="text-right">缓存写</TableHead><TableHead className="text-right">输出</TableHead><TableHead className="text-right">推理</TableHead><TableHead className="text-right">倍率</TableHead><TableHead className="text-right">请求数</TableHead><TableHead>最近出现</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {prices.history_items.map((price) => (
-                <TableRow key={price.model}>
-                  <TableCell className="font-mono text-xs">
-                    {price.model}
-                    {price.priced && price.priced_model !== price.model ? <p className="text-[10px] text-muted-foreground">按 {price.priced_model} 计价</p> : null}
-                  </TableCell>
-                  <TableCell>
-                    {price.priced ? <Badge variant="outline">{priceSourceLabel(price.source)}</Badge> : <Badge variant="secondary">未定价</Badge>}
-                  </TableCell>
-                  {[price.input_nano_usd_per_token, price.cached_input_nano_usd_per_token, price.cache_write_nano_usd_per_token, price.output_nano_usd_per_token, price.reasoning_nano_usd_per_token].map((value, index) => <TableCell key={index} className="text-right tabular-nums">{price.priced ? pricePerMillion(value) : "—"}</TableCell>)}
-                  <TableCell className="text-right tabular-nums">{price.priced ? `×${price.price_multiplier}` : "—"}</TableCell>
-                  <TableCell className="text-right tabular-nums">{price.request_count.toLocaleString()}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{dateTime(price.latest_started_at)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {!prices.history_items.length ? <p className="py-8 text-center text-sm text-muted-foreground">请求历史中还没有模型记录。</p> : null}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader><CardTitle>管理员价格覆盖</CardTitle><CardDescription>单位为 USD / 1M tokens；内部转换为整数 nanoUSD/token。</CardDescription></CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader><TableRow><TableHead>模型</TableHead><TableHead className="text-right">输入</TableHead><TableHead className="text-right">缓存读</TableHead><TableHead className="text-right">缓存写</TableHead><TableHead className="text-right">输出</TableHead><TableHead className="text-right">推理</TableHead><TableHead>倍率</TableHead><TableHead /></TableRow></TableHeader>
-            <TableBody>
-              {prices.items.map((price) => (
-                <TableRow key={price.model}>
-                  <TableCell className="font-mono text-xs">{price.model}<p className="text-[10px] text-muted-foreground">{price.version}</p></TableCell>
-                  {[price.input_nano_usd_per_token, price.cached_input_nano_usd_per_token, price.cache_write_nano_usd_per_token, price.output_nano_usd_per_token, price.reasoning_nano_usd_per_token].map((value, index) => <TableCell key={index} className="text-right tabular-nums">{(value / 1000).toFixed(4)}</TableCell>)}
-                  <TableCell><Badge variant="outline">×{price.price_multiplier}</Badge></TableCell>
-                  <TableCell className="text-right"><Button variant="ghost" size="icon-sm" onClick={() => void remove(price.model)}><Trash2Icon /></Button></TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {!prices.items.length ? <p className="py-8 text-center text-sm text-muted-foreground">没有管理员覆盖，当前使用在线或内置目录。</p> : null}
         </CardContent>
       </Card>
       <div className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>模型别名</CardTitle><CardDescription>请求模型先解析别名，再按来源优先级查价。</CardDescription></CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="flex flex-col gap-3">
             <Textarea value={aliasText} onChange={(event) => setAliasText(event.target.value)} className="min-h-52 font-mono text-xs" />
             <Button variant="outline" onClick={() => void saveJSON("aliases")}>保存 {aliases.length} 条别名</Button>
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle>CPA 多维倍率规则</CardTitle><CardDescription>可用字段：{fields.join("、")}</CardDescription></CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="flex flex-col gap-3">
             <Textarea value={ruleText} onChange={(event) => setRuleText(event.target.value)} className="min-h-52 font-mono text-xs" />
             <Button variant="outline" onClick={() => void saveJSON("rules")}>保存 {rules.length} 条规则</Button>
           </CardContent>
         </Card>
       </div>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={Boolean(editingPrice)} onOpenChange={(open) => { if (!open) setEditingPrice(null) }}>
         <DialogContent className="sm:max-w-2xl">
-          <DialogHeader><DialogTitle>添加管理员价格覆盖</DialogTitle><DialogDescription>价格单位为 USD / 1M tokens，支持整体倍率为 0 的免费模型。</DialogDescription></DialogHeader>
-          <form id="price-form" onSubmit={savePrice}>
+          <DialogHeader><DialogTitle>配置模型价格</DialogTitle><DialogDescription>保存后将创建本站管理员价格覆盖。单位为 USD / 1M tokens。</DialogDescription></DialogHeader>
+          <form id="price-form" key={editingPrice?.model} onSubmit={savePrice}>
             <FieldGroup>
-              <Field><FieldLabel>模型</FieldLabel><Input name="model" placeholder="provider/model 或 model" required /></Field>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <Field><FieldLabel>模型</FieldLabel><Input name="model" value={editingPrice?.model ?? ""} readOnly /></Field>
+              <FieldGroup className="grid gap-3 sm:grid-cols-3">
                 {[
-                  ["input", "普通输入"], ["cached", "缓存读取"], ["cacheWrite", "缓存写入"],
-                  ["output", "输出"], ["reasoning", "推理"], ["multiplier", "整体倍率"],
-                ].map(([name, label]) => (
-                  <Field key={name}><FieldLabel>{label}</FieldLabel><Input name={name} type="number" min="0" step="any" defaultValue={name === "multiplier" ? "1" : "0"} required /></Field>
+                  ["input", "普通输入", editingPrice?.input_nano_usd_per_token], ["cached", "缓存读取", editingPrice?.cached_input_nano_usd_per_token], ["cacheWrite", "缓存写入", editingPrice?.cache_write_nano_usd_per_token],
+                  ["output", "输出", editingPrice?.output_nano_usd_per_token], ["reasoning", "推理", editingPrice?.reasoning_nano_usd_per_token], ["multiplier", "整体倍率", editingPrice?.price_multiplier ?? 1],
+                ].map(([name, label, value]) => (
+                  <Field key={String(name)}><FieldLabel>{label}</FieldLabel><Input name={String(name)} type="number" min="0" step="any" defaultValue={name === "multiplier" ? Number(value) : pricePerMillion(Number(value ?? 0))} required /></Field>
                 ))}
-              </div>
+              </FieldGroup>
             </FieldGroup>
           </form>
-          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>取消</Button><Button form="price-form" type="submit" disabled={pending}>{pending ? <Spinner /> : <CircleDollarSignIcon />}保存</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setEditingPrice(null)}>取消</Button><Button form="price-form" type="submit" disabled={pending}>{pending ? <Spinner /> : <CircleDollarSignIcon data-icon="inline-start" />}保存</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -1,11 +1,37 @@
 package cpa
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 )
+
+func TestModelsReturnsSortedUniqueCPAModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer api-secret" {
+			t.Fatal("missing API authorization")
+		}
+		_, _ = io.WriteString(w, `{"data":[{"id":"model-b"},{"id":" model-a "},{"id":"model-b"},{"id":""}]}`)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "api-secret", "management-secret", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := client.Models(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"model-a", "model-b"}; !reflect.DeepEqual(models, want) {
+		t.Fatalf("models = %#v, want %#v", models, want)
+	}
+}
 
 func TestVersionAtLeast(t *testing.T) {
 	if !versionAtLeast("0.2.0", 0, 2, 0) || !versionAtLeast("1.0.0", 0, 2, 0) {

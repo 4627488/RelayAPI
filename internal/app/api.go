@@ -378,11 +378,6 @@ func (a *App) adminTenantKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
-	items, err := a.store.ListPrices(r.Context())
-	if err != nil {
-		writeError(w, 500, "database_error", err.Error())
-		return
-	}
 	catalog, err := a.store.ListCatalogPrices(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
@@ -397,19 +392,22 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	pending, err := a.store.PendingPricing(r.Context())
-	if err != nil {
-		writeError(w, 500, "database_error", err.Error())
-		return
+	availableModels, availableModelsError := a.cpa.Models(r.Context())
+	available := make([]store.AvailableModelPrice, 0)
+	if availableModelsError == nil {
+		available, err = a.store.AvailableModelPrices(r.Context(), availableModels)
+		if err != nil {
+			writeError(w, 500, "database_error", err.Error())
+			return
+		}
 	}
-	history, err := a.store.HistoricalModelPrices(r.Context())
-	if err != nil {
-		writeError(w, 500, "database_error", err.Error())
-		return
+	availableError := ""
+	if availableModelsError != nil {
+		availableError = availableModelsError.Error()
 	}
 	writeJSON(w, 200, map[string]any{
-		"items": items, "catalog_items": catalog, "bundled_items": pricing.BundledPrices,
-		"pending_models": pending, "history_items": history, "catalog_sync_error": catalogSyncError,
+		"available_models": available, "available_models_error": availableError,
+		"catalog_sync_error": catalogSyncError,
 	})
 }
 

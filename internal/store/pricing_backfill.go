@@ -32,6 +32,47 @@ type HistoricalModelPrice struct {
 	PriceMultiplier            float64   `json:"price_multiplier"`
 }
 
+type AvailableModelPrice struct {
+	Model                      string  `json:"model"`
+	Priced                     bool    `json:"priced"`
+	PricedModel                string  `json:"priced_model"`
+	InputNanoUSDPerToken       int64   `json:"input_nano_usd_per_token"`
+	OutputNanoUSDPerToken      int64   `json:"output_nano_usd_per_token"`
+	CachedInputNanoUSDPerToken int64   `json:"cached_input_nano_usd_per_token"`
+	CacheWriteNanoUSDPerToken  int64   `json:"cache_write_nano_usd_per_token"`
+	ReasoningNanoUSDPerToken   int64   `json:"reasoning_nano_usd_per_token"`
+	Source                     string  `json:"source"`
+	Version                    string  `json:"version"`
+	PriceMultiplier            float64 `json:"price_multiplier"`
+}
+
+func (s *Store) AvailableModelPrices(ctx context.Context, models []string) ([]AvailableModelPrice, error) {
+	result := make([]AvailableModelPrice, 0, len(models))
+	for _, model := range models {
+		item := AvailableModelPrice{Model: model}
+		resolved, err := s.ResolvePrice(ctx, pricing.Dimensions{Model: model})
+		if errors.Is(err, ErrNotFound) {
+			result = append(result, item)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		item.Priced = true
+		item.PricedModel = resolved.PricedModel
+		item.InputNanoUSDPerToken = resolved.InputNanoUSDPerToken
+		item.OutputNanoUSDPerToken = resolved.OutputNanoUSDPerToken
+		item.CachedInputNanoUSDPerToken = resolved.CachedInputNanoUSDPerToken
+		item.CacheWriteNanoUSDPerToken = resolved.CacheWriteNanoUSDPerToken
+		item.ReasoningNanoUSDPerToken = resolved.ReasoningNanoUSDPerToken
+		item.Source = resolved.Source
+		item.Version = resolved.Version
+		item.PriceMultiplier = resolved.PriceMultiplier
+		result = append(result, item)
+	}
+	return result, nil
+}
+
 func (s *Store) HistoricalModelPrices(ctx context.Context) ([]HistoricalModelPrice, error) {
 	result := make([]HistoricalModelPrice, 0)
 	if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
