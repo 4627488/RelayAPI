@@ -130,7 +130,23 @@ func (s Store) ResetPassword(ctx context.Context, tenantID, password string) err
 		return err
 	}
 	result := scoped(ctx, s.DB).Model(&Tenant{}).Where("id = ?", tenantID).
-		Updates(map[string]any{"password_hash": hash, "updated_at": time.Now()})
+		Updates(map[string]any{
+			"password_hash": hash, "must_change_password": true,
+			"password_version": gorm.Expr("password_version + 1"), "updated_at": time.Now(),
+		})
+	if result.Error == nil && result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return result.Error
+}
+
+func (s Store) ChangePassword(ctx context.Context, tenantID, password string) error {
+	hash, err := hashPassword(password)
+	if err != nil {
+		return err
+	}
+	result := scoped(ctx, s.DB).Model(&Tenant{}).Where("id = ?", tenantID).
+		Updates(map[string]any{"password_hash": hash, "must_change_password": false, "updated_at": time.Now()})
 	if result.Error == nil && result.RowsAffected == 0 {
 		return ErrNotFound
 	}

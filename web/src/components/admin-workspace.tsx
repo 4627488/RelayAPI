@@ -186,6 +186,8 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
 
 function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promise<void> }) {
   const [creditUser, setCreditUser] = useState<User | null>(null)
+  const [resetUser, setResetUser] = useState<User | null>(null)
+  const [temporaryPassword, setTemporaryPassword] = useState("")
   const [pending, setPending] = useState(false)
 
   async function credit(event: FormEvent<HTMLFormElement>) {
@@ -212,6 +214,27 @@ function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promi
     } finally {
       setPending(false)
     }
+  }
+
+  async function resetPassword() {
+    if (!resetUser) return
+    setPending(true)
+    try {
+      const result = await postJSON<{ temporary_password: string }>(`/api/admin/tenants/${resetUser.id}/password`, {})
+      setTemporaryPassword(result.temporary_password)
+      await onChanged()
+      toast.success(`已重置 ${resetUser.name} 的密码`)
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "密码重置失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  function closeReset() {
+    if (pending) return
+    setResetUser(null)
+    setTemporaryPassword("")
   }
 
   return (
@@ -256,10 +279,16 @@ function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promi
                     <TableCell className="text-right tabular-nums">{money(user.balance_nano_usd)}</TableCell>
                     <TableCell className="text-right text-muted-foreground">{dateTime(user.created_at)}</TableCell>
                     <TableCell className="text-right">
-                      <Button size="sm" variant="outline" onClick={() => setCreditUser(user)}>
-                        <CircleDollarSignIcon data-icon="inline-start" />
-                        充值
-                      </Button>
+                      <span className="inline-flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => { setResetUser(user); setTemporaryPassword("") }}>
+                          <KeyRoundIcon data-icon="inline-start" />
+                          重置密码
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => setCreditUser(user)}>
+                          <CircleDollarSignIcon data-icon="inline-start" />
+                          充值
+                        </Button>
+                      </span>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -313,6 +342,53 @@ function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promi
               {pending ? <Spinner /> : <CircleDollarSignIcon data-icon="inline-start" />}
               确认充值
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(resetUser)} onOpenChange={(open) => { if (!open) closeReset() }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{temporaryPassword ? "临时密码已生成" : "重置用户密码"}</DialogTitle>
+            <DialogDescription>
+              {temporaryPassword
+                ? `将临时密码发送给 ${resetUser?.name}。该密码关闭后无法再次查看。`
+                : `${resetUser?.name} 的原密码将立即失效。用户使用临时密码登录后必须设置新密码。`}
+            </DialogDescription>
+          </DialogHeader>
+          {temporaryPassword ? (
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="temporary-password">临时密码</FieldLabel>
+                <InputGroup>
+                  <InputGroupInput id="temporary-password" value={temporaryPassword} readOnly className="font-mono" />
+                  <InputGroupAddon align="inline-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="复制临时密码"
+                      onClick={() => void copyText(temporaryPassword).then(() => toast.success("临时密码已复制"))}
+                    >
+                      <CopyIcon />
+                    </Button>
+                  </InputGroupAddon>
+                </InputGroup>
+                <FieldDescription>用户首次登录后，该密码会被新密码替换。</FieldDescription>
+              </Field>
+            </FieldGroup>
+          ) : null}
+          <DialogFooter>
+            {temporaryPassword ? (
+              <Button onClick={closeReset}>完成</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={closeReset} disabled={pending}>取消</Button>
+                <Button variant="destructive" onClick={() => void resetPassword()} disabled={pending}>
+                  {pending ? <Spinner /> : <KeyRoundIcon data-icon="inline-start" />}
+                  生成临时密码
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

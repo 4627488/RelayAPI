@@ -6,6 +6,7 @@ export interface User {
   owner_email: string
   enabled: boolean
   is_admin: boolean
+  must_change_password: boolean
   balance_nano_usd: number
   rate_limit_per_minute: number | null
   token_limit_daily: number | null

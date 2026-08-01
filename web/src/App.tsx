@@ -3,6 +3,7 @@ import { toast } from "sonner"
 
 import { AppShell, type Page, type Workspace } from "@/components/app-shell"
 import { AuthPage } from "@/components/auth-page"
+import { ForcePasswordChange } from "@/components/force-password-change"
 import { LoadingView } from "@/components/loading-view"
 import { api, type Session } from "@/lib/api"
 
@@ -52,6 +53,15 @@ export function App() {
 
   if (!session) {
     return <AuthPage onAuthenticated={(value) => { setSession(value); setPage("overview"); setWorkspace("user") }} />
+  }
+
+  if (session.tenant.must_change_password) {
+    return (
+      <ForcePasswordChange
+        onChanged={async () => setSession(await api<Session>("/api/me"))}
+        onLogout={() => void logout()}
+      />
+    )
   }
 
   return (

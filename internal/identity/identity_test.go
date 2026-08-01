@@ -2,6 +2,7 @@ package identity
 
 import (
 	"bytes"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -21,8 +22,28 @@ func TestInvitationToken(t *testing.T) {
 	}
 }
 
+func TestTemporaryPassword(t *testing.T) {
+	first, err := NewTemporaryPassword()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewTemporaryPassword()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 24 {
+		t.Fatalf("temporary password length = %d", len(first))
+	}
+	if first == second {
+		t.Fatal("temporary passwords must be unique")
+	}
+	if _, err := base64.RawURLEncoding.DecodeString(first); err != nil {
+		t.Fatalf("temporary password is not URL-safe: %v", err)
+	}
+}
+
 func TestSessionRoundTrip(t *testing.T) {
-	want := Session{Role: "tenant", TenantID: "user-1", Expires: time.Now().Add(time.Hour).Unix()}
+	want := Session{Role: "tenant", TenantID: "user-1", PasswordVersion: 2, Expires: time.Now().Add(time.Hour).Unix()}
 	token, err := SignSession("a sufficiently long test session secret", want)
 	if err != nil {
 		t.Fatal(err)

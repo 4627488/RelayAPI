@@ -14,9 +14,10 @@ import (
 )
 
 type Session struct {
-	Role     string `json:"role"`
-	TenantID string `json:"tenant_id,omitempty"`
-	Expires  int64  `json:"exp"`
+	Role            string `json:"role"`
+	TenantID        string `json:"tenant_id,omitempty"`
+	PasswordVersion int64  `json:"password_version,omitempty"`
+	Expires         int64  `json:"exp"`
 }
 
 func NewID() string {
@@ -41,6 +42,14 @@ func NewInvitationToken() (plain string, hash []byte) {
 	_, _ = rand.Read(value[:])
 	plain = "invite_" + base64.RawURLEncoding.EncodeToString(value[:])
 	return plain, HashKey(plain)
+}
+
+func NewTemporaryPassword() (string, error) {
+	var value [18]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(value[:]), nil
 }
 
 func HashKey(value string) []byte {

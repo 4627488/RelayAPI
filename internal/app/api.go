@@ -36,7 +36,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setSession(w, identity.Session{
-		Role: "tenant", TenantID: user.ID, Expires: time.Now().Add(12 * time.Hour).Unix(),
+		Role: "tenant", TenantID: user.ID, PasswordVersion: user.PasswordVersion, Expires: time.Now().Add(12 * time.Hour).Unix(),
 	})
 	writeJSON(w, http.StatusCreated, map[string]any{"role": "tenant", "is_admin": user.IsAdmin, "tenant": user})
 }
@@ -319,18 +319,35 @@ func (a *App) adminCredit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) adminPassword(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("id") == currentSession(r).TenantID {
+		writeError(w, 400, "self_reset_not_allowed", "不能在这里重置自己的密码")
+		return
+	}
+	password, err := identity.NewTemporaryPassword()
+	if err != nil {
+		writeError(w, 500, "password_generation_failed", "无法生成临时密码")
+		return
+	}
+	if err := a.store.ResetPassword(r.Context(), r.PathValue("id"), password); err != nil {
+		writeError(w, 404, "not_found", "租户不存在")
+		return
+	}
+	writeJSON(w, 200, map[string]string{"temporary_password": password})
+}
+
+func (a *App) changePassword(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Password string `json:"password"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if len(input.Password) < 8 {
-		writeError(w, 400, "validation_error", "密码至少 8 位")
+	if len(input.Password) < 12 {
+		writeError(w, 400, "validation_error", "新密码至少 12 位")
 		return
 	}
-	if err := a.store.ResetPassword(r.Context(), r.PathValue("id"), input.Password); err != nil {
-		writeError(w, 404, "not_found", "租户不存在")
+	if err := a.store.ChangePassword(r.Context(), currentSession(r).TenantID, input.Password); err != nil {
+		writeError(w, 500, "password_change_failed", "密码修改失败")
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})

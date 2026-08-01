@@ -11,6 +11,8 @@ type Tenant struct {
 	Name               string         `gorm:"not null" json:"name"`
 	OwnerEmail         string         `gorm:"uniqueIndex;not null" json:"owner_email"`
 	PasswordHash       string         `gorm:"not null" json:"-"`
+	MustChangePassword bool           `gorm:"not null;default:false" json:"must_change_password"`
+	PasswordVersion    int64          `gorm:"not null;default:0" json:"-"`
 	Enabled            bool           `gorm:"not null;default:true" json:"enabled"`
 	IsAdmin            bool           `gorm:"not null;default:false;index" json:"is_admin"`
 	BalanceNanoUSD     int64          `gorm:"not null;default:0" json:"balance_nano_usd"`

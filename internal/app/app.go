@@ -174,7 +174,8 @@ func (a *App) routes() {
 	a.mux.HandleFunc("POST /api/auth/login", a.tenantLogin)
 	a.mux.HandleFunc("POST /api/auth/register", a.register)
 	a.mux.HandleFunc("POST /api/auth/logout", a.logout)
-	a.mux.Handle("GET /api/me", a.withTenant(http.HandlerFunc(a.me)))
+	a.mux.Handle("GET /api/me", a.withTenantSession(http.HandlerFunc(a.me)))
+	a.mux.Handle("POST /api/auth/password", a.withTenantSession(http.HandlerFunc(a.changePassword)))
 	a.mux.Handle("GET /api/dashboard", a.withTenant(http.HandlerFunc(a.dashboard)))
 	a.mux.Handle("GET /api/usage", a.withTenant(http.HandlerFunc(a.usage)))
 	a.mux.Handle("GET /api/subscriptions", a.withTenant(http.HandlerFunc(a.tenantSubscriptions)))
@@ -314,7 +315,7 @@ func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "邮箱或密码错误")
 		return
 	}
-	a.setSession(w, identity.Session{Role: "tenant", TenantID: tenant.ID, Expires: time.Now().Add(12 * time.Hour).Unix()})
+	a.setSession(w, identity.Session{Role: "tenant", TenantID: tenant.ID, PasswordVersion: tenant.PasswordVersion, Expires: time.Now().Add(12 * time.Hour).Unix()})
 	writeJSON(w, http.StatusOK, map[string]any{"role": "tenant", "is_admin": tenant.IsAdmin, "tenant": tenant})
 }
 
@@ -350,11 +351,31 @@ func (a *App) withSession(next http.Handler) http.Handler {
 }
 
 func (a *App) withAdmin(next http.Handler) http.Handler {
-	return a.withSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return a.withTenantSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session := currentSession(r)
 		tenant, err := a.store.GetTenant(r.Context(), session.TenantID)
 		if err != nil || !tenant.Enabled || !tenant.IsAdmin {
 			writeError(w, http.StatusForbidden, "forbidden", "需要管理员权限")
+			return
+		}
+		if tenant.MustChangePassword {
+			writeError(w, http.StatusForbidden, "password_change_required", "请先修改临时密码")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+func (a *App) withTenantSession(next http.Handler) http.Handler {
+	return a.withSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session := currentSession(r)
+		if session.TenantID == "" {
+			writeError(w, http.StatusForbidden, "forbidden", "需要租户权限")
+			return
+		}
+		tenant, err := a.store.GetTenant(r.Context(), session.TenantID)
+		if err != nil || !tenant.Enabled || tenant.PasswordVersion != session.PasswordVersion {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "登录已失效，请重新登录")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -362,9 +383,14 @@ func (a *App) withAdmin(next http.Handler) http.Handler {
 }
 
 func (a *App) withTenant(next http.Handler) http.Handler {
-	return a.withSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if currentSession(r).TenantID == "" {
-			writeError(w, http.StatusForbidden, "forbidden", "需要租户权限")
+	return a.withTenantSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenant, err := a.store.GetTenant(r.Context(), currentSession(r).TenantID)
+		if err != nil || !tenant.Enabled {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "账户不存在或已停用")
+			return
+		}
+		if tenant.MustChangePassword {
+			writeError(w, http.StatusForbidden, "password_change_required", "请先修改临时密码")
 			return
 		}
 		next.ServeHTTP(w, r)
