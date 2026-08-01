@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
   CheckIcon,
   CopyIcon,
@@ -49,6 +49,7 @@ import {
 import { LogsTable, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
+import { ModelSelector } from "@/components/model-selector"
 import { TenantSubscriptionsView } from "@/components/subscriptions-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { ConnectionGuide } from "@/components/connection-guide"
@@ -58,6 +59,7 @@ import {
   deleteRequest,
   postJSON,
   type ApiKey,
+  type ChildSubscription,
   type RequestLog,
   type Session,
   type UsageReport,
@@ -112,6 +114,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
     return (
       <KeysView
         keys={keys}
+        tenantModels={session.tenant?.model_allowlist ?? []}
         onChanged={load}
         storageKey={`relayapi.latest-api-key.${session.tenant?.id || "unknown"}`}
       />
@@ -177,6 +180,15 @@ type GeneratedKey = {
   key: string
 }
 
+const preferredKeyModels = ["gpt-5.6-sol", "grok-4.5"]
+
+function preferredModelsFrom(options: string[]) {
+  return preferredKeyModels.flatMap((preferred) => {
+    const match = options.find((model) => model === preferred || model.endsWith(`/${preferred}`))
+    return match ? [match] : []
+  })
+}
+
 function isGeneratedKey(value: unknown): value is GeneratedKey {
   if (!value || typeof value !== "object") return false
   const item = value as Partial<GeneratedKey>
@@ -185,10 +197,12 @@ function isGeneratedKey(value: unknown): value is GeneratedKey {
 
 function KeysView({
   keys,
+  tenantModels,
   onChanged,
   storageKey,
 }: {
   keys: ApiKey[]
+  tenantModels: string[]
   onChanged: () => Promise<void>
   storageKey: string
 }) {
@@ -199,6 +213,43 @@ function KeysView({
     isGeneratedKey,
   )
   const [pending, setPending] = useState(false)
+  const [modelOptions, setModelOptions] = useState<string[]>(tenantModels)
+  const [selectedModels, setSelectedModels] = useState<string[]>(() => preferredModelsFrom(tenantModels))
+  const modelSelectionTouched = useRef(false)
+
+  useEffect(() => {
+    let active = true
+    void api<{ items: ChildSubscription[] }>("/api/subscriptions")
+      .then((value) => {
+        if (!active) return
+        const now = Date.now()
+        const subscriptionModels = (value.items ?? [])
+          .filter((item) => item.enabled && Date.parse(item.starts_at) <= now && (!item.expires_at || Date.parse(item.expires_at) > now))
+          .flatMap((item) => item.effective_model_allowlist ?? item.model_allowlist ?? [])
+        const source = subscriptionModels.length ? subscriptionModels : tenantModels
+        setModelOptions(Array.from(new Set(source.map((model) => model.trim()).filter(Boolean))).sort())
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [tenantModels])
+
+  useEffect(() => {
+    if (createOpen && !modelSelectionTouched.current) {
+      setSelectedModels(preferredModelsFrom(modelOptions))
+    }
+  }, [createOpen, modelOptions])
+
+  function openCreateDialog() {
+    modelSelectionTouched.current = false
+    setShowPlainKey(false)
+    setSelectedModels(preferredModelsFrom(modelOptions))
+    setCreateOpen(true)
+  }
+
+  function changeSelectedModels(models: string[]) {
+    modelSelectionTouched.current = true
+    setSelectedModels(models)
+  }
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -209,10 +260,7 @@ function KeysView({
         name: String(data.get("name") ?? ""),
         rateLimitPerMinute: numberOrNull(data.get("rate")),
         tokenLimitDaily: numberOrNull(data.get("tokens")),
-        modelAllowlist: String(data.get("models") ?? "")
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
+        modelAllowlist: selectedModels,
       })
       setGeneratedKey({ id: response.item.id, name: response.item.name, key: response.key })
       setShowPlainKey(true)
@@ -243,7 +291,7 @@ function KeysView({
           <h1 className="text-2xl font-semibold tracking-tight">API Keys</h1>
           <p className="text-sm text-muted-foreground">为不同应用创建独立密钥与限制。</p>
         </div>
-        <Button onClick={() => { setShowPlainKey(false); setCreateOpen(true) }}>
+        <Button onClick={openCreateDialog}>
           <PlusIcon data-icon="inline-start" />
           创建 Key
         </Button>
@@ -309,7 +357,7 @@ function KeysView({
                 <EmptyDescription>创建密钥后即可调用所有已授权模型。</EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
-                <Button onClick={() => { setShowPlainKey(false); setCreateOpen(true) }}>
+                <Button onClick={openCreateDialog}>
                   <PlusIcon data-icon="inline-start" />
                   创建第一个 Key
                 </Button>
@@ -319,7 +367,7 @@ function KeysView({
         </CardContent>
       </Card>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setSelectedModels([]) }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{showPlainKey && generatedKey ? "保存 API Key" : "创建 API Key"}</DialogTitle>
@@ -348,8 +396,8 @@ function KeysView({
                 </div>
                 <Field>
                   <FieldLabel htmlFor="key-models">模型范围</FieldLabel>
-                  <Input id="key-models" name="models" placeholder="gpt-*, claude-*（留空为全部）" />
-                  <FieldDescription>支持逗号分隔和通配符。</FieldDescription>
+                  <ModelSelector id="key-models" options={modelOptions} value={selectedModels} onChange={changeSelectedModels} allLabel="全部可用模型" />
+                  <FieldDescription>默认选择推荐模型；可按需调整，不选择表示允许全部可用模型。</FieldDescription>
                 </Field>
               </FieldGroup>
             </form>
