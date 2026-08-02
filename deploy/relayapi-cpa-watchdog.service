@@ -1,0 +1,10 @@
+[Unit]
+Description=RelayAPI CPA health watchdog
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/relayapi-cpa-watchdog
+Nice=10
+IOSchedulingClass=idle

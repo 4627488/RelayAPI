@@ -1,0 +1,12 @@
+[Unit]
+Description=Check RelayAPI CPA health every 30 seconds
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=relayapi-cpa-watchdog.service
+
+[Install]
+WantedBy=timers.target
