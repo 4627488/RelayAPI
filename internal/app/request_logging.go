@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"net/http"
 	"strings"
@@ -112,4 +113,59 @@ func boundedErrorText(value string) string {
 		return value[:limit]
 	}
 	return value
+}
+
+func detailedUpstreamError(payload []byte, provider, model, requestID string, assignedCredential bool) ([]byte, string, bool) {
+	var value struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(payload, &value) != nil {
+		return payload, "", false
+	}
+	original := strings.TrimSpace(value.Error.Message)
+	if value.Error.Code != "auth_unavailable" && !strings.Contains(strings.ToLower(original), "auth_unavailable") {
+		return payload, "", false
+	}
+	if provider == "" {
+		provider = errorAttribute(original, "providers")
+	}
+	if model == "" {
+		model = errorAttribute(original, "model")
+	}
+	scope := "provider_pool"
+	subject := "the provider authentication pool"
+	action := "check the provider accounts and add a backup credential"
+	if assignedCredential {
+		scope = "assigned_credential"
+		subject = "the credential assigned to this subscription"
+		action = "check that model account's status and quota, or assign a backup credential"
+	}
+	message := fmt.Sprintf("Authentication is temporarily unavailable for model %s: %s is not currently eligible. Common causes are cooldown after an upstream failure, rate limiting, exhausted quota, or disabled/expired authentication. Retry in 5 seconds; if this persists, %s.", model, subject, action)
+	result, err := json.Marshal(map[string]any{"error": map[string]any{
+		"code": "auth_unavailable", "type": "service_unavailable", "message": message,
+		"details": map[string]any{
+			"provider": provider, "model": model, "scope": scope, "reason": "no_eligible_credentials",
+			"retryable": true, "retry_after_seconds": 5, "request_id": requestID, "upstream_message": original,
+		},
+	}})
+	if err != nil {
+		return payload, "", false
+	}
+	return result, "auth_unavailable", true
+}
+
+func errorAttribute(message, name string) string {
+	marker := name + "="
+	start := strings.Index(message, marker)
+	if start < 0 {
+		return ""
+	}
+	value := message[start+len(marker):]
+	if end := strings.IndexAny(value, ",)"); end >= 0 {
+		value = value[:end]
+	}
+	return strings.TrimSpace(value)
 }

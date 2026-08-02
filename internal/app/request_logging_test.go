@@ -63,3 +63,25 @@ func TestUpstreamErrorMessageExtractsStructuredMessage(t *testing.T) {
 		t.Fatalf("message = %q", got)
 	}
 }
+
+func TestDetailedUpstreamAuthUnavailable(t *testing.T) {
+	payload := []byte(`{"error":{"message":"auth_unavailable: no auth available (providers=codex, model=gpt-5.6-luna)","type":"server_error","code":"internal_server_error"}}`)
+	got, code, changed := detailedUpstreamError(payload, "", "gpt-5.6-luna", "request-123", true)
+	if !changed || code != "auth_unavailable" {
+		t.Fatalf("changed=%v code=%q", changed, code)
+	}
+	text := string(got)
+	for _, wanted := range []string{`"provider":"codex"`, `"scope":"assigned_credential"`, `"retryable":true`, `"request_id":"request-123"`} {
+		if !strings.Contains(text, wanted) {
+			t.Fatalf("detailed error %s does not contain %s", text, wanted)
+		}
+	}
+}
+
+func TestDetailedUpstreamErrorLeavesOtherErrorsUnchanged(t *testing.T) {
+	payload := []byte(`{"error":{"message":"invalid request","code":"bad_request"}}`)
+	got, code, changed := detailedUpstreamError(payload, "codex", "gpt-5.6-luna", "request-123", false)
+	if changed || code != "" || string(got) != string(payload) {
+		t.Fatalf("unexpected rewrite: changed=%v code=%q payload=%s", changed, code, got)
+	}
+}

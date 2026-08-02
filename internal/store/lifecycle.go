@@ -84,7 +84,11 @@ func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent) error {
 	put("response_service_tier", event.ResponseServiceTier)
 	put("reasoning_effort", event.ReasoningEffort)
 	if event.Outcome != "" && event.Outcome != "succeeded" {
-		put("error_code", "cpa_"+event.Outcome)
+		errorCode := "cpa_" + event.Outcome
+		if strings.Contains(strings.ToLower(event.ErrorMessage), "auth_unavailable") {
+			errorCode = "auth_unavailable"
+		}
+		put("error_code", errorCode)
 		put("error_message", event.ErrorMessage)
 	}
 	if len(updates) > 0 {
