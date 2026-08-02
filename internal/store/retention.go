@@ -102,18 +102,16 @@ func (s Store) RunRetention(ctx context.Context, now time.Time, policy Retention
 }
 
 func (s Store) scrubLifecyclePayloads(ctx context.Context, batch int) (int64, error) {
+	if batch > 100 {
+		batch = 100
+	}
 	return retentionTx(ctx, s.DB, func(tx *gorm.DB) (int64, error) {
-		var ids []string
-		err := tx.Raw(`SELECT id FROM cpa_lifecycle_events WHERE processed = true AND
-			(headers <> '{}' OR response_headers <> '{}' OR body <> '' OR original_request <> '' OR request_body <> '' OR raw_json <> '')
-			ORDER BY processed_at LIMIT ? FOR UPDATE SKIP LOCKED`, batch).Scan(&ids).Error
-		if err != nil || len(ids) == 0 {
-			return 0, err
-		}
-		result := tx.Model(&db.CPALifecycleEvent{}).Where("id IN ?", ids).Updates(map[string]any{
-			"headers": "{}", "response_headers": "{}", "body": "",
-			"original_request": "", "request_body": "", "raw_json": "",
-		})
+		result := tx.Exec(`WITH selected AS (
+			SELECT id FROM cpa_lifecycle_events WHERE processed = true AND
+				(headers <> '{}' OR response_headers <> '{}' OR body <> '' OR original_request <> '' OR request_body <> '' OR raw_json <> '')
+			ORDER BY processed_at LIMIT ? FOR UPDATE SKIP LOCKED
+		) UPDATE cpa_lifecycle_events AS event SET headers = '{}', response_headers = '{}', body = '',
+			original_request = '', request_body = '', raw_json = '' FROM selected WHERE event.id = selected.id`, batch)
 		return result.RowsAffected, result.Error
 	})
 }
