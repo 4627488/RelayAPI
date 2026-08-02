@@ -246,14 +246,15 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	response, err := a.cpa.HTTP.Do(upstream)
 	if err != nil {
 		a.releaseReservation(requestID, billable)
-		logContext.errorCode = "cpa_unavailable"
+		classified := classifyCPATransportError(err, r.Context().Err(), "awaiting_headers")
+		logContext.errorCode = classified.Code
 		logContext.detail.ErrorName = "upstream_error"
 		logContext.detail.ErrorMessage = err.Error()
 		logContext.detail.StageTimings = timingJSON(map[string]int64{
 			"read_body_ms": bodyReadAt.Sub(started).Milliseconds(), "total_ms": time.Since(started).Milliseconds(),
 		})
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
-		writeError(w, http.StatusBadGateway, "cpa_unavailable", "CPA 暂时不可用")
+		writeCPATransportError(w, r, err, "awaiting_headers", requestID)
 		return
 	}
 	upstreamHeadersAt := time.Now()

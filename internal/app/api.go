@@ -560,7 +560,7 @@ func (a *App) adminCPA(w http.ResponseWriter, r *http.Request) {
 	}
 	status, headers, payload, err := a.cpa.ManagementRaw(r.Context(), r.Method, resource, r.Header.Get("Content-Type"), body)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "cpa_unavailable", err.Error())
+		writeCPATransportError(w, r, err, "management", "")
 		return
 	}
 	if value := headers.Get("Content-Type"); value != "" {

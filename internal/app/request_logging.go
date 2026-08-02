@@ -1,16 +1,29 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
 const requestLogDetailLimit = 128 << 10
+
+type cpaTransportError struct {
+	Status    int
+	Code      string
+	Message   string
+	Phase     string
+	Retryable bool
+}
 
 var sensitiveLogHeaders = map[string]struct{}{
 	"api-key": {}, "authorization": {}, "cookie": {}, "set-cookie": {},
@@ -113,6 +126,66 @@ func boundedErrorText(value string) string {
 		return value[:limit]
 	}
 	return value
+}
+
+func classifyCPATransportError(err error, requestContextError error, phase string) cpaTransportError {
+	result := cpaTransportError{Status: http.StatusServiceUnavailable, Code: "cpa_unavailable", Message: "CPA 暂时不可用，请稍后重试", Phase: phase, Retryable: true}
+	if err == nil {
+		return result
+	}
+	if errors.Is(requestContextError, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		result.Status = http.StatusGatewayTimeout
+		result.Code = "cpa_timeout"
+		result.Message = "CPA 响应超时，请稍后重试"
+		return result
+	}
+	if errors.Is(requestContextError, context.Canceled) || errors.Is(err, context.Canceled) {
+		result.Status = 499
+		result.Code = "client_canceled"
+		result.Message = "请求已由客户端取消"
+		result.Retryable = false
+		return result
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		result.Status = http.StatusGatewayTimeout
+		result.Code = "cpa_timeout"
+		result.Message = "CPA 响应超时，请稍后重试"
+		return result
+	}
+	lower := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, io.EOF), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE),
+		strings.Contains(lower, "unexpected eof"), strings.Contains(lower, "connection reset"),
+		strings.Contains(lower, "server closed idle connection"):
+		result.Code = "cpa_connection_lost"
+		result.Message = "与 CPA 的连接提前中断；CPA 可能刚刚重启或触发了内存保护，请重试"
+	case errors.Is(err, syscall.ECONNREFUSED), strings.Contains(lower, "connection refused"), strings.Contains(lower, "no such host"):
+		result.Code = "cpa_unavailable"
+		result.Message = "无法连接 CPA 服务；服务可能正在启动或恢复，请稍后重试"
+	}
+	return result
+}
+
+func writeCPATransportError(w http.ResponseWriter, r *http.Request, err error, phase, requestID string) cpaTransportError {
+	var requestErr error
+	if r != nil {
+		requestErr = r.Context().Err()
+	}
+	classified := classifyCPATransportError(err, requestErr, phase)
+	details := map[string]any{"phase": classified.Phase, "retryable": classified.Retryable}
+	if requestID != "" {
+		details["request_id"] = requestID
+	}
+	if classified.Retryable {
+		details["retry_after_seconds"] = 5
+		w.Header().Set("Retry-After", "5")
+	}
+	w.Header().Set("X-Relay-Error-Code", classified.Code)
+	writeJSON(w, classified.Status, map[string]any{"error": map[string]any{
+		"code": classified.Code, "type": "service_unavailable", "message": classified.Message, "details": details,
+	}})
+	return classified
 }
 
 func detailedUpstreamError(payload []byte, provider, model, requestID string, assignedCredential bool) ([]byte, string, bool) {

@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,6 +19,29 @@ func TestSanitizedHeadersRedactsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(value, "visible") || !strings.Contains(value, "[REDACTED]") {
 		t.Fatalf("unexpected sanitized headers: %s", value)
+	}
+}
+
+func TestClassifyCPATransportError(t *testing.T) {
+	tests := []struct {
+		name, message, code string
+		err                 error
+		requestErr          error
+		status              int
+	}{
+		{name: "client canceled", err: context.Canceled, requestErr: context.Canceled, code: "client_canceled", status: 499},
+		{name: "timeout", err: context.DeadlineExceeded, code: "cpa_timeout", status: http.StatusGatewayTimeout},
+		{name: "reset", err: errors.New("read: connection reset by peer"), code: "cpa_connection_lost", status: http.StatusServiceUnavailable},
+		{name: "unexpected eof", err: errors.New("unexpected EOF"), code: "cpa_connection_lost", status: http.StatusServiceUnavailable},
+		{name: "refused", err: errors.New("dial tcp: connection refused"), code: "cpa_unavailable", status: http.StatusServiceUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyCPATransportError(test.err, test.requestErr, "models")
+			if got.Code != test.code || got.Status != test.status || got.Phase != "models" {
+				t.Fatalf("classification = %+v", got)
+			}
+		})
 	}
 }
 

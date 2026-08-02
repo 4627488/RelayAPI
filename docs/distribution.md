@@ -21,7 +21,8 @@ CLIProxyAPI 负责协议、提供商凭据和模型路由；RelayAPI 负责用�
 管理界面。前端不再作为独立镜像发布，bridge 仅在启用附加 Compose 时运行一次，
 把动态库复制到 CPA 插件卷中。只使用余额计费时 bridge 可省略；启用严格 AuthID
 父/子订阅时必须部署 `0.2.0+`；需要自动读取上游凭据额度时部署 `0.3.0+`；
-需要 CPA 转换后请求、上游响应、执行 ID 和终态错误进入详细日志时部署 `0.4.0+`。
+需要 CPA 执行 ID、实际模型和终态错误进入详细日志时部署 `0.5.0+`。请求体、响应体
+和 TTFT 由 Relay 代理层直接采集，不再经过 CPA 插件 ABI。
 
 ## GHCR 标签
 
@@ -68,10 +69,14 @@ adapter 运行时。它作为独立
 GHCR 镜像发布，避免把 CPA ABI 动态库塞入主镜像。启用父/子订阅时叠加：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.plugin.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
+  --profile plugin-install run --rm cpa-plugin
+docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
+  up -d --no-deps --force-recreate cliproxyapi
 ```
 
-随后在 CPA 配置中启用 `relayapi-bridge`，并让 `secret` 与
+插件安装是显式的一次性操作，普通 Relay 部署不得重新运行安装器。安装器先写临时
+文件再原子替换动态库，替换后必须重启 CPA。随后在 CPA 配置中启用 `relayapi-bridge`，并让 `secret` 与
 `CPA_PLUGIN_SECRET` 相同。仓库的 preview workflow 会在 bridge 镜像发布成功后
 自动刷新插件卷并仅重启 CPA；主镜像发布成功后只重建 RelayAPI。Caddy 不属于该
 发布链路。

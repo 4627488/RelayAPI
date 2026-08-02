@@ -10,4 +10,6 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildmode=c-sh
 
 FROM alpine:3.22
 COPY --from=build /out/relayapi-bridge.so /relayapi-bridge.so
-CMD ["cp", "/relayapi-bridge.so", "/plugins/relayapi-bridge.so"]
+COPY install-plugin.sh /usr/local/bin/install-plugin
+RUN chmod 0755 /usr/local/bin/install-plugin
+CMD ["/usr/local/bin/install-plugin"]

@@ -39,20 +39,31 @@ The bridge reads the selected credential through `host.auth.get`, uses CPA's
 proxy-aware `host.http.do` callback, and returns only a normalized quota report.
 Tokens, account identifiers, and raw upstream responses never leave CPA.
 
-Version 0.4.0 adds CPA v7 request/response lifecycle integration. The bridge
-correlates CPA execution `RequestID`/`TraceID` with Relay's signed
-`X-Relay-Request-ID`, then sends bounded lifecycle events to Relay:
+Version 0.5.0 makes lifecycle collection memory-safe for large streaming
+requests. Request interception is used only to correlate CPA's execution ID
+with Relay's signed `X-Relay-Request-ID`; request and response bodies never
+cross the asynchronous lifecycle queue. Response and stream interceptors are
+not registered because Relay already captures downstream responses and TTFT.
+Only the compact terminal completion is delivered through a 128-item queue,
+with a one-second local timeout and no blocking retries.
 
-- request interception before and after credential selection;
-- non-streaming upstream responses;
-- stream initialization and the first stream chunk for TTFT context;
-- terminal completion outcome and error information.
+The usage capability is also intentionally disabled: Relay parses the final
+response as its billing source of truth, while CPA's usage ABI has no Relay
+request correlation. Queue health and drop counters are available at:
 
-The synchronous hooks never wait for Relay. Events enter a bounded background
-queue, and per-chunk forwarding is intentionally disabled after the first
-chunk so observability cannot add steady-state streaming latency. Relay
-persists structured, redacted detail and keeps its own proxy capture as the
-fallback when events are dropped or the bridge is unavailable.
+```text
+GET /v0/management/plugins/relayapi-bridge/health
+```
+
+Install the plugin explicitly, then restart CPA. The installer uses a
+temporary file and atomic rename; normal Relay deploys must not run it:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
+  --profile plugin-install run --rm cpa-plugin
+docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
+  up -d --no-deps --force-recreate cliproxyapi
+```
 
 ## Adapter modes
 

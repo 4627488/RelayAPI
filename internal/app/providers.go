@@ -38,7 +38,7 @@ func (a *App) relayCPA(w http.ResponseWriter, r *http.Request, method, endpoint 
 	}
 	status, payload, err := a.cpa.Management(r.Context(), method, endpoint, body)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "cpa_unavailable", err.Error())
+		writeCPATransportError(w, r, err, "management", "")
 		return
 	}
 	if !json.Valid(payload) {
@@ -214,7 +214,7 @@ func (a *App) adminProviderOAuth(w http.ResponseWriter, r *http.Request) {
 	if err != nil || status < 200 || status >= 300 {
 		a.restoreManagedOAuth(r.Context(), session.State)
 		if err != nil {
-			writeError(w, http.StatusBadGateway, "cpa_unavailable", err.Error())
+			writeCPATransportError(w, r, err, "oauth_start", "")
 		} else {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(status)
@@ -256,7 +256,7 @@ func (a *App) adminOAuthStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	status, payload, err := a.cpa.Management(r.Context(), http.MethodGet, "get-auth-status?state="+url.QueryEscape(state), nil)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "cpa_unavailable", err.Error())
+		writeCPATransportError(w, r, err, "oauth_status", "")
 		return
 	}
 	if status >= 200 && status < 300 {

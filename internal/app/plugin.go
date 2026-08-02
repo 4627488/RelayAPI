@@ -72,7 +72,7 @@ func (a *App) cpaPluginLifecycle(w http.ResponseWriter, r *http.Request) {
 		Payload        cpaLifecyclePayload `json:"payload"`
 	}
 	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 3<<20))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	if err := decoder.Decode(&envelope); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "CPA 生命周期事件无效")
 		return
@@ -85,13 +85,6 @@ func (a *App) cpaPluginLifecycle(w http.ResponseWriter, r *http.Request) {
 	headers := payload.Headers
 	if len(headers) == 0 {
 		headers = payload.RequestHeaders
-	}
-	body, _, _ := boundedDetail(payload.Body)
-	originalRequest, _, _ := boundedDetail(payload.OriginalRequest)
-	requestBody, _, _ := boundedDetail(payload.RequestBody)
-	raw, _ := json.Marshal(payload)
-	if len(raw) > requestLogDetailLimit {
-		raw = raw[:requestLogDetailLimit]
 	}
 	input := store.CPALifecycleInput{
 		RequestLogID: envelope.RelayRequestID, Event: envelope.Event,
@@ -108,7 +101,6 @@ func (a *App) cpaPluginLifecycle(w http.ResponseWriter, r *http.Request) {
 		ReasoningEffort:     metadataText(payload.Metadata, "reasoning_effort", "ReasoningEffort"),
 		StatusCode:          payload.StatusCode, Outcome: payload.Outcome, ErrorMessage: payload.Error,
 		Headers: sanitizedHeaders(headers), ResponseHeaders: sanitizedHeaders(payload.ResponseHeaders),
-		Body: body, OriginalRequest: originalRequest, RequestBody: requestBody, RawJSON: string(raw),
 	}
 	if err := a.store.RecordCPALifecycleEvent(r.Context(), input); err != nil {
 		slog.Error("record CPA lifecycle", "request_id", envelope.RelayRequestID, "event", envelope.Event, "error", err)

@@ -121,11 +121,14 @@ go vet ./...
 
 CPA bridge 发布为 `ghcr.io/4627488/relayapi-cpa-plugin`。普通余额计费可以不安装；
 父/子订阅的 AuthID 固定路由要求 bridge `0.2.0+`；通用额度扩展要求 `0.3.0+`；
-详细 CPA 请求生命周期要求 `0.4.0+`。用附加 Compose 文件把动态库
+内存安全的 CPA 请求终态关联要求 `0.5.0+`。用附加 Compose 文件把动态库
 放入 CPA 的私有插件目录：
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.plugin.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
+  --profile plugin-install run --rm cpa-plugin
+docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
+  up -d --no-deps --force-recreate cliproxyapi
 ```
 
 在 CPA `config.yaml` 中启用：
@@ -144,12 +147,12 @@ plugins:
       quota_adapters_mode: append
 ```
 
-插件负责 CPA 凭据选择扩展、请求/响应生命周期与用量/失败遥测。Relay 会用短时 HMAC 签名保护内部
+插件负责 CPA 凭据选择扩展、额度探测与终态失败遥测。Relay 会用短时 HMAC 签名保护内部
 AuthID 路由指令；指定凭据不在 CPA 当前候选集时，插件会拒绝请求而不会悄悄切换
 到另一账户。计费仍使用 Relay 代理层关联到具体请求的响应用量，避免 CPA 插件
-事件缺少自定义关联 ID 时发生串账。生命周期事件通过
-`X-Relay-Request-ID` 与 CPA RequestID/TraceID 精确关联，只负责补充实际模型、
-转换后请求、上游响应、TTFT 和终态错误。
+事件缺少自定义关联 ID 时发生串账。终态事件通过 `X-Relay-Request-ID` 与 CPA
+RequestID/TraceID 精确关联，只补充实际模型和终态错误；请求体、响应体与 TTFT
+由 Relay 代理层直接采集，不经过 CPA 插件边界。
 
 `0.3.0` 的额度探测内核没有 Codex、xAI 或其他 provider 分支。内核只执行声明式
 adapter：按 provider 扩展键匹配、从 CPA 凭据渲染请求、通过 `host.http.do` 发起

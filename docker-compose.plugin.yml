@@ -3,13 +3,15 @@ services:
     image: ghcr.io/4627488/relayapi-cpa-plugin:latest
     build: ./cliproxyapi-plugin
     restart: "no"
+    profiles: ["plugin-install"]
     volumes:
       - relay-cpa-plugins:/plugins
 
   cliproxyapi:
-    depends_on:
-      cpa-plugin:
-        condition: service_completed_successfully
+    environment:
+      GOMEMLIMIT: 300MiB
+      GOGC: "75"
+      GODEBUG: madvdontneed=1
     volumes:
       - relay-cpa-plugins:/CLIProxyAPI/plugins:ro
 

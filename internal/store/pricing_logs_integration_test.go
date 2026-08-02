@@ -75,10 +75,10 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 
 	requestID := identity.NewID()
 	if err := dataStore.RecordCPALifecycleEvent(ctx, CPALifecycleInput{
-		RequestLogID: requestID, Event: "request.intercept_after", CPAExecutionID: "cpa-execution",
+		RequestLogID: requestID, Event: "request.complete", CPAExecutionID: "cpa-execution",
 		CPATraceID: "cpa-trace", Model: "actual-model", RequestedModel: "alias-model",
 		Provider: "openai", ExecutorType: "codex", AuthIndex: "auth-priority",
-		Headers: `{"X-Test":["value"]}`, Body: `{"model":"actual-model"}`,
+		Outcome: "succeeded",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -99,9 +99,12 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detailed.Log.CPAExecutionID != "cpa-execution" || detailed.Log.ActualModel != "actual-model" ||
-		detailed.Detail == nil || detailed.Detail.ForwardedBody != `{"model":"actual-model"}` {
+	if detailed.Log.CPAExecutionID != "cpa-execution" || detailed.Log.ActualModel != "actual-model" || detailed.Detail == nil {
 		t.Fatalf("lifecycle enrichment missing: %+v / %+v", detailed.Log, detailed.Detail)
+	}
+	var lifecycleCount int64
+	if err := database.Model(&db.CPALifecycleEvent{}).Where("request_log_id = ?", requestID).Count(&lifecycleCount).Error; err != nil || lifecycleCount != 0 {
+		t.Fatalf("temporary lifecycle rows = %d, err=%v", lifecycleCount, err)
 	}
 	if detailed.Log.ParentSubscriptionID != nil || detailed.Log.ChildSubscriptionID != nil {
 		t.Fatalf("empty subscription IDs must be stored as NULL: %+v", detailed.Log)

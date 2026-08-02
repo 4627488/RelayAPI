@@ -175,10 +175,11 @@ func (s Store) deleteLifecycle(ctx context.Context, now time.Time, policy Retent
 		var ids []string
 		successCutoff := now.Add(-time.Duration(policy.LifecycleSuccessHours) * time.Hour)
 		errorCutoff := now.AddDate(0, 0, -policy.LifecycleErrorDays)
-		err := tx.Raw(`SELECT id FROM cpa_lifecycle_events WHERE processed = true AND
-			(((outcome = '' OR outcome = 'succeeded') AND status_code < 400 AND created_at < ?)
-			 OR ((outcome <> '' AND outcome <> 'succeeded') OR status_code >= 400) AND created_at < ?)
-			ORDER BY created_at LIMIT ? FOR UPDATE SKIP LOCKED`, successCutoff, errorCutoff, policy.BatchSize).Scan(&ids).Error
+		err := tx.Raw(`SELECT id FROM cpa_lifecycle_events WHERE
+			((processed = false AND created_at < ?)
+			 OR (processed = true AND (((outcome = '' OR outcome = 'succeeded') AND status_code < 400 AND created_at < ?)
+			 OR (((outcome <> '' AND outcome <> 'succeeded') OR status_code >= 400) AND created_at < ?))))
+			ORDER BY created_at LIMIT ? FOR UPDATE SKIP LOCKED`, successCutoff, successCutoff, errorCutoff, policy.BatchSize).Scan(&ids).Error
 		if err != nil || len(ids) == 0 {
 			return 0, err
 		}

@@ -71,23 +71,9 @@ type schedulerRequest struct {
 	} `json:"Candidates"`
 }
 
-type interceptorPayload struct {
-	RequestID       string
-	TraceID         string
-	SourceFormat    string
-	ToFormat        string
-	Model           string
-	RequestedModel  string
-	Stream          bool
-	Headers         http.Header
-	RequestHeaders  http.Header
-	ResponseHeaders http.Header
-	Body            []byte
-	OriginalRequest []byte
-	RequestBody     []byte
-	StatusCode      int
-	ChunkIndex      int
-	Metadata        map[string]any
+type correlationPayload struct {
+	RequestID string
+	Headers   http.Header
 }
 
 type completionPayload struct {
@@ -96,6 +82,14 @@ type completionPayload struct {
 	StatusCode                                                              int
 	StartedAt, CompletedAt                                                  time.Time
 	Metadata                                                                map[string]any
+}
+
+type compactCompletionPayload struct {
+	RequestID, TraceID, SourceFormat, Model, RequestedModel, Outcome, Error string
+	Stream                                                                  bool
+	StatusCode                                                              int
+	StartedAt, CompletedAt                                                  time.Time
+	Metadata                                                                map[string]string
 }
 
 type relayLifecycleEvent struct {
@@ -119,9 +113,21 @@ type managementResponse struct {
 }
 
 var current atomic.Value
-var client = &http.Client{Timeout: 5 * time.Second}
+var lifecycleClient = &http.Client{Timeout: time.Second}
 var requestCorrelations sync.Map
-var lifecycleQueue = make(chan lifecycleJob, 256)
+var correlationCount atomic.Int64
+var lifecycleEnqueued atomic.Uint64
+var lifecycleDropped atomic.Uint64
+var lifecyclePostErrors atomic.Uint64
+var lifecyclePosted atomic.Uint64
+var lifecycleQueue = make(chan lifecycleJob, 128)
+
+const correlationTTL = 15 * time.Minute
+
+type requestCorrelation struct {
+	RelayID   string
+	ExpiresAt time.Time
+}
 
 type lifecycleJob struct {
 	URL, Secret string
@@ -129,9 +135,18 @@ type lifecycleJob struct {
 }
 
 func init() {
+	for range 2 {
+		go func() {
+			for job := range lifecycleQueue {
+				postLifecycle(job)
+			}
+		}()
+	}
 	go func() {
-		for job := range lifecycleQueue {
-			postLifecycle(job)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for now := range ticker.C {
+			cleanupCorrelations(now)
 		}
 	}()
 }
@@ -209,7 +224,7 @@ func handle(method string, raw []byte) ([]byte, error) {
 		current.Store(cfg)
 		return ok(map[string]any{
 			"schema_version": 2,
-			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.4.0", "Author": "4627488",
+			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.5.0", "Author": "4627488",
 				"GitHubRepository": "https://github.com/4627488/RelayAPI",
 				"Logo":             "https://github.com/4627488.png",
 				"ConfigFields": []map[string]any{
@@ -220,20 +235,29 @@ func handle(method string, raw []byte) ([]byte, error) {
 					{"Name": "quota_adapters", "Type": "array", "Description": "Declarative provider quota adapter manifests"},
 				}},
 			"capabilities": map[string]bool{
-				"usage_plugin": true, "scheduler": true, "management_api": true,
+				"usage_plugin": false, "scheduler": true, "management_api": true,
 				"request_interceptor": true, "request_lifecycle_plugin": true,
-				"response_interceptor": true, "response_stream_interceptor": true,
+				"response_interceptor": false, "response_stream_interceptor": false,
 			},
 		})
 	case "management.register":
-		return ok(map[string]any{"routes": []map[string]any{{
-			"Method": "GET", "Path": "/plugins/relayapi-bridge/quota",
-			"Description": "Return a normalized, secret-free quota observation for one CPA auth index.",
-		}}})
+		return ok(map[string]any{"routes": []map[string]any{
+			{"Method": "GET", "Path": "/plugins/relayapi-bridge/quota", "Description": "Return a normalized, secret-free quota observation for one CPA auth index."},
+			{"Method": "GET", "Path": "/plugins/relayapi-bridge/health", "Description": "Return bounded lifecycle queue health counters."},
+		}})
 	case "management.handle":
 		var req managementRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, fmt.Errorf("decode management request: %w", err)
+		}
+		if req.Path == "/plugins/relayapi-bridge/health" {
+			payload, _ := json.Marshal(map[string]any{
+				"status": "ok", "queue_depth": len(lifecycleQueue), "queue_capacity": cap(lifecycleQueue),
+				"enqueued": lifecycleEnqueued.Load(), "dropped": lifecycleDropped.Load(),
+				"posted": lifecyclePosted.Load(), "post_errors": lifecyclePostErrors.Load(),
+				"correlations": correlationCount.Load(),
+			})
+			return ok(managementResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"application/json; charset=utf-8"}}, Body: payload})
 		}
 		result, status, err := probeQuota(strings.TrimSpace(req.Query.Get("auth_index")), loaded().QuotaAdapters, time.Now())
 		if err != nil {
@@ -245,59 +269,17 @@ func handle(method string, raw []byte) ([]byte, error) {
 			return nil, err
 		}
 		return ok(managementResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"application/json; charset=utf-8"}}, Body: payload})
-	case "usage.handle":
-		cfg := loaded()
-		if cfg.RelayURL == "" || cfg.Secret == "" {
-			return ok(map[string]any{})
-		}
-		req, err := http.NewRequest(http.MethodPost, cfg.RelayURL+"/internal/cpa/usage", bytes.NewReader(raw))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Relay-Plugin-Secret", cfg.Secret)
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusNoContent {
-			return nil, errors.New("RelayAPI rejected usage event")
-		}
-		return ok(map[string]any{})
 	case "request.intercept_before", "request.intercept_after":
-		var payload interceptorPayload
+		// Decode only the two correlation fields. In particular, omitting Body
+		// prevents encoding/json from base64-decoding a multi-megabyte request
+		// into another allocation inside the plugin.
+		var payload correlationPayload
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, fmt.Errorf("decode request lifecycle: %w", err)
 		}
 		relayID := firstHTTPHeader(payload.Headers, "X-Relay-Request-ID")
 		if relayID != "" && payload.RequestID != "" {
-			requestCorrelations.Store(payload.RequestID, relayID)
-		}
-		payload = boundedInterceptorPayload(payload)
-		enqueueLifecycle(method, relayID, payload)
-		return ok(map[string]any{})
-	case "response.intercept_after":
-		var payload interceptorPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return nil, fmt.Errorf("decode response lifecycle: %w", err)
-		}
-		relayID := correlatedRelayID(payload.RequestID, payload.RequestHeaders)
-		payload = boundedInterceptorPayload(payload)
-		enqueueLifecycle(method, relayID, payload)
-		return ok(map[string]any{})
-	case "response.intercept_stream_chunk":
-		var payload interceptorPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return nil, fmt.Errorf("decode stream lifecycle: %w", err)
-		}
-		// The synchronous stream hook is kept deliberately cheap. Header
-		// initialization and the first payload chunk are sufficient for TTFT
-		// and diagnostic context; completion carries the terminal outcome.
-		if payload.ChunkIndex <= 0 {
-			relayID := correlatedRelayID(payload.RequestID, payload.RequestHeaders)
-			payload = boundedInterceptorPayload(payload)
-			enqueueLifecycle(method, relayID, payload)
+			storeCorrelation(payload.RequestID, relayID, time.Now())
 		}
 		return ok(map[string]any{})
 	case "request.complete":
@@ -305,11 +287,8 @@ func handle(method string, raw []byte) ([]byte, error) {
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return nil, fmt.Errorf("decode request completion: %w", err)
 		}
-		relayID := ""
-		if value, ok := requestCorrelations.LoadAndDelete(payload.RequestID); ok {
-			relayID, _ = value.(string)
-		}
-		enqueueLifecycle(method, relayID, payload)
+		relayID := takeCorrelation(payload.RequestID, time.Now())
+		enqueueLifecycle(method, relayID, compactCompletion(payload))
 		return ok(map[string]any{})
 	case "scheduler.pick":
 		var req schedulerRequest
@@ -346,48 +325,70 @@ func enqueueLifecycle(event, relayID string, payload any) {
 	}
 	select {
 	case lifecycleQueue <- job:
+		lifecycleEnqueued.Add(1)
 	default:
 		// Observability must never stall model traffic.
+		lifecycleDropped.Add(1)
 	}
 }
 
 func postLifecycle(job lifecycleJob) {
 	raw, err := json.Marshal(job.Event)
 	if err != nil {
+		lifecyclePostErrors.Add(1)
 		return
 	}
-	for attempt := 0; attempt < 3; attempt++ {
-		req, requestErr := http.NewRequest(http.MethodPost, job.URL+"/internal/cpa/lifecycle", bytes.NewReader(raw))
-		if requestErr != nil {
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Relay-Plugin-Secret", job.Secret)
-		response, requestErr := client.Do(req)
-		if requestErr == nil {
-			response.Body.Close()
-			if response.StatusCode == http.StatusNoContent {
-				return
-			}
-		}
-		if attempt < 2 {
-			time.Sleep(time.Duration(100*(1<<attempt)) * time.Millisecond)
-		}
+	req, requestErr := http.NewRequest(http.MethodPost, job.URL+"/internal/cpa/lifecycle", bytes.NewReader(raw))
+	if requestErr != nil {
+		lifecyclePostErrors.Add(1)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Relay-Plugin-Secret", job.Secret)
+	response, requestErr := lifecycleClient.Do(req)
+	if requestErr != nil {
+		lifecyclePostErrors.Add(1)
+		return
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		lifecyclePostErrors.Add(1)
+		return
+	}
+	lifecyclePosted.Add(1)
+}
+
+func storeCorrelation(requestID, relayID string, now time.Time) {
+	if requestID == "" || relayID == "" {
+		return
+	}
+	if _, loaded := requestCorrelations.Swap(requestID, requestCorrelation{RelayID: relayID, ExpiresAt: now.Add(correlationTTL)}); !loaded {
+		correlationCount.Add(1)
 	}
 }
 
-func correlatedRelayID(requestID string, headers http.Header) string {
-	if relayID := firstHTTPHeader(headers, "X-Relay-Request-ID"); relayID != "" {
-		if requestID != "" {
-			requestCorrelations.Store(requestID, relayID)
+func takeCorrelation(requestID string, now time.Time) string {
+	value, ok := requestCorrelations.LoadAndDelete(requestID)
+	if !ok {
+		return ""
+	}
+	correlationCount.Add(-1)
+	correlation, _ := value.(requestCorrelation)
+	if !correlation.ExpiresAt.After(now) {
+		return ""
+	}
+	return correlation.RelayID
+
+}
+
+func cleanupCorrelations(now time.Time) {
+	requestCorrelations.Range(func(key, value any) bool {
+		correlation, ok := value.(requestCorrelation)
+		if ok && !correlation.ExpiresAt.After(now) && requestCorrelations.CompareAndDelete(key, value) {
+			correlationCount.Add(-1)
 		}
-		return relayID
-	}
-	if value, ok := requestCorrelations.Load(requestID); ok {
-		relayID, _ := value.(string)
-		return relayID
-	}
-	return ""
+		return true
+	})
 }
 
 func firstHTTPHeader(headers http.Header, name string) string {
@@ -399,18 +400,43 @@ func firstHTTPHeader(headers http.Header, name string) string {
 	return ""
 }
 
-func boundedInterceptorPayload(payload interceptorPayload) interceptorPayload {
-	payload.Body = boundedBytes(payload.Body, 512<<10)
-	payload.OriginalRequest = boundedBytes(payload.OriginalRequest, 512<<10)
-	payload.RequestBody = boundedBytes(payload.RequestBody, 512<<10)
-	return payload
+func compactCompletion(payload completionPayload) compactCompletionPayload {
+	metadata := map[string]string{}
+	for _, key := range []string{"model_alias", "provider", "executor_type", "auth_type", "auth_index", "service_tier", "response_service_tier", "reasoning_effort"} {
+		if value := completionMetadataText(payload.Metadata, key); value != "" {
+			metadata[key] = boundedText(value, 256)
+		}
+	}
+	return compactCompletionPayload{
+		RequestID: boundedText(payload.RequestID, 256), TraceID: boundedText(payload.TraceID, 256),
+		SourceFormat: boundedText(payload.SourceFormat, 128), Model: boundedText(payload.Model, 256),
+		RequestedModel: boundedText(payload.RequestedModel, 256), Outcome: boundedText(payload.Outcome, 64),
+		Error: boundedText(payload.Error, 4<<10), Stream: payload.Stream, StatusCode: payload.StatusCode,
+		StartedAt: payload.StartedAt, CompletedAt: payload.CompletedAt, Metadata: metadata,
+	}
 }
 
-func boundedBytes(value []byte, limit int) []byte {
+func completionMetadataText(metadata map[string]any, wanted string) string {
+	for key, value := range metadata {
+		normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+		if normalized == wanted {
+			return strings.TrimSpace(fmt.Sprint(value))
+		}
+		if nested, ok := value.(map[string]any); ok {
+			if found := completionMetadataText(nested, wanted); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
+}
+
+func boundedText(value string, limit int) string {
+	value = strings.TrimSpace(value)
 	if len(value) <= limit {
 		return value
 	}
-	return append([]byte(nil), value[:limit]...)
+	return value[:limit]
 }
 
 func validRoutingSignature(secret string, headers map[string][]string, authID string, now time.Time) bool {

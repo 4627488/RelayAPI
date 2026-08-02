@@ -87,20 +87,20 @@ API key and management key are service credentials; tenant clients receive only
 
 ## CPA v7 plugin boundary
 
-`cliproxyapi-plugin/` is a thin C-ABI plugin with usage-observer, scheduler,
-request/response lifecycle, management, and declarative quota-adapter
-capabilities. A trusted
+`cliproxyapi-plugin/` is a thin C-ABI plugin with scheduler, compact request
+completion, management, and declarative quota-adapter capabilities. A trusted
 `X-Relay-CPA-Auth-ID` can select a specific candidate;
-otherwise the plugin delegates to CPA's built-in scheduler. Usage events are
-sent to Relay over the private network using a shared secret.
+otherwise the plugin delegates to CPA's built-in scheduler. Compact completion
+events are sent to Relay over the private network using a shared secret.
 
 CPA v7's usage plugin record does not include arbitrary request headers, so
 those events cannot safely be the sole tenant-billing correlation source.
-CPA's lifecycle ABI does provide execution IDs, trace IDs, headers, translated
-requests, upstream responses, stream initialization, and terminal outcomes.
-Bridge 0.4 correlates these with `X-Relay-Request-ID` and sends bounded events
-asynchronously. Relay persists them for detailed diagnostics while continuing
-to settle from its own request-correlated terminal response.
+CPA's lifecycle ABI provides execution IDs, trace IDs, and terminal outcomes.
+Bridge 0.5 uses request interception only to correlate these with
+`X-Relay-Request-ID`, then sends one metadata-only completion asynchronously.
+Response and stream interceptors are deliberately disabled so large request
+bodies are never cloned for every stream chunk. Relay continues to capture
+requests, responses, TTFT, and billing usage directly in its proxy path.
 
 Relay request logs have separate summary and detail retention. Sensitive
 headers are redacted; bodies carry original byte counts and truncation flags.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
@@ -36,17 +35,35 @@ func (s Store) RecordCPALifecycleEvent(ctx context.Context, input CPALifecycleIn
 		return errors.New("request log ID and event are required")
 	}
 	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&event).Error; err != nil {
-			return err
-		}
 		var count int64
 		if err := tx.Model(&db.RequestLog{}).Where("id = ?", event.RequestLogID).Count(&count).Error; err != nil {
 			return err
 		}
-		if count == 0 {
-			return nil
+		if count > 0 {
+			return applyCPALifecycleEvent(tx, &event, false)
 		}
-		return applyCPALifecycleEvent(tx, &event)
+		// Only a compact completion may arrive before Relay has written its
+		// request log. Keep it temporarily, then consume it atomically when the
+		// request log is created. Large request/response bodies are owned by the
+		// request detail record and must never be duplicated here.
+		event.Headers = "{}"
+		event.ResponseHeaders = "{}"
+		event.Body = ""
+		event.OriginalRequest = ""
+		event.RequestBody = ""
+		event.RawJSON = ""
+		if err := tx.Create(&event).Error; err != nil {
+			return err
+		}
+		// Close the race where the request log committed between the first
+		// existence check and this insert.
+		if err := tx.Model(&db.RequestLog{}).Where("id = ?", event.RequestLogID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return applyCPALifecycleEvent(tx, &event, true)
+		}
+		return nil
 	})
 }
 
@@ -57,14 +74,14 @@ func applyPendingCPALifecycleEvents(tx *gorm.DB, requestLogID string) error {
 		return err
 	}
 	for index := range events {
-		if err := applyCPALifecycleEvent(tx, &events[index]); err != nil {
+		if err := applyCPALifecycleEvent(tx, &events[index], true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent) error {
+func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent, persisted bool) error {
 	updates := map[string]any{}
 	put := func(column, value string) {
 		if strings.TrimSpace(value) != "" {
@@ -129,14 +146,11 @@ func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent) error {
 			return err
 		}
 	}
-	now := time.Now()
-	// Once the event has enriched the durable request summary/detail, its raw
-	// transport payload is redundant and is by far the largest source of TOAST
-	// growth. Keep compact lifecycle metadata for diagnostics, but scrub the
-	// duplicated bodies immediately.
-	return tx.Model(event).Updates(map[string]any{
-		"processed": true, "processed_at": &now,
-		"headers": "{}", "response_headers": "{}", "body": "",
-		"original_request": "", "request_body": "", "raw_json": "",
-	}).Error
+	if !persisted {
+		return nil
+	}
+	// The durable request summary/detail now owns all useful information.
+	// Removing the temporary enrichment avoids a second lifecycle history and
+	// the INSERT+UPDATE write amplification that previously grew TOAST/WAL.
+	return tx.Delete(event).Error
 }
