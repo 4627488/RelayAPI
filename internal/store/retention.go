@@ -137,29 +137,32 @@ func (s Store) deleteSuccessDetails(ctx context.Context, cutoff time.Time, polic
 	if policy.SuccessDetailDays <= 0 {
 		return 0, nil
 	}
+	batch := policy.BatchSize
+	if batch > 50 {
+		batch = 50
+	}
 	return retentionTx(ctx, s.DB, func(tx *gorm.DB) (int64, error) {
-		var ids []string
-		err := tx.Raw(`SELECT d.request_log_id FROM request_log_details d
+		result := tx.Exec(`WITH selected AS (
+			SELECT d.request_log_id FROM request_log_details d
 			JOIN request_logs l ON l.id = d.request_log_id
 			WHERE l.completed_at < ? AND l.status_code > 0 AND l.status_code < 400 AND l.pricing_complete = true
-			ORDER BY l.completed_at LIMIT ? FOR UPDATE OF d SKIP LOCKED`, cutoff, policy.BatchSize).Scan(&ids).Error
-		if err != nil || len(ids) == 0 {
-			return 0, err
-		}
-		result := tx.Where("request_log_id IN ?", ids).Delete(&db.RequestLogDetail{})
+			ORDER BY l.completed_at LIMIT ? FOR UPDATE OF d SKIP LOCKED
+		) DELETE FROM request_log_details AS detail USING selected
+		WHERE detail.request_log_id = selected.request_log_id`, cutoff, batch)
 		return result.RowsAffected, result.Error
 	})
 }
 
 func (s Store) deleteOldDetails(ctx context.Context, cutoff time.Time, batch int) (int64, error) {
+	if batch > 50 {
+		batch = 50
+	}
 	return retentionTx(ctx, s.DB, func(tx *gorm.DB) (int64, error) {
-		var ids []string
-		err := tx.Raw(`SELECT request_log_id FROM request_log_details WHERE created_at < ?
-			ORDER BY created_at LIMIT ? FOR UPDATE SKIP LOCKED`, cutoff, batch).Scan(&ids).Error
-		if err != nil || len(ids) == 0 {
-			return 0, err
-		}
-		result := tx.Where("request_log_id IN ?", ids).Delete(&db.RequestLogDetail{})
+		result := tx.Exec(`WITH selected AS (
+			SELECT request_log_id FROM request_log_details WHERE created_at < ?
+			ORDER BY created_at LIMIT ? FOR UPDATE SKIP LOCKED
+		) DELETE FROM request_log_details AS detail USING selected
+		WHERE detail.request_log_id = selected.request_log_id`, cutoff, batch)
 		return result.RowsAffected, result.Error
 	})
 }
