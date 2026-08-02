@@ -224,7 +224,7 @@ func handle(method string, raw []byte) ([]byte, error) {
 		current.Store(cfg)
 		return ok(map[string]any{
 			"schema_version": 2,
-			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.5.0", "Author": "4627488",
+			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.5.1", "Author": "4627488",
 				"GitHubRepository": "https://github.com/4627488/RelayAPI",
 				"Logo":             "https://github.com/4627488.png",
 				"ConfigFields": []map[string]any{
@@ -250,7 +250,7 @@ func handle(method string, raw []byte) ([]byte, error) {
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, fmt.Errorf("decode management request: %w", err)
 		}
-		if req.Path == "/plugins/relayapi-bridge/health" {
+		if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/plugins/relayapi-bridge/health") {
 			payload, _ := json.Marshal(map[string]any{
 				"status": "ok", "queue_depth": len(lifecycleQueue), "queue_capacity": cap(lifecycleQueue),
 				"enqueued": lifecycleEnqueued.Load(), "dropped": lifecycleDropped.Load(),

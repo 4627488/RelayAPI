@@ -39,7 +39,7 @@ quota_adapters:
 		!strings.Contains(string(raw), `"usage_plugin":false`) ||
 		!strings.Contains(string(raw), `"response_interceptor":false`) ||
 		!strings.Contains(string(raw), `"response_stream_interceptor":false`) ||
-		!strings.Contains(string(raw), `"Version":"0.5.0"`) {
+		!strings.Contains(string(raw), `"Version":"0.5.1"`) {
 		t.Fatalf("registration = %s", raw)
 	}
 	loadedConfig := loaded()
@@ -49,6 +49,28 @@ quota_adapters:
 	routes, err := handle("management.register", nil)
 	if err != nil || !strings.Contains(string(routes), `"Path":"/plugins/relayapi-bridge/quota"`) {
 		t.Fatalf("management registration = %s, err = %v", routes, err)
+	}
+}
+
+func TestManagementHealthAcceptsFullCPAPath(t *testing.T) {
+	payload, err := json.Marshal(managementRequest{Method: http.MethodGet, Path: "/v0/management/plugins/relayapi-bridge/health"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handle("management.handle", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wrapped envelope
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		t.Fatal(err)
+	}
+	var response managementResponse
+	if err := json.Unmarshal(wrapped.Result, &response); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(response.Body), `"queue_capacity":128`) || !strings.Contains(string(response.Body), `"status":"ok"`) {
+		t.Fatalf("health response = %s", response.Body)
 	}
 }
 
