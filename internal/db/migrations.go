@@ -25,7 +25,7 @@ var migrations = []migration{
 		version: 1,
 		name:    "parent and child subscriptions",
 		statements: []string{
-			`ALTER TABLE parent_subscriptions ADD CONSTRAINT parent_capacity_mode_check CHECK (capacity_mode IN ('unmetered','manual','observed'))`,
+			`ALTER TABLE parent_subscriptions ADD CONSTRAINT parent_capacity_mode_check CHECK (capacity_mode IN ('unmetered','observed'))`,
 			`ALTER TABLE parent_subscriptions ADD CONSTRAINT parent_allocation_limit_check CHECK (allocation_limit_ppm > 0)`,
 			`ALTER TABLE parent_quota_windows ADD CONSTRAINT parent_quota_limit_check CHECK (limit_nano_usd > 0)`,
 			`ALTER TABLE parent_quota_windows ADD CONSTRAINT parent_quota_parent_fk FOREIGN KEY (parent_subscription_id) REFERENCES parent_subscriptions(id) ON DELETE CASCADE`,
@@ -59,6 +59,17 @@ var migrations = []migration{
 				 SELECT id FROM tenants ORDER BY created_at ASC, id ASC LIMIT 1
 			 )
 			 AND NOT EXISTS (SELECT 1 FROM tenants WHERE is_admin = TRUE)`,
+		},
+	},
+	{
+		version: 4,
+		name:    "fold manual windows into observed USD conversions",
+		statements: []string{
+			`UPDATE parent_quota_windows SET source = 'manual_conversion' WHERE source = 'manual'`,
+			`UPDATE parent_subscriptions SET capacity_mode = 'observed' WHERE capacity_mode = 'manual'`,
+			`ALTER TABLE parent_subscriptions DROP CONSTRAINT parent_capacity_mode_check`,
+			`ALTER TABLE parent_subscriptions ADD CONSTRAINT parent_capacity_mode_check CHECK (capacity_mode IN ('unmetered','observed'))`,
+			`ALTER TABLE parent_quota_windows ALTER COLUMN source SET DEFAULT 'manual_conversion'`,
 		},
 	},
 }

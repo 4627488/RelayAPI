@@ -41,7 +41,7 @@ func TestUnmeteredParentDoesNotEnforceAllocationLimit(t *testing.T) {
 	if enforcesAllocationLimit("unmetered") {
 		t.Fatal("unmetered API-key parent must allow multiple balance-backed child grants")
 	}
-	for _, mode := range []string{"manual", "observed"} {
+	for _, mode := range []string{"observed"} {
 		if !enforcesAllocationLimit(mode) {
 			t.Fatalf("%s parent must enforce its allocation limit", mode)
 		}

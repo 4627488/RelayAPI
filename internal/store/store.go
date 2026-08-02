@@ -934,8 +934,8 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		"count(*) AS requests, " +
 			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 THEN 1 ELSE 0 END),0) AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
-			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode IN ('manual','observed') THEN cost_nano_usd ELSE 0 END),0) AS subscription_covered, " +
-			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode IN ('manual','observed') THEN 0 ELSE cost_nano_usd END),0) AS balance_charged",
+			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode = 'observed' THEN cost_nano_usd ELSE 0 END),0) AS subscription_covered, " +
+			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode = 'observed' THEN 0 ELSE cost_nano_usd END),0) AS balance_charged",
 	).Scan(&total).Error; err != nil {
 		return nil, err
 	}

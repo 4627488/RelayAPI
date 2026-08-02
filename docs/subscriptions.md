@@ -43,15 +43,15 @@ the stable CPA AuthID and accounting metadata.
 - stable management `auth_index` stored separately for synchronization,
   observations, request attribution, and credential administration;
 - CPA auth-file name, provider, display name, status, and cached model list;
-- capacity mode: `unmetered`, `manual`, or `observed`;
+- capacity mode: `unmetered` or `observed`;
 - allocation/oversell limit and synchronization timestamps.
 - normalized quota-probe capability, status, last error, observation time, and
   the latest secret-free upstream quota snapshot used by both management views.
 
-`parent_quota_windows` stores arbitrary window kinds such as `5h`, `7d`,
-`daily`, `monthly`, or `credits`. Manual windows are administrator supplied;
-observed windows are updated by quota probes or CPA metadata. The core does not
-hard-code a provider list.
+`parent_quota_windows` stores arbitrary observed window kinds such as `5h`,
+`7d`, `daily`, `monthly`, or `credits`. Window identity and timing are updated
+by quota probes or CPA metadata; administrators may only override each
+window's USD conversion. The core does not hard-code a provider list.
 
 ### Child subscriptions
 
@@ -118,18 +118,19 @@ rejects the request instead of silently bypassing the configured subscription.
   upstream API keys: the key remains private in CPA, any number of child access
   grants can be distributed, and every request is settled against the tenant's
   total Relay balance.
-- `manual`: administrators define parent window limits and reset instants. This
-  works for every CPA provider and API-key endpoint.
 - `observed`: Relay uses a differential method: between two observations in
   the same upstream generation it divides credential-attributed USD cost by
   the upstream used-percentage increase to estimate the full parent capacity.
   Every upstream window (`5h`, `7d`, monthly, and future provider-defined
-  kinds) is calibrated independently. Manual
-  overrides remain available when a provider exposes no normalized quota. An
+  kinds) is calibrated independently. An administrator can instead pin the USD
+  capacity for each automatically discovered window. In that case the upstream
+  still owns the window names, window set, percentages, and reset instants;
+  automatic synchronization does not overwrite the administrator's USD
+  conversion. An
   observed parent with no calibrated window is admitted in learning mode with
   strict credential routing and normal balance billing, but no child-quota
   reservation. A provider explicitly reported as unsupported is rejected until
-  an adapter is installed or the parent is switched to manual/unmetered mode.
+  an adapter is installed or the parent is switched to unmetered mode.
   Once accepted samples produce a capacity estimate, subsequent admissions
   enforce the learned nano-USD windows. Movements of 0.01 percentage points or
   more can produce a sample; incomplete pricing and cross-reset samples are
@@ -156,7 +157,8 @@ fields and raw upstream payloads.
 The CPA credential table and parent-subscription table render the same stored
 snapshot: plan, used/remaining percentage, reset time, raw credit units, and
 non-enforceable product/model windows. Automatic/observed mode treats these
-fields as read-only. Only manual mode exposes editable quota-window inputs.
+fields as read-only and exposes only the USD capacity conversion for each
+enforceable observed window.
 Model policies are selected from the credential's CPA-synchronized model list;
 an empty selection means inherit all available models.
 

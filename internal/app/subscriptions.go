@@ -35,11 +35,8 @@ type childSubscriptionInput struct {
 }
 
 type quotaWindowInput struct {
-	Kind         string   `json:"kind"`
-	LimitNanoUSD int64    `json:"limit_nano_usd"`
-	ResetsAt     string   `json:"resets_at"`
-	Source       string   `json:"source"`
-	UsedPercent  *float64 `json:"observed_used_percent"`
+	Kind         string `json:"kind"`
+	LimitNanoUSD int64  `json:"limit_nano_usd"`
 }
 
 func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +137,40 @@ func (a *App) adminParentWindows(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	parent, err := a.store.GetParentSubscription(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeSubscriptionError(w, err)
+		return
+	}
+	if parent.CapacityMode != db.ParentCapacityObserved {
+		writeError(w, 400, "validation_error", "只有自动观测模式可以配置窗口 USD 转换")
+		return
+	}
+	var snapshot struct {
+		Windows []struct {
+			Kind        string     `json:"kind"`
+			UsedPercent *float64   `json:"used_percent"`
+			ResetsAt    *time.Time `json:"resets_at"`
+			Enforceable bool       `json:"enforceable"`
+		} `json:"windows"`
+	}
+	if err := json.Unmarshal(parent.QuotaSnapshot, &snapshot); err != nil {
+		writeError(w, 409, "quota_snapshot_invalid", "自动观测快照无效，请先重新同步上游额度")
+		return
+	}
+	observed := make(map[string]struct {
+		usedPercent *float64
+		resetsAt    time.Time
+	}, len(snapshot.Windows))
+	for _, item := range snapshot.Windows {
+		kind := strings.TrimSpace(item.Kind)
+		if kind != "" && item.Enforceable && item.ResetsAt != nil {
+			observed[kind] = struct {
+				usedPercent *float64
+				resetsAt    time.Time
+			}{usedPercent: item.UsedPercent, resetsAt: *item.ResetsAt}
+		}
+	}
 	windows := make([]store.ParentQuotaWindow, 0, len(input.Items))
 	seenKinds := make(map[string]struct{}, len(input.Items))
 	for _, value := range input.Items {
@@ -153,15 +184,15 @@ func (a *App) adminParentWindows(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		seenKinds[value.Kind] = struct{}{}
-		resetsAt, err := time.Parse(time.RFC3339, value.ResetsAt)
-		if err != nil {
-			writeError(w, 400, "validation_error", "额度窗口重置时间无效")
+		upstream, exists := observed[value.Kind]
+		if !exists {
+			writeError(w, 400, "validation_error", "额度窗口必须来自最新的自动观测快照")
 			return
 		}
 		now := time.Now()
 		windows = append(windows, store.ParentQuotaWindow{
-			Kind: value.Kind, LimitNanoUSD: value.LimitNanoUSD, ResetsAt: resetsAt,
-			Source: value.Source, ObservedUsedPercent: value.UsedPercent, ObservedAt: &now,
+			Kind: value.Kind, LimitNanoUSD: value.LimitNanoUSD, ResetsAt: upstream.resetsAt,
+			Source: db.ParentQuotaSourceManualConversion, ObservedUsedPercent: upstream.usedPercent, ObservedAt: &now,
 		})
 	}
 	if err := a.store.SetParentQuotaWindows(r.Context(), r.PathValue("id"), windows); err != nil {
@@ -397,7 +428,7 @@ func childFromInput(id string, input childSubscriptionInput) store.ChildSubscrip
 }
 
 func validCapacityMode(value string) bool {
-	return value == db.ParentCapacityUnmetered || value == db.ParentCapacityManual || value == db.ParentCapacityObserved
+	return value == db.ParentCapacityUnmetered || value == db.ParentCapacityObserved
 }
 
 func writeSubscriptionError(w http.ResponseWriter, err error) {

@@ -247,7 +247,7 @@ func (s Store) SetParentQuotaWindows(ctx context.Context, parentID string, windo
 				return errors.New("invalid parent quota window")
 			}
 			if window.Source == "" {
-				window.Source = "manual"
+				window.Source = db.ParentQuotaSourceManualConversion
 			}
 			var existing ParentQuotaWindow
 			existingErr := tx.First(&existing, "parent_subscription_id = ? AND kind = ?", parentID, window.Kind).Error
@@ -368,7 +368,13 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 		}
 		existing, windowErr := currentWindow, currentWindowErr
 		limit := int64(0)
-		if observation.EstimatedLimit != nil {
+		source := db.ParentCapacityObserved
+		if windowErr == nil && existing.Source == db.ParentQuotaSourceManualConversion {
+			// The upstream owns observed window timing, while the administrator
+			// may explicitly own the conversion from that window to USD.
+			limit = existing.LimitNanoUSD
+			source = db.ParentQuotaSourceManualConversion
+		} else if observation.EstimatedLimit != nil {
 			var estimates []int64
 			if err := tx.Model(&ParentQuotaObservation{}).
 				Where("parent_subscription_id = ? AND kind = ? AND accepted = ? AND estimated_limit IS NOT NULL", parentID, observation.Kind, true).
@@ -382,7 +388,7 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 		if limit > 0 {
 			window := ParentQuotaWindow{
 				ParentSubscriptionID: parentID, Kind: observation.Kind, LimitNanoUSD: limit,
-				ResetsAt: resetsAt, Source: db.ParentCapacityObserved, ObservedUsedPercent: &usedPercent, ObservedAt: &observedAt,
+				ResetsAt: resetsAt, Source: source, ObservedUsedPercent: &usedPercent, ObservedAt: &observedAt,
 			}
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "parent_subscription_id"}, {Name: "kind"}},

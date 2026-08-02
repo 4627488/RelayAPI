@@ -32,7 +32,6 @@ import { dateTime, money } from "@/lib/format"
 
 const capacityModes: Array<{ value: CapacityMode; label: string }> = [
   { value: "unmetered", label: "账户余额计费" },
-  { value: "manual", label: "手动容量窗口" },
   { value: "observed", label: "自动观测/校准容量" },
 ]
 
@@ -344,19 +343,17 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
     if (!value) return
     setMode(value.item.capacity_mode)
     setModels(value.item.model_allowlist ?? [])
-    if (!value.windows.length) {
-      setWindows([emptyWindow("5h"), emptyWindow("7d")])
-      return
-    }
-    setWindows(value.windows.map((item) => ({
-      key: crypto.randomUUID(),
-      kind: item.kind,
-      limit: item.limit_nano_usd ? String(item.limit_nano_usd / 1_000_000_000) : "",
-      reset: localDateTime(item.resets_at),
-    })))
+    setWindows(value.item.capacity_mode === "observed" ? observedEditableWindows(value) : [])
   }, [value])
   if (!value) return null
   const current = value
+
+  function changeMode(next: unknown) {
+    if (!isCapacityMode(next)) return
+    setMode(next)
+    if (next === "observed") setWindows(observedEditableWindows(current))
+    else setWindows([])
+  }
 
   function updateWindow(key: string, field: keyof Omit<EditableWindow, "key">, next: string) {
     setWindows((items) => items.map((item) => item.key === key ? { ...item, [field]: next } : item))
@@ -367,18 +364,22 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
     const form = new FormData(event.currentTarget)
     onPending(true)
     try {
-      let manualItems: Array<{ kind: string; limit_nano_usd: number; resets_at: string; source: string }> = []
-      if (mode === "manual") {
+      let windowItems: Array<{ kind: string; limit_nano_usd: number }> = []
+      if (mode === "observed") {
         const configured = windows.filter((item) => item.kind.trim() || item.limit || item.reset)
-        if (!configured.length) throw new Error("手动计量父订阅至少需要一个有效容量窗口")
         const names = new Set<string>()
-        manualItems = configured.map((item) => {
+        windowItems = configured.map((item) => {
           const kind = item.kind.trim()
           const limit = Math.round(Number(item.limit) * 1_000_000_000)
-          if (!kind || !Number.isFinite(limit) || limit <= 0 || !item.reset) throw new Error("每个额度窗口都需要名称、正数容量和重置时间")
+          if (!kind || !Number.isFinite(limit) || limit <= 0 || !item.reset) {
+            throw new Error("请为每个自动观测窗口填写正数 USD 容量")
+          }
           if (names.has(kind)) throw new Error(`额度窗口名称重复：${kind}`)
           names.add(kind)
-          return { kind, limit_nano_usd: limit, resets_at: new Date(item.reset).toISOString(), source: mode }
+          return {
+            kind,
+            limit_nano_usd: limit,
+          }
         })
       }
       await api(`/api/admin/subscriptions/parents/${current.item.id}`, {
@@ -389,10 +390,8 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
           enabled: form.get("enabled") === "on", model_allowlist: models,
         }),
       })
-      if (mode === "manual") {
-        await api(`/api/admin/subscriptions/parents/${current.item.id}/windows`, { method: "PUT", body: JSON.stringify({ items: manualItems }) })
-      } else if (mode === "observed" && current.item.capacity_mode !== "observed") {
-        await api(`/api/admin/subscriptions/parents/${current.item.id}/windows`, { method: "PUT", body: JSON.stringify({ items: [] }) })
+      if (mode === "observed" && windowItems.length) {
+        await api(`/api/admin/subscriptions/parents/${current.item.id}/windows`, { method: "PUT", body: JSON.stringify({ items: windowItems }) })
       }
       toast.success("父订阅配置已保存")
       onClose()
@@ -411,22 +410,16 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
         <form id="parent-subscription-form" onSubmit={save}>
           <FieldGroup>
             <Field><FieldLabel htmlFor="parent-name">名称</FieldLabel><Input id="parent-name" name="name" defaultValue={current.item.name} required /></Field>
-            <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel>容量模式</FieldLabel><Select value={mode} onValueChange={(next) => { if (isCapacityMode(next)) setMode(next) }}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{capacityModes.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><Field><FieldLabel>上游计划</FieldLabel><div className="flex h-9 items-center gap-2 rounded-md border bg-muted/30 px-3"><Badge variant="secondary">{current.item.plan_type || "未识别"}</Badge><span className="text-xs text-muted-foreground">由 CPA 自动同步</span></div></Field></div>
+            <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel>容量模式</FieldLabel><Select value={mode} onValueChange={changeMode}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{capacityModes.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><Field><FieldLabel>上游计划</FieldLabel><div className="flex h-9 items-center gap-2 rounded-md border bg-muted/30 px-3"><Badge variant="secondary">{current.item.plan_type || "未识别"}</Badge><span className="text-xs text-muted-foreground">由 CPA 自动同步</span></div></Field></div>
             {mode !== "unmetered" ? <Field><FieldLabel htmlFor="parent-limit">可分配上限（%）</FieldLabel><Input id="parent-limit" name="allocation_limit" type="number" min="0.0001" step="0.0001" defaultValue={current.item.allocation_limit_ppm / 10_000} required /><FieldDescription>这是子订阅业务分配策略；100% 表示不超售，大于 100% 才表示明确允许超售。</FieldDescription></Field> : <Field><FieldLabel htmlFor="parent-billing-source">结算方式</FieldLabel><Input id="parent-billing-source" value="按租户账户总余额结算" readOnly /><FieldDescription>适用于按量付费的上游 API Key。可创建多个子订阅，实际请求按模型价格预扣并结算。</FieldDescription></Field>}
             <Field><FieldLabel htmlFor="parent-models">模型策略范围</FieldLabel><ModelSelector id="parent-models" options={current.item.cpa_model_allowlist ?? []} value={models} onChange={setModels} /><FieldDescription>CPA 已同步 {current.item.cpa_model_allowlist?.length ?? 0} 个模型；不选择表示允许该凭据的全部模型。</FieldDescription></Field>
             {mode === "observed" ? <div className="flex flex-col gap-3 rounded-lg border p-3">
-              <div><p className="font-medium">自动额度</p><p className="text-xs text-muted-foreground">以下数据由 bridge 从 CPA 凭据自动读取。这里不再要求手填百分比、窗口名称或重置时间。</p></div>
+              <div><p className="font-medium">自动观测窗口</p><p className="text-xs text-muted-foreground">窗口名称、数量、使用率和重置时间由 bridge 自动观测；你只定义每个窗口对应的 USD 容量。</p></div>
               <QuotaSnapshot snapshot={current.item.quota_snapshot} status={current.item.quota_probe_status} error={current.item.quota_probe_error} observedAt={current.item.quota_observed_at} />
-              <div className="rounded-md bg-muted/40 p-3"><p className="text-sm font-medium">USD 校准容量</p>{current.windows.length ? <div className="mt-2 flex flex-col gap-1">{current.windows.map((window) => <div key={window.kind} className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"><span>{window.kind} · {money(window.limit_nano_usd)}</span><span>{dateTime(window.resets_at)} 重置</span></div>)}</div> : <p className="mt-1 text-xs text-muted-foreground">正在学习：需要上游百分比发生有效变化，并有对应的本地计价消费后，才会估算完整 USD 容量。</p>}</div>
-            </div> : null}
-            {mode === "manual" ? <div className="flex flex-col gap-3 rounded-lg border p-3">
-              <div className="flex items-center justify-between gap-3"><div><p className="font-medium">手动额度窗口</p><p className="text-xs text-muted-foreground">仅在上游没有可用额度扩展时填写。</p></div><Button type="button" size="sm" variant="outline" onClick={() => setWindows((items) => [...items, emptyWindow("")])}><PlusIcon />添加窗口</Button></div>
-              {windows.map((item) => <div key={item.key} className="grid items-end gap-3 rounded-md bg-muted/40 p-3 sm:grid-cols-[0.8fr_1fr_1.2fr_auto]">
-                <Field><FieldLabel htmlFor={`${item.key}-kind`}>名称</FieldLabel><Input id={`${item.key}-kind`} value={item.kind} onChange={(event) => updateWindow(item.key, "kind", event.target.value)} placeholder="5h / monthly" /></Field>
-                <Field><FieldLabel htmlFor={`${item.key}-limit`}>容量（USD）</FieldLabel><Input id={`${item.key}-limit`} type="number" min="0" step="0.000001" value={item.limit} onChange={(event) => updateWindow(item.key, "limit", event.target.value)} /></Field>
-                <Field><FieldLabel htmlFor={`${item.key}-reset`}>上游重置时间</FieldLabel><Input id={`${item.key}-reset`} type="datetime-local" step="1" value={item.reset} onChange={(event) => updateWindow(item.key, "reset", event.target.value)} /></Field>
-                <Button type="button" size="icon-sm" variant="ghost" aria-label="删除额度窗口" onClick={() => setWindows((items) => items.filter((window) => window.key !== item.key))}><Trash2Icon /></Button>
-              </div>)}
+              {windows.length ? <FieldGroup>{windows.map((item) => <Field key={item.key} orientation="horizontal">
+                <div className="min-w-0 flex-1"><FieldLabel htmlFor={`${item.key}-observed-limit`}>{item.kind}</FieldLabel><FieldDescription>{dateTime(new Date(item.reset).toISOString())} 重置</FieldDescription></div>
+                <Input id={`${item.key}-observed-limit`} className="w-40" type="number" min="0.000001" step="0.000001" value={item.limit} onChange={(event) => updateWindow(item.key, "limit", event.target.value)} placeholder="USD 容量" required />
+              </Field>)}</FieldGroup> : <p className="text-xs text-muted-foreground">尚未发现可执行窗口。请先同步上游额度；发现 5h、7d 等窗口后即可填写对应的 USD 容量。</p>}
             </div> : null}
             <label className="flex items-center gap-2 text-sm"><input name="enabled" type="checkbox" defaultChecked={current.item.enabled} />启用父订阅</label>
           </FieldGroup>
@@ -500,7 +493,7 @@ function ParentDistributionCard({ view, children, tenants, drafts, pending, onAd
 
 function QuotaProbeBadge({ item }: { item: ParentSubscriptionView["item"] }) {
   if (item.quota_probe_status === "supported") return <Badge variant="outline" title={item.quota_observed_at ? `最近观测：${dateTime(item.quota_observed_at)}` : undefined}>自动额度</Badge>
-  if (item.quota_probe_status === "unsupported") return <Badge variant="outline">额度需手动配置</Badge>
+  if (item.quota_probe_status === "unsupported") return <Badge variant="outline">不支持自动额度</Badge>
   if (item.quota_probe_status === "error") return <Badge variant="destructive" title={item.quota_probe_error || "额度探测失败"}>额度探测失败</Badge>
   return <Badge variant="outline">额度待探测</Badge>
 }
@@ -524,7 +517,26 @@ function TableSkeleton({ columns }: { columns: number }) {
 }
 
 type EditableWindow = { key: string; kind: string; limit: string; reset: string }
-function emptyWindow(kind: string): EditableWindow { return { key: crypto.randomUUID(), kind, limit: "", reset: "" } }
+
+function observedEditableWindows(value: ParentSubscriptionView): EditableWindow[] {
+  const stored = new Map(value.windows.map((window) => [window.kind, window]))
+  const upstream = value.item.quota_snapshot?.windows ?? []
+  const result: EditableWindow[] = []
+  const seen = new Set<string>()
+  for (const window of upstream) {
+    const kind = window.kind.trim()
+    if (!kind || seen.has(kind) || !window.enforceable || !window.resets_at) continue
+    seen.add(kind)
+    const saved = stored.get(kind)
+    result.push({
+      key: crypto.randomUUID(),
+      kind,
+      limit: saved?.limit_nano_usd ? String(saved.limit_nano_usd / 1_000_000_000) : "",
+      reset: localDateTime(window.resets_at),
+    })
+  }
+  return result
+}
 
 export function TenantSubscriptionsView() {
   const [items, setItems] = useState<ChildSubscription[]>([])

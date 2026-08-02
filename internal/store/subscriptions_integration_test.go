@@ -47,7 +47,7 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 
 	store := Store{DB: database}
 	parent, err := store.UpsertParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "auth-integration", Name: "parent", CapacityMode: db.ParentCapacityManual,
+		CPAAuthID: "auth-integration", Name: "parent", CapacityMode: db.ParentCapacityObserved,
 		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	parent = syncedParent
 	firstReset := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 	if err := store.SetParentQuotaWindows(ctx, parent.ID, []ParentQuotaWindow{{
-		Kind: "rolling", LimitNanoUSD: 1_000, ResetsAt: firstReset, Source: "manual",
+		Kind: "rolling", LimitNanoUSD: 1_000, ResetsAt: firstReset, Source: db.ParentQuotaSourceManualConversion,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -212,9 +212,21 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 
 	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 	if err := store.SetParentQuotaWindows(ctx, parent.ID, []ParentQuotaWindow{{
-		Kind: "daily", LimitNanoUSD: 100, ResetsAt: reset, Source: db.ParentCapacityObserved,
+		Kind: "daily", LimitNanoUSD: 100, ResetsAt: reset, Source: db.ParentQuotaSourceManualConversion,
 	}}); err != nil {
 		t.Fatal(err)
+	}
+	usedPercent := 25.0
+	observedWindowAt := time.Now().UTC()
+	if _, err := store.RecordParentQuotaObservation(ctx, parent.ID, "daily", usedPercent, reset, observedWindowAt); err != nil {
+		t.Fatal(err)
+	}
+	configuredWindows, err := store.ListParentQuotaWindows(ctx, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configuredWindows) != 1 || configuredWindows[0].LimitNanoUSD != 100 || configuredWindows[0].Source != db.ParentQuotaSourceManualConversion {
+		t.Fatalf("manual USD conversion was overwritten by observation: %+v", configuredWindows)
 	}
 	second, err := store.AdmitRequest(ctx, AdmissionInput{
 		RequestID: identity.NewID(), Key: key, Model: "model", BalanceReserve: 10, QuotaReserve: 10,

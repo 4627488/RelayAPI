@@ -7,6 +7,15 @@ import (
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
+func TestCapacityModesExcludeLegacyManualWindows(t *testing.T) {
+	if !validCapacityMode("unmetered") || !validCapacityMode("observed") {
+		t.Fatal("current capacity modes must remain valid")
+	}
+	if validCapacityMode("manual") {
+		t.Fatal("legacy manual-window mode must be rejected")
+	}
+}
+
 func TestEffectiveSubscriptionModels(t *testing.T) {
 	parent := store.ParentSubscription{
 		CPAModelAllowlist: []string{"gpt-5.2", "gpt-5.1-codex", "claude-sonnet"},

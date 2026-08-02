@@ -238,7 +238,7 @@ type ApiErrorBody = {
   status?: string
 }
 
-export type CapacityMode = "unmetered" | "manual" | "observed"
+export type CapacityMode = "unmetered" | "observed"
 
 export interface UpstreamQuotaWindow {
   kind: string

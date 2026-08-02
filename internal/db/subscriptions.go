@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	ParentCapacityUnmetered = "unmetered"
-	ParentCapacityManual    = "manual"
-	ParentCapacityObserved  = "observed"
+	ParentCapacityUnmetered           = "unmetered"
+	ParentCapacityObserved            = "observed"
+	ParentQuotaSourceManualConversion = "manual_conversion"
 
 	ReservationActive   = "active"
 	ReservationSettled  = "settled"
@@ -51,7 +51,7 @@ type ParentQuotaWindow struct {
 	Kind                 string     `gorm:"primaryKey" json:"kind"`
 	LimitNanoUSD         int64      `gorm:"not null" json:"limit_nano_usd"`
 	ResetsAt             time.Time  `gorm:"not null;index" json:"resets_at"`
-	Source               string     `gorm:"not null;default:'manual'" json:"source"`
+	Source               string     `gorm:"not null;default:'manual_conversion'" json:"source"`
 	ObservedUsedPercent  *float64   `json:"observed_used_percent"`
 	ObservedAt           *time.Time `json:"observed_at"`
 	CreatedAt            time.Time  `json:"created_at"`
