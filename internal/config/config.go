@@ -27,6 +27,16 @@ type Config struct {
 	WebDistDir                 string
 	RequestLogRetentionDays    int
 	RequestDetailRetentionDays int
+	RequestSuccessDetailDays   int
+	RequestSuccessSamplePPM    int
+	LifecycleSuccessHours      int
+	LifecycleErrorDays         int
+	ReservationRetentionDays   int
+	IncompleteReservationDays  int
+	QuotaObservationDays       int
+	InvitationRetentionDays    int
+	RetentionBatchSize         int
+	RetentionMaxRuntime        time.Duration
 }
 
 func Load() (Config, error) {
@@ -45,8 +55,18 @@ func Load() (Config, error) {
 		UnpricedModelPolicy:        strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
 		CPAPluginSecret:            strings.TrimSpace(os.Getenv("CPA_PLUGIN_SECRET")),
 		WebDistDir:                 strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
-		RequestLogRetentionDays:    int(envInt64("REQUEST_LOG_RETENTION_DAYS", 90)),
-		RequestDetailRetentionDays: int(envInt64("REQUEST_LOG_DETAIL_RETENTION_DAYS", 30)),
+		RequestLogRetentionDays:    int(envInt64("REQUEST_LOG_RETENTION_DAYS", 30)),
+		RequestDetailRetentionDays: int(envInt64("REQUEST_LOG_DETAIL_RETENTION_DAYS", 14)),
+		RequestSuccessDetailDays:   int(envInt64("REQUEST_LOG_SUCCESS_DETAIL_DAYS", 1)),
+		RequestSuccessSamplePPM:    int(envInt64("REQUEST_LOG_SUCCESS_SAMPLE_PPM", 10_000)),
+		LifecycleSuccessHours:      int(envInt64("CPA_LIFECYCLE_SUCCESS_HOURS", 24)),
+		LifecycleErrorDays:         int(envInt64("CPA_LIFECYCLE_ERROR_DAYS", 7)),
+		ReservationRetentionDays:   int(envInt64("REQUEST_RESERVATION_RETENTION_DAYS", 14)),
+		IncompleteReservationDays:  int(envInt64("INCOMPLETE_RESERVATION_RETENTION_DAYS", 90)),
+		QuotaObservationDays:       int(envInt64("QUOTA_OBSERVATION_RETENTION_DAYS", 180)),
+		InvitationRetentionDays:    int(envInt64("INVITATION_RETENTION_DAYS", 30)),
+		RetentionBatchSize:         int(envInt64("RETENTION_BATCH_SIZE", 5_000)),
+		RetentionMaxRuntime:        time.Duration(envInt64("RETENTION_MAX_RUNTIME_SECONDS", 30)) * time.Second,
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
@@ -66,8 +86,19 @@ func Load() (Config, error) {
 	if cfg.UnpricedModelPolicy != "allow" && cfg.UnpricedModelPolicy != "deny" {
 		return Config{}, errors.New("UNPRICED_MODEL_POLICY must be allow or deny")
 	}
-	if cfg.RequestLogRetentionDays < 0 || cfg.RequestDetailRetentionDays < 0 {
+	if cfg.RequestLogRetentionDays < 0 || cfg.RequestDetailRetentionDays < 0 || cfg.RequestSuccessDetailDays < 0 ||
+		cfg.LifecycleSuccessHours < 0 || cfg.LifecycleErrorDays < 0 || cfg.ReservationRetentionDays < 0 ||
+		cfg.IncompleteReservationDays < 0 || cfg.QuotaObservationDays < 0 || cfg.InvitationRetentionDays < 0 {
 		return Config{}, errors.New("request log retention days cannot be negative")
+	}
+	if cfg.RequestSuccessSamplePPM < 0 || cfg.RequestSuccessSamplePPM > 1_000_000 {
+		return Config{}, errors.New("REQUEST_LOG_SUCCESS_SAMPLE_PPM must be between 0 and 1000000")
+	}
+	if cfg.RetentionBatchSize < 100 || cfg.RetentionBatchSize > 100_000 {
+		return Config{}, errors.New("RETENTION_BATCH_SIZE must be between 100 and 100000")
+	}
+	if cfg.RetentionMaxRuntime < time.Second || cfg.RetentionMaxRuntime > 10*time.Minute {
+		return Config{}, errors.New("RETENTION_MAX_RUNTIME_SECONDS must be between 1 and 600")
 	}
 	for name, value := range map[string]string{"CPA_URL": cfg.CPAURL, "RELAY_PUBLIC_URL": cfg.PublicURL} {
 		if parsed, err := url.Parse(value); err != nil || parsed.Scheme == "" || parsed.Host == "" {

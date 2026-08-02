@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -759,36 +760,6 @@ func (s Store) RequestLogDetail(ctx context.Context, id, tenantID string) (LogWi
 	return LogWithDetail{Log: item, Detail: &detail}, nil
 }
 
-func (s Store) PruneRequestLogs(ctx context.Context, now time.Time, summaryDays, detailDays int) error {
-	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		if detailDays > 0 {
-			detailCutoff := now.AddDate(0, 0, -detailDays)
-			subquery := tx.Model(&db.RequestLog{}).Select("id").Where("completed_at < ?", detailCutoff)
-			if err := tx.Where("request_log_id IN (?)", subquery).Delete(&db.RequestLogDetail{}).Error; err != nil {
-				return err
-			}
-		}
-		eventCutoff := now.AddDate(0, 0, -7)
-		if err := tx.Where("created_at < ?", eventCutoff).Delete(&db.CPALifecycleEvent{}).Error; err != nil {
-			return err
-		}
-		if summaryDays > 0 {
-			summaryCutoff := now.AddDate(0, 0, -summaryDays)
-			subquery := tx.Model(&db.RequestLog{}).Select("id").Where("completed_at < ?", summaryCutoff)
-			if err := tx.Where("request_log_id IN (?)", subquery).Delete(&db.RequestLogDetail{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("request_log_id IN (?)", subquery).Delete(&db.CPALifecycleEvent{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("completed_at < ?", summaryCutoff).Delete(&db.RequestLog{}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 func (s Store) CreateInvitation(ctx context.Context, email string, expiresAt time.Time) (Invitation, string, error) {
 	plain, hash := identity.NewInvitationToken()
 	item := Invitation{
@@ -939,6 +910,25 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	).Scan(&total).Error; err != nil {
 		return nil, err
 	}
+	rollupBase := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).Where("day >= ?", since)
+	if tenantID != "" {
+		rollupBase = rollupBase.Where("tenant_id = ?", tenantID)
+	}
+	var rolledTotal summary
+	if err := rollupBase.Select(
+		"COALESCE(sum(requests),0) AS requests, COALESCE(sum(errors),0) AS errors, " +
+			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
+			"COALESCE(sum(subscription_covered_nano_usd),0) AS subscription_covered, " +
+			"COALESCE(sum(balance_charged_nano_usd),0) AS balance_charged",
+	).Scan(&rolledTotal).Error; err != nil {
+		return nil, err
+	}
+	total.Requests += rolledTotal.Requests
+	total.Errors += rolledTotal.Errors
+	total.Tokens += rolledTotal.Tokens
+	total.Cost += rolledTotal.Cost
+	total.SubscriptionCovered += rolledTotal.SubscriptionCovered
+	total.BalanceCharged += rolledTotal.BalanceCharged
 	type daily struct {
 		Date     string `json:"date"`
 		Requests int64  `json:"requests"`
@@ -960,6 +950,32 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		Order("date").Scan(&dailyItems).Error; err != nil {
 		return nil, err
 	}
+	rolledDailyQuery := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).Select(
+		"to_char(day, 'YYYY-MM-DD') AS date, COALESCE(sum(requests),0) AS requests, "+
+			"COALESCE(sum(errors),0) AS errors, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
+	).Where("day >= ?", since)
+	if tenantID != "" {
+		rolledDailyQuery = rolledDailyQuery.Where("tenant_id = ?", tenantID)
+	}
+	var rolledDaily []daily
+	if err := rolledDailyQuery.Group("day").Scan(&rolledDaily).Error; err != nil {
+		return nil, err
+	}
+	dailyByDate := make(map[string]daily, len(dailyItems)+len(rolledDaily))
+	for _, item := range append(dailyItems, rolledDaily...) {
+		value := dailyByDate[item.Date]
+		value.Date = item.Date
+		value.Requests += item.Requests
+		value.Errors += item.Errors
+		value.Tokens += item.Tokens
+		value.Cost += item.Cost
+		dailyByDate[item.Date] = value
+	}
+	dailyItems = dailyItems[:0]
+	for _, item := range dailyByDate {
+		dailyItems = append(dailyItems, item)
+	}
+	sort.Slice(dailyItems, func(i, j int) bool { return dailyItems[i].Date < dailyItems[j].Date })
 	type modelTotal struct {
 		Model    string `json:"model"`
 		Requests int64  `json:"requests"`
@@ -978,6 +994,30 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	if err := modelQuery.Group("model").Order("tokens DESC").Scan(&models).Error; err != nil {
 		return nil, err
 	}
+	rolledModelQuery := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).Select(
+		"model, COALESCE(sum(requests),0) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
+	).Where("day >= ?", since)
+	if tenantID != "" {
+		rolledModelQuery = rolledModelQuery.Where("tenant_id = ?", tenantID)
+	}
+	var rolledModels []modelTotal
+	if err := rolledModelQuery.Group("model").Scan(&rolledModels).Error; err != nil {
+		return nil, err
+	}
+	modelsByName := make(map[string]modelTotal, len(models)+len(rolledModels))
+	for _, item := range append(models, rolledModels...) {
+		value := modelsByName[item.Model]
+		value.Model = item.Model
+		value.Requests += item.Requests
+		value.Tokens += item.Tokens
+		value.Cost += item.Cost
+		modelsByName[item.Model] = value
+	}
+	models = models[:0]
+	for _, item := range modelsByName {
+		models = append(models, item)
+	}
+	sort.Slice(models, func(i, j int) bool { return models[i].Tokens > models[j].Tokens })
 	return map[string]any{
 		"days": days, "user_id": tenantID, "summary": total,
 		"daily": dailyItems, "models": models,

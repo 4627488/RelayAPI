@@ -2,13 +2,14 @@ package app
 
 import (
 	"encoding/json"
+	"hash/fnv"
 	"net/http"
 	"strings"
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
-const requestLogDetailLimit = 512 << 10
+const requestLogDetailLimit = 128 << 10
 
 var sensitiveLogHeaders = map[string]struct{}{
 	"api-key": {}, "authorization": {}, "cookie": {}, "set-cookie": {},
@@ -35,6 +36,18 @@ func boundedDetail(payload []byte) (text string, truncated bool, originalBytes i
 		return string(payload), false, originalBytes
 	}
 	return string(payload[:requestLogDetailLimit]), true, originalBytes
+}
+
+func sampledRequest(requestID string, ppm int) bool {
+	if ppm <= 0 {
+		return false
+	}
+	if ppm >= 1_000_000 {
+		return true
+	}
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(requestID))
+	return int(hash.Sum64()%1_000_000) < ppm
 }
 
 func requestType(path string) string {

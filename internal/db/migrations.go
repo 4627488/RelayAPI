@@ -72,6 +72,19 @@ var migrations = []migration{
 			`ALTER TABLE parent_quota_windows ALTER COLUMN source SET DEFAULT 'manual_conversion'`,
 		},
 	},
+	{
+		version: 5,
+		name:    "bounded retention indexes",
+		statements: []string{
+			`CREATE INDEX IF NOT EXISTS request_logs_cleanup_idx ON request_logs(completed_at, id)`,
+			`CREATE INDEX IF NOT EXISTS request_log_details_cleanup_idx ON request_log_details(created_at, request_log_id)`,
+			`CREATE INDEX IF NOT EXISTS cpa_lifecycle_cleanup_idx ON cpa_lifecycle_events(processed, created_at, id)`,
+			`CREATE INDEX IF NOT EXISTS request_reservations_cleanup_idx ON request_reservations(status, pricing_complete, settled_at, request_id)`,
+			`CREATE INDEX IF NOT EXISTS billing_ledgers_cleanup_idx ON billing_ledgers(created_at, id)`,
+			`CREATE INDEX IF NOT EXISTS quota_observations_cleanup_idx ON parent_quota_observations(created_at, id)`,
+			`CREATE INDEX IF NOT EXISTS invitations_cleanup_idx ON invitations(created_at, id)`,
+		},
+	},
 }
 
 func runMigrations(ctx context.Context, database *gorm.DB) error {

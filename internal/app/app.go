@@ -91,6 +91,8 @@ func (a *App) maintenance() {
 	defer pricingTicker.Stop()
 	initialPricingSync := time.NewTimer(2 * time.Second)
 	defer initialPricingSync.Stop()
+	initialRetention := time.NewTimer(30 * time.Second)
+	defer initialRetention.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -106,6 +108,8 @@ func (a *App) maintenance() {
 			if err := a.refreshPricingCatalog(context.Background(), true); err != nil {
 				slog.Warn("initial pricing catalog sync", "error", err)
 			}
+		case <-initialRetention.C:
+			a.runRetention(context.Background())
 		case <-quotaTicker.C:
 			a.refreshParentQuotas(context.Background())
 		case <-pricingTicker.C:
@@ -113,14 +117,28 @@ func (a *App) maintenance() {
 				slog.Warn("periodic pricing catalog sync", "error", err)
 			}
 		case <-retentionTicker.C:
-			if err := a.store.PruneRequestLogs(
-				context.Background(), time.Now(), a.cfg.RequestLogRetentionDays, a.cfg.RequestDetailRetentionDays,
-			); err != nil {
-				slog.Error("prune request logs", "error", err)
-			}
+			a.runRetention(context.Background())
 		case <-a.stop:
 			return
 		}
+	}
+}
+
+func (a *App) runRetention(ctx context.Context) {
+	stats, err := a.store.RunRetention(ctx, time.Now(), store.RetentionPolicy{
+		SummaryDays:       a.cfg.RequestLogRetentionDays,
+		SuccessDetailDays: a.cfg.RequestSuccessDetailDays, ErrorDetailDays: a.cfg.RequestDetailRetentionDays,
+		LifecycleSuccessHours: a.cfg.LifecycleSuccessHours, LifecycleErrorDays: a.cfg.LifecycleErrorDays,
+		ReservationDays: a.cfg.ReservationRetentionDays, IncompleteReservationDays: a.cfg.IncompleteReservationDays,
+		QuotaObservationDays: a.cfg.QuotaObservationDays, InvitationDays: a.cfg.InvitationRetentionDays,
+		BatchSize: a.cfg.RetentionBatchSize, MaxRuntime: a.cfg.RetentionMaxRuntime,
+	})
+	if err != nil {
+		slog.Error("run retention", "error", err)
+	} else if stats.RequestLogs+stats.Details+stats.LifecycleEvents+stats.LifecyclePayloads+stats.Reservations+stats.QuotaObservations+stats.Invitations > 0 {
+		slog.Info("retention completed", "request_logs", stats.RequestLogs, "details", stats.Details,
+			"lifecycle_events", stats.LifecycleEvents, "lifecycle_payloads", stats.LifecyclePayloads, "reservations", stats.Reservations,
+			"quota_observations", stats.QuotaObservations, "invitations", stats.Invitations, "rollups", stats.Rollups)
 	}
 }
 

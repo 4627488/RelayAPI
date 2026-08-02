@@ -96,6 +96,27 @@ type BillingLedger struct {
 	CreatedAt           time.Time `gorm:"index:billing_ledger_tenant_idx,priority:2,sort:desc" json:"created_at"`
 }
 
+// UsageDailyRollup preserves reporting and billing analytics after individual
+// request logs age out. Rows are added in the same transaction that deletes
+// their source request logs, making the compaction idempotent.
+type UsageDailyRollup struct {
+	Day                        time.Time `gorm:"type:date;primaryKey" json:"day"`
+	TenantID                   string    `gorm:"type:uuid;primaryKey;index" json:"tenant_id"`
+	Model                      string    `gorm:"primaryKey" json:"model"`
+	Requests                   int64     `gorm:"not null;default:0" json:"requests"`
+	Errors                     int64     `gorm:"not null;default:0" json:"errors"`
+	PromptTokens               int64     `gorm:"not null;default:0" json:"prompt_tokens"`
+	CompletionTokens           int64     `gorm:"not null;default:0" json:"completion_tokens"`
+	CachedTokens               int64     `gorm:"not null;default:0" json:"cached_tokens"`
+	CacheWriteTokens           int64     `gorm:"not null;default:0" json:"cache_write_tokens"`
+	ReasoningTokens            int64     `gorm:"not null;default:0" json:"reasoning_tokens"`
+	TotalTokens                int64     `gorm:"not null;default:0" json:"total_tokens"`
+	CostNanoUSD                int64     `gorm:"not null;default:0" json:"cost_nano_usd"`
+	SubscriptionCoveredNanoUSD int64     `gorm:"not null;default:0" json:"subscription_covered_nano_usd"`
+	BalanceChargedNanoUSD      int64     `gorm:"not null;default:0" json:"balance_charged_nano_usd"`
+	UpdatedAt                  time.Time `json:"updated_at"`
+}
+
 type RequestLog struct {
 	ID                     string    `gorm:"type:uuid;primaryKey" json:"id"`
 	TenantID               string    `gorm:"type:uuid;not null;index:request_logs_tenant_started_idx,priority:1" json:"tenant_id"`

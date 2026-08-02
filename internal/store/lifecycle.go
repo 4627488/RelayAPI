@@ -126,5 +126,13 @@ func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent) error {
 		}
 	}
 	now := time.Now()
-	return tx.Model(event).Updates(map[string]any{"processed": true, "processed_at": &now}).Error
+	// Once the event has enriched the durable request summary/detail, its raw
+	// transport payload is redundant and is by far the largest source of TOAST
+	// growth. Keep compact lifecycle metadata for diagnostics, but scrub the
+	// duplicated bodies immediately.
+	return tx.Model(event).Updates(map[string]any{
+		"processed": true, "processed_at": &now,
+		"headers": "{}", "response_headers": "{}", "body": "",
+		"original_request": "", "request_body": "", "raw_json": "",
+	}).Error
 }

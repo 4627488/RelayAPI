@@ -350,6 +350,10 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 	if pricingComplete {
 		costPointer = &cost
 	}
+	detail := logContext.detail
+	if status > 0 && status < http.StatusBadRequest && pricingComplete && !sampledRequest(requestID, a.cfg.RequestSuccessSamplePPM) {
+		detail = nil
+	}
 	err := a.store.WriteLog(context.WithoutCancel(r.Context()), store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
 		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.Model, TenantName: key.TenantName,
@@ -361,7 +365,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
 		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: time.Since(started).Milliseconds(),
 		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
-		StartedAt: started, CompletedAt: time.Now(), Detail: logContext.detail,
+		StartedAt: started, CompletedAt: time.Now(), Detail: detail,
 	})
 	if err != nil {
 		slog.Error("write request log", "request_id", requestID, "error", err)

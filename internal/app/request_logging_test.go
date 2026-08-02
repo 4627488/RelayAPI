@@ -28,6 +28,21 @@ func TestBoundedDetailReportsOriginalSize(t *testing.T) {
 	}
 }
 
+func TestSampledRequestIsDeterministicAndHonorsBounds(t *testing.T) {
+	if sampledRequest("request", 0) {
+		t.Fatal("zero sampling rate retained a request")
+	}
+	if !sampledRequest("request", 1_000_000) {
+		t.Fatal("full sampling rate dropped a request")
+	}
+	first := sampledRequest("stable-request-id", 10_000)
+	for index := 0; index < 10; index++ {
+		if sampledRequest("stable-request-id", 10_000) != first {
+			t.Fatal("sampling decision changed for the same request")
+		}
+	}
+}
+
 func TestRequestTypeRecognizesSupportedSurfaces(t *testing.T) {
 	tests := map[string]string{
 		"/v1/responses":        "responses",

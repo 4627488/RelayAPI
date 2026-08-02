@@ -322,6 +322,14 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 			if !observedAt.After(previous.ObservedAt) {
 				return errors.New("observation must be newer than the previous sample")
 			}
+			// Integer-only providers such as Codex often return the same value for
+			// many consecutive probes. Keeping every duplicate adds no calibration
+			// information; retain the preceding change point as the cost baseline.
+			if previous.ResetsAt.Equal(resetsAt) && math.Abs(usedPercent-previous.UsedPercent) < 1e-9 {
+				observation = previous
+				observation.Reason = "unchanged"
+				return nil
+			}
 			if !previous.ResetsAt.Equal(resetsAt) {
 				observation.Reason = "window_reset"
 			} else if usedPercent < previous.UsedPercent {
