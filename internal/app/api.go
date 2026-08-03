@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -116,9 +118,70 @@ type tenantInput struct {
 
 type keyInput struct {
 	Name               string
+	Enabled            bool
 	RateLimitPerMinute *int
 	TokenLimitDaily    *int64
 	ModelAllowlist     []string
+	ModelAliases       []db.APIKeyModelAlias
+}
+
+func normalizeKeyInput(input *keyInput) error {
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" {
+		return errors.New("密钥名称不能为空")
+	}
+	if input.RateLimitPerMinute != nil && *input.RateLimitPerMinute < 1 {
+		return errors.New("每分钟请求数必须大于 0")
+	}
+	if input.TokenLimitDaily != nil && *input.TokenLimitDaily < 1 {
+		return errors.New("每日 Token 数必须大于 0")
+	}
+	models := make([]string, 0, len(input.ModelAllowlist))
+	seenModels := make(map[string]struct{}, len(input.ModelAllowlist))
+	for _, model := range input.ModelAllowlist {
+		model = strings.TrimSpace(model)
+		key := strings.ToLower(model)
+		if model == "" {
+			continue
+		}
+		if _, exists := seenModels[key]; exists {
+			continue
+		}
+		seenModels[key] = struct{}{}
+		models = append(models, model)
+	}
+	input.ModelAllowlist = models
+	if len(input.ModelAliases) > 100 {
+		return errors.New("每个 API Key 最多设置 100 个模型别名")
+	}
+	aliases := make([]db.APIKeyModelAlias, 0, len(input.ModelAliases))
+	seenAliases := make(map[string]struct{}, len(input.ModelAliases))
+	for _, item := range input.ModelAliases {
+		alias := strings.ToLower(strings.TrimSpace(item.Alias))
+		model := strings.TrimSpace(item.Model)
+		if alias == "" || model == "" {
+			return errors.New("模型别名和目标模型不能为空")
+		}
+		if len(alias) > 255 || len(model) > 255 {
+			return errors.New("模型别名和目标模型不能超过 255 个字符")
+		}
+		if strings.EqualFold(alias, model) {
+			return fmt.Errorf("模型别名 %q 不能指向自身", alias)
+		}
+		if _, exists := seenAliases[alias]; exists {
+			return fmt.Errorf("模型别名 %q 重复", alias)
+		}
+		if _, collides := seenModels[alias]; collides {
+			return fmt.Errorf("模型别名 %q 与已启用模型重名", alias)
+		}
+		if len(models) > 0 && !allowed(model, models) {
+			return fmt.Errorf("模型别名 %q 的目标不在已启用模型中", alias)
+		}
+		seenAliases[alias] = struct{}{}
+		aliases = append(aliases, db.APIKeyModelAlias{Alias: alias, Model: model})
+	}
+	input.ModelAliases = aliases
+	return nil
 }
 
 func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -173,17 +236,39 @@ func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if strings.TrimSpace(input.Name) == "" {
-		writeError(w, 400, "validation_error", "密钥名称不能为空")
+	if err := normalizeKeyInput(&input); err != nil {
+		writeError(w, 400, "validation_error", err.Error())
 		return
 	}
-	item, plain, err := a.store.CreateKey(r.Context(), tenantID, input.Name, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist)
+	item, plain, err := a.store.CreateKey(r.Context(), tenantID, input.Name, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 201, map[string]any{"item": item, "key": plain})
+}
+
+func (a *App) keyUpdate(w http.ResponseWriter, r *http.Request) {
+	var input keyInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := normalizeKeyInput(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	item, err := a.store.UpdateKey(r.Context(), currentSession(r).TenantID, r.PathValue("id"), input.Name,
+		input.Enabled, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "密钥不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"item": item})
 }
 
 func (a *App) keyDelete(w http.ResponseWriter, r *http.Request) {
@@ -368,13 +453,39 @@ func (a *App) adminTenantKeys(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	item, plain, err := a.store.CreateKey(r.Context(), tenantID, input.Name, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist)
+	if err := normalizeKeyInput(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	item, plain, err := a.store.CreateKey(r.Context(), tenantID, input.Name, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 201, map[string]any{"item": item, "key": plain})
+}
+
+func (a *App) adminTenantKeyUpdate(w http.ResponseWriter, r *http.Request) {
+	var input keyInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := normalizeKeyInput(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	item, err := a.store.UpdateKey(r.Context(), r.PathValue("id"), r.PathValue("keyID"), input.Name,
+		input.Enabled, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "密钥不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"item": item})
 }
 
 func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {

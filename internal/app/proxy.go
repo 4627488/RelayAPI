@@ -32,6 +32,8 @@ type requestMeta struct {
 	Reasoning       struct {
 		Effort string `json:"effort"`
 	} `json:"reasoning"`
+	RequestedModel string `json:"-"`
+	ModelAlias     string `json:"-"`
 }
 
 func readRequestMeta(body []byte, requestPath string) requestMeta {
@@ -65,6 +67,58 @@ func requestMetadata(body []byte, r *http.Request) requestMeta {
 		meta.Stream = true
 	}
 	return meta
+}
+
+func resolveAPIKeyModel(requested string, aliases []store.APIKeyModelAlias) requestMeta {
+	requested = strings.TrimSpace(requested)
+	result := requestMeta{Model: requested, RequestedModel: requested}
+	for _, item := range aliases {
+		if strings.EqualFold(strings.TrimSpace(item.Alias), requested) {
+			result.Model = strings.TrimSpace(item.Model)
+			result.ModelAlias = requested
+			break
+		}
+	}
+	return result
+}
+
+func rewriteRequestModel(body []byte, requestURL *url.URL, requested, actual string) ([]byte, error) {
+	if requested == "" || actual == "" || strings.EqualFold(requested, actual) {
+		return body, nil
+	}
+	var object map[string]json.RawMessage
+	if len(body) > 0 && json.Unmarshal(body, &object) == nil {
+		if raw, exists := object["model"]; exists {
+			var bodyModel string
+			if json.Unmarshal(raw, &bodyModel) == nil && strings.EqualFold(strings.TrimSpace(bodyModel), requested) {
+				replacement, _ := json.Marshal(actual)
+				object["model"] = replacement
+				var err error
+				body, err = json.Marshal(object)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	const marker = "/models/"
+	if index := strings.Index(requestURL.Path, marker); index >= 0 {
+		start := index + len(marker)
+		end := len(requestURL.Path)
+		if relative := strings.IndexAny(requestURL.Path[start:], ":/"); relative >= 0 {
+			end = start + relative
+		}
+		if strings.EqualFold(requestURL.Path[start:end], requested) {
+			requestURL.Path = requestURL.Path[:start] + actual + requestURL.Path[end:]
+			requestURL.RawPath = ""
+		}
+	}
+	query := requestURL.Query()
+	if strings.EqualFold(strings.TrimSpace(query.Get("model")), requested) {
+		query.Set("model", actual)
+		requestURL.RawQuery = query.Encode()
+	}
+	return body, nil
 }
 
 type rollingCapture struct {
@@ -138,6 +192,16 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	bodyReadAt := time.Now()
 	logContext := requestLogContext{detail: baseRequestDetail(r, body)}
 	meta := requestMetadata(body, r)
+	resolved := resolveAPIKeyModel(meta.Model, key.ModelAliases)
+	resolved.Stream = meta.Stream
+	resolved.ServiceTier = meta.ServiceTier
+	resolved.ReasoningEffort = meta.ReasoningEffort
+	meta = resolved
+	body, err = rewriteRequestModel(body, r.URL, meta.RequestedModel, meta.Model)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "无法改写请求模型")
+		return
+	}
 	websocket := isWebSocketUpgrade(r)
 	billable := meta.Model != "" && (websocket || (r.Method != http.MethodGet && r.Method != http.MethodHead))
 	if meta.Model != "" && !allowed(meta.Model, key.ModelAllowlist, key.TenantModels) {
@@ -386,7 +450,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 	}
 	err := a.store.WriteLog(context.WithoutCancel(r.Context()), store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
-		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.Model, TenantName: key.TenantName,
+		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
 		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
 		AuthIndex: admission.CPAAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,

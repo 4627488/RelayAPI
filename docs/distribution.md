@@ -40,6 +40,12 @@ AMD64 与 ARM64 分别运行在 GitHub 的原生 `ubuntu-24.04` 和
 
 生产环境推荐固定完整版本或 SHA，不要长期跟随 `latest`。
 
+`deploy-production.yml` 会在主镜像发布成功后，通过 GitHub `production`
+environment 自动部署对应的不可变 `sha-*` 标签。生产机上的
+`/opt/relayapi/deploy-relayapi.sh` 使用文件锁串行部署，更新前保存 Compose 备份，
+启动后检查 `/healthz`；健康检查失败时自动恢复原镜像。也可以从 Actions 手动输入
+SHA 或版本标签重新部署、升级或回滚。
+
 ## 标准安装
 
 准备 `.env` 与 `cliproxyapi/config.yaml` 后：

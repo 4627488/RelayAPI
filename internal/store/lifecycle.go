@@ -90,9 +90,22 @@ func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent, persisted 
 	}
 	put("cpa_execution_id", event.CPAExecutionID)
 	put("cpa_trace_id", event.CPATraceID)
-	put("requested_model", event.RequestedModel)
+	// RelayAPI may already have recorded a client-specific API-key alias. CPA
+	// only sees the rewritten model, so its lifecycle event must not erase the
+	// original client-visible model in that case.
+	if strings.TrimSpace(event.RequestedModel) != "" {
+		updates["requested_model"] = gorm.Expr(
+			"CASE WHEN model_alias = '' THEN ? ELSE requested_model END",
+			strings.TrimSpace(event.RequestedModel),
+		)
+	}
 	put("actual_model", event.Model)
-	put("model_alias", event.ModelAlias)
+	if strings.TrimSpace(event.ModelAlias) != "" {
+		updates["model_alias"] = gorm.Expr(
+			"CASE WHEN model_alias = '' THEN ? ELSE model_alias END",
+			strings.TrimSpace(event.ModelAlias),
+		)
+	}
 	put("provider", event.Provider)
 	put("executor_type", event.ExecutorType)
 	put("auth_type", event.AuthType)

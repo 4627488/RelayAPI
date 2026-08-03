@@ -27,6 +27,7 @@ type Store struct {
 }
 type Tenant = db.Tenant
 type APIKey = db.APIKey
+type APIKeyModelAlias = db.APIKeyModelAlias
 type Price = db.ModelPrice
 type ResolvedPrice = pricing.SnapshotPrice
 type Invitation = db.Invitation
@@ -183,18 +184,68 @@ func (s Store) SetupRequired(ctx context.Context) (bool, error) {
 
 func (s Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error) {
 	var result []APIKey
-	err := scoped(ctx, s.DB).Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&result).Error
+	err := scoped(ctx, s.DB).Preload("ModelAliases", func(database *gorm.DB) *gorm.DB {
+		return database.Order("alias")
+	}).Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&result).Error
 	return result, err
 }
 
-func (s Store) CreateKey(ctx context.Context, tenantID, name string, rate *int, tokens *int64, models []string) (APIKey, string, error) {
+func (s Store) CreateKey(ctx context.Context, tenantID, name string, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias) (APIKey, string, error) {
 	plain, prefix, hash := identity.NewAPIKey()
 	item := APIKey{
 		ID: identity.NewID(), TenantID: tenantID, Name: strings.TrimSpace(name), KeyHash: hash,
 		Prefix: prefix, Enabled: true, RateLimitPerMinute: rate, TokenLimitDaily: tokens, ModelAllowlist: models,
 	}
-	err := scoped(ctx, s.DB).Create(&item).Error
+	for index := range aliases {
+		aliases[index].ID = identity.NewID()
+		aliases[index].APIKeyID = item.ID
+	}
+	item.ModelAliases = aliases
+	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Omit("ModelAliases").Create(&item).Error; err != nil {
+			return err
+		}
+		if len(aliases) > 0 {
+			return tx.Create(&aliases).Error
+		}
+		return nil
+	})
 	return item, plain, err
+}
+
+func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled bool, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias) (APIKey, error) {
+	database := scoped(ctx, s.DB)
+	err := database.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&APIKey{}).Where("id = ? AND tenant_id = ?", id, tenantID).Updates(map[string]any{
+			"name": strings.TrimSpace(name), "enabled": enabled, "rate_limit_per_minute": rate,
+			"token_limit_daily": tokens, "model_allowlist": models,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		if err := tx.Where("api_key_id = ?", id).Delete(&db.APIKeyModelAlias{}).Error; err != nil {
+			return err
+		}
+		for index := range aliases {
+			aliases[index].ID = identity.NewID()
+			aliases[index].APIKeyID = id
+		}
+		if len(aliases) > 0 {
+			return tx.Create(&aliases).Error
+		}
+		return nil
+	})
+	if err != nil {
+		return APIKey{}, err
+	}
+	var item APIKey
+	err = database.Preload("ModelAliases", func(database *gorm.DB) *gorm.DB {
+		return database.Order("alias")
+	}).Where("id = ? AND tenant_id = ?", id, tenantID).First(&item).Error
+	return item, err
 }
 
 func (s Store) DeleteKey(ctx context.Context, tenantID, id string) error {
@@ -207,7 +258,9 @@ func (s Store) DeleteKey(ctx context.Context, tenantID, id string) error {
 
 func (s Store) ResolveKey(ctx context.Context, plain string) (KeyContext, error) {
 	var key APIKey
-	if err := scoped(ctx, s.DB).Where("key_hash = ?", identity.HashKey(plain)).First(&key).Error; err != nil {
+	if err := scoped(ctx, s.DB).Preload("ModelAliases", func(database *gorm.DB) *gorm.DB {
+		return database.Order("alias")
+	}).Where("key_hash = ?", identity.HashKey(plain)).First(&key).Error; err != nil {
 		return KeyContext{}, notFound(err)
 	}
 	var tenant Tenant

@@ -33,8 +33,15 @@ export interface ApiKey {
   rate_limit_per_minute: number | null
   token_limit_daily: number | null
   model_allowlist: string[]
+  model_aliases: ApiKeyModelAlias[]
   last_used_at: string | null
   created_at: string
+}
+
+export interface ApiKeyModelAlias {
+  id?: string
+  alias: string
+  model: string
 }
 
 export interface Invitation {

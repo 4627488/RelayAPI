@@ -26,18 +26,29 @@ type Tenant struct {
 }
 
 type APIKey struct {
-	ID                 string         `gorm:"type:uuid;primaryKey" json:"id"`
-	TenantID           string         `gorm:"type:uuid;not null;index:api_keys_tenant_idx,priority:1" json:"tenant_id"`
-	Name               string         `gorm:"not null" json:"name"`
-	KeyHash            []byte         `gorm:"uniqueIndex;not null" json:"-"`
-	Prefix             string         `gorm:"not null" json:"prefix"`
-	Enabled            bool           `gorm:"not null;default:true" json:"enabled"`
-	RateLimitPerMinute *int           `json:"rate_limit_per_minute"`
-	TokenLimitDaily    *int64         `json:"token_limit_daily"`
-	ModelAllowlist     pq.StringArray `gorm:"type:text[];not null;default:'{}'" json:"model_allowlist"`
-	ExpiresAt          *time.Time     `json:"expires_at"`
-	LastUsedAt         *time.Time     `json:"last_used_at"`
-	CreatedAt          time.Time      `gorm:"index:api_keys_tenant_idx,priority:2,sort:desc" json:"created_at"`
+	ID                 string             `gorm:"type:uuid;primaryKey" json:"id"`
+	TenantID           string             `gorm:"type:uuid;not null;index:api_keys_tenant_idx,priority:1" json:"tenant_id"`
+	Name               string             `gorm:"not null" json:"name"`
+	KeyHash            []byte             `gorm:"uniqueIndex;not null" json:"-"`
+	Prefix             string             `gorm:"not null" json:"prefix"`
+	Enabled            bool               `gorm:"not null;default:true" json:"enabled"`
+	RateLimitPerMinute *int               `json:"rate_limit_per_minute"`
+	TokenLimitDaily    *int64             `json:"token_limit_daily"`
+	ModelAllowlist     pq.StringArray     `gorm:"type:text[];not null;default:'{}'" json:"model_allowlist"`
+	ModelAliases       []APIKeyModelAlias `gorm:"foreignKey:APIKeyID;constraint:OnDelete:CASCADE" json:"model_aliases"`
+	ExpiresAt          *time.Time         `json:"expires_at"`
+	LastUsedAt         *time.Time         `json:"last_used_at"`
+	CreatedAt          time.Time          `gorm:"index:api_keys_tenant_idx,priority:2,sort:desc" json:"created_at"`
+}
+
+// APIKeyModelAlias exposes an additional client-visible model name for one API
+// key. Model always stores the concrete model used for authorization, billing,
+// subscription admission, and CPA routing.
+type APIKeyModelAlias struct {
+	ID       string `gorm:"type:uuid;primaryKey" json:"id"`
+	APIKeyID string `gorm:"type:uuid;not null;uniqueIndex:api_key_model_alias_identity,priority:1" json:"-"`
+	Alias    string `gorm:"not null;uniqueIndex:api_key_model_alias_identity,priority:2" json:"alias"`
+	Model    string `gorm:"not null;index" json:"model"`
 }
 
 type ModelPrice struct {

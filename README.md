@@ -102,13 +102,19 @@ CPA 凭据页和父订阅页都会展示最近一次脱敏上游额度快照。�
 - `POST /api/auth/login`：登录
 - `GET /api/dashboard`：账户与近 30 天概览
 - `GET /api/usage?days=30`：按天、模型聚合的个人用量
-- `GET|POST /api/keys`：查看或生成个人 API Key
+- `GET|POST /api/keys`：查看或生成个人 API Key，可限制启用模型并配置 Key 私有模型别名
+- `PUT /api/keys/{id}`：编辑 API Key 名称、额度、启用模型和模型别名
 - `DELETE /api/keys/{id}`：删除个人 API Key
 - `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
 
 创建邀请时仅在响应中返回一次明文 token。数据库只保存 SHA-256 哈希；邀请可
 限制注册邮箱，并支持过期、使用和撤销状态。
+
+API Key 模型别名是客户端可见的附加入口。例如将 `fast` 指向
+`gemini-2.5-flash` 后，客户端可以用 `fast` 发起请求。RelayAPI 会先解析别名，
+再以实际模型执行 Key/租户权限检查、订阅准入和计费，最后交给 CPA 完成提供商路由
+和协议转换。空模型范围仍表示继承全部可用模型；别名不会绕过模型范围限制。
 
 ## 验证
 

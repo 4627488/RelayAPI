@@ -4,9 +4,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/4627488/RelayAPI/internal/store"
 )
 
 func TestRoutesRegisterWithFrontendCatchAll(t *testing.T) {
@@ -51,6 +54,52 @@ func TestAllowedSupportsGlob(t *testing.T) {
 	if !allowed("anything", nil) {
 		t.Fatal("empty allowlist should allow all")
 	}
+}
+
+func TestResolveAPIKeyModelIsCaseInsensitive(t *testing.T) {
+	meta := resolveAPIKeyModel("FAST", []store.APIKeyModelAlias{{Alias: "fast", Model: "gemini-2.5-flash"}})
+	if meta.RequestedModel != "FAST" || meta.Model != "gemini-2.5-flash" || meta.ModelAlias != "FAST" {
+		t.Fatalf("resolved model = %+v", meta)
+	}
+	passthrough := resolveAPIKeyModel("gpt-5.6", nil)
+	if passthrough.Model != "gpt-5.6" || passthrough.RequestedModel != "gpt-5.6" || passthrough.ModelAlias != "" {
+		t.Fatalf("passthrough model = %+v", passthrough)
+	}
+}
+
+func TestRewriteRequestModelCoversBodyPathAndQuery(t *testing.T) {
+	t.Run("json body preserves other raw values", func(t *testing.T) {
+		request, _ := http.NewRequest(http.MethodPost, "http://relay.test/v1/responses", nil)
+		body, err := rewriteRequestModel([]byte(`{"model":"fast","large":9007199254740993}`), request.URL, "fast", "gpt-5.6")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(body, &object); err != nil {
+			t.Fatal(err)
+		}
+		if string(object["model"]) != `"gpt-5.6"` || string(object["large"]) != "9007199254740993" {
+			t.Fatalf("rewritten body = %s", body)
+		}
+	})
+	t.Run("gemini path", func(t *testing.T) {
+		request, _ := http.NewRequest(http.MethodPost, "http://relay.test/v1beta/models/fast:generateContent", nil)
+		if _, err := rewriteRequestModel(nil, request.URL, "fast", "gemini-2.5-flash"); err != nil {
+			t.Fatal(err)
+		}
+		if request.URL.Path != "/v1beta/models/gemini-2.5-flash:generateContent" {
+			t.Fatalf("rewritten path = %q", request.URL.Path)
+		}
+	})
+	t.Run("query", func(t *testing.T) {
+		request, _ := http.NewRequest(http.MethodGet, "http://relay.test/v1/realtime?model=fast&voice=alloy", nil)
+		if _, err := rewriteRequestModel(nil, request.URL, "fast", "gpt-realtime"); err != nil {
+			t.Fatal(err)
+		}
+		if request.URL.Query().Get("model") != "gpt-realtime" || request.URL.Query().Get("voice") != "alloy" {
+			t.Fatalf("rewritten query = %q", request.URL.RawQuery)
+		}
+	})
 }
 
 func TestBearerSupportsCompatibleClientHeaders(t *testing.T) {

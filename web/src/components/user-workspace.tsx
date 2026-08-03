@@ -3,6 +3,7 @@ import {
   CheckIcon,
   CopyIcon,
   KeyRoundIcon,
+  PencilIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -50,6 +51,10 @@ import { LogsTable, ModelTable, UsageChart, UsageMetrics } from "@/components/da
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ModelSelector } from "@/components/model-selector"
+import {
+  ApiKeyModelAliasEditor,
+  type ModelAliasDraft,
+} from "@/components/api-key-model-alias-editor"
 import { TenantSubscriptionsView } from "@/components/subscriptions-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { ConnectionGuide } from "@/components/connection-guide"
@@ -207,6 +212,7 @@ function KeysView({
   storageKey: string
 }) {
   const [createOpen, setCreateOpen] = useState(false)
+  const [editingKey, setEditingKey] = useState<ApiKey | null>(null)
   const [showPlainKey, setShowPlainKey] = useState(false)
   const [generatedKey, setGeneratedKey] = useSessionStorage<GeneratedKey>(
     storageKey,
@@ -215,6 +221,7 @@ function KeysView({
   const [pending, setPending] = useState(false)
   const [modelOptions, setModelOptions] = useState<string[]>(tenantModels)
   const [selectedModels, setSelectedModels] = useState<string[]>(() => preferredModelsFrom(tenantModels))
+  const [modelAliases, setModelAliases] = useState<ModelAliasDraft[]>([])
   const modelSelectionTouched = useRef(false)
 
   useEffect(() => {
@@ -241,8 +248,19 @@ function KeysView({
 
   function openCreateDialog() {
     modelSelectionTouched.current = false
+    setEditingKey(null)
     setShowPlainKey(false)
     setSelectedModels(preferredModelsFrom(modelOptions))
+    setModelAliases([])
+    setCreateOpen(true)
+  }
+
+  function openEditDialog(key: ApiKey) {
+    modelSelectionTouched.current = true
+    setEditingKey(key)
+    setShowPlainKey(false)
+    setSelectedModels(key.model_allowlist ?? [])
+    setModelAliases((key.model_aliases ?? []).map((item) => ({ ...item, clientId: item.id ?? crypto.randomUUID() })))
     setCreateOpen(true)
   }
 
@@ -261,6 +279,7 @@ function KeysView({
         rateLimitPerMinute: numberOrNull(data.get("rate")),
         tokenLimitDaily: numberOrNull(data.get("tokens")),
         modelAllowlist: selectedModels,
+        modelAliases: modelAliases.map(({ alias, model }) => ({ alias, model })),
       })
       setGeneratedKey({ id: response.item.id, name: response.item.name, key: response.key })
       setShowPlainKey(true)
@@ -268,6 +287,35 @@ function KeysView({
       toast.success("API Key 已创建")
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "创建失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function update(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!editingKey) return
+    const data = new FormData(event.currentTarget)
+    setPending(true)
+    try {
+      await api<{ item: ApiKey }>(`/api/keys/${editingKey.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: String(data.get("name") ?? ""),
+          enabled: editingKey.enabled,
+          rateLimitPerMinute: numberOrNull(data.get("rate")),
+          tokenLimitDaily: numberOrNull(data.get("tokens")),
+          modelAllowlist: selectedModels,
+          modelAliases: modelAliases.map(({ alias, model }) => ({ alias, model })),
+        }),
+      })
+      setCreateOpen(false)
+      setEditingKey(null)
+      await onChanged()
+      toast.success("API Key 已更新")
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "更新失败")
     } finally {
       setPending(false)
     }
@@ -329,6 +377,7 @@ function KeysView({
                   <TableHead>名称</TableHead>
                   <TableHead>前缀</TableHead>
                   <TableHead>最后使用</TableHead>
+                  <TableHead>模型 / 别名</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -339,8 +388,12 @@ function KeysView({
                     <TableCell className="font-medium">{key.name}</TableCell>
                     <TableCell className="font-mono text-xs">{key.prefix}…</TableCell>
                     <TableCell className="text-muted-foreground">{dateTime(key.last_used_at)}</TableCell>
+                    <TableCell className="text-muted-foreground">{key.model_allowlist?.length ? `${key.model_allowlist.length} 个模型` : "全部模型"} · {key.model_aliases?.length ?? 0} 个别名</TableCell>
                     <TableCell><Badge variant="secondary">{key.enabled ? "有效" : "停用"}</Badge></TableCell>
                     <TableCell className="text-right">
+                      <Button variant="ghost" size="icon-sm" aria-label={`编辑 ${key.name}`} onClick={() => openEditDialog(key)}>
+                        <PencilIcon />
+                      </Button>
                       <Button variant="ghost" size="icon-sm" aria-label={`删除 ${key.name}`} onClick={() => void remove(key.id)}>
                         <Trash2Icon />
                       </Button>
@@ -367,31 +420,31 @@ function KeysView({
         </CardContent>
       </Card>
 
-      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) setSelectedModels([]) }}>
-        <DialogContent className="sm:max-w-lg">
+      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) { setSelectedModels([]); setModelAliases([]); setEditingKey(null) } }}>
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{showPlainKey && generatedKey ? "保存 API Key" : "创建 API Key"}</DialogTitle>
+            <DialogTitle>{showPlainKey && generatedKey ? "保存 API Key" : editingKey ? "编辑 API Key" : "创建 API Key"}</DialogTitle>
             <DialogDescription>
-              {showPlainKey && generatedKey ? "请立即保存；关闭弹窗后仍可在密钥页顶部找到。" : "限制留空表示继承账户策略。"}
+              {showPlainKey && generatedKey ? "请立即保存；关闭弹窗后仍可在密钥页顶部找到。" : editingKey ? "修改模型范围和客户端可用的模型别名。" : "限制留空表示继承账户策略。"}
             </DialogDescription>
           </DialogHeader>
           {showPlainKey && generatedKey ? (
             <PlainKeyField id="dialog-plain-key" value={generatedKey.key} />
           ) : (
-            <form id="create-key-form" onSubmit={create}>
+            <form id="key-form" key={editingKey?.id ?? "create"} onSubmit={editingKey ? update : create}>
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="key-name">名称</FieldLabel>
-                  <Input id="key-name" name="name" placeholder="例如：开发环境" required />
+                  <Input id="key-name" name="name" defaultValue={editingKey?.name ?? ""} placeholder="例如：开发环境" required />
                 </Field>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field>
                     <FieldLabel htmlFor="key-rate">每分钟请求</FieldLabel>
-                    <Input id="key-rate" name="rate" type="number" min="1" placeholder="不限" />
+                    <Input id="key-rate" name="rate" type="number" min="1" defaultValue={editingKey?.rate_limit_per_minute ?? ""} placeholder="不限" />
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="key-tokens">每日 Tokens</FieldLabel>
-                    <Input id="key-tokens" name="tokens" type="number" min="1" placeholder="不限" />
+                    <Input id="key-tokens" name="tokens" type="number" min="1" defaultValue={editingKey?.token_limit_daily ?? ""} placeholder="不限" />
                   </Field>
                 </div>
                 <Field>
@@ -399,6 +452,7 @@ function KeysView({
                   <ModelSelector id="key-models" options={modelOptions} value={selectedModels} onChange={changeSelectedModels} allLabel="全部可用模型" />
                   <FieldDescription>默认选择推荐模型；可按需调整，不选择表示允许全部可用模型。</FieldDescription>
                 </Field>
+                <ApiKeyModelAliasEditor aliases={modelAliases} models={selectedModels.length ? selectedModels : modelOptions} onChange={setModelAliases} />
               </FieldGroup>
             </form>
           )}
@@ -407,9 +461,9 @@ function KeysView({
               {showPlainKey && generatedKey ? "我已保存" : "取消"}
             </Button>
             {!(showPlainKey && generatedKey) ? (
-              <Button type="submit" form="create-key-form" disabled={pending}>
-                {pending ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}
-                创建
+              <Button type="submit" form="key-form" disabled={pending}>
+                {pending ? <Spinner data-icon="inline-start" /> : editingKey ? <PencilIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}
+                {editingKey ? "保存" : "创建"}
               </Button>
             ) : null}
           </DialogFooter>
