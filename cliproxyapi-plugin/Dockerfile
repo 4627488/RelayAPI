@@ -14,7 +14,7 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildmode=c-sh
 RUN git clone --filter=blob:none https://github.com/router-for-me/CLIProxyAPI.git /cpa \
     && git -C /cpa checkout --detach "${CPA_REF}"
 WORKDIR /cpa/examples/plugin/claude-web-search-router/go
-RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildmode=c-shared -trimpath -o /out/claude-web-search-router.so .
+RUN GOFLAGS=-mod=mod CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildmode=c-shared -trimpath -o /out/claude-web-search-router.so .
 
 FROM alpine:3.22
 COPY --from=build /out/relayapi-bridge.so /relayapi-bridge.so
