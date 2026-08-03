@@ -129,11 +129,6 @@ type rollingCapture struct {
 	total  int64
 }
 
-type prefixedReadCloser struct {
-	io.Reader
-	io.Closer
-}
-
 func (c *rollingCapture) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -322,27 +317,6 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamHeadersAt := time.Now()
-	classifiedError := ""
-	if response.StatusCode >= http.StatusBadRequest {
-		const inspectLimit = 128 << 10
-		prefix, readErr := io.ReadAll(io.LimitReader(response.Body, inspectLimit+1))
-		if readErr == nil && len(prefix) <= inspectLimit {
-			response.Body.Close()
-			if detailed, code, changed := detailedUpstreamError(prefix, "", meta.Model, requestID, admission.CPAAuthID != ""); changed {
-				prefix = detailed
-				classifiedError = code
-				response.Header.Set("Content-Type", "application/json; charset=utf-8")
-				response.Header.Set("Retry-After", "5")
-				response.Header.Set("X-Relay-Error-Code", code)
-				response.Header.Del("Content-Encoding")
-			}
-			response.ContentLength = int64(len(prefix))
-			response.Header.Set("Content-Length", strconv.Itoa(len(prefix)))
-			response.Body = io.NopCloser(bytes.NewReader(prefix))
-		} else {
-			response.Body = &prefixedReadCloser{Reader: io.MultiReader(bytes.NewReader(prefix), response.Body), Closer: response.Body}
-		}
-	}
 	defer response.Body.Close()
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Relay-Request-ID", requestID)
@@ -416,10 +390,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		"first_byte_ms":       valueOrZero(logContext.ttftMS), "total_ms": time.Since(started).Milliseconds(),
 	})
 	if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
-		logContext.errorCode = classifiedError
-		if logContext.errorCode == "" {
-			logContext.errorCode = "upstream_http_error"
-		}
+		logContext.errorCode = "upstream_http_error"
 		logContext.detail.ErrorName = logContext.errorCode
 		logContext.detail.ErrorDetail = logContext.detail.UpstreamBody
 		errorMessage = upstreamErrorMessage(response.StatusCode, rawResponse)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"hash/fnv"
 	"io"
 	"net"
@@ -186,61 +185,4 @@ func writeCPATransportError(w http.ResponseWriter, r *http.Request, err error, p
 		"code": classified.Code, "type": "service_unavailable", "message": classified.Message, "details": details,
 	}})
 	return classified
-}
-
-func detailedUpstreamError(payload []byte, provider, model, requestID string, assignedCredential bool) ([]byte, string, bool) {
-	var value struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(payload, &value) != nil {
-		return payload, "", false
-	}
-	original := strings.TrimSpace(value.Error.Message)
-	if value.Error.Code != "auth_unavailable" && !strings.Contains(strings.ToLower(original), "auth_unavailable") {
-		return payload, "", false
-	}
-	if provider == "" {
-		provider = errorAttribute(original, "providers")
-	}
-	if model == "" {
-		model = errorAttribute(original, "model")
-	}
-	scope := "provider_pool"
-	code := "auth_pool_unavailable"
-	message := fmt.Sprintf("No eligible %s credential is available for model %s. CPA did not report why the credentials were excluded. Check credential status and quota, then retry.", provider, model)
-	fallbackAvailable := true
-	if assignedCredential {
-		scope = "assigned_credential"
-		code = "assigned_credential_unavailable"
-		fallbackAvailable = false
-		message = fmt.Sprintf("The credential assigned to this subscription cannot currently serve %s, and no backup credential is assigned. CPA did not report the specific exclusion reason. Retry shortly; if it persists, check that credential or assign a backup.", model)
-	}
-	result, err := json.Marshal(map[string]any{"error": map[string]any{
-		"code": code, "type": "service_unavailable", "message": message,
-		"details": map[string]any{
-			"provider": provider, "model": model, "scope": scope, "reason": "no_eligible_credentials",
-			"exclusion_reason": "not_reported_by_cpa", "fallback_available": fallbackAvailable,
-			"retryable": true, "retry_after_seconds": 5, "request_id": requestID, "upstream_message": original,
-		},
-	}})
-	if err != nil {
-		return payload, "", false
-	}
-	return result, code, true
-}
-
-func errorAttribute(message, name string) string {
-	marker := name + "="
-	start := strings.Index(message, marker)
-	if start < 0 {
-		return ""
-	}
-	value := message[start+len(marker):]
-	if end := strings.IndexAny(value, ",)"); end >= 0 {
-		value = value[:end]
-	}
-	return strings.TrimSpace(value)
 }

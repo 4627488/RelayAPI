@@ -88,39 +88,3 @@ func TestUpstreamErrorMessageExtractsStructuredMessage(t *testing.T) {
 		t.Fatalf("message = %q", got)
 	}
 }
-
-func TestDetailedUpstreamAuthUnavailable(t *testing.T) {
-	payload := []byte(`{"error":{"message":"auth_unavailable: no auth available (providers=codex, model=gpt-5.6-luna)","type":"server_error","code":"internal_server_error"}}`)
-	got, code, changed := detailedUpstreamError(payload, "", "gpt-5.6-luna", "request-123", true)
-	if !changed || code != "assigned_credential_unavailable" {
-		t.Fatalf("changed=%v code=%q", changed, code)
-	}
-	text := string(got)
-	for _, wanted := range []string{`"code":"assigned_credential_unavailable"`, `"provider":"codex"`, `"scope":"assigned_credential"`, `"exclusion_reason":"not_reported_by_cpa"`, `"fallback_available":false`, `"retryable":true`, `"request_id":"request-123"`} {
-		if !strings.Contains(text, wanted) {
-			t.Fatalf("detailed error %s does not contain %s", text, wanted)
-		}
-	}
-}
-
-func TestDetailedUpstreamAuthPoolUnavailable(t *testing.T) {
-	payload := []byte(`{"error":{"message":"auth_unavailable: no auth available (providers=xai, model=grok-4.5)","code":"auth_unavailable"}}`)
-	got, code, changed := detailedUpstreamError(payload, "", "", "request-456", false)
-	if !changed || code != "auth_pool_unavailable" {
-		t.Fatalf("changed=%v code=%q", changed, code)
-	}
-	text := string(got)
-	for _, wanted := range []string{`"code":"auth_pool_unavailable"`, `"provider":"xai"`, `"model":"grok-4.5"`, `"fallback_available":true`} {
-		if !strings.Contains(text, wanted) {
-			t.Fatalf("detailed error %s does not contain %s", text, wanted)
-		}
-	}
-}
-
-func TestDetailedUpstreamErrorLeavesOtherErrorsUnchanged(t *testing.T) {
-	payload := []byte(`{"error":{"message":"invalid request","code":"bad_request"}}`)
-	got, code, changed := detailedUpstreamError(payload, "codex", "gpt-5.6-luna", "request-123", false)
-	if changed || code != "" || string(got) != string(payload) {
-		t.Fatalf("unexpected rewrite: changed=%v code=%q payload=%s", changed, code, got)
-	}
-}
