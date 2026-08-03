@@ -1,7 +1,7 @@
 FROM golang:1.26-bookworm AS build
 ARG TARGETOS=linux
 ARG TARGETARCH
-ARG CPA_REF=4a315136730baa8b3a436d12b74e5a702c70be5c
+ARG CPA_REF=ffdb9c9fbc78a6235d59c9ccbdc4243ba35ecdcd
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY go.mod go.sum ./
