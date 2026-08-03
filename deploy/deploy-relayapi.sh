@@ -26,7 +26,7 @@ fi
 
 set_compose_image() {
   local image=$1
-  sed -i -E "/^  relayapi:/,/^  [^ ]/ s#^    image: .*$#    image: ${image}#" "$compose_file"
+  sed -i -E "/^  relayapi:/,/^  [^ ]/ s#^    image: .*\$#    image: ${image}#" "$compose_file"
   docker compose -f "$compose_file" config --quiet
 }
 
