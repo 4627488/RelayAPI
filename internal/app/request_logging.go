@@ -209,25 +209,27 @@ func detailedUpstreamError(payload []byte, provider, model, requestID string, as
 		model = errorAttribute(original, "model")
 	}
 	scope := "provider_pool"
-	subject := "the provider authentication pool"
-	action := "check the provider accounts and add a backup credential"
+	code := "auth_pool_unavailable"
+	message := fmt.Sprintf("No eligible %s credential is available for model %s. CPA did not report why the credentials were excluded. Check credential status and quota, then retry.", provider, model)
+	fallbackAvailable := true
 	if assignedCredential {
 		scope = "assigned_credential"
-		subject = "the credential assigned to this subscription"
-		action = "check that model account's status and quota, or assign a backup credential"
+		code = "assigned_credential_unavailable"
+		fallbackAvailable = false
+		message = fmt.Sprintf("The credential assigned to this subscription cannot currently serve %s, and no backup credential is assigned. CPA did not report the specific exclusion reason. Retry shortly; if it persists, check that credential or assign a backup.", model)
 	}
-	message := fmt.Sprintf("Authentication is temporarily unavailable for model %s: %s is not currently eligible. Common causes are cooldown after an upstream failure, rate limiting, exhausted quota, or disabled/expired authentication. Retry in 5 seconds; if this persists, %s.", model, subject, action)
 	result, err := json.Marshal(map[string]any{"error": map[string]any{
-		"code": "auth_unavailable", "type": "service_unavailable", "message": message,
+		"code": code, "type": "service_unavailable", "message": message,
 		"details": map[string]any{
 			"provider": provider, "model": model, "scope": scope, "reason": "no_eligible_credentials",
+			"exclusion_reason": "not_reported_by_cpa", "fallback_available": fallbackAvailable,
 			"retryable": true, "retry_after_seconds": 5, "request_id": requestID, "upstream_message": original,
 		},
 	}})
 	if err != nil {
 		return payload, "", false
 	}
-	return result, "auth_unavailable", true
+	return result, code, true
 }
 
 func errorAttribute(message, name string) string {
