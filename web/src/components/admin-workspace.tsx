@@ -15,7 +15,7 @@ import {
 import { toast } from "sonner"
 
 import type { Page } from "@/components/app-shell"
-import { LogsTable, MetricGrid, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
+import { ApiKeyUsageTable, LogsTable, MetricGrid, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
@@ -129,6 +129,7 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
       <div className="flex flex-col gap-4">
         <UsageMetrics report={usage} />
         <UsageChart report={usage} />
+        <ApiKeyUsageTable report={usage} showTenant />
         <ModelTable report={usage} />
       </div>
     )

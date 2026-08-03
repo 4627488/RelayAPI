@@ -47,7 +47,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { LogsTable, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
+import { ApiKeyUsageTable, LogsTable, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ModelSelector } from "@/components/model-selector"
@@ -133,6 +133,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
       <div className="flex flex-col gap-4">
         <UsageMetrics report={usage} />
         <UsageChart report={usage} />
+        <ApiKeyUsageTable report={usage} />
         <ModelTable report={usage} />
       </div>
     )

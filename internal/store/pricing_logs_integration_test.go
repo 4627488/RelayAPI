@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -136,6 +137,30 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}
 	if !backfilled.PricingComplete || backfilled.CostNanoUSD == nil || *backfilled.CostNanoUSD != 40 {
 		t.Fatalf("pending price was not backfilled: %+v", backfilled)
+	}
+	report, err := dataStore.UsageReport(ctx, tenantID, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawKeyUsage, err := json.Marshal(report["api_keys"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keyUsage []struct {
+		APIKeyID     string `json:"api_key_id"`
+		APIKeyName   string `json:"api_key_name"`
+		APIKeyPrefix string `json:"api_key_prefix"`
+		TenantName   string `json:"tenant_name,omitempty"`
+		Requests     int64  `json:"requests"`
+		Errors       int64  `json:"errors"`
+		Tokens       int64  `json:"tokens"`
+		Cost         int64  `json:"cost_nano_usd"`
+	}
+	if err := json.Unmarshal(rawKeyUsage, &keyUsage); err != nil {
+		t.Fatal(err)
+	}
+	if len(keyUsage) != 1 || keyUsage[0].APIKeyID != keyID || keyUsage[0].Requests != 2 || keyUsage[0].Tokens != 15 {
+		t.Fatalf("API key usage = %#v", report["api_keys"])
 	}
 	history, err := dataStore.HistoricalModelPrices(ctx)
 	if err != nil {

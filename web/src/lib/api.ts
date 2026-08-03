@@ -198,6 +198,16 @@ export interface UsageReport {
     tokens: number
     cost_nano_usd: number
   }>
+  api_keys: Array<{
+    api_key_id: string
+    api_key_name: string
+    api_key_prefix: string
+    tenant_name?: string
+    requests: number
+    errors: number
+    tokens: number
+    cost_nano_usd: number
+  }>
 }
 
 export interface AdminOverview {

@@ -1071,8 +1071,32 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		models = append(models, item)
 	}
 	sort.Slice(models, func(i, j int) bool { return models[i].Tokens > models[j].Tokens })
+	type apiKeyTotal struct {
+		APIKeyID     string `json:"api_key_id"`
+		APIKeyName   string `json:"api_key_name"`
+		APIKeyPrefix string `json:"api_key_prefix"`
+		TenantName   string `json:"tenant_name,omitempty"`
+		Requests     int64  `json:"requests"`
+		Errors       int64  `json:"errors"`
+		Tokens       int64  `json:"tokens"`
+		Cost         int64  `json:"cost_nano_usd"`
+	}
+	apiKeys := make([]apiKeyTotal, 0)
+	apiKeyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
+		Select(
+			"api_key_id, api_key_name, api_key_prefix, tenant_name, count(*) AS requests, "+
+				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 THEN 1 ELSE 0 END),0) AS errors, "+
+				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
+		).Where("started_at >= ?", since)
+	if tenantID != "" {
+		apiKeyQuery = apiKeyQuery.Where("tenant_id = ?", tenantID)
+	}
+	if err := apiKeyQuery.Group("api_key_id, api_key_name, api_key_prefix, tenant_name").
+		Order("tokens DESC, requests DESC").Scan(&apiKeys).Error; err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"days": days, "user_id": tenantID, "summary": total,
-		"daily": dailyItems, "models": models,
+		"daily": dailyItems, "models": models, "api_keys": apiKeys,
 	}, nil
 }

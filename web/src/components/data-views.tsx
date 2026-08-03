@@ -171,6 +171,59 @@ export function ModelTable({ report }: { report: UsageReport }) {
   )
 }
 
+export function ApiKeyUsageTable({ report, showTenant = false }: { report: UsageReport; showTenant?: boolean }) {
+  const apiKeys = report.api_keys ?? []
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Key 用量</CardTitle>
+        <CardDescription>按 Token 消耗排序，统计最近 {report.days} 天仍在请求日志中的数据。</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {apiKeys.length ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {showTenant ? <TableHead>用户</TableHead> : null}
+                <TableHead>Key</TableHead>
+                <TableHead className="text-right">请求</TableHead>
+                <TableHead className="text-right">错误</TableHead>
+                <TableHead className="text-right">Tokens</TableHead>
+                <TableHead className="text-right">费用</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {apiKeys.map((apiKey) => (
+                <TableRow key={`${apiKey.api_key_id}-${apiKey.api_key_name}-${apiKey.api_key_prefix}`}>
+                  {showTenant ? <TableCell>{apiKey.tenant_name || "未知用户"}</TableCell> : null}
+                  <TableCell>
+                    <div className="flex flex-col gap-1">
+                      <span className="font-medium">{apiKey.api_key_name || "已删除的 Key"}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{apiKey.api_key_prefix || "未知前缀"}…</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{compact(apiKey.requests)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{compact(apiKey.errors)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{compactTokens(apiKey.tokens)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{money(apiKey.cost_nano_usd)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><CoinsIcon /></EmptyMedia>
+              <EmptyTitle>没有 Key 用量</EmptyTitle>
+              <EmptyDescription>当前时间范围内没有 API Key 请求。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function LogsTable({ logs }: { logs: RequestLog[] }) {
   return (
     <Card>
