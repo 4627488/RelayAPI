@@ -35,9 +35,18 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
@@ -47,12 +56,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ApiKeyUsageTable, LogsTable, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
+import {
+  ApiKeyUsageTable,
+  LogsTable,
+  ModelTable,
+  UsageChart,
+  UsageMetrics,
+} from "@/components/data-views"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ModelSelector } from "@/components/model-selector"
 import {
   ApiKeyModelAliasEditor,
+  type ModelAliasPreset,
   type ModelAliasDraft,
 } from "@/components/api-key-model-alias-editor"
 import { TenantSubscriptionsView } from "@/components/subscriptions-view"
@@ -112,7 +128,12 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
 
   if (loading) return <LoadingView />
   if (!usage) {
-    return <LoadErrorView message={loadError || "账户数据不完整"} onRetry={() => void load(true)} />
+    return (
+      <LoadErrorView
+        message={loadError || "账户数据不完整"}
+        onRetry={() => void load(true)}
+      />
+    )
   }
 
   if (page === "keys") {
@@ -126,7 +147,10 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
     )
   }
   if (page === "logs") return <RequestLogsWorkbench />
-  if (page === "guide") return <ConnectionGuide tenantModels={session.tenant?.model_allowlist ?? []} />
+  if (page === "guide")
+    return (
+      <ConnectionGuide tenantModels={session.tenant?.model_allowlist ?? []} />
+    )
   if (page === "subscriptions") return <TenantSubscriptionsView />
   if (page === "usage") {
     return (
@@ -142,8 +166,12 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">你好，{session.tenant?.name}</h1>
-        <p className="text-sm text-muted-foreground">这里是你的模型访问和用量概况。</p>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          你好，{session.tenant?.name}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          这里是你的模型访问和用量概况。
+        </p>
       </div>
       <UsageMetrics report={usage} />
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
@@ -156,20 +184,28 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
           <CardContent className="flex flex-col gap-5">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">状态</span>
-              <Badge variant="secondary"><CheckIcon /> 正常</Badge>
+              <Badge variant="secondary">
+                <CheckIcon /> 正常
+              </Badge>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">余额</span>
-              <span className="font-medium tabular-nums">{money(session.tenant?.balance_nano_usd)}</span>
+              <span className="font-medium tabular-nums">
+                {money(session.tenant?.balance_nano_usd)}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">有效 Keys</span>
-              <span className="font-medium tabular-nums">{keys.filter((key) => key.enabled).length}</span>
+              <span className="font-medium tabular-nums">
+                {keys.filter((key) => key.enabled).length}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">模型范围</span>
               <span className="font-medium">
-                {session.tenant?.model_allowlist?.length ? `${session.tenant.model_allowlist.length} 个` : "全部模型"}
+                {session.tenant?.model_allowlist?.length
+                  ? `${session.tenant.model_allowlist.length} 个`
+                  : "全部模型"}
               </span>
             </div>
           </CardContent>
@@ -190,7 +226,9 @@ const preferredKeyModels = ["gpt-5.6-sol", "grok-4.5"]
 
 function preferredModelsFrom(options: string[]) {
   return preferredKeyModels.flatMap((preferred) => {
-    const match = options.find((model) => model === preferred || model.endsWith(`/${preferred}`))
+    const match = options.find(
+      (model) => model === preferred || model.endsWith(`/${preferred}`)
+    )
     return match ? [match] : []
   })
 }
@@ -198,7 +236,11 @@ function preferredModelsFrom(options: string[]) {
 function isGeneratedKey(value: unknown): value is GeneratedKey {
   if (!value || typeof value !== "object") return false
   const item = value as Partial<GeneratedKey>
-  return typeof item.id === "string" && typeof item.name === "string" && typeof item.key === "string"
+  return (
+    typeof item.id === "string" &&
+    typeof item.name === "string" &&
+    typeof item.key === "string"
+  )
 }
 
 function KeysView({
@@ -217,11 +259,13 @@ function KeysView({
   const [showPlainKey, setShowPlainKey] = useState(false)
   const [generatedKey, setGeneratedKey] = useSessionStorage<GeneratedKey>(
     storageKey,
-    isGeneratedKey,
+    isGeneratedKey
   )
   const [pending, setPending] = useState(false)
   const [modelOptions, setModelOptions] = useState<string[]>(tenantModels)
-  const [selectedModels, setSelectedModels] = useState<string[]>(() => preferredModelsFrom(tenantModels))
+  const [selectedModels, setSelectedModels] = useState<string[]>(() =>
+    preferredModelsFrom(tenantModels)
+  )
   const [modelAliases, setModelAliases] = useState<ModelAliasDraft[]>([])
   const modelSelectionTouched = useRef(false)
 
@@ -232,13 +276,29 @@ function KeysView({
         if (!active) return
         const now = Date.now()
         const subscriptionModels = (value.items ?? [])
-          .filter((item) => item.enabled && Date.parse(item.starts_at) <= now && (!item.expires_at || Date.parse(item.expires_at) > now))
-          .flatMap((item) => item.effective_model_allowlist ?? item.model_allowlist ?? [])
-        const source = subscriptionModels.length ? subscriptionModels : tenantModels
-        setModelOptions(Array.from(new Set(source.map((model) => model.trim()).filter(Boolean))).sort())
+          .filter(
+            (item) =>
+              item.enabled &&
+              Date.parse(item.starts_at) <= now &&
+              (!item.expires_at || Date.parse(item.expires_at) > now)
+          )
+          .flatMap(
+            (item) =>
+              item.effective_model_allowlist ?? item.model_allowlist ?? []
+          )
+        const source = subscriptionModels.length
+          ? subscriptionModels
+          : tenantModels
+        setModelOptions(
+          Array.from(
+            new Set(source.map((model) => model.trim()).filter(Boolean))
+          ).sort()
+        )
       })
       .catch(() => {})
-    return () => { active = false }
+    return () => {
+      active = false
+    }
   }, [tenantModels])
 
   useEffect(() => {
@@ -261,7 +321,12 @@ function KeysView({
     setEditingKey(key)
     setShowPlainKey(false)
     setSelectedModels(key.model_allowlist ?? [])
-    setModelAliases((key.model_aliases ?? []).map((item) => ({ ...item, clientId: item.id ?? crypto.randomUUID() })))
+    setModelAliases(
+      (key.model_aliases ?? []).map((item) => ({
+        ...item,
+        clientId: item.id ?? crypto.randomUUID(),
+      }))
+    )
     setCreateOpen(true)
   }
 
@@ -275,14 +340,24 @@ function KeysView({
     const data = new FormData(event.currentTarget)
     setPending(true)
     try {
-      const response = await postJSON<{ item: ApiKey; key: string }>("/api/keys", {
-        name: String(data.get("name") ?? ""),
-        rateLimitPerMinute: numberOrNull(data.get("rate")),
-        tokenLimitDaily: numberOrNull(data.get("tokens")),
-        modelAllowlist: selectedModels,
-        modelAliases: modelAliases.map(({ alias, model }) => ({ alias, model })),
+      const response = await postJSON<{ item: ApiKey; key: string }>(
+        "/api/keys",
+        {
+          name: String(data.get("name") ?? ""),
+          rateLimitPerMinute: numberOrNull(data.get("rate")),
+          tokenLimitDaily: numberOrNull(data.get("tokens")),
+          modelAllowlist: selectedModels,
+          modelAliases: modelAliases.map(({ alias, model }) => ({
+            alias,
+            model,
+          })),
+        }
+      )
+      setGeneratedKey({
+        id: response.item.id,
+        name: response.item.name,
+        key: response.key,
       })
-      setGeneratedKey({ id: response.item.id, name: response.item.name, key: response.key })
       setShowPlainKey(true)
       await onChanged()
       toast.success("API Key 已创建")
@@ -291,6 +366,31 @@ function KeysView({
     } finally {
       setPending(false)
     }
+  }
+
+  function applyModelAliasPreset(preset: ModelAliasPreset) {
+    const presetAliases = new Set(
+      preset.aliases.map((alias) => alias.toLowerCase())
+    )
+    modelSelectionTouched.current = true
+    setSelectedModels((current) =>
+      Array.from(
+        new Set([
+          ...current.filter((model) => !presetAliases.has(model.toLowerCase())),
+          preset.target,
+        ])
+      )
+    )
+    setModelAliases((current) => [
+      ...current.filter(
+        (item) => !presetAliases.has(item.alias.trim().toLowerCase())
+      ),
+      ...preset.aliases.map((alias) => ({
+        clientId: crypto.randomUUID(),
+        alias,
+        model: preset.target,
+      })),
+    ])
   }
 
   async function update(event: FormEvent<HTMLFormElement>) {
@@ -308,7 +408,10 @@ function KeysView({
           rateLimitPerMinute: numberOrNull(data.get("rate")),
           tokenLimitDaily: numberOrNull(data.get("tokens")),
           modelAllowlist: selectedModels,
-          modelAliases: modelAliases.map(({ alias, model }) => ({ alias, model })),
+          modelAliases: modelAliases.map(({ alias, model }) => ({
+            alias,
+            model,
+          })),
         }),
       })
       setCreateOpen(false)
@@ -338,7 +441,9 @@ function KeysView({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">API Keys</h1>
-          <p className="text-sm text-muted-foreground">为不同应用创建独立密钥与限制。</p>
+          <p className="text-sm text-muted-foreground">
+            为不同应用创建独立密钥与限制。
+          </p>
         </div>
         <Button onClick={openCreateDialog}>
           <PlusIcon data-icon="inline-start" />
@@ -355,7 +460,12 @@ function KeysView({
                 {generatedKey.name} 的完整密钥临时保留在当前浏览器标签页中。
               </CardDescription>
             </div>
-            <Button variant="ghost" size="icon-sm" aria-label="清除完整密钥" onClick={() => setGeneratedKey(null)}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="清除完整密钥"
+              onClick={() => setGeneratedKey(null)}
+            >
               <XIcon />
             </Button>
           </CardHeader>
@@ -387,15 +497,38 @@ function KeysView({
                 {keys.map((key) => (
                   <TableRow key={key.id}>
                     <TableCell className="font-medium">{key.name}</TableCell>
-                    <TableCell className="font-mono text-xs">{key.prefix}…</TableCell>
-                    <TableCell className="text-muted-foreground">{dateTime(key.last_used_at)}</TableCell>
-                    <TableCell className="text-muted-foreground">{key.model_allowlist?.length ? `${key.model_allowlist.length} 个模型` : "全部模型"} · {key.model_aliases?.length ?? 0} 个别名</TableCell>
-                    <TableCell><Badge variant="secondary">{key.enabled ? "有效" : "停用"}</Badge></TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {key.prefix}…
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {dateTime(key.last_used_at)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {key.model_allowlist?.length
+                        ? `${key.model_allowlist.length} 个模型`
+                        : "全部模型"}{" "}
+                      · {key.model_aliases?.length ?? 0} 个别名
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">
+                        {key.enabled ? "有效" : "停用"}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon-sm" aria-label={`编辑 ${key.name}`} onClick={() => openEditDialog(key)}>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`编辑 ${key.name}`}
+                        onClick={() => openEditDialog(key)}
+                      >
                         <PencilIcon />
                       </Button>
-                      <Button variant="ghost" size="icon-sm" aria-label={`删除 ${key.name}`} onClick={() => void remove(key.id)}>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`删除 ${key.name}`}
+                        onClick={() => void remove(key.id)}
+                      >
                         <Trash2Icon />
                       </Button>
                     </TableCell>
@@ -406,9 +539,13 @@ function KeysView({
           ) : (
             <Empty>
               <EmptyHeader>
-                <EmptyMedia variant="icon"><KeyRoundIcon /></EmptyMedia>
+                <EmptyMedia variant="icon">
+                  <KeyRoundIcon />
+                </EmptyMedia>
                 <EmptyTitle>还没有 API Key</EmptyTitle>
-                <EmptyDescription>创建密钥后即可调用所有已授权模型。</EmptyDescription>
+                <EmptyDescription>
+                  创建密钥后即可调用所有已授权模型。
+                </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
                 <Button onClick={openCreateDialog}>
@@ -421,39 +558,97 @@ function KeysView({
         </CardContent>
       </Card>
 
-      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) { setSelectedModels([]); setModelAliases([]); setEditingKey(null) } }}>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open)
+          if (!open) {
+            setSelectedModels([])
+            setModelAliases([])
+            setEditingKey(null)
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{showPlainKey && generatedKey ? "保存 API Key" : editingKey ? "编辑 API Key" : "创建 API Key"}</DialogTitle>
+            <DialogTitle>
+              {showPlainKey && generatedKey
+                ? "保存 API Key"
+                : editingKey
+                  ? "编辑 API Key"
+                  : "创建 API Key"}
+            </DialogTitle>
             <DialogDescription>
-              {showPlainKey && generatedKey ? "请立即保存；关闭弹窗后仍可在密钥页顶部找到。" : editingKey ? "修改模型范围和客户端可用的模型别名。" : "限制留空表示继承账户策略。"}
+              {showPlainKey && generatedKey
+                ? "请立即保存；关闭弹窗后仍可在密钥页顶部找到。"
+                : editingKey
+                  ? "修改模型范围和客户端可用的模型别名。"
+                  : "限制留空表示继承账户策略。"}
             </DialogDescription>
           </DialogHeader>
           {showPlainKey && generatedKey ? (
             <PlainKeyField id="dialog-plain-key" value={generatedKey.key} />
           ) : (
-            <form id="key-form" key={editingKey?.id ?? "create"} onSubmit={editingKey ? update : create}>
+            <form
+              id="key-form"
+              key={editingKey?.id ?? "create"}
+              onSubmit={editingKey ? update : create}
+            >
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="key-name">名称</FieldLabel>
-                  <Input id="key-name" name="name" defaultValue={editingKey?.name ?? ""} placeholder="例如：开发环境" required />
+                  <Input
+                    id="key-name"
+                    name="name"
+                    defaultValue={editingKey?.name ?? ""}
+                    placeholder="例如：开发环境"
+                    required
+                  />
                 </Field>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field>
                     <FieldLabel htmlFor="key-rate">每分钟请求</FieldLabel>
-                    <Input id="key-rate" name="rate" type="number" min="1" defaultValue={editingKey?.rate_limit_per_minute ?? ""} placeholder="不限" />
+                    <Input
+                      id="key-rate"
+                      name="rate"
+                      type="number"
+                      min="1"
+                      defaultValue={editingKey?.rate_limit_per_minute ?? ""}
+                      placeholder="不限"
+                    />
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="key-tokens">每日 Tokens</FieldLabel>
-                    <Input id="key-tokens" name="tokens" type="number" min="1" defaultValue={editingKey?.token_limit_daily ?? ""} placeholder="不限" />
+                    <Input
+                      id="key-tokens"
+                      name="tokens"
+                      type="number"
+                      min="1"
+                      defaultValue={editingKey?.token_limit_daily ?? ""}
+                      placeholder="不限"
+                    />
                   </Field>
                 </div>
                 <Field>
                   <FieldLabel htmlFor="key-models">模型范围</FieldLabel>
-                  <ModelSelector id="key-models" options={modelOptions} value={selectedModels} onChange={changeSelectedModels} allLabel="全部可用模型" />
-                  <FieldDescription>默认选择推荐模型；可按需调整，不选择表示允许全部可用模型。</FieldDescription>
+                  <ModelSelector
+                    id="key-models"
+                    options={modelOptions}
+                    value={selectedModels}
+                    onChange={changeSelectedModels}
+                    allLabel="全部可用模型"
+                  />
+                  <FieldDescription>
+                    默认选择推荐模型；可按需调整，不选择表示允许全部可用模型。
+                  </FieldDescription>
                 </Field>
-                <ApiKeyModelAliasEditor aliases={modelAliases} models={selectedModels.length ? selectedModels : modelOptions} onChange={setModelAliases} />
+                <ApiKeyModelAliasEditor
+                  aliases={modelAliases}
+                  models={selectedModels.length ? selectedModels : modelOptions}
+                  availableModels={modelOptions}
+                  onChange={setModelAliases}
+                  onApplyPreset={applyModelAliasPreset}
+                />
               </FieldGroup>
             </form>
           )}
@@ -463,7 +658,13 @@ function KeysView({
             </Button>
             {!(showPlainKey && generatedKey) ? (
               <Button type="submit" form="key-form" disabled={pending}>
-                {pending ? <Spinner data-icon="inline-start" /> : editingKey ? <PencilIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}
+                {pending ? (
+                  <Spinner data-icon="inline-start" />
+                ) : editingKey ? (
+                  <PencilIcon data-icon="inline-start" />
+                ) : (
+                  <PlusIcon data-icon="inline-start" />
+                )}
                 {editingKey ? "保存" : "创建"}
               </Button>
             ) : null}
@@ -480,7 +681,12 @@ function PlainKeyField({ id, value }: { id: string; value: string }) {
       <Field>
         <FieldLabel htmlFor={id}>完整密钥</FieldLabel>
         <InputGroup>
-          <InputGroupInput id={id} readOnly value={value} className="font-mono text-xs" />
+          <InputGroupInput
+            id={id}
+            readOnly
+            value={value}
+            className="font-mono text-xs"
+          />
           <InputGroupAddon align="inline-end">
             <Button
               variant="ghost"
