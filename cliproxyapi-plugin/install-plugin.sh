@@ -1,12 +1,17 @@
 #!/bin/sh
 set -eu
 
-target=/plugins/relayapi-bridge.so
-temporary=/plugins/.relayapi-bridge.so.$$
-trap 'rm -f "$temporary"' EXIT
+install_plugin() {
+  source=$1
+  target=$2
+  temporary="/plugins/.$(basename "$target").$$"
+  trap 'rm -f "$temporary"' EXIT
+  cp "$source" "$temporary"
+  chmod 0755 "$temporary"
+  sync
+  mv -f "$temporary" "$target"
+  trap - EXIT
+}
 
-cp /relayapi-bridge.so "$temporary"
-chmod 0755 "$temporary"
-sync
-mv -f "$temporary" "$target"
-trap - EXIT
+install_plugin /relayapi-bridge.so /plugins/relayapi-bridge.so
+install_plugin /claude-web-search-router.so /plugins/claude-web-search-router.so

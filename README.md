@@ -151,6 +151,12 @@ plugins:
       secret: 与 CPA_PLUGIN_SECRET 相同
       delegate: round-robin
       quota_adapters_mode: append
+    claude-web-search-router:
+      enabled: true
+      priority: 20
+      route: xai_web_search
+      xai_model: grok-4.3
+      require_web_search_only: true
 ```
 
 插件负责 CPA 凭据选择扩展、额度探测与终态失败遥测。Relay 会用短时 HMAC 签名保护内部

@@ -20,6 +20,12 @@ plugins:
       secret: replace-with-CPA_PLUGIN_SECRET
       delegate: round-robin
       quota_adapters_mode: append
+    claude-web-search-router:
+      enabled: true
+      priority: 20
+      route: xai_web_search
+      xai_model: grok-4.3
+      require_web_search_only: true
 ```
 
 Version 0.2.0 added strict AuthID pinning for parent/child subscriptions.
@@ -55,8 +61,12 @@ request correlation. Queue health and drop counters are available at:
 GET /v0/management/plugins/relayapi-bridge/health
 ```
 
-Install the plugin explicitly, then restart CPA. The installer uses a
-temporary file and atomic rename; normal Relay deploys must not run it:
+The image bundles both `relayapi-bridge.so` and CPA's Claude Web Search Router.
+CWSR routes Claude Code's typed WebSearch request to xAI Responses using the
+documented `grok-4.3` search model instead of forwarding the aliased chat model.
+
+Install the plugins explicitly, then restart CPA. The installer uses temporary
+files and atomic renames; normal Relay deploys must not run it:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
