@@ -4,6 +4,8 @@ RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+ARG VITE_GIT_COMMIT=dev
+ENV VITE_GIT_COMMIT=$VITE_GIT_COMMIT
 RUN pnpm build
 
 FROM golang:1.24-alpine AS build

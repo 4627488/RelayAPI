@@ -14,6 +14,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -78,6 +79,9 @@ type LogDetailInput struct {
 }
 
 func scoped(ctx context.Context, database *gorm.DB) *gorm.DB { return database.WithContext(ctx) }
+func postgresStringArray(values []string) pq.StringArray {
+	return append(pq.StringArray{}, values...)
+}
 func notFound(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ErrNotFound
@@ -115,7 +119,7 @@ func (s Store) UpdateTenant(ctx context.Context, id, name, email string, enabled
 	result := scoped(ctx, s.DB).Model(&Tenant{}).Where("id = ?", id).Updates(map[string]any{
 		"name": strings.TrimSpace(name), "owner_email": strings.ToLower(strings.TrimSpace(email)),
 		"enabled": enabled, "rate_limit_per_minute": rate, "token_limit_daily": tokens,
-		"model_allowlist": models, "updated_at": time.Now(),
+		"model_allowlist": postgresStringArray(models), "updated_at": time.Now(),
 	})
 	if result.Error != nil {
 		return Tenant{}, result.Error
@@ -218,7 +222,7 @@ func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled
 	err := database.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&APIKey{}).Where("id = ? AND tenant_id = ?", id, tenantID).Updates(map[string]any{
 			"name": strings.TrimSpace(name), "enabled": enabled, "rate_limit_per_minute": rate,
-			"token_limit_daily": tokens, "model_allowlist": models,
+			"token_limit_daily": tokens, "model_allowlist": postgresStringArray(models),
 		})
 		if result.Error != nil {
 			return result.Error

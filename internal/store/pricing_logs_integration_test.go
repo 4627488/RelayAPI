@@ -182,3 +182,20 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		t.Fatalf("pending historical price = %+v", item)
 	}
 }
+
+func TestPostgresStringArrayPreservesEmptyArray(t *testing.T) {
+	value, err := postgresStringArray(nil).Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "{}" {
+		t.Fatalf("empty PostgreSQL array = %#v, want %q", value, "{}")
+	}
+	value, err = postgresStringArray([]string{"grok-4.5"}).Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != `{"grok-4.5"}` {
+		t.Fatalf("PostgreSQL array = %#v, want %q", value, `{"grok-4.5"}`)
+	}
+}

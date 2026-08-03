@@ -115,6 +115,9 @@ const themes: Array<{ value: Theme; label: string; icon: ComponentType }> = [
   { value: "system", label: "跟随系统", icon: MonitorIcon },
 ]
 
+const buildCommit = (import.meta.env.VITE_GIT_COMMIT || "dev").trim()
+const buildVersion = buildCommit === "dev" ? buildCommit : buildCommit.slice(0, 7)
+
 function ThemeChoices({
   value,
   onValueChange,
@@ -235,6 +238,11 @@ export function AppShell({ session, workspace, page, onPageChange, onWorkspaceCh
                       退出登录
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="flex items-center justify-between gap-4" title={buildCommit}>
+                    <span>版本</span>
+                    <code className="font-mono font-normal text-muted-foreground">{buildVersion}</code>
+                  </DropdownMenuLabel>
                 </DropdownMenuContent>
               </DropdownMenu>
             </SidebarMenuItem>
