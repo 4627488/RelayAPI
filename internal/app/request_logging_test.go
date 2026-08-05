@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSanitizedHeadersRedactsSecrets(t *testing.T) {
@@ -50,6 +51,22 @@ func TestBoundedDetailReportsOriginalSize(t *testing.T) {
 	value, truncated, size := boundedDetail(payload)
 	if !truncated || len(value) != requestLogDetailLimit || size != int64(len(payload)) {
 		t.Fatalf("value=%d truncated=%v size=%d", len(value), truncated, size)
+	}
+}
+
+func TestBoundedDetailNeverReturnsInvalidUTF8(t *testing.T) {
+	payload := append([]byte(strings.Repeat("a", requestLogDetailLimit-1)), []byte("中文")...)
+	value, truncated, size := boundedDetail(payload)
+	if !truncated || !utf8.ValidString(value) || size != int64(len(payload)) {
+		t.Fatalf("valid=%v truncated=%v size=%d", utf8.ValidString(value), truncated, size)
+	}
+	if strings.HasSuffix(value, "�") {
+		t.Fatalf("a rune split at the byte limit: %q", value[len(value)-4:])
+	}
+
+	value, truncated, _ = boundedDetail([]byte{'a', 0xff, 'b'})
+	if truncated || !utf8.ValidString(value) || value != "a�b" {
+		t.Fatalf("invalid input was not normalized: %q", value)
 	}
 }
 

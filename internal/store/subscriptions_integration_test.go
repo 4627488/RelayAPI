@@ -89,10 +89,18 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	}
 
 	secondReset := firstReset.Add(time.Hour)
-	if err := database.Model(&db.ChildQuotaWindow{}).
-		Where("child_subscription_id = ? AND kind = ?", child.ID, "rolling").
-		Updates(map[string]any{"resets_at": secondReset, "settled_nano_usd": 0, "reserved_nano_usd": 0}).Error; err != nil {
+	if err := store.SetParentQuotaWindows(ctx, parent.ID, []ParentQuotaWindow{{
+		Kind: "rolling", LimitNanoUSD: 2_000, ResetsAt: secondReset, Source: db.ParentQuotaSourceManualConversion,
+	}}); err != nil {
 		t.Fatal(err)
+	}
+	var resetWindow db.ChildQuotaWindow
+	if err := database.First(&resetWindow, "child_subscription_id = ? AND kind = ?", child.ID, "rolling").Error; err != nil {
+		t.Fatal(err)
+	}
+	if !resetWindow.ResetsAt.Equal(secondReset) || resetWindow.LimitNanoUSD != 2_000 ||
+		resetWindow.SettledNanoUSD != 0 || resetWindow.ReservedNanoUSD != 0 {
+		t.Fatalf("parent reset was not propagated to child: %+v", resetWindow)
 	}
 	if err := store.SettleRequestReservation(ctx, requestID, 7, true); err != nil {
 		t.Fatal(err)

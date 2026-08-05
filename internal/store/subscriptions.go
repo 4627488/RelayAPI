@@ -24,6 +24,11 @@ var (
 	ErrSubscriptionPrice     = errors.New("priced model is required for metered subscription")
 )
 
+// Upstream rolling-window reset timestamps are often derived from a rounded
+// countdown and can move by a few seconds between probes. Treat nearby values
+// as the same generation; a real reset advances by hours or days.
+const quotaResetJitterTolerance = time.Minute
+
 type ParentSubscription = db.ParentSubscription
 type ParentQuotaWindow = db.ParentQuotaWindow
 type ParentQuotaObservation = db.ParentQuotaObservation
@@ -253,7 +258,7 @@ func (s Store) SetParentQuotaWindows(ctx context.Context, parentID string, windo
 			existingErr := tx.First(&existing, "parent_subscription_id = ? AND kind = ?", parentID, window.Kind).Error
 			if existingErr == nil {
 				delta := window.ResetsAt.Sub(existing.ResetsAt)
-				if delta >= -time.Second && delta <= time.Second {
+				if delta >= -quotaResetJitterTolerance && delta <= quotaResetJitterTolerance {
 					window.ResetsAt = existing.ResetsAt
 				} else if delta < 0 {
 					return errors.New("quota window resets_at cannot move backwards")
@@ -267,6 +272,9 @@ func (s Store) SetParentQuotaWindows(ctx context.Context, parentID string, windo
 				Columns:   []clause.Column{{Name: "parent_subscription_id"}, {Name: "kind"}},
 				DoUpdates: clause.AssignmentColumns([]string{"limit_nano_usd", "resets_at", "source", "observed_used_percent", "observed_at", "updated_at"}),
 			}).Create(&window).Error; err != nil {
+				return err
+			}
+			if err := syncChildQuotaWindowGeneration(tx, parentID, window.Kind, window.LimitNanoUSD, window.ResetsAt, time.Now()); err != nil {
 				return err
 			}
 		}
@@ -305,7 +313,7 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 		currentWindowErr := tx.First(&currentWindow, "parent_subscription_id = ? AND kind = ?", parentID, observation.Kind).Error
 		if currentWindowErr == nil {
 			delta := resetsAt.Sub(currentWindow.ResetsAt)
-			if delta >= -time.Second && delta <= time.Second {
+			if delta >= -quotaResetJitterTolerance && delta <= quotaResetJitterTolerance {
 				resetsAt = currentWindow.ResetsAt
 				observation.ResetsAt = resetsAt
 			} else if delta < 0 {
@@ -318,6 +326,7 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 		previousErr := tx.Where("parent_subscription_id = ? AND kind = ?", parentID, observation.Kind).
 			Order("observed_at DESC").First(&previous).Error
 		observation.Reason = "initial_sample"
+		unchanged := false
 		if previousErr == nil {
 			if !observedAt.After(previous.ObservedAt) {
 				return errors.New("observation must be newer than the previous sample")
@@ -328,9 +337,12 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 			if previous.ResetsAt.Equal(resetsAt) && math.Abs(usedPercent-previous.UsedPercent) < 1e-9 {
 				observation = previous
 				observation.Reason = "unchanged"
-				return nil
+				unchanged = true
 			}
-			if !previous.ResetsAt.Equal(resetsAt) {
+			if unchanged {
+				// Keep the change-point sample for capacity estimation, but still
+				// refresh the parent and child window timestamps below.
+			} else if !previous.ResetsAt.Equal(resetsAt) {
 				observation.Reason = "window_reset"
 			} else if usedPercent < previous.UsedPercent {
 				observation.Reason = "percentage_decreased"
@@ -371,8 +383,10 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 			return previousErr
 		}
 
-		if err := tx.Create(&observation).Error; err != nil {
-			return err
+		if !unchanged {
+			if err := tx.Create(&observation).Error; err != nil {
+				return err
+			}
 		}
 		existing, windowErr := currentWindow, currentWindowErr
 		limit := int64(0)
@@ -404,10 +418,53 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 			}).Create(&window).Error; err != nil {
 				return err
 			}
+			if err := syncChildQuotaWindowGeneration(tx, parentID, observation.Kind, limit, resetsAt, observedAt); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
 	return observation, err
+}
+
+// syncChildQuotaWindowGeneration makes the persisted child state follow the
+// authoritative parent generation. A generation change atomically clears old
+// usage; an update within the same generation only adjusts the allocated limit.
+// Reservations carry their generation's resets_at, so late settlements from an
+// old generation cannot debit the newly reset window.
+func syncChildQuotaWindowGeneration(tx *gorm.DB, parentID, kind string, parentLimit int64, resetsAt, startedAt time.Time) error {
+	var children []ChildSubscription
+	if err := tx.Where("parent_subscription_id = ?", parentID).Find(&children).Error; err != nil {
+		return err
+	}
+	for _, child := range children {
+		limit := fraction(parentLimit, child.AllocationPPM)
+		var current ChildQuotaWindow
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current,
+			"child_subscription_id = ? AND kind = ?", child.ID, kind).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			window := ChildQuotaWindow{ChildSubscriptionID: child.ID, Kind: kind, StartedAt: startedAt,
+				ResetsAt: resetsAt, LimitNanoUSD: limit}
+			if err := tx.Create(&window).Error; err != nil {
+				return err
+			}
+		case err != nil:
+			return err
+		case current.ResetsAt.Equal(resetsAt):
+			if err := tx.Model(&current).Updates(map[string]any{"limit_nano_usd": limit, "updated_at": time.Now()}).Error; err != nil {
+				return err
+			}
+		case resetsAt.After(current.ResetsAt):
+			if err := tx.Model(&current).Updates(map[string]any{
+				"started_at": startedAt, "resets_at": resetsAt, "limit_nano_usd": limit,
+				"settled_nano_usd": 0, "reserved_nano_usd": 0, "updated_at": time.Now(),
+			}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s Store) ListParentQuotaObservations(ctx context.Context, parentID string, limit int) ([]ParentQuotaObservation, error) {

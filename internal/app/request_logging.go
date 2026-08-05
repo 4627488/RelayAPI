@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
@@ -45,10 +46,21 @@ func sanitizedHeaders(header http.Header) string {
 
 func boundedDetail(payload []byte) (text string, truncated bool, originalBytes int64) {
 	originalBytes = int64(len(payload))
-	if len(payload) <= requestLogDetailLimit {
+	limit := len(payload)
+	if limit <= requestLogDetailLimit {
+		if !utf8.Valid(payload) {
+			return strings.ToValidUTF8(string(payload), "\uFFFD"), false, originalBytes
+		}
 		return string(payload), false, originalBytes
 	}
-	return string(payload[:requestLogDetailLimit]), true, originalBytes
+	limit = requestLogDetailLimit
+	// A byte limit can split a multi-byte rune. PostgreSQL text columns reject
+	// the resulting invalid UTF-8, so back up to the last complete rune. Also
+	// replace any invalid bytes already present in the retained payload.
+	for limit > 0 && !utf8.RuneStart(payload[limit]) {
+		limit--
+	}
+	return strings.ToValidUTF8(string(payload[:limit]), "\uFFFD"), true, originalBytes
 }
 
 func sampledRequest(requestID string, ppm int) bool {
