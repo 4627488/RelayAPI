@@ -130,6 +130,47 @@ func (s Store) UpdateTenant(ctx context.Context, id, name, email string, enabled
 	return s.GetTenant(ctx, id)
 }
 
+// DeleteTenant permanently removes a tenant and all tenant-owned operational
+// and accounting data. The explicit order keeps the operation portable across
+// existing databases whose older foreign keys may not all cascade.
+func (s Store) DeleteTenant(ctx context.Context, id string) error {
+	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		var tenant Tenant
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", id).Error; err != nil {
+			return notFound(err)
+		}
+
+		logIDs := tx.Model(&db.RequestLog{}).Select("id").Where("tenant_id = ?", id)
+		childIDs := tx.Model(&db.ChildSubscription{}).Select("id").Where("tenant_id = ?", id)
+		keyIDs := tx.Model(&db.APIKey{}).Select("id").Where("tenant_id = ?", id)
+		deletions := []struct {
+			model any
+			query string
+			value any
+		}{
+			{&db.RequestLogDetail{}, "request_log_id IN (?)", logIDs},
+			{&db.CPALifecycleEvent{}, "request_log_id IN (?)", logIDs},
+			{&db.RequestReservation{}, "tenant_id = ?", id},
+			{&db.ChildQuotaWindow{}, "child_subscription_id IN (?)", childIDs},
+			{&db.ChildSubscription{}, "tenant_id = ?", id},
+			{&db.BillingLedger{}, "tenant_id = ?", id},
+			{&db.UsageDailyRollup{}, "tenant_id = ?", id},
+			{&db.RequestLog{}, "tenant_id = ?", id},
+			{&db.APIKeyModelAlias{}, "api_key_id IN (?)", keyIDs},
+			{&db.APIKey{}, "tenant_id = ?", id},
+		}
+		for _, item := range deletions {
+			if err := tx.Where(item.query, item.value).Delete(item.model).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&db.Invitation{}).Where("used_by_tenant_id = ?", id).Update("used_by_tenant_id", nil).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&tenant).Error
+	})
+}
+
 func (s Store) ResetPassword(ctx context.Context, tenantID, password string) error {
 	hash, err := hashPassword(password)
 	if err != nil {

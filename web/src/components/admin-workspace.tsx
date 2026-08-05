@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react"
 import {
   ActivityIcon,
+  BanIcon,
+  CircleCheckIcon,
   CircleDollarSignIcon,
   CopyIcon,
   KeyRoundIcon,
@@ -23,6 +25,17 @@ import { PricingView } from "@/components/pricing-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { AdminSubscriptionsView } from "@/components/subscriptions-view"
 import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -74,9 +87,10 @@ import { useSessionStorage } from "@/hooks/use-session-storage"
 
 interface AdminWorkspaceProps {
   page: Page
+  currentUserId: string
 }
 
-export function AdminWorkspace({ page }: AdminWorkspaceProps) {
+export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [usage, setUsage] = useState<UsageReport | null>(null)
   const [users, setUsers] = useState<User[]>([])
@@ -118,7 +132,7 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
   if (!overview || !usage) {
     return <LoadErrorView message={loadError || "管理数据不完整"} onRetry={() => void load(true)} />
   }
-  if (page === "users") return <UsersView users={users} onChanged={load} />
+  if (page === "users") return <UsersView users={users} currentUserId={currentUserId} onChanged={load} />
   if (page === "invitations") return <InvitationsView items={invitations} onChanged={load} />
   if (page === "providers") return <ProvidersView />
   if (page === "subscriptions") return <AdminSubscriptionsView />
@@ -185,9 +199,10 @@ export function AdminWorkspace({ page }: AdminWorkspaceProps) {
   )
 }
 
-function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promise<void> }) {
+function UsersView({ users, currentUserId, onChanged }: { users: User[]; currentUserId: string; onChanged: () => Promise<void> }) {
   const [creditUser, setCreditUser] = useState<User | null>(null)
   const [resetUser, setResetUser] = useState<User | null>(null)
+  const [deleteUser, setDeleteUser] = useState<User | null>(null)
   const [temporaryPassword, setTemporaryPassword] = useState("")
   const [pending, setPending] = useState(false)
 
@@ -236,6 +251,44 @@ function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promi
     if (pending) return
     setResetUser(null)
     setTemporaryPassword("")
+  }
+
+  async function toggleUser(user: User) {
+    setPending(true)
+    try {
+      await api<User>(`/api/admin/tenants/${user.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: user.name,
+          ownerEmail: user.owner_email,
+          enabled: !user.enabled,
+          rateLimitPerMinute: user.rate_limit_per_minute,
+          tokenLimitDaily: user.token_limit_daily,
+          modelAllowlist: user.model_allowlist,
+        }),
+      })
+      await onChanged()
+      toast.success(`已${user.enabled ? "停用" : "启用"} ${user.name}`)
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "更新用户状态失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function removeUser() {
+    if (!deleteUser) return
+    setPending(true)
+    try {
+      await deleteRequest(`/api/admin/tenants/${deleteUser.id}`)
+      await onChanged()
+      toast.success(`已删除 ${deleteUser.name}`)
+      setDeleteUser(null)
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "删除用户失败")
+    } finally {
+      setPending(false)
+    }
   }
 
   return (
@@ -288,6 +341,24 @@ function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promi
                         <Button size="sm" variant="outline" onClick={() => setCreditUser(user)}>
                           <CircleDollarSignIcon data-icon="inline-start" />
                           充值
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={pending || user.id === currentUserId}
+                          onClick={() => void toggleUser(user)}
+                        >
+                          {user.enabled ? <BanIcon data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
+                          {user.enabled ? "停用" : "启用"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={pending || user.id === currentUserId}
+                          onClick={() => setDeleteUser(user)}
+                        >
+                          <Trash2Icon data-icon="inline-start" />
+                          删除
                         </Button>
                       </span>
                     </TableCell>
@@ -346,6 +417,26 @@ function UsersView({ users, onChanged }: { users: User[]; onChanged: () => Promi
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={Boolean(deleteUser)} onOpenChange={(open) => { if (!open && !pending) setDeleteUser(null) }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogMedia>
+              <Trash2Icon />
+            </AlertDialogMedia>
+            <AlertDialogTitle>永久删除用户？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将永久删除 {deleteUser?.name} 及其 API Key、订阅分配、请求日志和计费记录。此操作无法撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>取消</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" disabled={pending} onClick={() => void removeUser()}>
+              {pending ? <Spinner /> : <Trash2Icon data-icon="inline-start" />}
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <Dialog open={Boolean(resetUser)} onOpenChange={(open) => { if (!open) closeReset() }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

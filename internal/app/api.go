@@ -375,6 +375,10 @@ func (a *App) adminTenantUpdate(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	if r.PathValue("id") == currentSession(r).TenantID && !input.Enabled {
+		writeError(w, http.StatusBadRequest, "self_disable_not_allowed", "不能停用自己的账户")
+		return
+	}
 	item, err := a.store.UpdateTenant(r.Context(), r.PathValue("id"), input.Name, input.OwnerEmail, input.Enabled,
 		input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist)
 	if err != nil {
@@ -382,6 +386,23 @@ func (a *App) adminTenantUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, item)
+}
+
+func (a *App) adminTenantDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == currentSession(r).TenantID {
+		writeError(w, http.StatusBadRequest, "self_delete_not_allowed", "不能删除自己的账户")
+		return
+	}
+	if err := a.store.DeleteTenant(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "租户不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "delete_failed", "删除租户失败")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *App) adminCredit(w http.ResponseWriter, r *http.Request) {

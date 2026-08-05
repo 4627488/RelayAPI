@@ -78,7 +78,7 @@ export function App() {
     >
       <Suspense fallback={<LoadingView />}>
         {workspace === "admin" && session.is_admin ? (
-          <AdminWorkspace page={page} />
+          <AdminWorkspace page={page} currentUserId={session.tenant.id} />
         ) : (
           <UserWorkspace page={page} session={session} />
         )}

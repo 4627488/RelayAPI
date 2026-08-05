@@ -207,6 +207,7 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/tenants", a.withAdmin(http.HandlerFunc(a.adminTenants)))
 	a.mux.Handle("POST /api/admin/tenants", a.withAdmin(http.HandlerFunc(a.adminTenants)))
 	a.mux.Handle("PUT /api/admin/tenants/{id}", a.withAdmin(http.HandlerFunc(a.adminTenantUpdate)))
+	a.mux.Handle("DELETE /api/admin/tenants/{id}", a.withAdmin(http.HandlerFunc(a.adminTenantDelete)))
 	a.mux.Handle("POST /api/admin/tenants/{id}/credit", a.withAdmin(http.HandlerFunc(a.adminCredit)))
 	a.mux.Handle("POST /api/admin/tenants/{id}/password", a.withAdmin(http.HandlerFunc(a.adminPassword)))
 	a.mux.Handle("GET /api/admin/tenants/{id}/keys", a.withAdmin(http.HandlerFunc(a.adminTenantKeys)))
