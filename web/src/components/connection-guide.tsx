@@ -106,18 +106,17 @@ export function ConnectionGuide({ tenantModels }: { tenantModels: string[] }) {
         </TabsContent>
 
         <TabsContent value="cli" className="grid gap-4 xl:grid-cols-2">
-          <SampleCard title="Codex CLI" description="配置写入用户级 ~/.codex/config.toml。provider 配置不会从项目级 .codex/config.toml 读取。">
+          <SampleCard title="Codex CLI" description="按 CLIProxyAPI 推荐方式写入用户级 ~/.codex/config.toml，无需修改 auth.json。默认使用 gpt-5.6-sol。">
             <CodeSample label="复制 config.toml" code={samples.codex} />
-            <CodeSample label="复制环境变量" code={samples.relayEnv} />
           </SampleCard>
-          <SampleCard title="Claude Code" description="Base URL 不带 /v1。模型名称使用本站模型列表中的值。">
-            <CodeSample label="复制环境变量" code={samples.claudeCode} />
+          <SampleCard title="Claude Code" description="字段按 CLIProxyAPI 文档写入 ~/.claude/settings.json；Base URL 不带 /v1，同时兼容 Claude Code 2.x 和 1.x。">
+            <CodeSample label="复制 settings.json" code={samples.claudeCode} />
           </SampleCard>
-          <SampleCard title="OpenCode" description="Responses 模型使用 @ai-sdk/openai；只支持 Chat Completions 的模型可改用 @ai-sdk/openai-compatible。">
+          <SampleCard title="OpenCode" description="写入 ~/.config/opencode/opencode.json，API Key 直接保存在 provider 配置中。">
             <CodeSample label="复制 opencode.json" code={samples.opencode} />
           </SampleCard>
-          <SampleCard title="Aider" description="Aider 通过 OpenAI-compatible 地址调用。模型名称需要带 openai/ 前缀。">
-            <CodeSample label="复制启动命令" code={samples.aider} />
+          <SampleCard title="Aider" description="写入 ~/.aider.conf.yml，通过 OpenAI-compatible 地址调用；模型名称需要带 openai/ 前缀。">
+            <CodeSample label="复制 .aider.conf.yml" code={samples.aider} />
           </SampleCard>
         </TabsContent>
 
@@ -182,45 +181,47 @@ export function ConnectionGuide({ tenantModels }: { tenantModels: string[] }) {
 function guideSamples(origin: string, models: string[]) {
   const base = `${origin}/v1`
   const model = models[0] ?? "当前账户暂无可用模型"
-  const openCodeModels = models.length
-    ? models.map((item) => `        ${JSON.stringify(item)}: { "name": ${JSON.stringify(item)} }`).join(",\n")
-    : `        "当前账户暂无可用模型": { "name": "当前账户暂无可用模型" }`
   return {
     models: `curl ${origin}/v1/models \\\n  -H "Authorization: Bearer relay_你的密钥"`,
     chat: `curl ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer relay_你的密钥" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
-    relayEnv: `export RELAY_API_KEY="relay_你的密钥"`,
-    codex: `model = ${JSON.stringify(model)}
+    codex: `model = "gpt-5.6-sol"
 model_provider = "relayapi"
+model_reasoning_effort = "xhigh"
+plan_mode_reasoning_effort = "xhigh"
 
 [model_providers.relayapi]
 name = "RelayAPI"
 base_url = "${base}"
-env_key = "RELAY_API_KEY"
-wire_api = "responses"`,
-    claudeCode: `export ANTHROPIC_BASE_URL="${origin}"
-export ANTHROPIC_AUTH_TOKEN="relay_你的密钥"
-export ANTHROPIC_MODEL=${JSON.stringify(model)}
-
-claude`,
+experimental_bearer_token = "relay_你的密钥"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = true`,
+    claudeCode: `{
+  "env": {
+    "ANTHROPIC_BASE_URL": ${JSON.stringify(origin)},
+    "ANTHROPIC_AUTH_TOKEN": "relay_你的密钥",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": ${JSON.stringify(model)},
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": ${JSON.stringify(model)},
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": ${JSON.stringify(model)},
+    "ANTHROPIC_MODEL": ${JSON.stringify(model)},
+    "ANTHROPIC_SMALL_FAST_MODEL": ${JSON.stringify(model)}
+  }
+}`,
     opencode: `{
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "relayapi": {
-      "npm": "@ai-sdk/openai",
-      "name": "RelayAPI",
+    "openai": {
       "options": {
         "baseURL": "${base}",
-        "apiKey": "{env:RELAY_API_KEY}"
-      },
-      "models": {
-${openCodeModels}
+        "apiKey": "relay_你的密钥"
       }
     }
-  }
+  },
+  "model": "gpt-5.6-sol"
 }`,
-    aider: `export OPENAI_API_KEY="relay_你的密钥"
-export OPENAI_API_BASE="${base}"
-aider --model openai/${model}`,
+    aider: `openai-api-key: relay_你的密钥
+openai-api-base: ${base}
+model: openai/${model}`,
     python: `from openai import OpenAI
 
 client = OpenAI(
