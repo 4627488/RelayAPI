@@ -18,6 +18,7 @@ import (
 type Engine struct {
 	Translator *Translator
 	Transports *TransportPool
+	Executors  *CompatibilityExecutors
 }
 
 type Exchange struct {
@@ -26,10 +27,11 @@ type Exchange struct {
 	TranslatedRequest []byte
 	Request           *http.Request
 	Response          *http.Response
+	ExecutorManaged   bool
 }
 
 func NewEngine(translator *Translator, transports *TransportPool) *Engine {
-	return &Engine{Translator: translator, Transports: transports}
+	return &Engine{Translator: translator, Transports: transports, Executors: NewCompatibilityExecutors()}
 }
 
 func (e *Engine) Do(ctx context.Context, plan RoutePlan, credential Credential, inboundHeaders http.Header, body []byte) (*Exchange, error) {
@@ -38,6 +40,9 @@ func (e *Engine) Do(ctx context.Context, plan RoutePlan, credential Credential, 
 	}
 	if e == nil || e.Translator == nil || e.Transports == nil {
 		return nil, fmt.Errorf("data plane engine is not initialized")
+	}
+	if exchange, handled, err := e.doCompatibilityExecutor(ctx, plan, credential, inboundHeaders, body); handled {
+		return exchange, err
 	}
 	translated, err := e.Translator.TranslateRequest(plan.Inbound, plan.Upstream, plan.Model, body, plan.Stream)
 	if err != nil {
@@ -95,6 +100,9 @@ func (e *Engine) TranslateWebSocketRequest(plan RoutePlan, body []byte, inboundH
 func (e *Engine) CopyResponse(ctx context.Context, w io.Writer, exchange *Exchange, onFirstByte func()) error {
 	if exchange == nil || exchange.Response == nil {
 		return fmt.Errorf("exchange has no response")
+	}
+	if exchange.ExecutorManaged {
+		return copyImmediate(w, exchange.Response.Body, onFirstByte)
 	}
 	if exchange.Plan.Stream {
 		return e.copyStream(ctx, w, exchange, onFirstByte)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,5 +98,84 @@ func TestNativeResponsesWebSocketEndToEnd(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for upstream websocket request")
+	}
+}
+
+func TestNativeResponsesWebSocketReusesCPAExecutorSession(t *testing.T) {
+	var connections atomic.Int32
+	requests := make(chan map[string]any, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connections.Add(1)
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for i := 1; i <= 2; i++ {
+			_, payload, readErr := conn.ReadMessage()
+			if readErr != nil {
+				return
+			}
+			var body map[string]any
+			_ = json.Unmarshal(payload, &body)
+			requests <- body
+			_ = conn.WriteJSON(map[string]any{
+				"type":     "response.completed",
+				"response": map[string]any{"id": "resp_" + string(rune('0'+i)), "status": "completed", "output": []any{}},
+			})
+		}
+	}))
+	defer upstream.Close()
+
+	endpoint, _ := url.Parse(upstream.URL + "/responses")
+	catalog := dataplane.NewCredentialCatalog()
+	if err := catalog.Replace([]dataplane.Credential{{
+		ID: "codex", Provider: "codex", Endpoint: endpoint, ProxyURL: "direct", AccessToken: "token",
+		Models: []dataplane.ModelRoute{{Public: "gpt-test", Upstream: "gpt-upstream"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	translator := dataplane.NewTranslator()
+	app := &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}, credentials: catalog,
+		translator: translator, transports: dataplane.NewTransportPool(4, time.Minute)}
+	app.engine = dataplane.NewEngine(translator, app.transports)
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, store.Admission{}, requestMeta{}, "session-test")
+	}))
+	defer downstream.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+downstream.URL[len("http"):]+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err := client.WriteJSON(map[string]any{"type": "response.create", "model": "gpt-test", "input": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.WriteJSON(map[string]any{
+		"type": "response.append", "previous_response_id": "resp_1", "input": []any{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := client.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	_ = client.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+
+	first, second := <-requests, <-requests
+	if got := first["type"]; got != "response.create" {
+		t.Fatalf("first type = %#v", got)
+	}
+	if got := second["type"]; got != "response.create" {
+		t.Fatalf("second type = %#v, want response.create", got)
+	}
+	if got := second["previous_response_id"]; got != "resp_1" {
+		t.Fatalf("second previous_response_id = %#v", got)
+	}
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("upstream websocket connections = %d, want 1", got)
 	}
 }

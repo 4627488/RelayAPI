@@ -10,6 +10,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -106,6 +108,10 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 }
 
 func (a *App) Close() {
+	if a.engine != nil {
+		a.engine.CloseCompatibilitySessions()
+		a.transports.CloseIdleConnections()
+	}
 	if a.stop != nil {
 		close(a.stop)
 		a.wg.Wait()
@@ -140,6 +146,7 @@ func (a *App) maintenance() {
 		select {
 		case <-ticker.C:
 			if a.cfg.DataPlane == "native" {
+				a.reclaimExecutorCachesUnderPressure()
 				if err := a.authManager.RefreshDue(context.Background(), 5*time.Minute); err != nil {
 					slog.Warn("refresh upstream credentials", "error", err)
 				}
@@ -184,6 +191,21 @@ func (a *App) maintenance() {
 			return
 		}
 	}
+}
+
+func (a *App) reclaimExecutorCachesUnderPressure() {
+	if a == nil || a.engine == nil || a.cfg.ExecutorCachePressureBytes == 0 {
+		return
+	}
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	if stats.HeapAlloc < a.cfg.ExecutorCachePressureBytes {
+		return
+	}
+	a.engine.ClearCompatibilityCaches()
+	debug.FreeOSMemory()
+	slog.Warn("cleared executor compatibility caches under heap pressure",
+		"heap_alloc_bytes", stats.HeapAlloc, "threshold_bytes", a.cfg.ExecutorCachePressureBytes)
 }
 
 func (a *App) runRetention(ctx context.Context) {

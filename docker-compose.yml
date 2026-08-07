@@ -3,8 +3,13 @@ services:
     image: ghcr.io/4627488/relayapi:latest
     build: .
     restart: unless-stopped
+    mem_limit: ${RELAY_MEMORY_LIMIT:-768m}
+    mem_reservation: ${RELAY_MEMORY_RESERVATION:-512m}
     env_file: .env
     environment:
+      GOMEMLIMIT: ${RELAY_GOMEMLIMIT:-576MiB}
+      GOGC: "50"
+      GODEBUG: madvdontneed=1
       RELAY_CPA_IMPORT_AUTH_DIR: /migration/cpa-auths
       RELAY_CPA_IMPORT_CONFIG: /migration/cpa-config.yaml
     volumes:

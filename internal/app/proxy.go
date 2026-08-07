@@ -337,10 +337,16 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		if planErr == nil {
 			nativeExchange, err = a.engine.Do(r.Context(), plan, credential, r.Header, body)
-			if err == nil && nativeExchange.Response.StatusCode == http.StatusUnauthorized &&
+			unauthorized := executorStatusCode(err) == http.StatusUnauthorized
+			if err == nil && nativeExchange != nil && nativeExchange.Response != nil {
+				unauthorized = nativeExchange.Response.StatusCode == http.StatusUnauthorized
+			}
+			if unauthorized &&
 				(plan.Provider == "codex" || plan.Provider == "xai" || plan.Provider == "grok") {
 				if refreshErr := a.authManager.Refresh(r.Context(), credential.ID); refreshErr == nil {
-					nativeExchange.Response.Body.Close()
+					if nativeExchange != nil && nativeExchange.Response != nil && nativeExchange.Response.Body != nil {
+						nativeExchange.Response.Body.Close()
+					}
 					plan, credential, planErr = a.credentials.Plan(r.URL.Path, admission.CPAAuthID, meta.Model, meta.Stream)
 					if planErr == nil {
 						nativeExchange, err = a.engine.Do(r.Context(), plan, credential, r.Header, body)
@@ -391,7 +397,11 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		})
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
 		if a.cfg.DataPlane == "native" {
-			writeError(w, http.StatusBadGateway, "upstream_unavailable", err.Error())
+			status := executorStatusCode(err)
+			if status < 400 || status > 599 {
+				status = http.StatusBadGateway
+			}
+			writeError(w, status, "upstream_error", err.Error())
 		} else {
 			writeCPATransportError(w, r, err, "awaiting_headers", requestID)
 		}
