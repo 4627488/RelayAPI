@@ -162,6 +162,7 @@ func (s Store) DeleteTenant(ctx context.Context, id string) error {
 			{&db.BillingLedger{}, "tenant_id = ?", id},
 			{&db.UsageDailyRollup{}, "tenant_id = ?", id},
 			{&db.RequestLog{}, "tenant_id = ?", id},
+			{&db.AgentSetup{}, "tenant_id = ?", id},
 			{&db.APIKeyModelAlias{}, "api_key_id IN (?)", keyIDs},
 			{&db.APIKey{}, "tenant_id = ?", id},
 		}
@@ -292,6 +293,54 @@ func (s Store) RevealKey(ctx context.Context, tenantID, id string) (string, erro
 		return "", fmt.Errorf("decrypt api key: %w", err)
 	}
 	return string(plain), nil
+}
+
+func agentSetupAssociatedData(tenantID string, tokenHash []byte) string {
+	return fmt.Sprintf("agent-setup/%s/%x", tenantID, tokenHash)
+}
+
+func (s Store) CreateAgentSetup(ctx context.Context, tenantID string, payload []byte, expiresAt time.Time) (string, error) {
+	token, tokenHash, err := identity.NewAgentSetupToken()
+	if err != nil {
+		return "", err
+	}
+	ciphertext, err := s.secretBox.Seal(payload, agentSetupAssociatedData(tenantID, tokenHash))
+	if err != nil {
+		return "", err
+	}
+	item := db.AgentSetup{
+		TokenHash: tokenHash, TenantID: tenantID, PayloadCiphertext: ciphertext,
+		ExpiresAt: expiresAt, CreatedAt: time.Now(),
+	}
+	err = scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("expires_at <= ?", time.Now()).Delete(&db.AgentSetup{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&item).Error
+	})
+	return token, err
+}
+
+func (s Store) AgentSetup(ctx context.Context, token string) ([]byte, error) {
+	if len(token) < len("setup_")+20 || len(token) > 64 {
+		return nil, ErrNotFound
+	}
+	tokenHash := identity.HashKey(token)
+	var item db.AgentSetup
+	err := scoped(ctx, s.DB).Where("token_hash = ? AND expires_at > ?", tokenHash, time.Now()).First(&item).Error
+	if err != nil {
+		return nil, notFound(err)
+	}
+	payload, err := s.secretBox.Open(item.PayloadCiphertext, agentSetupAssociatedData(item.TenantID, item.TokenHash))
+	if err != nil {
+		return nil, fmt.Errorf("decrypt agent setup: %w", err)
+	}
+	return payload, nil
+}
+
+func (s Store) DeleteExpiredAgentSetups(ctx context.Context, now time.Time) (int64, error) {
+	result := scoped(ctx, s.DB).Where("expires_at <= ?", now).Delete(&db.AgentSetup{})
+	return result.RowsAffected, result.Error
 }
 
 func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled bool, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias) (APIKey, error) {

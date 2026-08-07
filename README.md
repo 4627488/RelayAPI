@@ -191,7 +191,7 @@ CPA 凭据页和父订阅页都会展示最近一次脱敏上游额度快照。�
 - `DELETE /api/keys/{id}`：删除个人 API Key
 - `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
-- `POST /api/agent-setup`：创建 5 分钟有效的加密安装能力令牌与跨平台一键命令
+- `POST /api/agent-setup`：创建 5 分钟有效的短随机安装令牌与跨平台一键命令；数据库只保存令牌哈希和加密配置
 - `GET /setup/{token}/install.sh|install.ps1`：读取禁止缓存的短时安装脚本
 
 创建邀请时仅在响应中返回一次明文 token。数据库只保存 SHA-256 哈希；邀请可

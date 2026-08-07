@@ -127,12 +127,11 @@ func (a *App) createAgentSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "setup_failed", "无法创建安装脚本")
 		return
 	}
-	sealed, err := a.setupBox.Seal(payload, agentSetupAssociatedData)
+	token, err := a.store.CreateAgentSetup(r.Context(), tenantID, payload, expires)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "setup_failed", "无法创建安装脚本")
 		return
 	}
-	token := base64.RawURLEncoding.EncodeToString(sealed)
 	base := strings.TrimRight(a.cfg.PublicURL, "/") + "/setup/" + token
 	setSensitiveNoStore(w)
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -146,14 +145,20 @@ func (a *App) createAgentSetup(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) agentSetupScript(w http.ResponseWriter, r *http.Request) {
 	setSensitiveNoStore(w)
-	token, err := base64.RawURLEncoding.DecodeString(r.PathValue("token"))
-	if err != nil {
+	token := r.PathValue("token")
+	var payload []byte
+	var err error
+	if len(token) <= 64 {
+		payload, err = a.store.AgentSetup(r.Context(), token)
+	} else {
+		payload, err = a.openLegacyAgentSetup(token)
+	}
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "setup_not_found", "安装脚本不存在或已过期")
 		return
 	}
-	payload, err := a.setupBox.Open(token, agentSetupAssociatedData)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "setup_not_found", "安装脚本不存在或已过期")
+		writeError(w, http.StatusInternalServerError, "setup_failed", "无法读取安装脚本")
 		return
 	}
 	var claim agentSetupClaim
@@ -188,6 +193,18 @@ func (a *App) agentSetupScript(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		_ = agentSetupShellTemplate.Execute(w, data)
 	}
+}
+
+func (a *App) openLegacyAgentSetup(token string) ([]byte, error) {
+	sealed, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return nil, store.ErrNotFound
+	}
+	payload, err := a.setupBox.Open(sealed, agentSetupAssociatedData)
+	if err != nil {
+		return nil, store.ErrNotFound
+	}
+	return payload, nil
 }
 
 func setSensitiveNoStore(w http.ResponseWriter) {

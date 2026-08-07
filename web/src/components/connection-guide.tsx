@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from "react"
 import {
-  CheckCircle2Icon,
+  CheckIcon,
+  ChevronDownIcon,
   ClipboardIcon,
   Clock3Icon,
   KeyRoundIcon,
-  LaptopIcon,
-  PlayIcon,
-  RefreshCwIcon,
-  ShieldCheckIcon,
+  Settings2Icon,
   TerminalIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -24,11 +22,25 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
+  FieldLegend,
+  FieldSet,
 } from "@/components/ui/field"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group"
 import {
   Select,
   SelectContent,
@@ -38,8 +50,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, postJSON, type ApiKey, type ChildSubscription } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
+import { cn } from "@/lib/utils"
 
 type Platform = "bash" | "powershell"
 type ClientChoice = "all" | "codex" | "claude" | "opencode"
@@ -71,17 +86,18 @@ export function ConnectionGuide({
   const [platform, setPlatform] = useState<Platform>("bash")
   const [reasoningEffort, setReasoningEffort] = useState("high")
   const [openCodeProtocol, setOpenCodeProtocol] = useState("responses")
-  const [installMissing, setInstallMissing] = useState("yes")
-  const [verifyConnection, setVerifyConnection] = useState("yes")
-  const [gatewayDiscovery, setGatewayDiscovery] = useState("yes")
-  const [disableExtraTraffic, setDisableExtraTraffic] = useState("no")
+  const [installMissing, setInstallMissing] = useState(true)
+  const [verifyConnection, setVerifyConnection] = useState(true)
+  const [gatewayDiscovery, setGatewayDiscovery] = useState(true)
+  const [disableExtraTraffic, setDisableExtraTraffic] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [pending, setPending] = useState(false)
   const [setup, setSetup] = useState<SetupResponse | null>(null)
 
   useEffect(() => {
     if (!usableKeys.some((key) => key.id === keyID)) {
       setKeyID(usableKeys[0]?.id ?? "")
-      setSetup(null)
     }
   }, [keyID, usableKeys])
 
@@ -137,13 +153,15 @@ export function ConnectionGuide({
   useEffect(() => {
     if (!models.includes(model)) {
       setModel(preferredModel(models))
-      setSetup(null)
     }
   }, [model, models])
 
   useEffect(() => {
     setSetup(null)
   }, [
+    keyID,
+    model,
+    client,
     reasoningEffort,
     openCodeProtocol,
     installMissing,
@@ -162,15 +180,15 @@ export function ConnectionGuide({
         model,
         reasoning_effort: reasoningEffort,
         opencode_protocol: openCodeProtocol,
-        install_missing: installMissing === "yes",
-        verify_connection: verifyConnection === "yes",
-        claude_gateway_discovery: gatewayDiscovery === "yes",
-        claude_disable_extra_traffic: disableExtraTraffic === "yes",
+        install_missing: installMissing,
+        verify_connection: verifyConnection,
+        claude_gateway_discovery: gatewayDiscovery,
+        claude_disable_extra_traffic: disableExtraTraffic,
       })
       setSetup(value)
-      toast.success("安装脚本已生成，有效期 5 分钟")
+      toast.success("接入命令已生成")
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法生成安装脚本")
+      toast.error(cause instanceof Error ? cause.message : "无法生成接入命令")
     } finally {
       setPending(false)
     }
@@ -186,65 +204,44 @@ export function ConnectionGuide({
       ? setup.bash_check_command
       : setup.powershell_check_command
     : ""
+  const includesCodex = client === "all" || client === "codex"
+  const includesClaude = client === "all" || client === "claude"
+  const includesOpenCode = client === "all" || client === "opencode"
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
+      <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">接入向导</h1>
         <p className="text-sm text-muted-foreground">
-          生成一个可重复执行、失败自动回滚的安装脚本，配置 Codex、Claude Code 和
-          OpenCode。
+          选择客户端和模型，复制一条命令完成用户级配置。
         </p>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <FeatureCard
-          icon={ShieldCheckIcon}
-          title="短时授权"
-          description="命令只包含 5 分钟有效的加密令牌，不把 API Key 放进剪贴板或终端历史。"
-        />
-        <FeatureCard
-          icon={RefreshCwIcon}
-          title="合并与回滚"
-          description="保留原配置，原子写入并在失败时恢复；重复运行只更新 RelayAPI 对应项。"
-        />
-        <FeatureCard
-          icon={CheckCircle2Icon}
-          title="先验证再落盘"
-          description="先检查 /v1/models、密钥和客户端版本，再写受限权限的共享凭据文件。"
-        />
-      </div>
+      </header>
 
       {!usableKeys.length ? (
-        <Alert variant="destructive">
+        <Alert>
           <KeyRoundIcon />
-          <AlertTitle>没有可用于脚本的 API Key</AlertTitle>
+          <AlertTitle>需要一个可恢复的 API Key</AlertTitle>
           <AlertDescription>
-            请先到“API Keys”创建一个新密钥。升级前创建的旧 Key
-            只有哈希，无法恢复明文或生成安装脚本。
+            请先在 API Keys 页面创建新密钥。旧密钥只有哈希，无法生成安装脚本。
           </AlertDescription>
         </Alert>
       ) : null}
 
       <Card>
         <CardHeader>
-          <CardTitle>1. 选择接入目标</CardTitle>
+          <CardTitle>配置客户端</CardTitle>
           <CardDescription>
-            脚本在当前用户范围写配置，不需要管理员权限；已有配置会先备份。
+            已有配置会先备份；脚本失败时自动恢复。
           </CardDescription>
         </CardHeader>
         <CardContent>
           <FieldGroup>
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2">
               <SelectField
                 label="API Key"
-                description="仅列出启用且可恢复的 Key。"
                 value={keyID}
                 placeholder="选择 API Key"
-                onChange={(value) => {
-                  setKeyID(value)
-                  setSetup(null)
-                }}
+                onChange={setKeyID}
                 options={usableKeys.map((key) => ({
                   value: key.id,
                   label: `${key.name} · ${key.prefix}…`,
@@ -252,94 +249,144 @@ export function ConnectionGuide({
               />
               <SelectField
                 label="默认模型"
-                description="包含当前 Key 的模型别名。"
                 value={model}
                 placeholder={modelsLoading ? "正在读取模型" : "选择模型"}
-                onChange={(value) => {
-                  setModel(value)
-                  setSetup(null)
-                }}
+                onChange={setModel}
                 options={models.map((item) => ({ value: item, label: item }))}
-              />
-              <SelectField
-                label="客户端"
-                description="可一次配置三个客户端，也可只配置其中一个。"
-                value={client}
-                onChange={(value) => {
-                  setClient(value as ClientChoice)
-                  setSetup(null)
-                }}
-                options={[
-                  {
-                    value: "all",
-                    label: "全部：Codex + Claude Code + OpenCode",
-                  },
-                  { value: "codex", label: "Codex" },
-                  { value: "claude", label: "Claude Code" },
-                  { value: "opencode", label: "OpenCode" },
-                ]}
-              />
-              <SelectField
-                label="运行环境"
-                description="WSL 应选择 macOS / Linux / WSL。"
-                value={platform}
-                onChange={(value) => {
-                  setPlatform(value as Platform)
-                  setSetup(null)
-                }}
-                options={[
-                  { value: "bash", label: "macOS / Linux / WSL（Bash）" },
-                  { value: "powershell", label: "Windows（PowerShell）" },
-                ]}
               />
             </div>
 
-            <Field>
-              <FieldLabel>高级设置</FieldLabel>
-              <div className="grid gap-4 rounded-lg border p-4 md:grid-cols-2 xl:grid-cols-3">
-                <CompactSelect
-                  label="Codex 推理强度"
-                  value={reasoningEffort}
-                  onChange={setReasoningEffort}
-                  options={["minimal", "low", "medium", "high", "xhigh"]}
+            <ChoiceField
+              label="客户端"
+              description="“全部”会同时配置 Codex、Claude Code 和 OpenCode。"
+              value={client}
+              onChange={(value) => setClient(value as ClientChoice)}
+              options={[
+                { value: "all", label: "全部" },
+                { value: "codex", label: "Codex" },
+                { value: "claude", label: "Claude Code" },
+                { value: "opencode", label: "OpenCode" },
+              ]}
+            />
+
+            <ChoiceField
+              label="运行环境"
+              value={platform}
+              onChange={(value) => setPlatform(value as Platform)}
+              options={[
+                { value: "bash", label: "macOS / Linux / WSL" },
+                { value: "powershell", label: "Windows" },
+              ]}
+            />
+
+            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <CollapsibleTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start px-0"
+                  />
+                }
+              >
+                <Settings2Icon data-icon="inline-start" />
+                高级设置
+                <ChevronDownIcon
+                  data-icon="inline-end"
+                  className={cn(
+                    "ml-auto transition-transform",
+                    advancedOpen && "rotate-180"
+                  )}
                 />
-                <CompactSelect
-                  label="OpenCode 协议"
-                  value={openCodeProtocol}
-                  onChange={setOpenCodeProtocol}
-                  options={["responses", "chat"]}
-                />
-                <YesNoSelect
-                  label="自动安装缺失客户端"
-                  value={installMissing}
-                  onChange={setInstallMissing}
-                />
-                <YesNoSelect
-                  label="写入前后验证连接"
-                  value={verifyConnection}
-                  onChange={setVerifyConnection}
-                />
-                <YesNoSelect
-                  label="Claude 网关模型发现"
-                  value={gatewayDiscovery}
-                  onChange={setGatewayDiscovery}
-                />
-                <YesNoSelect
-                  label="Claude 禁用非必要外联"
-                  value={disableExtraTraffic}
-                  onChange={setDisableExtraTraffic}
-                />
-              </div>
-              <FieldDescription>
-                Responses 适合 Codex/OAI 模型；Chat 兼容更多传统
-                OpenAI-compatible 模型。关闭 Claude
-                非必要外联也会关闭自动更新和网关模型发现。
-              </FieldDescription>
-            </Field>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-4">
+                <FieldGroup>
+                  {includesCodex ? (
+                    <ChoiceField
+                      label="Codex 推理强度"
+                      value={reasoningEffort}
+                      onChange={setReasoningEffort}
+                      options={[
+                        { value: "minimal", label: "Minimal" },
+                        { value: "low", label: "Low" },
+                        { value: "medium", label: "Medium" },
+                        { value: "high", label: "High" },
+                        { value: "xhigh", label: "XHigh" },
+                      ]}
+                    />
+                  ) : null}
+
+                  {includesOpenCode ? (
+                    <ChoiceField
+                      label="OpenCode 协议"
+                      description="Responses 适合 Codex/OAI；Chat 兼容传统 OpenAI 接口。"
+                      value={openCodeProtocol}
+                      onChange={setOpenCodeProtocol}
+                      options={[
+                        { value: "responses", label: "Responses" },
+                        { value: "chat", label: "Chat Completions" },
+                      ]}
+                    />
+                  ) : null}
+
+                  <FieldSet>
+                    <FieldLegend variant="label">安装行为</FieldLegend>
+                    <FieldGroup className="gap-3">
+                      <SwitchField
+                        id="setup-install-missing"
+                        label="安装缺失的客户端"
+                        description="只在命令不存在时调用官方安装器。"
+                        checked={installMissing}
+                        onCheckedChange={setInstallMissing}
+                      />
+                      <SwitchField
+                        id="setup-verify"
+                        label="验证连接"
+                        description="写入前后检查网关、密钥和模型。"
+                        checked={verifyConnection}
+                        onCheckedChange={setVerifyConnection}
+                      />
+                    </FieldGroup>
+                  </FieldSet>
+
+                  {includesClaude ? (
+                    <FieldSet>
+                      <FieldLegend variant="label">Claude Code</FieldLegend>
+                      <FieldGroup className="gap-3">
+                        <SwitchField
+                          id="setup-claude-discovery"
+                          label="网关模型发现"
+                          description="让 Claude Code 从 RelayAPI 获取可用模型。"
+                          checked={gatewayDiscovery}
+                          onCheckedChange={(checked) => {
+                            setGatewayDiscovery(checked)
+                            if (checked) setDisableExtraTraffic(false)
+                          }}
+                        />
+                        <SwitchField
+                          id="setup-claude-traffic"
+                          label="禁用非必要外联"
+                          description="同时关闭自动更新和网关模型发现。"
+                          checked={disableExtraTraffic}
+                          onCheckedChange={(checked) => {
+                            setDisableExtraTraffic(checked)
+                            if (checked) setGatewayDiscovery(false)
+                          }}
+                        />
+                      </FieldGroup>
+                    </FieldSet>
+                  ) : null}
+                </FieldGroup>
+              </CollapsibleContent>
+            </Collapsible>
           </FieldGroup>
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+          <p className="text-xs text-muted-foreground sm:mr-auto">
+            {clientLabel(client)} ·{" "}
+            {platform === "bash" ? "Bash" : "PowerShell"}
+          </p>
           <Button
+            className="w-full sm:w-auto"
             disabled={pending || !usableKeys.length || !model}
             onClick={() => void generateSetup()}
           >
@@ -348,99 +395,91 @@ export function ConnectionGuide({
             ) : (
               <TerminalIcon data-icon="inline-start" />
             )}
-            生成一键脚本
+            生成接入命令
           </Button>
         </CardFooter>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>2. 检查并安装</CardTitle>
-          <CardDescription>
-            建议先运行只读预检，再运行安装命令。脚本过期后重新生成即可。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          {setup ? (
-            <>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">
-                  <Clock3Icon />
-                  {new Date(setup.expires_at).toLocaleTimeString()} 前有效
-                </Badge>
-                <Badge variant="outline">
-                  {platform === "bash" ? "Bash" : "PowerShell"}
-                </Badge>
-                <Badge variant="outline">{clientLabel(client)}</Badge>
+      {setup ? (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <CardTitle>运行命令</CardTitle>
+                <CardDescription>
+                  先预检；确认无误后再执行安装。
+                </CardDescription>
               </div>
-              <CommandBlock
-                title="只读预检"
-                description="验证网关、Key 与客户端安装状态，不修改任何文件。"
+              <Badge variant="outline">
+                <Clock3Icon />
+                {new Date(setup.expires_at).toLocaleTimeString()} 前有效
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup>
+              <CommandField
+                label="只读预检"
+                description="检查网络、密钥和客户端，不修改文件。"
                 command={checkCommand}
               />
-              <CommandBlock
-                title="执行接入"
-                description="必要时安装客户端，然后合并配置；任何写入失败都会回滚本次修改。"
+              <CommandField
+                label="安装并配置"
+                description="合并现有配置，失败时恢复备份。"
                 command={installCommand}
+                primary
               />
-              <Alert>
-                <ShieldCheckIcon />
-                <AlertTitle>脚本如何保存密钥</AlertTitle>
-                <AlertDescription>
-                  三个客户端共用 <code>~/.config/relayapi/api-key</code>。Codex
-                  和 Claude Code 通过凭据命令读取，OpenCode 通过 file
-                  变量读取；脚本不会修改 Codex 的 auth.json。
-                </AlertDescription>
-              </Alert>
-            </>
-          ) : (
-            <div className="flex flex-col gap-3 rounded-lg border p-6 text-center">
-              <LaptopIcon className="mx-auto size-8 text-muted-foreground" />
-              <p className="font-medium">等待生成脚本</p>
-              <p className="text-sm text-muted-foreground">
-                选好 Key、模型和运行环境后，点击“生成一键脚本”。
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>脚本写入内容</CardTitle>
-          <CardDescription>
-            所有配置均为用户级，并保留时间戳备份。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 text-sm md:grid-cols-3">
-          <WriteTarget
-            title="Codex"
-            path="~/.codex/config.toml"
-            detail="Responses、WebSocket、模型、推理强度与 provider-scoped auth；通过 app-server 原子更新。"
-          />
-          <WriteTarget
-            title="Claude Code"
-            path="~/.claude/settings.json"
-            detail="Anthropic Base URL、apiKeyHelper、默认模型及可选网关模型发现。"
-          />
-          <WriteTarget
-            title="OpenCode"
-            path="~/.config/opencode/opencode.json"
-            detail="独立 relayapi provider、默认模型、Responses 或 Chat 协议，不覆盖其他 provider。"
-          />
-        </CardContent>
-      </Card>
-
-      <Alert>
-        <PlayIcon />
-        <AlertTitle>接入后验证</AlertTitle>
-        <AlertDescription>
-          运行 <code>codex --version</code>、<code>claude --version</code> 或{" "}
-          <code>opencode --version</code>
-          ，再启动对应客户端。若模型不可用，请回到这里选择当前 Key
-          能访问的模型重新生成。
-        </AlertDescription>
-      </Alert>
+              <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+                <CollapsibleTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start px-0"
+                    />
+                  }
+                >
+                  查看脚本写入内容
+                  <ChevronDownIcon
+                    data-icon="inline-end"
+                    className={cn(
+                      "ml-auto transition-transform",
+                      detailsOpen && "rotate-180"
+                    )}
+                  />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-3">
+                  <div className="flex flex-col gap-3 text-sm">
+                    {includesCodex ? (
+                      <WriteTarget title="Codex" path="~/.codex/config.toml" />
+                    ) : null}
+                    {includesClaude ? (
+                      <WriteTarget
+                        title="Claude Code"
+                        path="~/.claude/settings.json"
+                      />
+                    ) : null}
+                    {includesOpenCode ? (
+                      <WriteTarget
+                        title="OpenCode"
+                        path="~/.config/opencode/opencode.json"
+                      />
+                    ) : null}
+                    <WriteTarget
+                      title="共享凭据"
+                      path="~/.config/relayapi/api-key"
+                    />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </FieldGroup>
+          </CardContent>
+          <CardFooter className="text-xs text-muted-foreground">
+            链接使用短时随机令牌，不包含 API Key；过期后需重新生成。
+          </CardFooter>
+        </Card>
+      ) : null}
     </div>
   )
 }
@@ -454,172 +493,166 @@ function preferredModel(models: string[]) {
   )
 }
 
-function FeatureCard({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: typeof ShieldCheckIcon
-  title: string
-  description: string
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-3">
-          <Icon className="size-5 text-muted-foreground" />
-          <CardTitle>{title}</CardTitle>
-        </div>
-      </CardHeader>
-      <CardContent className="text-sm leading-6 text-muted-foreground">
-        {description}
-      </CardContent>
-    </Card>
-  )
-}
-
 function SelectField({
   label,
-  description,
   value,
   placeholder,
   onChange,
   options,
 }: {
   label: string
-  description: string
   value: string
   placeholder?: string
   onChange: (value: string) => void
   options: { value: string; label: string }[]
 }) {
+  const items: Array<{ value: string | null; label: string }> = [
+    { value: null, label: placeholder ?? "请选择" },
+    ...options,
+  ]
   return (
     <Field>
       <FieldLabel>{label}</FieldLabel>
-      <Select value={value} onValueChange={(next) => next && onChange(next)}>
+      <Select
+        items={items}
+        value={value || null}
+        onValueChange={(next) =>
+          typeof next === "string" && next && onChange(next)
+        }
+      >
         <SelectTrigger className="w-full">
-          <SelectValue placeholder={placeholder} />
+          <SelectValue />
         </SelectTrigger>
         <SelectContent>
           <SelectGroup>
-            {options.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
+            {items.map((option) => (
+              <SelectItem
+                key={option.value ?? "placeholder"}
+                value={option.value}
+                disabled={option.value === null}
+              >
                 {option.label}
               </SelectItem>
             ))}
           </SelectGroup>
         </SelectContent>
       </Select>
-      <FieldDescription>{description}</FieldDescription>
     </Field>
   )
 }
 
-function CompactSelect({
+function ChoiceField({
   label,
+  description,
   value,
   onChange,
   options,
 }: {
   label: string
+  description?: string
   value: string
   onChange: (value: string) => void
-  options: string[]
+  options: { value: string; label: string }[]
 }) {
   return (
     <Field>
       <FieldLabel>{label}</FieldLabel>
-      <Select value={value} onValueChange={(next) => next && onChange(next)}>
-        <SelectTrigger className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectGroup>
-            {options.map((option) => (
-              <SelectItem key={option} value={option}>
-                {option}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
+      <ToggleGroup
+        variant="outline"
+        size="sm"
+        spacing={1}
+        value={[value]}
+        onValueChange={(next) => next[0] && onChange(next[0])}
+        className="w-full flex-wrap"
+      >
+        {options.map((option) => (
+          <ToggleGroupItem
+            key={option.value}
+            value={option.value}
+            className="min-w-24 flex-1"
+          >
+            {value === option.value ? <CheckIcon /> : null}
+            {option.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      {description ? <FieldDescription>{description}</FieldDescription> : null}
     </Field>
   )
 }
 
-function YesNoSelect({
+function SwitchField({
+  id,
   label,
-  value,
-  onChange,
+  description,
+  checked,
+  onCheckedChange,
 }: {
+  id: string
   label: string
-  value: string
-  onChange: (value: string) => void
+  description: string
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
 }) {
   return (
-    <Field>
-      <FieldLabel>{label}</FieldLabel>
-      <Select value={value} onValueChange={(next) => next && onChange(next)}>
-        <SelectTrigger className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectGroup>
-            <SelectItem value="yes">启用</SelectItem>
-            <SelectItem value="no">关闭</SelectItem>
-          </SelectGroup>
-        </SelectContent>
-      </Select>
+    <Field orientation="horizontal">
+      <FieldContent>
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <FieldDescription>{description}</FieldDescription>
+      </FieldContent>
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
     </Field>
   )
 }
 
-function CommandBlock({
-  title,
+function CommandField({
+  label,
   description,
   command,
+  primary = false,
 }: {
-  title: string
+  label: string
   description: string
   command: string
+  primary?: boolean
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <p className="font-medium">{title}</p>
-          <p className="text-xs text-muted-foreground">{description}</p>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`复制${title}`}
-          onClick={() => void copy(command, title)}
-        >
-          <ClipboardIcon />
-        </Button>
-      </div>
-      <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs leading-5">
-        <code>{command}</code>
-      </pre>
-    </div>
+    <Field>
+      <FieldLabel>{label}</FieldLabel>
+      <FieldDescription>{description}</FieldDescription>
+      <InputGroup>
+        <InputGroupAddon>
+          <TerminalIcon />
+        </InputGroupAddon>
+        <InputGroupInput
+          readOnly
+          value={command}
+          className="font-mono text-xs"
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <InputGroupAddon align="inline-end">
+          <InputGroupButton
+            variant={primary ? "default" : "ghost"}
+            size={primary ? "sm" : "icon-xs"}
+            aria-label={`复制${label}`}
+            onClick={() => void copy(command, label)}
+          >
+            <ClipboardIcon data-icon={primary ? "inline-start" : undefined} />
+            {primary ? "复制" : null}
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+    </Field>
   )
 }
 
-function WriteTarget({
-  title,
-  path,
-  detail,
-}: {
-  title: string
-  path: string
-  detail: string
-}) {
+function WriteTarget({ title, path }: { title: string; path: string }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg border p-4">
-      <p className="font-medium">{title}</p>
-      <code className="text-xs">{path}</code>
-      <p className="leading-6 text-muted-foreground">{detail}</p>
+    <div className="flex min-w-0 items-center justify-between gap-4">
+      <span>{title}</span>
+      <code className="truncate text-xs text-muted-foreground" title={path}>
+        {path}
+      </code>
     </div>
   )
 }

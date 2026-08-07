@@ -97,6 +97,15 @@ func NewInvitationToken() (plain string, hash []byte) {
 	return plain, HashKey(plain)
 }
 
+func NewAgentSetupToken() (plain string, hash []byte, err error) {
+	var value [16]byte
+	if _, err = rand.Read(value[:]); err != nil {
+		return "", nil, err
+	}
+	plain = "setup_" + base64.RawURLEncoding.EncodeToString(value[:])
+	return plain, HashKey(plain), nil
+}
+
 func NewTemporaryPassword() (string, error) {
 	var value [18]byte
 	if _, err := rand.Read(value[:]); err != nil {

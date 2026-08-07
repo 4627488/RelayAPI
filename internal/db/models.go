@@ -259,3 +259,13 @@ type Invitation struct {
 	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
 	CreatedAt      time.Time  `gorm:"not null" json:"created_at"`
 }
+
+// AgentSetup stores a short-lived encrypted setup claim behind an opaque
+// capability token. Only the token hash is persisted.
+type AgentSetup struct {
+	TokenHash         []byte    `gorm:"type:bytea;primaryKey" json:"-"`
+	TenantID          string    `gorm:"type:uuid;not null;index" json:"-"`
+	PayloadCiphertext []byte    `gorm:"type:bytea;not null" json:"-"`
+	ExpiresAt         time.Time `gorm:"not null;index" json:"-"`
+	CreatedAt         time.Time `gorm:"not null" json:"-"`
+}

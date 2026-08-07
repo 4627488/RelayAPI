@@ -84,3 +84,16 @@ func TestSecretBoxRoundTripAndBinding(t *testing.T) {
 		t.Fatal("ciphertext must not open with another key")
 	}
 }
+
+func TestAgentSetupTokenIsShortAndHashed(t *testing.T) {
+	plain, hash, err := NewAgentSetupToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plain) != 28 || !strings.HasPrefix(plain, "setup_") {
+		t.Fatalf("token = %q", plain)
+	}
+	if !bytes.Equal(hash, HashKey(plain)) || bytes.Contains(hash, []byte(plain)) {
+		t.Fatal("setup token hash is invalid")
+	}
+}

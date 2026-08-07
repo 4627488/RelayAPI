@@ -107,6 +107,11 @@ func (a *App) maintenance() {
 		select {
 		case <-ticker.C:
 			a.refreshBridgeStatus(context.Background())
+			if count, err := a.store.DeleteExpiredAgentSetups(context.Background(), time.Now()); err != nil {
+				slog.Error("delete expired agent setups", "error", err)
+			} else if count > 0 {
+				slog.Info("deleted expired agent setups", "count", count)
+			}
 			if count, err := a.store.ReclaimExpiredReservations(context.Background(), time.Now()); err != nil {
 				slog.Error("reclaim expired reservations", "error", err)
 			} else if count > 0 {
