@@ -64,7 +64,7 @@ func (s Store) UpsertUpstreamCredential(ctx context.Context, input UpstreamCrede
 		DoUpdates: clause.Assignments(map[string]any{
 			"name": item.Name, "provider": item.Provider, "enabled": item.Enabled,
 			"models": item.Models, "sealed_document": item.SealedDocument, "source": item.Source,
-			"expires_at": item.ExpiresAt, "revision": gormExpr("revision + 1"), "updated_at": time.Now(),
+			"expires_at": item.ExpiresAt, "revision": gormExpr(`"upstream_credentials"."revision" + 1`), "updated_at": time.Now(),
 		}),
 	}).Create(&item).Error
 	if err != nil {
