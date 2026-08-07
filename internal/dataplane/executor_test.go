@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
 
 func TestCompatibilityExecutorCodexRequestAndStream(t *testing.T) {
@@ -78,6 +80,23 @@ func TestExecutorBaseURL(t *testing.T) {
 	endpoint, _ := url.Parse("https://example.test/custom/v1/responses?ignored=yes")
 	if got := executorBaseURL(endpoint); got != "https://example.test/custom/v1" {
 		t.Fatalf("executorBaseURL() = %q", got)
+	}
+}
+
+func TestExecutorResponsesStreamRestoresSplitSSEFrames(t *testing.T) {
+	chunks := make(chan cliproxyexecutor.StreamChunk, 4)
+	chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("event: response.completed")}
+	chunks <- cliproxyexecutor.StreamChunk{Payload: []byte(`data: {"type":"response.completed","response":{"usage":{"input_tokens":9,"output_tokens":2,"total_tokens":11}}}`)}
+	close(chunks)
+
+	body := newExecutorStreamBody(context.Background(), chunks, ProtocolResponses)
+	payload, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":2,\"total_tokens\":11}}}\n\n"
+	if string(payload) != want {
+		t.Fatalf("framed stream = %q, want %q", payload, want)
 	}
 }
 

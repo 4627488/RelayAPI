@@ -76,7 +76,7 @@ func (e *Engine) doCompatibilityExecutor(ctx context.Context, plan RoutePlan, cr
 			return nil, true, fmt.Errorf("%s executor returned no stream", plan.Provider)
 		}
 		response.Header = stream.Headers.Clone()
-		response.Body = &executorStreamBody{ctx: ctx, chunks: stream.Chunks}
+		response.Body = newExecutorStreamBody(ctx, stream.Chunks, plan.Inbound)
 	} else {
 		result, executeErr := exec.Execute(ctx, auth, request, options)
 		if executeErr != nil {
@@ -225,6 +225,18 @@ type executorStreamBody struct {
 	chunks <-chan cliproxyexecutor.StreamChunk
 	buffer []byte
 	err    error
+	framer executorStreamFramer
+}
+
+func newExecutorStreamBody(ctx context.Context, chunks <-chan cliproxyexecutor.StreamChunk, protocol Protocol) *executorStreamBody {
+	body := &executorStreamBody{ctx: ctx, chunks: chunks}
+	switch protocol {
+	case ProtocolResponses:
+		body.framer = &responsesSSEFramer{}
+	case ProtocolOpenAI:
+		body.framer = &openAIChatSSEFramer{}
+	}
+	return body
 }
 
 func (b *executorStreamBody) Read(destination []byte) (int, error) {
@@ -234,14 +246,24 @@ func (b *executorStreamBody) Read(destination []byte) (int, error) {
 			b.err = b.ctx.Err()
 		case chunk, ok := <-b.chunks:
 			if !ok {
-				b.err = io.EOF
-				break
+				if b.framer != nil {
+					b.buffer = b.framer.Flush()
+					b.framer = nil
+				}
+				if len(b.buffer) == 0 {
+					b.err = io.EOF
+				}
+				continue
 			}
 			if chunk.Err != nil {
 				b.err = chunk.Err
 				break
 			}
-			b.buffer = chunk.Payload
+			if b.framer != nil {
+				b.buffer = b.framer.Push(chunk.Payload)
+			} else {
+				b.buffer = chunk.Payload
+			}
 		}
 	}
 	if len(b.buffer) > 0 {
