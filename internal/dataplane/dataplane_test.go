@@ -69,6 +69,20 @@ func TestCompletedSSEPayload(t *testing.T) {
 	}
 }
 
+func TestOpenAIStreamFraming(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"object":"chat.completion.chunk","choices":[]}`)
+	if got := string(frameStreamChunk(ProtocolOpenAI, raw)); got != "data: "+string(raw)+"\n\n" {
+		t.Fatalf("framed chunk = %q", got)
+	}
+	if got := string(terminalStreamChunk(ProtocolOpenAI)); got != "data: [DONE]\n\n" {
+		t.Fatalf("terminal chunk = %q", got)
+	}
+	if got := frameStreamChunk(ProtocolClaude, raw); !bytes.Equal(got, raw) {
+		t.Fatalf("Claude chunk changed: %q", got)
+	}
+}
+
 func TestTranslatorRequiredClientMatrix(t *testing.T) {
 	t.Parallel()
 	translator := NewTranslator()

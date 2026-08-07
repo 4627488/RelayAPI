@@ -110,6 +110,7 @@ func (e *Engine) copyStream(ctx context.Context, w io.Writer, exchange *Exchange
 				return err
 			}
 			for _, chunk := range chunks {
+				chunk = frameStreamChunk(exchange.Plan.Inbound, chunk)
 				if len(chunk) == 0 {
 					continue
 				}
@@ -124,11 +125,42 @@ func (e *Engine) copyStream(ctx context.Context, w io.Writer, exchange *Exchange
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
+				if terminal := terminalStreamChunk(exchange.Plan.Inbound); len(terminal) > 0 {
+					if onFirstByte != nil {
+						onFirstByte()
+					}
+					_, err := w.Write(terminal)
+					return err
+				}
 				return nil
 			}
 			return readErr
 		}
 	}
+}
+
+func frameStreamChunk(protocol Protocol, chunk []byte) []byte {
+	if protocol != ProtocolOpenAI {
+		return chunk
+	}
+	trimmed := bytes.TrimSpace(chunk)
+	if len(trimmed) == 0 {
+		return nil
+	}
+	if bytes.HasPrefix(trimmed, []byte("data:")) || bytes.HasPrefix(trimmed, []byte("event:")) {
+		return append(append([]byte(nil), trimmed...), '\n', '\n')
+	}
+	framed := make([]byte, 0, len(trimmed)+8)
+	framed = append(framed, "data: "...)
+	framed = append(framed, trimmed...)
+	return append(framed, '\n', '\n')
+}
+
+func terminalStreamChunk(protocol Protocol) []byte {
+	if protocol == ProtocolOpenAI {
+		return []byte("data: [DONE]\n\n")
+	}
+	return nil
 }
 
 func normalizeProviderRequest(plan RoutePlan, body []byte) []byte {
