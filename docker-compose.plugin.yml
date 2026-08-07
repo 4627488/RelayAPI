@@ -8,10 +8,6 @@ services:
       - relay-cpa-plugins:/plugins
 
   cliproxyapi:
-    environment:
-      GOMEMLIMIT: 300MiB
-      GOGC: "75"
-      GODEBUG: madvdontneed=1
     volumes:
       - relay-cpa-plugins:/CLIProxyAPI/plugins:ro
 

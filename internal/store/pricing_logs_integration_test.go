@@ -47,7 +47,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	dataStore, err := New(database)
+	dataStore, err := New(database, "integration-test-api-key-encryption-secret")
 	if err != nil {
 		t.Fatal(err)
 	}

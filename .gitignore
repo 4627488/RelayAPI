@@ -4,3 +4,4 @@ cliproxyapi/config.yaml
 cliproxyapi/auths/
 web/node_modules/
 web/dist/
+/.tmp-*

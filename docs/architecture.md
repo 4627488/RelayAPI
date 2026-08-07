@@ -64,6 +64,23 @@ CLIProxyAPI without silently inventing prices.
 
 ## Reliability and security
 
+- Inference admission is bounded before Relay reads the request body. A full
+  CPA bulkhead waits for a short, bounded interval and then returns a
+  retryable `503`, preventing an unbounded request queue from becoming an
+  implicit memory queue.
+- CPA transport failures feed a circuit breaker. After repeated failures the
+  circuit rejects traffic for a cooldown period and permits only one recovery
+  probe, so an OOM-restarting CPA is not flooded as soon as its port reopens.
+- Request bodies default to 16 MiB (configurable up to 64 MiB), aggregate
+  in-flight request bodies have a separate 32 MiB budget, response-log captures
+  remain bounded, and the CPA connection pool cannot exceed the inference
+  concurrency limit.
+- SSE and WebSocket operations have no whole-request client timeout. Only the
+  wait for CPA response headers is bounded, so long Codex and Claude Code
+  generations are not terminated by the gateway.
+- Inference and control traffic use separate HTTP transports. Long-lived
+  inference streams cannot exhaust the connections used by readiness checks,
+  management, OAuth, or quota probes and trigger a false watchdog restart.
 - PostgreSQL row locks make balance reservation/settlement atomic.
 - A request is settled only after usage is found; upstream errors are refunded.
 - Responses without usage are refunded and remain visibly marked as
@@ -87,20 +104,19 @@ API key and management key are service credentials; tenant clients receive only
 
 ## CPA v7 plugin boundary
 
-`cliproxyapi-plugin/` is a thin C-ABI plugin with scheduler, compact request
-completion, management, and declarative quota-adapter capabilities. A trusted
+`cliproxyapi-plugin/` 0.6+ is a control-plane-only C-ABI plugin with scheduler,
+management, and declarative quota-adapter capabilities. A trusted
 `X-Relay-CPA-Auth-ID` can select a specific candidate;
-otherwise the plugin delegates to CPA's built-in scheduler. Compact completion
-events are sent to Relay over the private network using a shared secret.
+otherwise the plugin delegates to CPA's built-in scheduler.
 
-CPA v7's usage plugin record does not include arbitrary request headers, so
-those events cannot safely be the sole tenant-billing correlation source.
-CPA's lifecycle ABI provides execution IDs, trace IDs, and terminal outcomes.
-Bridge 0.5 uses request interception only to correlate these with
-`X-Relay-Request-ID`, then sends one metadata-only completion asynchronously.
-Response and stream interceptors are deliberately disabled so large request
-bodies are never cloned for every stream chunk. Relay continues to capture
-requests, responses, TTFT, and billing usage directly in its proxy path.
+The bridge deliberately declares no request interceptor, response interceptor,
+stream interceptor, usage callback, or completion callback. CPA clones request
+bodies before invoking a request interceptor and its RPC/C-ABI transport JSON
+encodes byte slices, so even a metadata-only interceptor amplifies large bodies
+several times before plugin code can discard them. Keeping the bridge out of
+the data plane removes that OOM multiplier. Relay captures request identity,
+responses, TTFT, terminal transport errors, and billing usage directly in its
+proxy path; `X-CPA-TRACE-ID` is consumed when CPA returns it.
 
 Relay request logs have separate summary and detail retention. Sensitive
 headers are redacted; bodies carry original byte counts and truncation flags.

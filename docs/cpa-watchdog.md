@@ -3,8 +3,9 @@
 `cliproxyapi` can become unavailable while its container is still running, so
 Docker's restart policy alone cannot recover it. The production watchdog checks
 RelayAPI's local health endpoint every 30 seconds and restarts only
-`cliproxyapi` after two consecutive responses where CPA or the required bridge
-is unhealthy.
+`cliproxyapi` after two consecutive responses where CPA or a bridge required by
+active child subscriptions is unhealthy. Installations without child
+subscriptions are not restarted merely because no bridge is installed.
 
 Install the versioned files as root:
 

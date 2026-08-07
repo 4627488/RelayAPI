@@ -1,26 +1,89 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { BookOpenIcon, CheckIcon, ClipboardIcon, CodeXmlIcon, KeyRoundIcon, MonitorCogIcon, TerminalIcon } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import {
+  CheckCircle2Icon,
+  ClipboardIcon,
+  Clock3Icon,
+  KeyRoundIcon,
+  LaptopIcon,
+  PlayIcon,
+  RefreshCwIcon,
+  ShieldCheckIcon,
+  TerminalIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Skeleton } from "@/components/ui/skeleton"
-import { api, type ChildSubscription } from "@/lib/api"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Spinner } from "@/components/ui/spinner"
+import { api, postJSON, type ApiKey, type ChildSubscription } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
 
-type CodeSampleProps = {
-  code: string
-  label: string
+type Platform = "bash" | "powershell"
+type ClientChoice = "all" | "codex" | "claude" | "opencode"
+
+interface SetupResponse {
+  expires_at: string
+  bash_command: string
+  bash_check_command: string
+  powershell_command: string
+  powershell_check_command: string
 }
 
-export function ConnectionGuide({ tenantModels }: { tenantModels: string[] }) {
-  const origin = window.location.origin
-  const openAIBase = `${origin}/v1`
+export function ConnectionGuide({
+  keys,
+  tenantModels,
+}: {
+  keys: ApiKey[]
+  tenantModels: string[]
+}) {
+  const usableKeys = useMemo(
+    () => keys.filter((key) => key.enabled && key.recoverable),
+    [keys]
+  )
   const [subscriptionModels, setSubscriptionModels] = useState<string[]>([])
   const [modelsLoading, setModelsLoading] = useState(true)
+  const [keyID, setKeyID] = useState(usableKeys[0]?.id ?? "")
+  const [model, setModel] = useState("")
+  const [client, setClient] = useState<ClientChoice>("all")
+  const [platform, setPlatform] = useState<Platform>("bash")
+  const [reasoningEffort, setReasoningEffort] = useState("high")
+  const [openCodeProtocol, setOpenCodeProtocol] = useState("responses")
+  const [installMissing, setInstallMissing] = useState("yes")
+  const [verifyConnection, setVerifyConnection] = useState("yes")
+  const [gatewayDiscovery, setGatewayDiscovery] = useState("yes")
+  const [disableExtraTraffic, setDisableExtraTraffic] = useState("no")
+  const [pending, setPending] = useState(false)
+  const [setup, setSetup] = useState<SetupResponse | null>(null)
+
+  useEffect(() => {
+    if (!usableKeys.some((key) => key.id === keyID)) {
+      setKeyID(usableKeys[0]?.id ?? "")
+      setSetup(null)
+    }
+  }, [keyID, usableKeys])
 
   useEffect(() => {
     let active = true
@@ -28,255 +91,544 @@ export function ConnectionGuide({ tenantModels }: { tenantModels: string[] }) {
       .then((value) => {
         if (!active) return
         const now = Date.now()
-        const models = value.items
-          .filter((item) => item.enabled && Date.parse(item.starts_at) <= now && (!item.expires_at || Date.parse(item.expires_at) > now))
-          .flatMap((item) => item.effective_model_allowlist ?? item.model_allowlist ?? [])
-        setSubscriptionModels(Array.from(new Set(models)).sort())
+        setSubscriptionModels(
+          Array.from(
+            new Set(
+              value.items
+                .filter(
+                  (item) =>
+                    item.enabled &&
+                    Date.parse(item.starts_at) <= now &&
+                    (!item.expires_at || Date.parse(item.expires_at) > now)
+                )
+                .flatMap(
+                  (item) =>
+                    item.effective_model_allowlist ?? item.model_allowlist ?? []
+                )
+            )
+          ).sort()
+        )
       })
       .catch(() => {})
-      .finally(() => { if (active) setModelsLoading(false) })
-    return () => { active = false }
+      .finally(() => {
+        if (active) setModelsLoading(false)
+      })
+    return () => {
+      active = false
+    }
   }, [])
 
+  const selectedKey = usableKeys.find((key) => key.id === keyID)
   const models = useMemo(() => {
-    const source = subscriptionModels.length ? subscriptionModels : tenantModels
-    return Array.from(new Set(source.map((model) => model.trim()).filter(Boolean))).sort()
-  }, [subscriptionModels, tenantModels])
-  const samples = useMemo(() => guideSamples(origin, models), [origin, models])
+    const inherited = subscriptionModels.length
+      ? subscriptionModels
+      : tenantModels
+    const concrete = selectedKey?.model_allowlist?.length
+      ? selectedKey.model_allowlist
+      : inherited
+    const aliases = selectedKey?.model_aliases?.map((item) => item.alias) ?? []
+    return Array.from(
+      new Set(
+        [...aliases, ...concrete].map((item) => item.trim()).filter(Boolean)
+      )
+    ).sort()
+  }, [selectedKey, subscriptionModels, tenantModels])
+
+  useEffect(() => {
+    if (!models.includes(model)) {
+      setModel(preferredModel(models))
+      setSetup(null)
+    }
+  }, [model, models])
+
+  useEffect(() => {
+    setSetup(null)
+  }, [
+    reasoningEffort,
+    openCodeProtocol,
+    installMissing,
+    verifyConnection,
+    gatewayDiscovery,
+    disableExtraTraffic,
+  ])
+
+  async function generateSetup() {
+    if (!keyID || !model) return
+    setPending(true)
+    try {
+      const value = await postJSON<SetupResponse>("/api/agent-setup", {
+        key_id: keyID,
+        agents: client === "all" ? ["codex", "claude", "opencode"] : [client],
+        model,
+        reasoning_effort: reasoningEffort,
+        opencode_protocol: openCodeProtocol,
+        install_missing: installMissing === "yes",
+        verify_connection: verifyConnection === "yes",
+        claude_gateway_discovery: gatewayDiscovery === "yes",
+        claude_disable_extra_traffic: disableExtraTraffic === "yes",
+      })
+      setSetup(value)
+      toast.success("安装脚本已生成，有效期 5 分钟")
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "无法生成安装脚本")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const installCommand = setup
+    ? platform === "bash"
+      ? setup.bash_command
+      : setup.powershell_command
+    : ""
+  const checkCommand = setup
+    ? platform === "bash"
+      ? setup.bash_check_command
+      : setup.powershell_check_command
+    : ""
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">接入指南</h1>
-        <p className="text-sm text-muted-foreground">使用本站 API Key 接入支持 OpenAI、Anthropic 或 Gemini 自定义地址的客户端。</p>
+        <h1 className="text-2xl font-semibold tracking-tight">接入向导</h1>
+        <p className="text-sm text-muted-foreground">
+          生成一个可重复执行、失败自动回滚的安装脚本，配置 Codex、Claude Code 和
+          OpenCode。
+        </p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <GuideStep icon={KeyRoundIcon} number="1" title="创建 API Key">在“API Keys”页面创建密钥。完整密钥只在创建后显示。</GuideStep>
-        <GuideStep icon={MonitorCogIcon} number="2" title="填写服务地址">OpenAI-compatible 客户端使用 <code>{openAIBase}</code>。Claude Code 和 Gemini 原生协议使用 <code>{origin}</code>。</GuideStep>
-        <GuideStep icon={CheckIcon} number="3" title="使用可用模型">本页已把当前账户的模型写入配置。接入后可用 <code>GET /v1/models</code> 核对客户端读取结果。</GuideStep>
+        <FeatureCard
+          icon={ShieldCheckIcon}
+          title="短时授权"
+          description="命令只包含 5 分钟有效的加密令牌，不把 API Key 放进剪贴板或终端历史。"
+        />
+        <FeatureCard
+          icon={RefreshCwIcon}
+          title="合并与回滚"
+          description="保留原配置，原子写入并在失败时恢复；重复运行只更新 RelayAPI 对应项。"
+        />
+        <FeatureCard
+          icon={CheckCircle2Icon}
+          title="先验证再落盘"
+          description="先检查 /v1/models、密钥和客户端版本，再写受限权限的共享凭据文件。"
+        />
       </div>
+
+      {!usableKeys.length ? (
+        <Alert variant="destructive">
+          <KeyRoundIcon />
+          <AlertTitle>没有可用于脚本的 API Key</AlertTitle>
+          <AlertDescription>
+            请先到“API Keys”创建一个新密钥。升级前创建的旧 Key
+            只有哈希，无法恢复明文或生成安装脚本。
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <Card>
         <CardHeader>
-          <CardTitle>连接参数</CardTitle>
-          <CardDescription>客户端名称不同，填写的值相同。</CardDescription>
+          <CardTitle>1. 选择接入目标</CardTitle>
+          <CardDescription>
+            脚本在当前用户范围写配置，不需要管理员权限；已有配置会先备份。
+          </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2">
-          <ConnectionValue label="OpenAI Base URL" value={openAIBase} />
-          <ConnectionValue label="Anthropic Base URL" value={origin} />
-          <ConnectionValue label="Gemini Base URL" value={origin} />
-          <ConnectionValue label="API Key" value="relay_…" secret />
+        <CardContent>
+          <FieldGroup>
+            <div className="grid gap-4 md:grid-cols-2">
+              <SelectField
+                label="API Key"
+                description="仅列出启用且可恢复的 Key。"
+                value={keyID}
+                placeholder="选择 API Key"
+                onChange={(value) => {
+                  setKeyID(value)
+                  setSetup(null)
+                }}
+                options={usableKeys.map((key) => ({
+                  value: key.id,
+                  label: `${key.name} · ${key.prefix}…`,
+                }))}
+              />
+              <SelectField
+                label="默认模型"
+                description="包含当前 Key 的模型别名。"
+                value={model}
+                placeholder={modelsLoading ? "正在读取模型" : "选择模型"}
+                onChange={(value) => {
+                  setModel(value)
+                  setSetup(null)
+                }}
+                options={models.map((item) => ({ value: item, label: item }))}
+              />
+              <SelectField
+                label="客户端"
+                description="可一次配置三个客户端，也可只配置其中一个。"
+                value={client}
+                onChange={(value) => {
+                  setClient(value as ClientChoice)
+                  setSetup(null)
+                }}
+                options={[
+                  {
+                    value: "all",
+                    label: "全部：Codex + Claude Code + OpenCode",
+                  },
+                  { value: "codex", label: "Codex" },
+                  { value: "claude", label: "Claude Code" },
+                  { value: "opencode", label: "OpenCode" },
+                ]}
+              />
+              <SelectField
+                label="运行环境"
+                description="WSL 应选择 macOS / Linux / WSL。"
+                value={platform}
+                onChange={(value) => {
+                  setPlatform(value as Platform)
+                  setSetup(null)
+                }}
+                options={[
+                  { value: "bash", label: "macOS / Linux / WSL（Bash）" },
+                  { value: "powershell", label: "Windows（PowerShell）" },
+                ]}
+              />
+            </div>
+
+            <Field>
+              <FieldLabel>高级设置</FieldLabel>
+              <div className="grid gap-4 rounded-lg border p-4 md:grid-cols-2 xl:grid-cols-3">
+                <CompactSelect
+                  label="Codex 推理强度"
+                  value={reasoningEffort}
+                  onChange={setReasoningEffort}
+                  options={["minimal", "low", "medium", "high", "xhigh"]}
+                />
+                <CompactSelect
+                  label="OpenCode 协议"
+                  value={openCodeProtocol}
+                  onChange={setOpenCodeProtocol}
+                  options={["responses", "chat"]}
+                />
+                <YesNoSelect
+                  label="自动安装缺失客户端"
+                  value={installMissing}
+                  onChange={setInstallMissing}
+                />
+                <YesNoSelect
+                  label="写入前后验证连接"
+                  value={verifyConnection}
+                  onChange={setVerifyConnection}
+                />
+                <YesNoSelect
+                  label="Claude 网关模型发现"
+                  value={gatewayDiscovery}
+                  onChange={setGatewayDiscovery}
+                />
+                <YesNoSelect
+                  label="Claude 禁用非必要外联"
+                  value={disableExtraTraffic}
+                  onChange={setDisableExtraTraffic}
+                />
+              </div>
+              <FieldDescription>
+                Responses 适合 Codex/OAI 模型；Chat 兼容更多传统
+                OpenAI-compatible 模型。关闭 Claude
+                非必要外联也会关闭自动更新和网关模型发现。
+              </FieldDescription>
+            </Field>
+          </FieldGroup>
+        </CardContent>
+        <CardFooter>
+          <Button
+            disabled={pending || !usableKeys.length || !model}
+            onClick={() => void generateSetup()}
+          >
+            {pending ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <TerminalIcon data-icon="inline-start" />
+            )}
+            生成一键脚本
+          </Button>
+        </CardFooter>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>2. 检查并安装</CardTitle>
+          <CardDescription>
+            建议先运行只读预检，再运行安装命令。脚本过期后重新生成即可。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          {setup ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">
+                  <Clock3Icon />
+                  {new Date(setup.expires_at).toLocaleTimeString()} 前有效
+                </Badge>
+                <Badge variant="outline">
+                  {platform === "bash" ? "Bash" : "PowerShell"}
+                </Badge>
+                <Badge variant="outline">{clientLabel(client)}</Badge>
+              </div>
+              <CommandBlock
+                title="只读预检"
+                description="验证网关、Key 与客户端安装状态，不修改任何文件。"
+                command={checkCommand}
+              />
+              <CommandBlock
+                title="执行接入"
+                description="必要时安装客户端，然后合并配置；任何写入失败都会回滚本次修改。"
+                command={installCommand}
+              />
+              <Alert>
+                <ShieldCheckIcon />
+                <AlertTitle>脚本如何保存密钥</AlertTitle>
+                <AlertDescription>
+                  三个客户端共用 <code>~/.config/relayapi/api-key</code>。Codex
+                  和 Claude Code 通过凭据命令读取，OpenCode 通过 file
+                  变量读取；脚本不会修改 Codex 的 auth.json。
+                </AlertDescription>
+              </Alert>
+            </>
+          ) : (
+            <div className="flex flex-col gap-3 rounded-lg border p-6 text-center">
+              <LaptopIcon className="mx-auto size-8 text-muted-foreground" />
+              <p className="font-medium">等待生成脚本</p>
+              <p className="text-sm text-muted-foreground">
+                选好 Key、模型和运行环境后，点击“生成一键脚本”。
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>脚本写入内容</CardTitle>
+          <CardDescription>
+            所有配置均为用户级，并保留时间戳备份。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm md:grid-cols-3">
+          <WriteTarget
+            title="Codex"
+            path="~/.codex/config.toml"
+            detail="Responses、WebSocket、模型、推理强度与 provider-scoped auth；通过 app-server 原子更新。"
+          />
+          <WriteTarget
+            title="Claude Code"
+            path="~/.claude/settings.json"
+            detail="Anthropic Base URL、apiKeyHelper、默认模型及可选网关模型发现。"
+          />
+          <WriteTarget
+            title="OpenCode"
+            path="~/.config/opencode/opencode.json"
+            detail="独立 relayapi provider、默认模型、Responses 或 Chat 协议，不覆盖其他 provider。"
+          />
         </CardContent>
       </Card>
 
       <Alert>
-        <BookOpenIcon />
-        <AlertTitle>模型名称必须来自本站</AlertTitle>
-        <AlertDescription>客户端内置的模型列表可能与本站不同。本页按当前订阅生成模型配置，<code>GET /v1/models</code> 可用于核对接入结果。</AlertDescription>
+        <PlayIcon />
+        <AlertTitle>接入后验证</AlertTitle>
+        <AlertDescription>
+          运行 <code>codex --version</code>、<code>claude --version</code> 或{" "}
+          <code>opencode --version</code>
+          ，再启动对应客户端。若模型不可用，请回到这里选择当前 Key
+          能访问的模型重新生成。
+        </AlertDescription>
       </Alert>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>当前可用模型</CardTitle>
-          <CardDescription>下方配置已使用第一个模型；支持模型列表的客户端已写入全部模型。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {modelsLoading ? <div className="flex flex-col gap-2"><Skeleton className="h-6 w-full" /><Skeleton className="h-6 w-2/3" /></div> : models.length ? (
-            <div className="flex flex-wrap gap-1.5">{models.map((model) => <Badge key={model} variant="outline" className="font-mono font-normal">{model}</Badge>)}</div>
-          ) : <p className="text-sm text-muted-foreground">当前账户没有已同步的模型。订阅同步模型后，本页会自动生成配置。</p>}
-        </CardContent>
-      </Card>
-
-      <Tabs defaultValue="quick" className="gap-4">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 lg:w-fit lg:grid-cols-4">
-          <TabsTrigger value="quick"><TerminalIcon />快速验证</TabsTrigger>
-          <TabsTrigger value="cli"><CodeXmlIcon />编程 CLI</TabsTrigger>
-          <TabsTrigger value="sdk"><BookOpenIcon />SDK 与 REST</TabsTrigger>
-          <TabsTrigger value="gui"><MonitorCogIcon />桌面与 IDE</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="quick" className="grid gap-4 xl:grid-cols-2">
-          <SampleCard title="读取模型" description="成功时返回 data 数组。401 表示 Key 不正确或已停用。">
-            <CodeSample label="复制 curl 命令" code={samples.models} />
-          </SampleCard>
-          <SampleCard title="发送一条消息" description="命令已使用当前账户的可用模型。">
-            <CodeSample label="复制 curl 命令" code={samples.chat} />
-          </SampleCard>
-        </TabsContent>
-
-        <TabsContent value="cli" className="grid gap-4 xl:grid-cols-2">
-          <SampleCard title="Codex CLI" description="按 CLIProxyAPI 推荐方式写入用户级 ~/.codex/config.toml，无需修改 auth.json。默认使用 gpt-5.6-sol。">
-            <CodeSample label="复制 config.toml" code={samples.codex} />
-          </SampleCard>
-          <SampleCard title="Claude Code" description="字段按 CLIProxyAPI 文档写入 ~/.claude/settings.json；Base URL 不带 /v1，同时兼容 Claude Code 2.x 和 1.x。">
-            <CodeSample label="复制 settings.json" code={samples.claudeCode} />
-          </SampleCard>
-          <SampleCard title="OpenCode" description="写入 ~/.config/opencode/opencode.json，API Key 直接保存在 provider 配置中。">
-            <CodeSample label="复制 opencode.json" code={samples.opencode} />
-          </SampleCard>
-          <SampleCard title="Aider" description="写入 ~/.aider.conf.yml，通过 OpenAI-compatible 地址调用；模型名称需要带 openai/ 前缀。">
-            <CodeSample label="复制 .aider.conf.yml" code={samples.aider} />
-          </SampleCard>
-        </TabsContent>
-
-        <TabsContent value="sdk" className="grid gap-4 xl:grid-cols-2">
-          <SampleCard title="OpenAI Python" description="适合 Responses API、工具调用和流式输出。">
-            <CodeSample label="复制 Python 示例" code={samples.python} />
-          </SampleCard>
-          <SampleCard title="OpenAI Node.js" description="baseURL 必须包含 /v1。">
-            <CodeSample label="复制 Node.js 示例" code={samples.node} />
-          </SampleCard>
-          <SampleCard title="Anthropic 原生协议" description="本站接受 x-api-key，并提供 /v1/messages。">
-            <CodeSample label="复制 Anthropic 请求" code={samples.anthropic} />
-          </SampleCard>
-          <SampleCard title="Gemini 原生协议" description="本站接受 x-goog-api-key，并提供 /v1beta 路径。">
-            <CodeSample label="复制 Gemini 请求" code={samples.gemini} />
-          </SampleCard>
-        </TabsContent>
-
-        <TabsContent value="gui" className="grid gap-4 xl:grid-cols-2">
-          <ClientGroup title="聊天客户端" clients={["Cherry Studio", "Chatbox", "LobeChat", "NextChat"]}>
-            选择“OpenAI”或“OpenAI-compatible”，填写 OpenAI Base URL 和 API Key。关闭客户端自带的模型过滤后，从本站模型列表添加模型。
-          </ClientGroup>
-          <ClientGroup title="VS Code 扩展" clients={["Cline", "Roo Code", "Kilo Code", "Continue"]}>
-            选择 OpenAI-compatible provider。API Base 填写 OpenAI Base URL，API Key 填写本站密钥，模型名称使用本站返回值。
-          </ClientGroup>
-          <ClientGroup title="工作流与自动化" clients={["Dify", "FastGPT", "n8n", "LangChain"]}>
-            使用 OpenAI-compatible 连接器。健康检查应调用 /v1/models，不要用聊天请求作为定时探测。
-          </ClientGroup>
-          <ClientGroup title="原生协议客户端" clients={["Claude Code", "Anthropic SDK", "Gemini REST 客户端"]}>
-            Anthropic 使用站点根地址和 x-api-key。Gemini 使用站点根地址和 x-goog-api-key。本站会在转发前移除用户密钥。
-          </ClientGroup>
-        </TabsContent>
-      </Tabs>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>协议路径</CardTitle>
-          <CardDescription>只有客户端要求手动填写完整路径时才需要使用这些值。</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3 text-sm">
-          <Endpoint path="/v1/responses" use="OpenAI Responses，Codex 和智能体客户端优先使用" />
-          <Endpoint path="/v1/chat/completions" use="OpenAI Chat Completions 兼容客户端" />
-          <Endpoint path="/v1/messages" use="Anthropic Messages 和 Claude Code" />
-          <Endpoint path="/v1beta/models/{model}:generateContent" use="Gemini 原生 REST" />
-          <Endpoint path="/v1/models" use="读取当前 Key 可访问的模型" />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>常见错误</CardTitle></CardHeader>
-        <CardContent className="flex flex-col gap-3 text-sm">
-          <Troubleshooting code="401" text="Key 不正确、已删除或已停用。重新复制完整 Key。" />
-          <Troubleshooting code="403" text="模型不在当前 Key 或订阅的允许范围内。使用 /v1/models 中的模型。" />
-          <Troubleshooting code="429" text="余额、订阅额度、请求频率或 Token 限制已达到上限。查看“我的订阅”和“用量”。" />
-          <Troubleshooting code="502" text="上游账户或网络暂时不可用。保留 X-Relay-Request-ID，并在“请求日志”中查看对应记录。" />
-        </CardContent>
-      </Card>
     </div>
   )
 }
 
-function guideSamples(origin: string, models: string[]) {
-  const base = `${origin}/v1`
-  const model = models[0] ?? "当前账户暂无可用模型"
-  return {
-    models: `curl ${origin}/v1/models \\\n  -H "Authorization: Bearer relay_你的密钥"`,
-    chat: `curl ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer relay_你的密钥" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}]}'`,
-    codex: `model = "gpt-5.6-sol"
-model_provider = "relayapi"
-model_reasoning_effort = "xhigh"
-plan_mode_reasoning_effort = "xhigh"
-
-[model_providers.relayapi]
-name = "RelayAPI"
-base_url = "${base}"
-experimental_bearer_token = "relay_你的密钥"
-wire_api = "responses"
-requires_openai_auth = true
-supports_websockets = true`,
-    claudeCode: `{
-  "env": {
-    "ANTHROPIC_BASE_URL": ${JSON.stringify(origin)},
-    "ANTHROPIC_AUTH_TOKEN": "relay_你的密钥",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": ${JSON.stringify(model)},
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": ${JSON.stringify(model)},
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": ${JSON.stringify(model)},
-    "ANTHROPIC_MODEL": ${JSON.stringify(model)},
-    "ANTHROPIC_SMALL_FAST_MODEL": ${JSON.stringify(model)}
-  }
-}`,
-    opencode: `{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "openai": {
-      "options": {
-        "baseURL": "${base}",
-        "apiKey": "relay_你的密钥"
-      }
-    }
-  },
-  "model": "gpt-5.6-sol"
-}`,
-    aider: `openai-api-key: relay_你的密钥
-openai-api-base: ${base}
-model: openai/${model}`,
-    python: `from openai import OpenAI
-
-client = OpenAI(
-    api_key="relay_你的密钥",
-    base_url="${base}",
-)
-
-response = client.responses.create(
-    model=${JSON.stringify(model)},
-    input="你好",
-)
-print(response.output_text)`,
-    node: `import OpenAI from "openai";
-
-const client = new OpenAI({
-  apiKey: "relay_你的密钥",
-  baseURL: "${base}",
-});
-
-const response = await client.responses.create({
-  model: ${JSON.stringify(model)},
-  input: "你好",
-});
-console.log(response.output_text);`,
-    anthropic: `curl ${origin}/v1/messages \\\n  -H "x-api-key: relay_你的密钥" \\\n  -H "anthropic-version: 2023-06-01" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"${model}","max_tokens":256,"messages":[{"role":"user","content":"你好"}]}'`,
-    gemini: `curl "${origin}/v1beta/models/${encodeURIComponent(model)}:generateContent" \\\n  -H "x-goog-api-key: relay_你的密钥" \\\n  -H "content-type: application/json" \\\n  -d '{"contents":[{"role":"user","parts":[{"text":"你好"}]}]}'`,
-  }
+function preferredModel(models: string[]) {
+  return (
+    models.find((item) => item === "gpt-5.6-sol") ??
+    models.find((item) => item.toLowerCase().includes("codex")) ??
+    models[0] ??
+    ""
+  )
 }
 
-function GuideStep({ icon: Icon, number, title, children }: { icon: typeof KeyRoundIcon; number: string; title: string; children: ReactNode }) {
-  return <Card><CardHeader><div className="flex items-center gap-3"><div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Icon /></div><div><Badge variant="outline">步骤 {number}</Badge><CardTitle className="mt-2">{title}</CardTitle></div></div></CardHeader><CardContent className="text-sm leading-6 text-muted-foreground">{children}</CardContent></Card>
+function FeatureCard({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: typeof ShieldCheckIcon
+  title: string
+  description: string
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <Icon className="size-5 text-muted-foreground" />
+          <CardTitle>{title}</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="text-sm leading-6 text-muted-foreground">
+        {description}
+      </CardContent>
+    </Card>
+  )
 }
 
-function ConnectionValue({ label, value, secret = false }: { label: string; value: string; secret?: boolean }) {
-  return <div className="flex min-w-0 items-center gap-3 rounded-lg border p-3"><div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 truncate font-mono text-sm">{value}</p></div>{secret ? null : <Button variant="ghost" size="icon-sm" aria-label={`复制 ${label}`} onClick={() => void copy(value, label)}><ClipboardIcon /></Button>}</div>
+function SelectField({
+  label,
+  description,
+  value,
+  placeholder,
+  onChange,
+  options,
+}: {
+  label: string
+  description: string
+  value: string
+  placeholder?: string
+  onChange: (value: string) => void
+  options: { value: string; label: string }[]
+}) {
+  return (
+    <Field>
+      <FieldLabel>{label}</FieldLabel>
+      <Select value={value} onValueChange={(next) => next && onChange(next)}>
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      <FieldDescription>{description}</FieldDescription>
+    </Field>
+  )
 }
 
-function SampleCard({ title, description, children }: { title: string; description: string; children: ReactNode }) {
-  return <Card><CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader><CardContent className="flex flex-col gap-3">{children}</CardContent></Card>
+function CompactSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  options: string[]
+}) {
+  return (
+    <Field>
+      <FieldLabel>{label}</FieldLabel>
+      <Select value={value} onValueChange={(next) => next && onChange(next)}>
+        <SelectTrigger className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
+  )
 }
 
-function CodeSample({ code, label }: CodeSampleProps) {
-  return <div className="overflow-hidden rounded-lg border bg-muted/20"><div className="flex items-center justify-between border-b px-3 py-2"><span className="text-xs text-muted-foreground">{label}</span><Button variant="ghost" size="icon-xs" aria-label={label} onClick={() => void copy(code, "配置")}><ClipboardIcon /></Button></div><pre className="overflow-x-auto p-3 text-xs leading-5"><code>{code}</code></pre></div>
+function YesNoSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <Field>
+      <FieldLabel>{label}</FieldLabel>
+      <Select value={value} onValueChange={(next) => next && onChange(next)}>
+        <SelectTrigger className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            <SelectItem value="yes">启用</SelectItem>
+            <SelectItem value="no">关闭</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
+  )
 }
 
-function ClientGroup({ title, clients, children }: { title: string; clients: string[]; children: ReactNode }) {
-  return <Card><CardHeader><CardTitle>{title}</CardTitle><div className="flex flex-wrap gap-1.5">{clients.map((client) => <Badge key={client} variant="outline">{client}</Badge>)}</div></CardHeader><CardContent className="text-sm leading-6 text-muted-foreground">{children}</CardContent></Card>
+function CommandBlock({
+  title,
+  description,
+  command,
+}: {
+  title: string
+  description: string
+  command: string
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <p className="font-medium">{title}</p>
+          <p className="text-xs text-muted-foreground">{description}</p>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`复制${title}`}
+          onClick={() => void copy(command, title)}
+        >
+          <ClipboardIcon />
+        </Button>
+      </div>
+      <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs leading-5">
+        <code>{command}</code>
+      </pre>
+    </div>
+  )
 }
 
-function Endpoint({ path, use }: { path: string; use: string }) {
-  return <div className="grid gap-1 sm:grid-cols-[18rem_1fr]"><code className="font-mono text-xs">{path}</code><span className="text-muted-foreground">{use}</span></div>
+function WriteTarget({
+  title,
+  path,
+  detail,
+}: {
+  title: string
+  path: string
+  detail: string
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border p-4">
+      <p className="font-medium">{title}</p>
+      <code className="text-xs">{path}</code>
+      <p className="leading-6 text-muted-foreground">{detail}</p>
+    </div>
+  )
 }
 
-function Troubleshooting({ code, text }: { code: string; text: string }) {
-  return <div className="flex items-start gap-3"><Badge variant="outline" className="font-mono">{code}</Badge><p className="text-muted-foreground">{text}</p></div>
+function clientLabel(client: ClientChoice) {
+  if (client === "all") return "三个客户端"
+  if (client === "claude") return "Claude Code"
+  if (client === "opencode") return "OpenCode"
+  return "Codex"
 }
 
 async function copy(value: string, label: string) {

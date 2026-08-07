@@ -67,7 +67,7 @@ func (a *App) refreshParentQuotas(ctx context.Context) {
 		return
 	}
 	if !ready {
-		slog.Debug("skip automatic CPA quota sync", "bridge_version", version, "required", "0.3.0")
+		slog.Debug("skip automatic CPA quota sync", "bridge_version", version, "required", "0.6.0")
 		return
 	}
 	parents, err := a.store.ListParentSubscriptions(ctx)

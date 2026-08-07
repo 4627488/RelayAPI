@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/billing"
+	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
@@ -178,10 +180,20 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 无效或已停用")
 		return
 	}
-
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<20))
+	expectedBodyBytes := r.ContentLength
+	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.CPAMaxRequestBytes {
+		expectedBodyBytes = a.cfg.CPAMaxRequestBytes
+	}
+	lease, err := a.cpa.Acquire(r.Context(), expectedBodyBytes)
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "请求体超过 64 MiB")
+		writeCPAAdmissionError(w, err, a.cpa.AdmissionStatus())
+		return
+	}
+	defer lease.Release()
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, a.cfg.CPAMaxRequestBytes))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("请求体超过 %d MiB", a.cfg.CPAMaxRequestBytes>>20))
 		return
 	}
 	bodyReadAt := time.Now()
@@ -254,7 +266,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		if admission.CPAAuthID != "" && !a.bridgeReady.Load() {
 			a.releaseReservation(requestID, true)
-			writeError(w, http.StatusServiceUnavailable, "cpa_bridge_required", "严格子订阅路由要求 CPA bridge 0.2.0 或更高版本")
+			writeError(w, http.StatusServiceUnavailable, "cpa_bridge_required", "严格子订阅路由要求 CPA bridge 0.6.0 或更高版本")
 			return
 		}
 		if priceConfigured {
@@ -304,6 +316,9 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 
 	response, err := a.cpa.HTTP.Do(upstream)
 	if err != nil {
+		if r.Context().Err() == nil {
+			a.cpa.RecordTransportResult(err)
+		}
 		a.releaseReservation(requestID, billable)
 		classified := classifyCPATransportError(err, r.Context().Err(), "awaiting_headers")
 		logContext.errorCode = classified.Code
@@ -316,6 +331,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		writeCPATransportError(w, r, err, "awaiting_headers", requestID)
 		return
 	}
+	a.cpa.RecordTransportResult(nil)
 	upstreamHeadersAt := time.Now()
 	defer response.Body.Close()
 	copyHeaders(w.Header(), response.Header)
@@ -331,6 +347,9 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			firstByteAt = time.Now()
 		}
 	})
+	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
+		a.cpa.RecordTransportResult(copyErr)
+	}
 
 	parsed := billing.ParseResponse(capture.Bytes())
 	if priceConfigured && parsed.ResponseServiceTier != "" {
@@ -455,7 +474,7 @@ func copyStreaming(w http.ResponseWriter, source io.Reader, onFirstByte func()) 
 				onFirstByte = nil
 			}
 			if _, writeErr := w.Write(buffer[:n]); writeErr != nil {
-				return writeErr
+				return &streamCopyError{operation: "write_downstream", err: writeErr}
 			}
 			if flusher != nil {
 				flusher.Flush()
@@ -465,9 +484,22 @@ func copyStreaming(w http.ResponseWriter, source io.Reader, onFirstByte func()) 
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
-			return err
+			return &streamCopyError{operation: "read_upstream", err: err}
 		}
 	}
+}
+
+type streamCopyError struct {
+	operation string
+	err       error
+}
+
+func (e *streamCopyError) Error() string { return e.operation + ": " + e.err.Error() }
+func (e *streamCopyError) Unwrap() error { return e.err }
+
+func isUpstreamStreamError(err error) bool {
+	var copyErr *streamCopyError
+	return errors.As(err, &copyErr) && copyErr.operation == "read_upstream"
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {
@@ -477,13 +509,18 @@ func isWebSocketUpgrade(r *http.Request) bool {
 func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
 	proxy := httputil.NewSingleHostReverseProxy(a.cpa.BaseURL)
+	proxy.Transport = a.cpa.HTTP.Transport
 	statusCode := 0
 	proxy.ModifyResponse = func(response *http.Response) error {
 		statusCode = response.StatusCode
+		a.cpa.RecordTransportResult(nil)
 		return nil
 	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+	proxy.ErrorHandler = func(w http.ResponseWriter, request *http.Request, err error) {
 		statusCode = http.StatusBadGateway
+		if request == nil || request.Context().Err() == nil {
+			a.cpa.RecordTransportResult(err)
+		}
 		slog.Error("websocket proxy", "request_id", requestID, "error", err)
 		writeError(w, statusCode, "cpa_unavailable", "CPA 暂时不可用")
 	}
@@ -524,6 +561,43 @@ func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.K
 	}
 	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, nil, false, settled, actual, "", logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
+}
+
+func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.AdmissionStatus) {
+	retryAfter := int64(1)
+	httpStatus := http.StatusServiceUnavailable
+	retryable := true
+	code := "cpa_overloaded"
+	message := "CPA 当前并发已达到安全上限，请稍后重试"
+	switch {
+	case errors.Is(err, context.Canceled):
+		httpStatus = 499
+		retryable = false
+		code = "client_canceled"
+		message = "请求已由客户端取消"
+	case errors.Is(err, context.DeadlineExceeded):
+		httpStatus = http.StatusGatewayTimeout
+		code = "request_timeout"
+		message = "请求在等待 CPA 准入时超时"
+	case errors.Is(err, cpa.ErrCircuitOpen):
+		code = "cpa_circuit_open"
+		message = "CPA 正在从连续故障中恢复，请稍后重试"
+		if status.RetryAfterMS > 0 {
+			retryAfter = (status.RetryAfterMS + 999) / 1000
+		}
+	}
+	if retryable {
+		w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+	}
+	w.Header().Set("X-Relay-Error-Code", code)
+	details := map[string]any{"retryable": retryable}
+	if retryable {
+		details["retry_after_seconds"] = retryAfter
+	}
+	writeJSON(w, httpStatus, map[string]any{"error": map[string]any{
+		"code": code, "type": "service_unavailable", "message": message,
+		"details": details,
+	}})
 }
 
 func (a *App) releaseReservation(requestID string, billable bool) {

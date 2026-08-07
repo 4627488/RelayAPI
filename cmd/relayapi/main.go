@@ -32,6 +32,7 @@ func main() {
 		Handler:           service.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 	go func() {
 		slog.Info("RelayAPI started", "listen", cfg.ListenAddr, "cpa", cfg.CPAURL)

@@ -32,6 +32,13 @@ services:
   cliproxyapi:
     image: eceasy/cli-proxy-api:latest
     restart: unless-stopped
+    mem_limit: ${CPA_MEMORY_LIMIT:-512m}
+    mem_reservation: ${CPA_MEMORY_RESERVATION:-384m}
+    stop_grace_period: 20s
+    environment:
+      GOMEMLIMIT: ${CPA_GOMEMLIMIT:-384MiB}
+      GOGC: "50"
+      GODEBUG: madvdontneed=1
     volumes:
       # Writable so the authenticated Relay admin panel can persist CPA's
       # complete configuration through /v0/management/config.yaml.

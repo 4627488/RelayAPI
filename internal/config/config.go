@@ -17,10 +17,18 @@ type Config struct {
 	CPAAPIKey                  string
 	CPAManagementKey           string
 	SessionSecret              string
+	APIKeyEncryptionKey        string
 	PublicURL                  string
 	SecureCookies              bool
 	ReservationNanoUSD         int64
 	RequestTimeout             time.Duration
+	CPAMaxInFlight             int
+	CPAMaxQueue                int
+	CPAQueueTimeout            time.Duration
+	CPAMaxRequestBytes         int64
+	CPARequestBytesInFlight    int64
+	CPACircuitFailureThreshold int
+	CPACircuitOpenDuration     time.Duration
 	QuotaSyncInterval          time.Duration
 	UnpricedModelPolicy        string
 	CPAPluginSecret            string
@@ -47,10 +55,18 @@ func Load() (Config, error) {
 		CPAAPIKey:                  strings.TrimSpace(os.Getenv("CPA_API_KEY")),
 		CPAManagementKey:           strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
 		SessionSecret:              strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),
+		APIKeyEncryptionKey:        strings.TrimSpace(os.Getenv("RELAY_API_KEY_ENCRYPTION_KEY")),
 		PublicURL:                  strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
 		SecureCookies:              envBool("RELAY_SECURE_COOKIES", false),
 		ReservationNanoUSD:         envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
 		RequestTimeout:             time.Duration(envInt64("CPA_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
+		CPAMaxInFlight:             int(envInt64("CPA_MAX_IN_FLIGHT", 16)),
+		CPAMaxQueue:                int(envInt64("CPA_MAX_QUEUE", 32)),
+		CPAQueueTimeout:            time.Duration(envInt64("CPA_QUEUE_TIMEOUT_MILLISECONDS", 2_000)) * time.Millisecond,
+		CPAMaxRequestBytes:         envInt64("CPA_MAX_REQUEST_MIB", 16) << 20,
+		CPARequestBytesInFlight:    envInt64("CPA_REQUEST_BYTES_IN_FLIGHT_MIB", 32) << 20,
+		CPACircuitFailureThreshold: int(envInt64("CPA_CIRCUIT_FAILURE_THRESHOLD", 3)),
+		CPACircuitOpenDuration:     time.Duration(envInt64("CPA_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
 		QuotaSyncInterval:          time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
 		UnpricedModelPolicy:        strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
 		CPAPluginSecret:            strings.TrimSpace(os.Getenv("CPA_PLUGIN_SECRET")),
@@ -68,6 +84,9 @@ func Load() (Config, error) {
 		RetentionBatchSize:         int(envInt64("RETENTION_BATCH_SIZE", 5_000)),
 		RetentionMaxRuntime:        time.Duration(envInt64("RETENTION_MAX_RUNTIME_SECONDS", 30)) * time.Second,
 	}
+	if cfg.APIKeyEncryptionKey == "" {
+		cfg.APIKeyEncryptionKey = cfg.SessionSecret
+	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
 	}
@@ -77,8 +96,35 @@ func Load() (Config, error) {
 	if len(cfg.SessionSecret) < 32 {
 		return Config{}, errors.New("RELAY_SESSION_SECRET must contain at least 32 characters")
 	}
+	if len(cfg.APIKeyEncryptionKey) < 32 {
+		return Config{}, errors.New("RELAY_API_KEY_ENCRYPTION_KEY must contain at least 32 characters")
+	}
 	if cfg.ReservationNanoUSD < 0 {
 		return Config{}, errors.New("BILLING_RESERVE_NANO_USD cannot be negative")
+	}
+	if cfg.RequestTimeout < time.Second || cfg.RequestTimeout > time.Hour {
+		return Config{}, errors.New("CPA_REQUEST_TIMEOUT_SECONDS must be between 1 and 3600")
+	}
+	if cfg.CPAMaxInFlight < 1 || cfg.CPAMaxInFlight > 1024 {
+		return Config{}, errors.New("CPA_MAX_IN_FLIGHT must be between 1 and 1024")
+	}
+	if cfg.CPAMaxQueue < 0 || cfg.CPAMaxQueue > 10_000 {
+		return Config{}, errors.New("CPA_MAX_QUEUE must be between 0 and 10000")
+	}
+	if cfg.CPAQueueTimeout < 0 || cfg.CPAQueueTimeout > time.Minute {
+		return Config{}, errors.New("CPA_QUEUE_TIMEOUT_MILLISECONDS must be between 0 and 60000")
+	}
+	if cfg.CPAMaxRequestBytes < 1<<20 || cfg.CPAMaxRequestBytes > 64<<20 {
+		return Config{}, errors.New("CPA_MAX_REQUEST_MIB must be between 1 and 64")
+	}
+	if cfg.CPARequestBytesInFlight < cfg.CPAMaxRequestBytes || cfg.CPARequestBytesInFlight > 1<<30 {
+		return Config{}, errors.New("CPA_REQUEST_BYTES_IN_FLIGHT_MIB must be at least CPA_MAX_REQUEST_MIB and at most 1024")
+	}
+	if cfg.CPACircuitFailureThreshold < 1 || cfg.CPACircuitFailureThreshold > 100 {
+		return Config{}, errors.New("CPA_CIRCUIT_FAILURE_THRESHOLD must be between 1 and 100")
+	}
+	if cfg.CPACircuitOpenDuration < time.Second || cfg.CPACircuitOpenDuration > 10*time.Minute {
+		return Config{}, errors.New("CPA_CIRCUIT_OPEN_SECONDS must be between 1 and 600")
 	}
 	if cfg.QuotaSyncInterval < time.Minute {
 		return Config{}, errors.New("CPA_QUOTA_SYNC_INTERVAL_SECONDS must be at least 60")

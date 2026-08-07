@@ -34,12 +34,12 @@ quota_adapters:
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(raw), `"management_api":true`) ||
-		!strings.Contains(string(raw), `"request_interceptor":true`) ||
-		!strings.Contains(string(raw), `"request_lifecycle_plugin":true`) ||
+		!strings.Contains(string(raw), `"request_interceptor":false`) ||
+		!strings.Contains(string(raw), `"request_lifecycle_plugin":false`) ||
 		!strings.Contains(string(raw), `"usage_plugin":false`) ||
 		!strings.Contains(string(raw), `"response_interceptor":false`) ||
 		!strings.Contains(string(raw), `"response_stream_interceptor":false`) ||
-		!strings.Contains(string(raw), `"Version":"0.5.1"`) {
+		!strings.Contains(string(raw), `"Version":"0.6.0"`) {
 		t.Fatalf("registration = %s", raw)
 	}
 	loadedConfig := loaded()
@@ -69,7 +69,9 @@ func TestManagementHealthAcceptsFullCPAPath(t *testing.T) {
 	if err := json.Unmarshal(wrapped.Result, &response); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(response.Body), `"queue_capacity":128`) || !strings.Contains(string(response.Body), `"status":"ok"`) {
+	if !strings.Contains(string(response.Body), `"mode":"control-plane-only"`) ||
+		!strings.Contains(string(response.Body), `"data_plane_interceptors":false`) ||
+		!strings.Contains(string(response.Body), `"status":"ok"`) {
 		t.Fatalf("health response = %s", response.Body)
 	}
 }
@@ -114,77 +116,6 @@ func TestRoutingSignatureExpires(t *testing.T) {
 	}
 	if validRoutingSignature("shared-secret", headers, "auth-1", time.Now()) {
 		t.Fatal("expected stale routing signature to be rejected")
-	}
-}
-
-func TestLifecycleCorrelatesExecutionWithoutMutatingTraffic(t *testing.T) {
-	current.Store(config{})
-	request := correlationPayload{
-		RequestID: "cpa-exec-1",
-		Headers:   http.Header{"X-Relay-Request-ID": {"relay-request-1"}},
-	}
-	raw, _ := json.Marshal(request)
-	response, err := handle("request.intercept_before", raw)
-	if err != nil || !strings.Contains(string(response), `"ok":true`) {
-		t.Fatalf("request interception response=%s err=%v", response, err)
-	}
-	value, ok := requestCorrelations.Load("cpa-exec-1")
-	correlation, _ := value.(requestCorrelation)
-	if !ok || correlation.RelayID != "relay-request-1" {
-		t.Fatalf("correlation = %+v, found=%t", correlation, ok)
-	}
-	completion, _ := json.Marshal(completionPayload{RequestID: "cpa-exec-1", Outcome: "succeeded"})
-	if _, err := handle("request.complete", completion); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := requestCorrelations.Load("cpa-exec-1"); ok {
-		t.Fatal("completion did not release request correlation")
-	}
-}
-
-func TestRequestCorrelationDoesNotDecodeBody(t *testing.T) {
-	current.Store(config{})
-	raw := []byte(`{"RequestID":"cpa-light","Headers":{"X-Relay-Request-ID":["relay-light"]},"Body":"not-valid-base64"}`)
-	if _, err := handle("request.intercept_before", raw); err != nil {
-		t.Fatalf("correlation-only decode inspected Body: %v", err)
-	}
-	if got := takeCorrelation("cpa-light", time.Now()); got != "relay-light" {
-		t.Fatalf("correlated Relay ID = %q", got)
-	}
-}
-
-func TestLifecycleCompletionIsCompactAndWhitelisted(t *testing.T) {
-	payload := compactCompletion(completionPayload{
-		RequestID: strings.Repeat("r", 300), Error: strings.Repeat("e", 8<<10),
-		Metadata: map[string]any{
-			"provider": "codex", "access_token": "must-not-leak",
-			"nested": map[string]any{"auth_index": "auth-1"},
-		},
-	})
-	if len(payload.RequestID) != 256 || len(payload.Error) != 4<<10 {
-		t.Fatalf("payload strings were not bounded: request=%d error=%d", len(payload.RequestID), len(payload.Error))
-	}
-	if payload.Metadata["provider"] != "codex" || payload.Metadata["auth_index"] != "auth-1" {
-		t.Fatalf("expected metadata missing: %+v", payload.Metadata)
-	}
-	if _, ok := payload.Metadata["access_token"]; ok {
-		t.Fatalf("secret metadata leaked: %+v", payload.Metadata)
-	}
-}
-
-func TestCorrelationExpires(t *testing.T) {
-	requestCorrelations.Range(func(key, _ any) bool {
-		requestCorrelations.Delete(key)
-		return true
-	})
-	correlationCount.Store(0)
-	now := time.Now()
-	storeCorrelation("cpa-expiring", "relay-expiring", now)
-	if got := takeCorrelation("cpa-expiring", now.Add(correlationTTL+time.Second)); got != "" {
-		t.Fatalf("expired correlation = %q", got)
-	}
-	if correlationCount.Load() != 0 {
-		t.Fatalf("correlation count = %d", correlationCount.Load())
 	}
 }
 

@@ -56,3 +56,31 @@ func TestSessionRoundTrip(t *testing.T) {
 		t.Fatalf("session = %+v, want %+v", got, want)
 	}
 }
+
+func TestSecretBoxRoundTripAndBinding(t *testing.T) {
+	box, err := NewSecretBox("a stable encryption secret with enough entropy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := box.Seal([]byte("relay_secret"), "tenant-1/key-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(sealed, []byte("relay_secret")) {
+		t.Fatal("ciphertext contains plaintext")
+	}
+	plain, err := box.Open(sealed, "tenant-1/key-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != "relay_secret" {
+		t.Fatalf("plain = %q", plain)
+	}
+	if _, err := box.Open(sealed, "tenant-1/key-2"); err == nil {
+		t.Fatal("ciphertext must be bound to its record")
+	}
+	other, _ := NewSecretBox("a different encryption secret with entropy")
+	if _, err := other.Open(sealed, "tenant-1/key-1"); err == nil {
+		t.Fatal("ciphertext must not open with another key")
+	}
+}

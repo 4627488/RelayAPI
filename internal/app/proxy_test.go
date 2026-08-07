@@ -5,16 +5,66 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
+var errStreamTest = errors.New("stream test failure")
+
+type failingStreamReader struct{}
+
+func (failingStreamReader) Read([]byte) (int, error) { return 0, errStreamTest }
+
+type failingResponseWriter struct{ header http.Header }
+
+func (w *failingResponseWriter) Header() http.Header     { return w.header }
+func (*failingResponseWriter) Write([]byte) (int, error) { return 0, errStreamTest }
+func (*failingResponseWriter) WriteHeader(int)           {}
+
 func TestRoutesRegisterWithFrontendCatchAll(t *testing.T) {
 	a := &App{mux: http.NewServeMux()}
 	a.routes()
+}
+
+func TestRoutesCoverSupportedClientProtocols(t *testing.T) {
+	a := &App{mux: http.NewServeMux()}
+	a.routes()
+	for _, test := range []struct {
+		name, method, path string
+	}{
+		{name: "Codex Responses", method: http.MethodPost, path: "/v1/responses"},
+		{name: "Codex direct", method: http.MethodPost, path: "/backend-api/codex/responses"},
+		{name: "OpenAI namespace", method: http.MethodPost, path: "/openai/v1/responses"},
+		{name: "Grok OpenAI", method: http.MethodPost, path: "/v1/chat/completions"},
+		{name: "Claude Code", method: http.MethodPost, path: "/v1/messages"},
+		{name: "OpenCode", method: http.MethodPost, path: "/v1/chat/completions"},
+		{name: "Gemini native", method: http.MethodPost, path: "/v1beta/models/gemini:generateContent"},
+		{name: "Codex WebSocket", method: http.MethodGet, path: "/v1/responses/ws"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.path, nil)
+			_, pattern := a.mux.Handler(request)
+			if pattern == "" || pattern == "/" {
+				t.Fatalf("path %q matched %q instead of the inference proxy", test.path, pattern)
+			}
+		})
+	}
+}
+
+func TestCopyStreamingClassifiesOnlyUpstreamReadFailures(t *testing.T) {
+	if err := copyStreaming(httptest.NewRecorder(), failingStreamReader{}, nil); !isUpstreamStreamError(err) {
+		t.Fatalf("upstream read error was not classified: %v", err)
+	}
+	writer := &failingResponseWriter{header: make(http.Header)}
+	if err := copyStreaming(writer, strings.NewReader("payload"), nil); err == nil || isUpstreamStreamError(err) {
+		t.Fatalf("downstream write error misclassified: %v", err)
+	}
 }
 
 func TestReadRequestMeta(t *testing.T) {

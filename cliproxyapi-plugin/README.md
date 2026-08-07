@@ -16,7 +16,6 @@ plugins:
     relayapi-bridge:
       enabled: true
       priority: 10
-      relay_url: http://relayapi:3000
       secret: replace-with-CPA_PLUGIN_SECRET
       delegate: round-robin
       quota_adapters_mode: append
@@ -45,17 +44,15 @@ The bridge reads the selected credential through `host.auth.get`, uses CPA's
 proxy-aware `host.http.do` callback, and returns only a normalized quota report.
 Tokens, account identifiers, and raw upstream responses never leave CPA.
 
-Version 0.5.0 makes lifecycle collection memory-safe for large streaming
-requests. Request interception is used only to correlate CPA's execution ID
-with Relay's signed `X-Relay-Request-ID`; request and response bodies never
-cross the asynchronous lifecycle queue. Response and stream interceptors are
-not registered because Relay already captures downstream responses and TTFT.
-Only the compact terminal completion is delivered through a 128-item queue,
-with a one-second local timeout and no blocking retries.
+Version 0.6.0 makes the bridge control-plane-only. It registers scheduler and
+management capabilities, but no request, response, stream, usage, or request
+completion callbacks. CPA clones request bodies and JSON/base64 serializes
+byte slices before a request interceptor reaches plugin code, so even a
+metadata-only interceptor creates a large data-plane memory multiplier. Relay
+already parses the proxied response as its billing source of truth and records
+transport failures directly, so that correlation was not worth the OOM risk.
 
-The usage capability is also intentionally disabled: Relay parses the final
-response as its billing source of truth, while CPA's usage ABI has no Relay
-request correlation. Queue health and drop counters are available at:
+The bridge mode is available at:
 
 ```text
 GET /v0/management/plugins/relayapi-bridge/health
@@ -173,9 +170,7 @@ adapters:
 }
 ```
 
-Relay keeps response-correlated usage as the billing source of truth because
-CPA v7's usage ABI does not currently expose custom request correlation
-headers. The request lifecycle ABI does expose headers and execution IDs, so
-it enriches logs but does not independently debit tenants. Quota observations
-only calibrate parent capacity; tenant child shares remain an administrator
-policy.
+Relay keeps response-correlated usage as the billing source of truth. The
+bridge never independently debits tenants and never observes inference
+payloads. Quota observations only calibrate parent capacity; tenant child
+shares remain an administrator policy.

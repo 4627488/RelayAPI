@@ -4,3 +4,4 @@ cliproxyapi
 **/node_modules
 **/dist
 *.exe
+/.tmp-*

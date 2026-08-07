@@ -34,6 +34,7 @@ type App struct {
 	pricingSyncMu sync.Mutex
 	oauthMu       sync.Mutex
 	oauthSession  *managedOAuthSession
+	setupBox      identity.SecretBox
 }
 
 type contextKey string
@@ -46,15 +47,24 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := cpa.New(cfg.CPAURL, cfg.CPAAPIKey, cfg.CPAManagementKey, cfg.RequestTimeout)
+	client, err := cpa.NewWithOptions(cfg.CPAURL, cfg.CPAAPIKey, cfg.CPAManagementKey, cpa.Options{
+		ResponseHeaderTimeout: cfg.RequestTimeout, MaxInFlight: cfg.CPAMaxInFlight, MaxQueue: cfg.CPAMaxQueue,
+		MaxRequestBytesInFlight: cfg.CPARequestBytesInFlight,
+		QueueTimeout:            cfg.CPAQueueTimeout, CircuitFailureThreshold: cfg.CPACircuitFailureThreshold,
+		CircuitOpenDuration: cfg.CPACircuitOpenDuration,
+	})
 	if err != nil {
 		return nil, err
 	}
-	dataStore, err := store.New(database)
+	dataStore, err := store.New(database, cfg.APIKeyEncryptionKey)
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, store: dataStore, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{})}
+	setupBox, err := identity.NewSecretBox(cfg.APIKeyEncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	a := &App{cfg: cfg, store: dataStore, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox}
 	a.routes()
 	a.refreshBridgeStatus(ctx)
 	a.wg.Add(1)
@@ -186,6 +196,10 @@ func (a *App) Handler() http.Handler {
 
 func (a *App) routes() {
 	a.mux.HandleFunc("GET /healthz", a.health)
+	a.mux.HandleFunc("GET /setup/{token}/install.sh", a.agentSetupScript)
+	a.mux.HandleFunc("HEAD /setup/{token}/install.sh", a.agentSetupScript)
+	a.mux.HandleFunc("GET /setup/{token}/install.ps1", a.agentSetupScript)
+	a.mux.HandleFunc("HEAD /setup/{token}/install.ps1", a.agentSetupScript)
 	a.mux.HandleFunc("POST /internal/cpa/usage", a.cpaPluginUsage)
 	a.mux.HandleFunc("POST /internal/cpa/lifecycle", a.cpaPluginLifecycle)
 	a.mux.HandleFunc("GET /api/auth/status", a.authStatus)
@@ -197,8 +211,10 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/dashboard", a.withTenant(http.HandlerFunc(a.dashboard)))
 	a.mux.Handle("GET /api/usage", a.withTenant(http.HandlerFunc(a.usage)))
 	a.mux.Handle("GET /api/subscriptions", a.withTenant(http.HandlerFunc(a.tenantSubscriptions)))
+	a.mux.Handle("POST /api/agent-setup", a.withTenant(http.HandlerFunc(a.createAgentSetup)))
 	a.mux.Handle("GET /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("POST /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
+	a.mux.Handle("GET /api/keys/{id}/secret", a.withTenant(http.HandlerFunc(a.keySecret)))
 	a.mux.Handle("PUT /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyUpdate)))
 	a.mux.Handle("DELETE /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyDelete)))
 	a.mux.Handle("GET /api/logs", a.withTenant(http.HandlerFunc(a.logs)))
@@ -212,6 +228,7 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/admin/tenants/{id}/password", a.withAdmin(http.HandlerFunc(a.adminPassword)))
 	a.mux.Handle("GET /api/admin/tenants/{id}/keys", a.withAdmin(http.HandlerFunc(a.adminTenantKeys)))
 	a.mux.Handle("POST /api/admin/tenants/{id}/keys", a.withAdmin(http.HandlerFunc(a.adminTenantKeys)))
+	a.mux.Handle("GET /api/admin/tenants/{id}/keys/{keyID}/secret", a.withAdmin(http.HandlerFunc(a.adminTenantKeySecret)))
 	a.mux.Handle("PUT /api/admin/tenants/{id}/keys/{keyID}", a.withAdmin(http.HandlerFunc(a.adminTenantKeyUpdate)))
 	a.mux.Handle("GET /api/admin/prices", a.withAdmin(http.HandlerFunc(a.adminPrices)))
 	a.mux.Handle("PUT /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceUpdate)))
@@ -323,7 +340,8 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	bridgeVersion, _ := a.bridgeVersion.Load().(string)
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
 		"database": errorText(err), "cpa": errorText(cpaErr),
-		"subscriptions": errorText(subscriptionErr), "bridge": map[string]any{"required": bridgeRequired, "ready": a.bridgeReady.Load(), "version": bridgeVersion}})
+		"cpa_admission": a.cpa.AdmissionStatus(), "subscriptions": errorText(subscriptionErr),
+		"bridge": map[string]any{"required": bridgeRequired, "ready": a.bridgeReady.Load(), "version": bridgeVersion}})
 }
 
 func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {

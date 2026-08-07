@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-set -u
+set -eu
 
 state_file=/run/relayapi-cpa-watchdog.failures
 health_url=http://127.0.0.1:18080/healthz
 compose_dir=/opt/relayapi
 
 payload=$(/usr/bin/curl --silent --show-error --max-time 8 "$health_url" 2>/dev/null || true)
-if /usr/bin/jq --exit-status '.cpa == "ok" and .bridge.ready == true' >/dev/null 2>&1 <<<"$payload"; then
+if /usr/bin/jq --exit-status '.cpa == "ok" and (.bridge.required != true or .bridge.ready == true)' >/dev/null 2>&1 <<<"$payload"; then
   /usr/bin/rm -f "$state_file"
   exit 0
 fi

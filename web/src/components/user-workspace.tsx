@@ -1,12 +1,20 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react"
 import {
   CheckIcon,
   CopyIcon,
+  EyeIcon,
+  EyeOffIcon,
   KeyRoundIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
-  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -87,7 +95,6 @@ import {
 } from "@/lib/api"
 import { dateTime, money } from "@/lib/format"
 import { copyText } from "@/lib/clipboard"
-import { useSessionStorage } from "@/hooks/use-session-storage"
 
 interface UserWorkspaceProps {
   page: Page
@@ -142,14 +149,16 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
         keys={keys}
         tenantModels={session.tenant?.model_allowlist ?? []}
         onChanged={load}
-        storageKey={`relayapi.latest-api-key.${session.tenant?.id || "unknown"}`}
       />
     )
   }
   if (page === "logs") return <RequestLogsWorkbench />
   if (page === "guide")
     return (
-      <ConnectionGuide tenantModels={session.tenant?.model_allowlist ?? []} />
+      <ConnectionGuide
+        keys={keys}
+        tenantModels={session.tenant?.model_allowlist ?? []}
+      />
     )
   if (page === "subscriptions") return <TenantSubscriptionsView />
   if (page === "usage") {
@@ -216,12 +225,6 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
   )
 }
 
-type GeneratedKey = {
-  id: string
-  name: string
-  key: string
-}
-
 const preferredKeyModels = ["gpt-5.6-sol", "grok-4.5"]
 
 function preferredModelsFrom(options: string[]) {
@@ -233,35 +236,20 @@ function preferredModelsFrom(options: string[]) {
   })
 }
 
-function isGeneratedKey(value: unknown): value is GeneratedKey {
-  if (!value || typeof value !== "object") return false
-  const item = value as Partial<GeneratedKey>
-  return (
-    typeof item.id === "string" &&
-    typeof item.name === "string" &&
-    typeof item.key === "string"
-  )
-}
-
 function KeysView({
   keys,
   tenantModels,
   onChanged,
-  storageKey,
 }: {
   keys: ApiKey[]
   tenantModels: string[]
   onChanged: () => Promise<void>
-  storageKey: string
 }) {
   const [createOpen, setCreateOpen] = useState(false)
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null)
-  const [showPlainKey, setShowPlainKey] = useState(false)
-  const [generatedKey, setGeneratedKey] = useSessionStorage<GeneratedKey>(
-    storageKey,
-    isGeneratedKey
-  )
   const [pending, setPending] = useState(false)
+  const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({})
+  const [revealingKeyID, setRevealingKeyID] = useState("")
   const [modelOptions, setModelOptions] = useState<string[]>(tenantModels)
   const [selectedModels, setSelectedModels] = useState<string[]>(() =>
     preferredModelsFrom(tenantModels)
@@ -310,7 +298,6 @@ function KeysView({
   function openCreateDialog() {
     modelSelectionTouched.current = false
     setEditingKey(null)
-    setShowPlainKey(false)
     setSelectedModels(preferredModelsFrom(modelOptions))
     setModelAliases([])
     setCreateOpen(true)
@@ -319,7 +306,6 @@ function KeysView({
   function openEditDialog(key: ApiKey) {
     modelSelectionTouched.current = true
     setEditingKey(key)
-    setShowPlainKey(false)
     setSelectedModels(key.model_allowlist ?? [])
     setModelAliases(
       (key.model_aliases ?? []).map((item) => ({
@@ -353,12 +339,11 @@ function KeysView({
           })),
         }
       )
-      setGeneratedKey({
-        id: response.item.id,
-        name: response.item.name,
-        key: response.key,
-      })
-      setShowPlainKey(true)
+      setRevealedKeys((current) => ({
+        ...current,
+        [response.item.id]: response.key,
+      }))
+      setCreateOpen(false)
       await onChanged()
       toast.success("API Key 已创建")
     } catch (cause) {
@@ -428,11 +413,35 @@ function KeysView({
   async function remove(id: string) {
     try {
       await deleteRequest(`/api/keys/${id}`)
-      if (generatedKey?.id === id) setGeneratedKey(null)
+      setRevealedKeys((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
       await onChanged()
       toast.success("API Key 已删除")
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "删除失败")
+    }
+  }
+
+  async function toggleReveal(key: ApiKey) {
+    if (revealedKeys[key.id]) {
+      setRevealedKeys((current) => {
+        const next = { ...current }
+        delete next[key.id]
+        return next
+      })
+      return
+    }
+    setRevealingKeyID(key.id)
+    try {
+      const response = await api<{ key: string }>(`/api/keys/${key.id}/secret`)
+      setRevealedKeys((current) => ({ ...current, [key.id]: response.key }))
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "无法读取完整密钥")
+    } finally {
+      setRevealingKeyID("")
     }
   }
 
@@ -451,34 +460,12 @@ function KeysView({
         </Button>
       </div>
 
-      {generatedKey ? (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardHeader className="flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle>最近创建的 API Key</CardTitle>
-              <CardDescription>
-                {generatedKey.name} 的完整密钥临时保留在当前浏览器标签页中。
-              </CardDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="清除完整密钥"
-              onClick={() => setGeneratedKey(null)}
-            >
-              <XIcon />
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <PlainKeyField id="latest-plain-key" value={generatedKey.key} />
-          </CardContent>
-        </Card>
-      ) : null}
-
       <Card>
         <CardHeader>
           <CardTitle>你的密钥</CardTitle>
-          <CardDescription>完整密钥只在创建时显示一次。</CardDescription>
+          <CardDescription>
+            完整密钥加密保存；点击眼睛可按需查看或复制。
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {keys.length ? (
@@ -495,44 +482,82 @@ function KeysView({
               </TableHeader>
               <TableBody>
                 {keys.map((key) => (
-                  <TableRow key={key.id}>
-                    <TableCell className="font-medium">{key.name}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {key.prefix}…
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {dateTime(key.last_used_at)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {key.model_allowlist?.length
-                        ? `${key.model_allowlist.length} 个模型`
-                        : "全部模型"}{" "}
-                      · {key.model_aliases?.length ?? 0} 个别名
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">
-                        {key.enabled ? "有效" : "停用"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`编辑 ${key.name}`}
-                        onClick={() => openEditDialog(key)}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`删除 ${key.name}`}
-                        onClick={() => void remove(key.id)}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+                  <Fragment key={key.id}>
+                    <TableRow>
+                      <TableCell className="font-medium">{key.name}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {key.prefix}…
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {dateTime(key.last_used_at)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {key.model_allowlist?.length
+                          ? `${key.model_allowlist.length} 个模型`
+                          : "全部模型"}{" "}
+                        · {key.model_aliases?.length ?? 0} 个别名
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">
+                          {key.enabled ? "有效" : "停用"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={
+                            revealedKeys[key.id]
+                              ? `隐藏 ${key.name}`
+                              : `查看 ${key.name}`
+                          }
+                          title={
+                            key.recoverable
+                              ? "查看完整密钥"
+                              : "旧版密钥无法恢复，请新建替换"
+                          }
+                          disabled={
+                            !key.recoverable || revealingKeyID === key.id
+                          }
+                          onClick={() => void toggleReveal(key)}
+                        >
+                          {revealingKeyID === key.id ? (
+                            <Spinner />
+                          ) : revealedKeys[key.id] ? (
+                            <EyeOffIcon />
+                          ) : (
+                            <EyeIcon />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`编辑 ${key.name}`}
+                          onClick={() => openEditDialog(key)}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`删除 ${key.name}`}
+                          onClick={() => void remove(key.id)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {revealedKeys[key.id] ? (
+                      <TableRow>
+                        <TableCell colSpan={6}>
+                          <PlainKeyField
+                            id={`plain-key-${key.id}`}
+                            value={revealedKeys[key.id]}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>
@@ -572,102 +597,90 @@ function KeysView({
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
-              {showPlainKey && generatedKey
-                ? "保存 API Key"
-                : editingKey
-                  ? "编辑 API Key"
-                  : "创建 API Key"}
+              {editingKey ? "编辑 API Key" : "创建 API Key"}
             </DialogTitle>
             <DialogDescription>
-              {showPlainKey && generatedKey
-                ? "请立即保存；关闭弹窗后仍可在密钥页顶部找到。"
-                : editingKey
-                  ? "修改模型范围和客户端可用的模型别名。"
-                  : "限制留空表示继承账户策略。"}
+              {editingKey
+                ? "修改模型范围和客户端可用的模型别名。"
+                : "限制留空表示继承账户策略。创建后可随时查看完整密钥。"}
             </DialogDescription>
           </DialogHeader>
-          {showPlainKey && generatedKey ? (
-            <PlainKeyField id="dialog-plain-key" value={generatedKey.key} />
-          ) : (
-            <form
-              id="key-form"
-              key={editingKey?.id ?? "create"}
-              onSubmit={editingKey ? update : create}
-            >
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="key-name">名称</FieldLabel>
-                  <Input
-                    id="key-name"
-                    name="name"
-                    defaultValue={editingKey?.name ?? ""}
-                    placeholder="例如：开发环境"
-                    required
-                  />
-                </Field>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="key-rate">每分钟请求</FieldLabel>
-                    <Input
-                      id="key-rate"
-                      name="rate"
-                      type="number"
-                      min="1"
-                      defaultValue={editingKey?.rate_limit_per_minute ?? ""}
-                      placeholder="不限"
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="key-tokens">每日 Tokens</FieldLabel>
-                    <Input
-                      id="key-tokens"
-                      name="tokens"
-                      type="number"
-                      min="1"
-                      defaultValue={editingKey?.token_limit_daily ?? ""}
-                      placeholder="不限"
-                    />
-                  </Field>
-                </div>
-                <Field>
-                  <FieldLabel htmlFor="key-models">模型范围</FieldLabel>
-                  <ModelSelector
-                    id="key-models"
-                    options={modelOptions}
-                    value={selectedModels}
-                    onChange={changeSelectedModels}
-                    allLabel="全部可用模型"
-                  />
-                  <FieldDescription>
-                    默认选择推荐模型；可按需调整，不选择表示允许全部可用模型。
-                  </FieldDescription>
-                </Field>
-                <ApiKeyModelAliasEditor
-                  aliases={modelAliases}
-                  models={selectedModels.length ? selectedModels : modelOptions}
-                  availableModels={modelOptions}
-                  onChange={setModelAliases}
-                  onApplyPreset={applyModelAliasPreset}
+          <form
+            id="key-form"
+            key={editingKey?.id ?? "create"}
+            onSubmit={editingKey ? update : create}
+          >
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="key-name">名称</FieldLabel>
+                <Input
+                  id="key-name"
+                  name="name"
+                  defaultValue={editingKey?.name ?? ""}
+                  placeholder="例如：开发环境"
+                  required
                 />
-              </FieldGroup>
-            </form>
-          )}
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="key-rate">每分钟请求</FieldLabel>
+                  <Input
+                    id="key-rate"
+                    name="rate"
+                    type="number"
+                    min="1"
+                    defaultValue={editingKey?.rate_limit_per_minute ?? ""}
+                    placeholder="不限"
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="key-tokens">每日 Tokens</FieldLabel>
+                  <Input
+                    id="key-tokens"
+                    name="tokens"
+                    type="number"
+                    min="1"
+                    defaultValue={editingKey?.token_limit_daily ?? ""}
+                    placeholder="不限"
+                  />
+                </Field>
+              </div>
+              <Field>
+                <FieldLabel htmlFor="key-models">模型范围</FieldLabel>
+                <ModelSelector
+                  id="key-models"
+                  options={modelOptions}
+                  value={selectedModels}
+                  onChange={changeSelectedModels}
+                  allLabel="全部可用模型"
+                />
+                <FieldDescription>
+                  默认选择推荐模型；可按需调整，不选择表示允许全部可用模型。
+                </FieldDescription>
+              </Field>
+              <ApiKeyModelAliasEditor
+                aliases={modelAliases}
+                models={selectedModels.length ? selectedModels : modelOptions}
+                availableModels={modelOptions}
+                onChange={setModelAliases}
+                onApplyPreset={applyModelAliasPreset}
+              />
+            </FieldGroup>
+          </form>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              {showPlainKey && generatedKey ? "我已保存" : "取消"}
+              取消
             </Button>
-            {!(showPlainKey && generatedKey) ? (
-              <Button type="submit" form="key-form" disabled={pending}>
-                {pending ? (
-                  <Spinner data-icon="inline-start" />
-                ) : editingKey ? (
-                  <PencilIcon data-icon="inline-start" />
-                ) : (
-                  <PlusIcon data-icon="inline-start" />
-                )}
-                {editingKey ? "保存" : "创建"}
-              </Button>
-            ) : null}
+            <Button type="submit" form="key-form" disabled={pending}>
+              {pending ? (
+                <Spinner data-icon="inline-start" />
+              ) : editingKey ? (
+                <PencilIcon data-icon="inline-start" />
+              ) : (
+                <PlusIcon data-icon="inline-start" />
+              )}
+              {editingKey ? "保存" : "创建"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

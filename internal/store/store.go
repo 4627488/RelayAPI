@@ -20,11 +20,13 @@ import (
 )
 
 var ErrNotFound = errors.New("not found")
+var ErrKeyNotRecoverable = errors.New("api key is not recoverable")
 
 type Store struct {
 	DB             *gorm.DB
 	pricingCatalog *pricing.Catalog
 	pricingMu      *sync.Mutex
+	secretBox      identity.SecretBox
 }
 type Tenant = db.Tenant
 type APIKey = db.APIKey
@@ -33,8 +35,12 @@ type Price = db.ModelPrice
 type ResolvedPrice = pricing.SnapshotPrice
 type Invitation = db.Invitation
 
-func New(database *gorm.DB) (Store, error) {
-	s := Store{DB: database, pricingCatalog: pricing.NewCatalog(nil), pricingMu: &sync.Mutex{}}
+func New(database *gorm.DB, encryptionKey string) (Store, error) {
+	secretBox, err := identity.NewSecretBox(encryptionKey)
+	if err != nil {
+		return Store{}, err
+	}
+	s := Store{DB: database, pricingCatalog: pricing.NewCatalog(nil), pricingMu: &sync.Mutex{}, secretBox: secretBox}
 	if err := s.RefreshPricing(context.Background()); err != nil {
 		return Store{}, err
 	}
@@ -232,7 +238,14 @@ func (s Store) ListKeys(ctx context.Context, tenantID string) ([]APIKey, error) 
 	err := scoped(ctx, s.DB).Preload("ModelAliases", func(database *gorm.DB) *gorm.DB {
 		return database.Order("alias")
 	}).Where("tenant_id = ?", tenantID).Order("created_at DESC").Find(&result).Error
+	for index := range result {
+		result[index].Recoverable = len(result[index].KeyCiphertext) > 0
+	}
 	return result, err
+}
+
+func keySecretAssociatedData(tenantID, keyID string) string {
+	return "api-key/" + tenantID + "/" + keyID
 }
 
 func (s Store) CreateKey(ctx context.Context, tenantID, name string, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias) (APIKey, string, error) {
@@ -241,12 +254,18 @@ func (s Store) CreateKey(ctx context.Context, tenantID, name string, rate *int, 
 		ID: identity.NewID(), TenantID: tenantID, Name: strings.TrimSpace(name), KeyHash: hash,
 		Prefix: prefix, Enabled: true, RateLimitPerMinute: rate, TokenLimitDaily: tokens, ModelAllowlist: models,
 	}
+	ciphertext, err := s.secretBox.Seal([]byte(plain), keySecretAssociatedData(tenantID, item.ID))
+	if err != nil {
+		return APIKey{}, "", err
+	}
+	item.KeyCiphertext = ciphertext
+	item.Recoverable = true
 	for index := range aliases {
 		aliases[index].ID = identity.NewID()
 		aliases[index].APIKeyID = item.ID
 	}
 	item.ModelAliases = aliases
-	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+	err = scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Omit("ModelAliases").Create(&item).Error; err != nil {
 			return err
 		}
@@ -256,6 +275,23 @@ func (s Store) CreateKey(ctx context.Context, tenantID, name string, rate *int, 
 		return nil
 	})
 	return item, plain, err
+}
+
+func (s Store) RevealKey(ctx context.Context, tenantID, id string) (string, error) {
+	var item APIKey
+	err := scoped(ctx, s.DB).Select("id", "tenant_id", "key_ciphertext").
+		Where("id = ? AND tenant_id = ?", id, tenantID).First(&item).Error
+	if err != nil {
+		return "", notFound(err)
+	}
+	if len(item.KeyCiphertext) == 0 {
+		return "", ErrKeyNotRecoverable
+	}
+	plain, err := s.secretBox.Open(item.KeyCiphertext, keySecretAssociatedData(item.TenantID, item.ID))
+	if err != nil {
+		return "", fmt.Errorf("decrypt api key: %w", err)
+	}
+	return string(plain), nil
 }
 
 func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled bool, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias) (APIKey, error) {
@@ -290,6 +326,7 @@ func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled
 	err = database.Preload("ModelAliases", func(database *gorm.DB) *gorm.DB {
 		return database.Order("alias")
 	}).Where("id = ? AND tenant_id = ?", id, tenantID).First(&item).Error
+	item.Recoverable = len(item.KeyCiphertext) > 0
 	return item, err
 }
 

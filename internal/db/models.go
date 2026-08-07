@@ -30,7 +30,9 @@ type APIKey struct {
 	TenantID           string             `gorm:"type:uuid;not null;index:api_keys_tenant_idx,priority:1" json:"tenant_id"`
 	Name               string             `gorm:"not null" json:"name"`
 	KeyHash            []byte             `gorm:"uniqueIndex;not null" json:"-"`
+	KeyCiphertext      []byte             `gorm:"type:bytea" json:"-"`
 	Prefix             string             `gorm:"not null" json:"prefix"`
+	Recoverable        bool               `gorm:"-" json:"recoverable"`
 	Enabled            bool               `gorm:"not null;default:true" json:"enabled"`
 	RateLimitPerMinute *int               `json:"rate_limit_per_minute"`
 	TokenLimitDaily    *int64             `json:"token_limit_daily"`

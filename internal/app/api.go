@@ -245,7 +245,7 @@ func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	setSensitiveNoStore(w)
 	writeJSON(w, 201, map[string]any{"item": item, "key": plain})
 }
 
@@ -269,6 +269,28 @@ func (a *App) keyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+}
+
+func writeKeySecret(w http.ResponseWriter, plain string) {
+	setSensitiveNoStore(w)
+	writeJSON(w, http.StatusOK, map[string]string{"key": plain})
+}
+
+func (a *App) keySecret(w http.ResponseWriter, r *http.Request) {
+	plain, err := a.store.RevealKey(r.Context(), currentSession(r).TenantID, r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "密钥不存在")
+		return
+	}
+	if errors.Is(err, store.ErrKeyNotRecoverable) {
+		writeError(w, http.StatusConflict, "key_not_recoverable", "旧版密钥未保存可恢复密文，请创建新密钥后替换")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "key_decrypt_failed", "密钥解密失败，请检查加密密钥配置")
+		return
+	}
+	writeKeySecret(w, plain)
 }
 
 func (a *App) keyDelete(w http.ResponseWriter, r *http.Request) {
@@ -483,7 +505,7 @@ func (a *App) adminTenantKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	setSensitiveNoStore(w)
 	writeJSON(w, 201, map[string]any{"item": item, "key": plain})
 }
 
@@ -507,6 +529,23 @@ func (a *App) adminTenantKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+}
+
+func (a *App) adminTenantKeySecret(w http.ResponseWriter, r *http.Request) {
+	plain, err := a.store.RevealKey(r.Context(), r.PathValue("id"), r.PathValue("keyID"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "密钥不存在")
+		return
+	}
+	if errors.Is(err, store.ErrKeyNotRecoverable) {
+		writeError(w, http.StatusConflict, "key_not_recoverable", "旧版密钥未保存可恢复密文，请创建新密钥后替换")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "key_decrypt_failed", "密钥解密失败，请检查加密密钥配置")
+		return
+	}
+	writeKeySecret(w, plain)
 }
 
 func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {

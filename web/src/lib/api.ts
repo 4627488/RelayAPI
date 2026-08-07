@@ -29,6 +29,7 @@ export interface ApiKey {
   id: string
   name: string
   prefix: string
+  recoverable: boolean
   enabled: boolean
   rate_limit_per_minute: number | null
   token_limit_daily: number | null
@@ -371,10 +372,11 @@ export class ApiError extends Error {
 
   constructor(status: number, body: ApiErrorBody) {
     const nestedError = typeof body.error === "object" ? body.error : undefined
-    const message = nestedError?.message
-      ?? (typeof body.error === "string" ? body.error : undefined)
-      ?? body.message
-      ?? `请求失败 (${status})`
+    const message =
+      nestedError?.message ??
+      (typeof body.error === "string" ? body.error : undefined) ??
+      body.message ??
+      `请求失败 (${status})`
     super(message)
     this.name = "ApiError"
     this.status = status
@@ -405,4 +407,5 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export const postJSON = <T>(path: string, value: unknown) =>
   api<T>(path, { method: "POST", body: JSON.stringify(value) })
 
-export const deleteRequest = (path: string) => api<void>(path, { method: "DELETE" })
+export const deleteRequest = (path: string) =>
+  api<void>(path, { method: "DELETE" })

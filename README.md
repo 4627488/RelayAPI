@@ -46,6 +46,10 @@ WebSocket 入口。
 | `CPA_URL` | CLIProxyAPI 私网地址 |
 | `CPA_API_KEY` | RelayAPI 访问 CLIProxyAPI 的 API Key |
 | `RELAY_SESSION_SECRET` | Cookie 签名密钥（至少 32 字符） |
+| `RELAY_API_KEY_ENCRYPTION_KEY` | API Key 静态加密密钥（至少 32 字符，必须稳定备份） |
+
+`RELAY_API_KEY_ENCRYPTION_KEY` 未设置时兼容性回退到 `RELAY_SESSION_SECRET`。生产环境
+建议单独设置且持久备份；直接更换会导致已有 Key 无法再次显示，但不会影响其哈希鉴权。
 
 `CPA_MANAGEMENT_KEY` 用于管理员面板中的 CPA 凭据、Codex OAuth 与运行策略管理。
 `CPA_PLUGIN_SECRET` 用于 CPA bridge 与 Relay 相互认证。仅使用遥测时可不配置；
@@ -53,6 +57,85 @@ WebSocket 入口。
 `CPA_QUOTA_SYNC_INTERVAL_SECONDS` 控制父订阅额度自动观测周期，默认 300 秒，最小
 60 秒。上游额度由 bridge 在 CPA 进程内读取并脱敏；子订阅 `allocation_ppm` 是
 管理员的业务分配策略，不能也不应由 CPA 自动决定。
+
+CPA 被当作“可恢复、可替换的协议适配器”，而不是与 RelayAPI 同生共死的进程：
+推理请求默认最多 16 个并发、32 个等待者，排队最多 2 秒；单请求体默认最多
+16 MiB，所有在途请求体合计最多 32 MiB。连续 3 次
+CPA 传输故障后熔断 15 秒，恢复时只允许一个探针。`CPA_REQUEST_TIMEOUT_SECONDS`
+只限制等待响应头，不会中断已经开始的 SSE/WebSocket。Compose 还给 CPA 设置
+384 MiB Go 软限制和 512 MiB cgroup 硬限制，OOM 后由 restart policy 拉起。
+推理与健康/管理使用独立连接池，因此长连接不会饿死健康检查并触发误重启。
+上述值均可用 `.env.example` 中的 `CPA_*` 参数调整；提高并发或请求体上限时应同步
+提高 CPA 内存预算，而不是只放大其中一项。
+
+## 客户端兼容
+
+Relay 原样提供 CPA 的 OpenAI Responses、OpenAI Chat Completions、Anthropic
+Messages、Gemini native 和 Codex direct 路径。Grok/xAI 与其他 OpenAI-compatible
+模型共用 `/v1/chat/completions` 或 `/v1/responses`，由请求中的 `model` 和 CPA
+凭据配置选择提供商。
+
+用户面板的“接入向导”会生成 5 分钟有效的一键 Bash 或 PowerShell 命令，可同时
+配置 Codex、Claude Code 与 OpenCode。脚本先验证 `/v1/models`，可选择安装缺失
+客户端，并以备份、合并、原子替换和失败回滚方式写用户级配置；三个客户端通过
+权限受限的 `~/.config/relayapi/api-key` 共用凭据，不向 shell profile 或 Codex
+`auth.json` 写入明文。下面的片段仅作为无法执行脚本时的手动回退。
+
+Codex CLI 的 `~/.codex/config.toml`（`base_url` 必须包含 `/v1`）：
+
+```toml
+model = "你的-codex-模型"
+model_provider = "relay"
+
+[model_providers.relay]
+name = "RelayAPI"
+base_url = "http://localhost:8080/v1"
+env_key = "RELAY_API_KEY"
+wire_api = "responses"
+requires_openai_auth = false
+```
+
+```bash
+export RELAY_API_KEY=relay_xxx
+```
+
+这些字段与当前 [Codex 配置参考](https://developers.openai.com/codex/config-reference)
+一致；Relay 同时透传 `/v1/responses/ws`，可供 CPA 支持 WebSocket 时使用。
+
+Claude Code 使用 Anthropic Messages 路径：
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8080
+export ANTHROPIC_AUTH_TOKEN=relay_xxx
+claude
+```
+
+`ANTHROPIC_AUTH_TOKEN` 会发送 Bearer 认证，Relay 也接受 `ANTHROPIC_API_KEY`
+对应的 `x-api-key`。配置方式见 [Claude Code gateway 文档](https://code.claude.com/docs/en/llm-gateway-connect)。
+
+OpenCode 可选择 Chat Completions 或 Responses；下面是 Chat Completions 配置：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "relay": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "RelayAPI",
+      "options": {
+        "baseURL": "http://localhost:8080/v1",
+        "apiKey": "{env:RELAY_API_KEY}"
+      },
+      "models": {
+        "你的模型 ID": { "name": "你的模型显示名" }
+      }
+    }
+  }
+}
+```
+
+Responses 模型把 `npm` 改为 `@ai-sdk/openai`。这一区分来自
+[OpenCode provider 文档](https://opencode.ai/docs/providers)。
 未知模型默认允许调用且不扣费；
 设置 `UNPRICED_MODEL_POLICY=deny` 可改为严格模式。
 定价按“管理员覆盖 > Models.dev 在线目录 > 内置最后可用目录”解析，支持模型别名、
@@ -103,13 +186,21 @@ CPA 凭据页和父订阅页都会展示最近一次脱敏上游额度快照。�
 - `GET /api/dashboard`：账户与近 30 天概览
 - `GET /api/usage?days=30`：按天、模型和 API Key 聚合的个人用量
 - `GET|POST /api/keys`：查看或生成个人 API Key，可限制启用模型并配置 Key 私有模型别名
+- `GET /api/keys/{id}/secret`：按需读取自己可恢复的完整 API Key（禁止缓存）
 - `PUT /api/keys/{id}`：编辑 API Key 名称、额度、启用模型和模型别名
 - `DELETE /api/keys/{id}`：删除个人 API Key
 - `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
+- `POST /api/agent-setup`：创建 5 分钟有效的加密安装能力令牌与跨平台一键命令
+- `GET /setup/{token}/install.sh|install.ps1`：读取禁止缓存的短时安装脚本
 
 创建邀请时仅在响应中返回一次明文 token。数据库只保存 SHA-256 哈希；邀请可
 限制注册邮箱，并支持过期、使用和撤销状态。
+
+API Key 与邀请不同：新 Key 同时保存用于鉴权的 SHA-256 哈希和使用
+`RELAY_API_KEY_ENCRYPTION_KEY` 保护的 AES-GCM 密文，因此所属用户可随时按需查看。
+列表接口永不包含明文，解密接口禁止缓存；升级前只有哈希的旧 Key 仍可正常鉴权，
+但无法恢复明文，需要新建 Key 后逐步替换。
 
 API Key 模型别名是客户端可见的附加入口。例如将 `fast` 指向
 `gemini-2.5-flash` 后，客户端可以用 `fast` 发起请求。RelayAPI 会先解析别名，
@@ -126,8 +217,9 @@ go vet ./...
 ## CPA 薄插件
 
 CPA bridge 发布为 `ghcr.io/4627488/relayapi-cpa-plugin`。普通余额计费可以不安装；
-父/子订阅的 AuthID 固定路由要求 bridge `0.2.0+`；通用额度扩展要求 `0.3.0+`；
-内存安全的 CPA 请求终态关联要求 `0.5.0+`。用附加 Compose 文件把动态库
+父/子订阅的 AuthID 固定路由和通用额度扩展统一要求 bridge `0.6.0+`。0.6
+是控制面专用版本，不注册任何数据面拦截器；旧版 0.5 的请求关联会触发 CPA
+请求体复制和 ABI 序列化放大，不应继续用于生产。用附加 Compose 文件把动态库
 放入 CPA 的私有插件目录：
 
 ```bash
@@ -147,7 +239,6 @@ plugins:
     relayapi-bridge:
       enabled: true
       priority: 10
-      relay_url: http://relayapi:3000
       secret: 与 CPA_PLUGIN_SECRET 相同
       delegate: round-robin
       quota_adapters_mode: append
@@ -159,12 +250,11 @@ plugins:
       require_web_search_only: true
 ```
 
-插件负责 CPA 凭据选择扩展、额度探测与终态失败遥测。Relay 会用短时 HMAC 签名保护内部
+插件只负责 CPA 凭据选择扩展和额度探测。Relay 会用短时 HMAC 签名保护内部
 AuthID 路由指令；指定凭据不在 CPA 当前候选集时，插件会拒绝请求而不会悄悄切换
 到另一账户。计费仍使用 Relay 代理层关联到具体请求的响应用量，避免 CPA 插件
-事件缺少自定义关联 ID 时发生串账。终态事件通过 `X-Relay-Request-ID` 与 CPA
-RequestID/TraceID 精确关联，只补充实际模型和终态错误；请求体、响应体与 TTFT
-由 Relay 代理层直接采集，不经过 CPA 插件边界。
+事件缺少自定义关联 ID 时发生串账。请求体、响应体、TTFT 和终态传输错误均由
+Relay 代理层直接采集，不经过 CPA 插件 ABI 边界。
 
 `0.3.0` 的额度探测内核没有 Codex、xAI 或其他 provider 分支。内核只执行声明式
 adapter：按 provider 扩展键匹配、从 CPA 凭据渲染请求、通过 `host.http.do` 发起

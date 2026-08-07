@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,6 +14,57 @@ import (
 	"strings"
 	"time"
 )
+
+const sealedSecretVersion byte = 1
+
+// SecretBox encrypts recoverable credentials at rest. The caller supplies
+// stable associated data (normally the tenant and record IDs), so ciphertext
+// copied to another row cannot be decrypted there.
+type SecretBox struct {
+	aead cipher.AEAD
+}
+
+func NewSecretBox(secret string) (SecretBox, error) {
+	key := sha256.Sum256([]byte("relayapi/secret-box/v1\x00" + secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return SecretBox{}, fmt.Errorf("create secret cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return SecretBox{}, fmt.Errorf("create secret box: %w", err)
+	}
+	return SecretBox{aead: aead}, nil
+}
+
+func (b SecretBox) Seal(plain []byte, associatedData string) ([]byte, error) {
+	if b.aead == nil {
+		return nil, errors.New("secret box is not initialized")
+	}
+	nonce := make([]byte, b.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("generate secret nonce: %w", err)
+	}
+	sealed := make([]byte, 1, 1+len(nonce)+len(plain)+b.aead.Overhead())
+	sealed[0] = sealedSecretVersion
+	sealed = append(sealed, nonce...)
+	return b.aead.Seal(sealed, nonce, plain, []byte(associatedData)), nil
+}
+
+func (b SecretBox) Open(sealed []byte, associatedData string) ([]byte, error) {
+	if b.aead == nil {
+		return nil, errors.New("secret box is not initialized")
+	}
+	if len(sealed) < 1+b.aead.NonceSize()+b.aead.Overhead() || sealed[0] != sealedSecretVersion {
+		return nil, errors.New("invalid sealed secret")
+	}
+	nonce := sealed[1 : 1+b.aead.NonceSize()]
+	plain, err := b.aead.Open(nil, nonce, sealed[1+b.aead.NonceSize():], []byte(associatedData))
+	if err != nil {
+		return nil, errors.New("decrypt sealed secret")
+	}
+	return plain, nil
+}
 
 type Session struct {
 	Role            string `json:"role"`

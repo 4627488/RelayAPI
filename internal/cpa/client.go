@@ -18,16 +18,72 @@ type Client struct {
 	APIKey        string
 	ManagementKey string
 	HTTP          *http.Client
+	ControlHTTP   *http.Client
+	admission     *admissionController
 }
 
 func New(rawURL, apiKey, managementKey string, timeout time.Duration) (*Client, error) {
+	return NewWithOptions(rawURL, apiKey, managementKey, Options{ResponseHeaderTimeout: timeout, MaxQueue: 32})
+}
+
+type Options struct {
+	ResponseHeaderTimeout   time.Duration
+	MaxInFlight             int
+	MaxQueue                int
+	MaxRequestBytesInFlight int64
+	QueueTimeout            time.Duration
+	CircuitFailureThreshold int
+	CircuitOpenDuration     time.Duration
+}
+
+func NewWithOptions(rawURL, apiKey, managementKey string, options Options) (*Client, error) {
 	base, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
 	}
+	if base.Scheme == "" || base.Host == "" {
+		return nil, fmt.Errorf("CPA URL must be absolute")
+	}
+	if options.ResponseHeaderTimeout <= 0 {
+		options.ResponseHeaderTimeout = 10 * time.Minute
+	}
+	if options.MaxInFlight <= 0 {
+		options.MaxInFlight = 16
+	}
+	if options.MaxQueue < 0 {
+		options.MaxQueue = 0
+	}
+	if options.MaxRequestBytesInFlight <= 0 {
+		options.MaxRequestBytesInFlight = 32 << 20
+	}
+	if options.QueueTimeout < 0 {
+		options.QueueTimeout = 0
+	}
+	if options.CircuitFailureThreshold <= 0 {
+		options.CircuitFailureThreshold = 3
+	}
+	if options.CircuitOpenDuration <= 0 {
+		options.CircuitOpenDuration = 15 * time.Second
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxConnsPerHost = options.MaxInFlight
+	transport.MaxIdleConnsPerHost = options.MaxInFlight
+	transport.MaxIdleConns = options.MaxInFlight * 2
+	transport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
+	controlTransport := http.DefaultTransport.(*http.Transport).Clone()
+	controlTransport.MaxConnsPerHost = 4
+	controlTransport.MaxIdleConnsPerHost = 4
+	controlTransport.MaxIdleConns = 8
+	controlTransport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
 	return &Client{
 		BaseURL: base, APIKey: apiKey, ManagementKey: managementKey,
-		HTTP: &http.Client{Timeout: timeout},
+		// A total Client.Timeout breaks long-lived SSE and WebSocket traffic.
+		// Bound only the wait for response headers; request contexts own the
+		// complete operation lifetime.
+		HTTP:        &http.Client{Transport: transport},
+		ControlHTTP: &http.Client{Transport: controlTransport},
+		admission: newAdmissionController(options.MaxInFlight, options.MaxQueue, options.MaxRequestBytesInFlight, options.QueueTimeout,
+			options.CircuitFailureThreshold, options.CircuitOpenDuration),
 	}, nil
 }
 
@@ -52,7 +108,7 @@ func (c *Client) Management(ctx context.Context, method, path string, body any) 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.ControlHTTP.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -73,7 +129,7 @@ func (c *Client) ManagementRaw(ctx context.Context, method, path, contentType st
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.ControlHTTP.Do(req)
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -88,8 +144,9 @@ func (c *Client) Ready(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.ControlHTTP.Do(req)
 	if err != nil {
+		c.admission.recordTransportResult(err)
 		return err
 	}
 	defer resp.Body.Close()
@@ -105,7 +162,7 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.ControlHTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -139,11 +196,11 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) BridgeReady(ctx context.Context) (bool, string, error) {
-	return c.bridgeReadyAtLeast(ctx, 0, 2, 0)
+	return c.bridgeReadyAtLeast(ctx, 0, 6, 0)
 }
 
 func (c *Client) QuotaReady(ctx context.Context) (bool, string, error) {
-	return c.bridgeReadyAtLeast(ctx, 0, 3, 0)
+	return c.bridgeReadyAtLeast(ctx, 0, 6, 0)
 }
 
 func (c *Client) bridgeReadyAtLeast(ctx context.Context, major, minor, patch int) (bool, string, error) {

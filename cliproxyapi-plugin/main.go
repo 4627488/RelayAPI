@@ -28,7 +28,6 @@ static void free_host_buffer(void* ptr, size_t len) {
 import "C"
 
 import (
-	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -39,7 +38,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -56,7 +54,6 @@ type lifecycleRequest struct {
 	ConfigYAML []byte `json:"config_yaml"`
 }
 type config struct {
-	RelayURL         string         `yaml:"relay_url"`
 	Secret           string         `yaml:"secret"`
 	Delegate         string         `yaml:"delegate"`
 	QuotaAdapterMode string         `yaml:"quota_adapters_mode"`
@@ -69,33 +66,6 @@ type schedulerRequest struct {
 	Candidates []struct {
 		ID string `json:"ID"`
 	} `json:"Candidates"`
-}
-
-type correlationPayload struct {
-	RequestID string
-	Headers   http.Header
-}
-
-type completionPayload struct {
-	RequestID, TraceID, SourceFormat, Model, RequestedModel, Outcome, Error string
-	Stream                                                                  bool
-	StatusCode                                                              int
-	StartedAt, CompletedAt                                                  time.Time
-	Metadata                                                                map[string]any
-}
-
-type compactCompletionPayload struct {
-	RequestID, TraceID, SourceFormat, Model, RequestedModel, Outcome, Error string
-	Stream                                                                  bool
-	StatusCode                                                              int
-	StartedAt, CompletedAt                                                  time.Time
-	Metadata                                                                map[string]string
-}
-
-type relayLifecycleEvent struct {
-	Event          string `json:"event"`
-	RelayRequestID string `json:"relay_request_id"`
-	Payload        any    `json:"payload"`
 }
 
 type managementRequest struct {
@@ -113,43 +83,6 @@ type managementResponse struct {
 }
 
 var current atomic.Value
-var lifecycleClient = &http.Client{Timeout: time.Second}
-var requestCorrelations sync.Map
-var correlationCount atomic.Int64
-var lifecycleEnqueued atomic.Uint64
-var lifecycleDropped atomic.Uint64
-var lifecyclePostErrors atomic.Uint64
-var lifecyclePosted atomic.Uint64
-var lifecycleQueue = make(chan lifecycleJob, 128)
-
-const correlationTTL = 15 * time.Minute
-
-type requestCorrelation struct {
-	RelayID   string
-	ExpiresAt time.Time
-}
-
-type lifecycleJob struct {
-	URL, Secret string
-	Event       relayLifecycleEvent
-}
-
-func init() {
-	for range 2 {
-		go func() {
-			for job := range lifecycleQueue {
-				postLifecycle(job)
-			}
-		}()
-	}
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for now := range ticker.C {
-			cleanupCorrelations(now)
-		}
-	}()
-}
 
 func main() {}
 
@@ -217,18 +150,16 @@ func handle(method string, raw []byte) ([]byte, error) {
 			return nil, err
 		}
 		cfg.QuotaAdapters = adapters
-		cfg.RelayURL = strings.TrimRight(strings.TrimSpace(cfg.RelayURL), "/")
 		if cfg.Delegate != "fill-first" {
 			cfg.Delegate = "round-robin"
 		}
 		current.Store(cfg)
 		return ok(map[string]any{
 			"schema_version": 2,
-			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.5.1", "Author": "4627488",
+			"metadata": map[string]any{"Name": "RelayAPI Bridge", "Version": "0.6.0", "Author": "4627488",
 				"GitHubRepository": "https://github.com/4627488/RelayAPI",
 				"Logo":             "https://github.com/4627488.png",
 				"ConfigFields": []map[string]any{
-					{"Name": "relay_url", "Type": "string", "Description": "RelayAPI private service URL"},
 					{"Name": "secret", "Type": "string", "Description": "Shared webhook secret", "Sensitive": true},
 					{"Name": "delegate", "Type": "enum", "EnumValues": []string{"round-robin", "fill-first"}},
 					{"Name": "quota_adapters_mode", "Type": "enum", "EnumValues": []string{"append", "replace", "disabled"}, "Description": "How custom quota adapter manifests combine with the bundled extension pack"},
@@ -236,7 +167,7 @@ func handle(method string, raw []byte) ([]byte, error) {
 				}},
 			"capabilities": map[string]bool{
 				"usage_plugin": false, "scheduler": true, "management_api": true,
-				"request_interceptor": true, "request_lifecycle_plugin": true,
+				"request_interceptor": false, "request_lifecycle_plugin": false,
 				"response_interceptor": false, "response_stream_interceptor": false,
 			},
 		})
@@ -252,10 +183,7 @@ func handle(method string, raw []byte) ([]byte, error) {
 		}
 		if strings.HasSuffix(strings.TrimRight(req.Path, "/"), "/plugins/relayapi-bridge/health") {
 			payload, _ := json.Marshal(map[string]any{
-				"status": "ok", "queue_depth": len(lifecycleQueue), "queue_capacity": cap(lifecycleQueue),
-				"enqueued": lifecycleEnqueued.Load(), "dropped": lifecycleDropped.Load(),
-				"posted": lifecyclePosted.Load(), "post_errors": lifecyclePostErrors.Load(),
-				"correlations": correlationCount.Load(),
+				"status": "ok", "mode": "control-plane-only", "data_plane_interceptors": false,
 			})
 			return ok(managementResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"application/json; charset=utf-8"}}, Body: payload})
 		}
@@ -269,27 +197,6 @@ func handle(method string, raw []byte) ([]byte, error) {
 			return nil, err
 		}
 		return ok(managementResponse{StatusCode: http.StatusOK, Headers: http.Header{"Content-Type": {"application/json; charset=utf-8"}}, Body: payload})
-	case "request.intercept_before", "request.intercept_after":
-		// Decode only the two correlation fields. In particular, omitting Body
-		// prevents encoding/json from base64-decoding a multi-megabyte request
-		// into another allocation inside the plugin.
-		var payload correlationPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return nil, fmt.Errorf("decode request lifecycle: %w", err)
-		}
-		relayID := firstHTTPHeader(payload.Headers, "X-Relay-Request-ID")
-		if relayID != "" && payload.RequestID != "" {
-			storeCorrelation(payload.RequestID, relayID, time.Now())
-		}
-		return ok(map[string]any{})
-	case "request.complete":
-		var payload completionPayload
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			return nil, fmt.Errorf("decode request completion: %w", err)
-		}
-		relayID := takeCorrelation(payload.RequestID, time.Now())
-		enqueueLifecycle(method, relayID, compactCompletion(payload))
-		return ok(map[string]any{})
 	case "scheduler.pick":
 		var req schedulerRequest
 		if err := json.Unmarshal(raw, &req); err != nil {
@@ -312,131 +219,6 @@ func handle(method string, raw []byte) ([]byte, error) {
 	default:
 		return ok(map[string]any{})
 	}
-}
-
-func enqueueLifecycle(event, relayID string, payload any) {
-	cfg := loaded()
-	if cfg.RelayURL == "" || cfg.Secret == "" || strings.TrimSpace(relayID) == "" {
-		return
-	}
-	job := lifecycleJob{
-		URL: cfg.RelayURL, Secret: cfg.Secret,
-		Event: relayLifecycleEvent{Event: event, RelayRequestID: relayID, Payload: payload},
-	}
-	select {
-	case lifecycleQueue <- job:
-		lifecycleEnqueued.Add(1)
-	default:
-		// Observability must never stall model traffic.
-		lifecycleDropped.Add(1)
-	}
-}
-
-func postLifecycle(job lifecycleJob) {
-	raw, err := json.Marshal(job.Event)
-	if err != nil {
-		lifecyclePostErrors.Add(1)
-		return
-	}
-	req, requestErr := http.NewRequest(http.MethodPost, job.URL+"/internal/cpa/lifecycle", bytes.NewReader(raw))
-	if requestErr != nil {
-		lifecyclePostErrors.Add(1)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Relay-Plugin-Secret", job.Secret)
-	response, requestErr := lifecycleClient.Do(req)
-	if requestErr != nil {
-		lifecyclePostErrors.Add(1)
-		return
-	}
-	response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		lifecyclePostErrors.Add(1)
-		return
-	}
-	lifecyclePosted.Add(1)
-}
-
-func storeCorrelation(requestID, relayID string, now time.Time) {
-	if requestID == "" || relayID == "" {
-		return
-	}
-	if _, loaded := requestCorrelations.Swap(requestID, requestCorrelation{RelayID: relayID, ExpiresAt: now.Add(correlationTTL)}); !loaded {
-		correlationCount.Add(1)
-	}
-}
-
-func takeCorrelation(requestID string, now time.Time) string {
-	value, ok := requestCorrelations.LoadAndDelete(requestID)
-	if !ok {
-		return ""
-	}
-	correlationCount.Add(-1)
-	correlation, _ := value.(requestCorrelation)
-	if !correlation.ExpiresAt.After(now) {
-		return ""
-	}
-	return correlation.RelayID
-
-}
-
-func cleanupCorrelations(now time.Time) {
-	requestCorrelations.Range(func(key, value any) bool {
-		correlation, ok := value.(requestCorrelation)
-		if ok && !correlation.ExpiresAt.After(now) && requestCorrelations.CompareAndDelete(key, value) {
-			correlationCount.Add(-1)
-		}
-		return true
-	})
-}
-
-func firstHTTPHeader(headers http.Header, name string) string {
-	for key, values := range headers {
-		if strings.EqualFold(key, name) && len(values) > 0 {
-			return strings.TrimSpace(values[0])
-		}
-	}
-	return ""
-}
-
-func compactCompletion(payload completionPayload) compactCompletionPayload {
-	metadata := map[string]string{}
-	for _, key := range []string{"model_alias", "provider", "executor_type", "auth_type", "auth_index", "service_tier", "response_service_tier", "reasoning_effort"} {
-		if value := completionMetadataText(payload.Metadata, key); value != "" {
-			metadata[key] = boundedText(value, 256)
-		}
-	}
-	return compactCompletionPayload{
-		RequestID: boundedText(payload.RequestID, 256), TraceID: boundedText(payload.TraceID, 256),
-		SourceFormat: boundedText(payload.SourceFormat, 128), Model: boundedText(payload.Model, 256),
-		RequestedModel: boundedText(payload.RequestedModel, 256), Outcome: boundedText(payload.Outcome, 64),
-		Error: boundedText(payload.Error, 4<<10), Stream: payload.Stream, StatusCode: payload.StatusCode,
-		StartedAt: payload.StartedAt, CompletedAt: payload.CompletedAt, Metadata: metadata,
-	}
-}
-
-func completionMetadataText(metadata map[string]any, wanted string) string {
-	for key, value := range metadata {
-		normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
-		if normalized == wanted {
-			return strings.TrimSpace(fmt.Sprint(value))
-		}
-		if nested, ok := value.(map[string]any); ok {
-			if found := completionMetadataText(nested, wanted); found != "" {
-				return found
-			}
-		}
-	}
-	return ""
-}
-
-func boundedText(value string, limit int) string {
-	value = strings.TrimSpace(value)
-	if len(value) <= limit {
-		return value
-	}
-	return value[:limit]
 }
 
 func validRoutingSignature(secret string, headers map[string][]string, authID string, now time.Time) bool {
