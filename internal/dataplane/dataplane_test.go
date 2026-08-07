@@ -86,6 +86,25 @@ func TestTranslatorRequiredClientMatrix(t *testing.T) {
 	}
 }
 
+func TestTranslatorUsesProviderToClientResponseDirection(t *testing.T) {
+	t.Parallel()
+	translator := NewTranslator()
+	original := []byte(`{"model":"gpt-test","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	translated, err := translator.TranslateRequest(ProtocolClaude, ProtocolCodex, "gpt-test", original, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := []byte(`data: {"type":"response.created","response":{"id":"resp_test","model":"gpt-test","created_at":1,"output":[],"usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}}`)
+	chunks, err := translator.TranslateStreamLine(context.Background(), ProtocolClaude, ProtocolCodex, "gpt-test", original, translated, line, &StreamState{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := bytes.Join(chunks, nil)
+	if bytes.Contains(joined, []byte(`"response.created"`)) || !bytes.Contains(joined, []byte(`message_start`)) {
+		t.Fatalf("Codex response was not translated to Claude SSE: %s", joined)
+	}
+}
+
 func TestTransportPoolReusesClientsByProxyRoute(t *testing.T) {
 	t.Parallel()
 	pool := NewTransportPool(12, 3*time.Second)

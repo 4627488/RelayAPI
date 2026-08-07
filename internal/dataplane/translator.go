@@ -37,15 +37,15 @@ func (t *Translator) TranslateStreamLine(ctx context.Context, inbound, upstream 
 		return [][]byte{line}, nil
 	}
 	// CPA registers each response transform under the same (client, provider)
-	// pair as its request transform, even though response bytes travel provider
-	// to client. Keep that convention contained in this adapter.
+	// pair as its request transform, but TranslateStream accepts the actual byte
+	// direction (provider, client). Keep that asymmetry contained here.
 	if t == nil || t.registry == nil || !t.registry.HasStreamResponseTransformer(format(inbound), format(upstream)) {
 		return nil, fmt.Errorf("stream translation %s -> %s -> %s is unavailable", inbound, upstream, inbound)
 	}
 	if state == nil {
 		state = &StreamState{}
 	}
-	return t.registry.TranslateStream(ctx, format(inbound), format(upstream), model, originalRequest, translatedRequest, line, &state.value), nil
+	return t.registry.TranslateStream(ctx, format(upstream), format(inbound), model, originalRequest, translatedRequest, line, &state.value), nil
 }
 
 func (t *Translator) TranslateResponse(ctx context.Context, inbound, upstream Protocol, model string, originalRequest, translatedRequest, body []byte) ([]byte, error) {
@@ -56,7 +56,7 @@ func (t *Translator) TranslateResponse(ctx context.Context, inbound, upstream Pr
 		return nil, fmt.Errorf("response translation %s -> %s -> %s is unavailable", inbound, upstream, inbound)
 	}
 	var state any
-	return t.registry.TranslateNonStream(ctx, format(inbound), format(upstream), model, originalRequest, translatedRequest, body, &state), nil
+	return t.registry.TranslateNonStream(ctx, format(upstream), format(inbound), model, originalRequest, translatedRequest, body, &state), nil
 }
 
 func (t *Translator) Supports(from, to Protocol, stream bool) bool {
