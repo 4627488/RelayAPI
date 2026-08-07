@@ -110,6 +110,16 @@ func TestAgentSetupScriptsRenderAndParse(t *testing.T) {
 		if !bytes.Contains(output.Bytes(), []byte("relayapi-backup")) || !bytes.Contains(output.Bytes(), []byte("/v1/models")) {
 			t.Fatalf("%s script is missing backup or verification logic", platform)
 		}
+		if platform == "powershell" {
+			for _, unsafe := range []string{"$message.id", "$message.error", "$message.result", "$result.status"} {
+				if bytes.Contains(output.Bytes(), []byte(unsafe)) {
+					t.Fatalf("powershell script directly reads optional JSON property %q under strict mode", unsafe)
+				}
+			}
+			if !bytes.Contains(output.Bytes(), []byte("$message.PSObject.Properties['result']")) {
+				t.Fatal("powershell script is missing strict-mode-safe JSON-RPC result handling")
+			}
+		}
 		assertScriptParses(t, platform, output.Bytes())
 	}
 }

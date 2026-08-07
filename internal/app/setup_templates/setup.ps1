@@ -20,6 +20,12 @@ function ConvertFrom-SetupBase64([string]$Value) {
 function Write-SetupInfo([string]$Message) { Write-Host "  $Message" }
 function Write-SetupOk([string]$Message) { Write-Host "OK $Message" -ForegroundColor Green }
 function Stop-Setup([string]$Message) { throw $Message }
+function Get-SetupJsonProperty($Object, [string]$Name) {
+  if ($null -eq $Object) { return $null }
+  $property = $Object.PSObject.Properties[$Name]
+  if ($null -eq $property) { return $null }
+  return $property.Value
+}
 
 $Endpoint = ConvertFrom-SetupBase64 $EndpointBase64
 $ApiKey = ConvertFrom-SetupBase64 $ApiKeyBase64
@@ -189,9 +195,12 @@ try {
         if ($null -eq $line) { Stop-Setup 'Codex app-server exited before confirming the request.' }
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try { $message = $line | ConvertFrom-Json } catch { Stop-Setup 'Codex app-server returned malformed JSON.' }
-        if ($message.id -ne $WantId) { continue }
-        if ($null -ne $message.error) { Stop-Setup 'Codex app-server rejected the configuration request.' }
-        return $message.result
+        $messageId = Get-SetupJsonProperty $message 'id'
+        if ($null -eq $messageId -or $messageId -ne $WantId) { continue }
+        if ($null -ne (Get-SetupJsonProperty $message 'error')) { Stop-Setup 'Codex app-server rejected the configuration request.' }
+        $resultProperty = $message.PSObject.Properties['result']
+        if ($null -eq $resultProperty) { Stop-Setup 'Codex app-server response did not include a result.' }
+        return $resultProperty.Value
       }
     }
     try {
@@ -205,9 +214,10 @@ try {
       if (-not $process.WaitForExit(1000)) { $process.Kill(); $process.WaitForExit() }
       $stderr = $stderrTask.GetAwaiter().GetResult()
     }
-    if ($result.status -ne 'ok' -and $result.status -ne 'okOverridden') {
+    $status = Get-SetupJsonProperty $result 'status'
+    if ($status -ne 'ok' -and $status -ne 'okOverridden') {
       if ($stderr) { Write-Warning $stderr }
-      Stop-Setup "Codex did not confirm the configuration write (status: $($result.status))."
+      Stop-Setup "Codex did not confirm the configuration write (status: $status)."
     }
     Write-SetupOk "Codex configured in $codexConfig"
   }
