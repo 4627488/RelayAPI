@@ -3,6 +3,7 @@ package dataplane
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -80,6 +81,40 @@ func TestOpenAIStreamFraming(t *testing.T) {
 	}
 	if got := frameStreamChunk(ProtocolClaude, raw); !bytes.Equal(got, raw) {
 		t.Fatalf("Claude chunk changed: %q", got)
+	}
+}
+
+func TestCodexResponsesLiteDisablesParallelToolCalls(t *testing.T) {
+	t.Parallel()
+	plan := RoutePlan{Upstream: ProtocolCodex, Model: "gpt-5.6-sol"}
+	headers := make(http.Header)
+	headers.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
+	body := normalizeProviderRequest(plan, []byte(`{"model":"gpt-5.6-sol","parallel_tool_calls":true}`), headers)
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	if value, ok := request["parallel_tool_calls"].(bool); !ok || value {
+		t.Fatalf("parallel_tool_calls = %#v, want false; body=%s", request["parallel_tool_calls"], body)
+	}
+}
+
+func TestTranslateWebSocketRequestPreservesContinuationAndNormalizesLite(t *testing.T) {
+	t.Parallel()
+	engine := &Engine{Translator: NewTranslator()}
+	plan := RoutePlan{Inbound: ProtocolResponses, Upstream: ProtocolCodex, Model: "gpt-5.6-sol"}
+	headers := make(http.Header)
+	headers.Set("X-OpenAI-Internal-Codex-Responses-Lite", "true")
+	body, err := engine.TranslateWebSocketRequest(plan, []byte(`{"type":"response.append","previous_response_id":"resp_1","parallel_tool_calls":true,"input":[]}`), headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request["type"] != "response.create" || request["model"] != "gpt-5.6-sol" || request["previous_response_id"] != "resp_1" || request["parallel_tool_calls"] != false {
+		t.Fatalf("normalized websocket request = %s", body)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"golang.org/x/net/proxy"
 )
 
@@ -57,6 +58,52 @@ func (p *TransportPool) CloseIdleConnections() {
 	for _, client := range p.clients {
 		client.CloseIdleConnections()
 	}
+}
+
+// WebSocketDialer returns an isolated dialer with the same proxy semantics as
+// the pooled HTTP transports. WebSocket connections themselves are sessions
+// and cannot be pooled, but proxy selection and DNS behavior must stay
+// identical to HTTP or the two transports will route differently.
+func (p *TransportPool) WebSocketDialer(proxyURL string) (*websocket.Dialer, error) {
+	key, parsed, err := normalizeProxyURL(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = 30 * time.Second
+	dialer.EnableCompression = true
+	dialer.Proxy = http.ProxyFromEnvironment
+	if key == "environment" {
+		return &dialer, nil
+	}
+	if key == "direct" {
+		dialer.Proxy = nil
+		return &dialer, nil
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		dialer.Proxy = http.ProxyURL(parsed)
+	case "socks5", "socks5h":
+		var auth *proxy.Auth
+		if parsed.User != nil {
+			password, _ := parsed.User.Password()
+			auth = &proxy.Auth{User: parsed.User.Username(), Password: password}
+		}
+		socksDialer, err := proxy.SOCKS5("tcp", parsed.Host, auth, proxy.Direct)
+		if err != nil {
+			return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
+		}
+		dialer.Proxy = nil
+		dialer.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			if contextual, ok := socksDialer.(proxy.ContextDialer); ok {
+				return contextual.DialContext(ctx, network, address)
+			}
+			return socksDialer.Dial(network, address)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported proxy scheme %q", parsed.Scheme)
+	}
+	return &dialer, nil
 }
 
 func (p *TransportPool) newTransport(proxyURL *url.URL, key string) (*http.Transport, error) {

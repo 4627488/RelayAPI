@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -42,7 +43,7 @@ func (e *Engine) Do(ctx context.Context, plan RoutePlan, credential Credential, 
 	if err != nil {
 		return nil, err
 	}
-	translated = normalizeProviderRequest(plan, translated)
+	translated = normalizeProviderRequest(plan, translated, inboundHeaders)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, plan.Endpoint.String(), bytes.NewReader(translated))
 	if err != nil {
 		return nil, err
@@ -66,6 +67,29 @@ func (e *Engine) Do(ctx context.Context, plan RoutePlan, credential Credential, 
 		return nil, err
 	}
 	return &Exchange{Plan: plan, OriginalRequest: bytes.Clone(body), TranslatedRequest: translated, Request: request, Response: response}, nil
+}
+
+// TranslateWebSocketRequest converts one downstream response.create frame to
+// the selected provider protocol. WebSocket follow-up turns deliberately keep
+// previous_response_id because it is the session continuation primitive.
+func (e *Engine) TranslateWebSocketRequest(plan RoutePlan, body []byte, inboundHeaders http.Header) ([]byte, error) {
+	if e == nil || e.Translator == nil {
+		return nil, fmt.Errorf("data plane engine is not initialized")
+	}
+	translated, err := e.Translator.TranslateRequest(plan.Inbound, plan.Upstream, plan.Model, body, true)
+	if err != nil {
+		return nil, err
+	}
+	if plan.Upstream != ProtocolCodex || !json.Valid(translated) {
+		return translated, nil
+	}
+	translated, _ = sjson.SetBytes(translated, "model", plan.Model)
+	translated, _ = sjson.SetBytes(translated, "stream", true)
+	translated, _ = sjson.SetBytes(translated, "type", "response.create")
+	for _, field := range []string{"generate", "prompt_cache_retention", "safety_identifier", "stream_options"} {
+		translated, _ = sjson.DeleteBytes(translated, field)
+	}
+	return normalizeCodexResponsesLite(translated, inboundHeaders), nil
 }
 
 func (e *Engine) CopyResponse(ctx context.Context, w io.Writer, exchange *Exchange, onFirstByte func()) error {
@@ -163,7 +187,7 @@ func terminalStreamChunk(protocol Protocol) []byte {
 	return nil
 }
 
-func normalizeProviderRequest(plan RoutePlan, body []byte) []byte {
+func normalizeProviderRequest(plan RoutePlan, body []byte, inboundHeaders http.Header) []byte {
 	if plan.Upstream != ProtocolCodex {
 		return body
 	}
@@ -176,6 +200,18 @@ func normalizeProviderRequest(plan RoutePlan, body []byte) []byte {
 	body, _ = sjson.SetBytes(body, "stream", true)
 	for _, field := range []string{"previous_response_id", "generate", "prompt_cache_retention", "safety_identifier", "stream_options"} {
 		body, _ = sjson.DeleteBytes(body, field)
+	}
+	return normalizeCodexResponsesLite(body, inboundHeaders)
+}
+
+func normalizeCodexResponsesLite(body []byte, headers http.Header) []byte {
+	lite := strings.EqualFold(strings.TrimSpace(headers.Get("X-OpenAI-Internal-Codex-Responses-Lite")), "true")
+	if !lite {
+		value := gjson.GetBytes(body, "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite")
+		lite = value.Bool() || strings.EqualFold(strings.TrimSpace(value.String()), "true")
+	}
+	if lite {
+		body, _ = sjson.SetBytes(body, "parallel_tool_calls", false)
 	}
 	return body
 }

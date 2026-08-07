@@ -319,8 +319,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 
 	if websocket {
 		if a.cfg.DataPlane == "native" {
-			a.releaseReservation(requestID, billable)
-			writeError(w, http.StatusNotImplemented, "native_websocket_pending", "原生 WebSocket 数据面尚未启用")
+			a.proxyNativeWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
