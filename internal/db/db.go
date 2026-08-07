@@ -29,6 +29,13 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres handle: %w", err)
 	}
+	// Keep enough warm local connections for the inference admission path.
+	// database/sql otherwise retains only two idle connections, which causes
+	// needless reconnect churn under the same concurrency accepted by CPA.
+	sqlDB.SetMaxOpenConns(32)
+	sqlDB.SetMaxIdleConns(16)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	if err := sqlDB.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
@@ -37,6 +44,7 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 		&BillingLedger{}, &UsageDailyRollup{}, &RequestLog{}, &RequestLogDetail{}, &CPALifecycleEvent{}, &Invitation{}, &AgentSetup{},
 		&ParentSubscription{}, &ParentQuotaWindow{}, &ParentQuotaObservation{},
 		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{},
+		&UpstreamCredential{},
 	); err != nil {
 		return nil, fmt.Errorf("gorm automigrate: %w", err)
 	}

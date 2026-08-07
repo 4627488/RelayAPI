@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,10 +17,13 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/config"
 	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/cpaimport"
+	"github.com/4627488/RelayAPI/internal/dataplane"
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
+	"github.com/4627488/RelayAPI/internal/upstreamauth"
 )
 
 type App struct {
@@ -35,6 +39,11 @@ type App struct {
 	oauthMu       sync.Mutex
 	oauthSession  *managedOAuthSession
 	setupBox      identity.SecretBox
+	translator    *dataplane.Translator
+	credentials   *dataplane.CredentialCatalog
+	transports    *dataplane.TransportPool
+	engine        *dataplane.Engine
+	authManager   *upstreamauth.Manager
 }
 
 type contextKey string
@@ -64,9 +73,33 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, store: dataStore, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox}
+	if cfg.CPAImportAuthDir != "" || cfg.CPAImportConfigPath != "" {
+		report, importErr := cpaimport.Import(ctx, dataStore, cfg.CPAImportAuthDir, cfg.CPAImportConfigPath, cfg.DataPlane != "native")
+		if importErr != nil {
+			return nil, fmt.Errorf("import CPA credentials: %w", importErr)
+		}
+		slog.Info("CPA credentials imported", "imported", report.Imported, "unchanged", report.Skipped)
+	}
+	catalog := dataplane.NewCredentialCatalog()
+	a := &App{
+		cfg: cfg, store: dataStore, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
+		translator: dataplane.NewTranslator(), credentials: catalog,
+		transports: dataplane.NewTransportPool(cfg.CPAMaxInFlight, cfg.RequestTimeout),
+	}
+	a.engine = dataplane.NewEngine(a.translator, a.transports)
+	a.authManager = upstreamauth.NewManager(dataStore, catalog, a.transports)
+	if err := a.authManager.Reload(ctx); err != nil {
+		return nil, fmt.Errorf("build credential catalog: %w", err)
+	}
+	if cfg.DataPlane == "native" {
+		if err := a.authManager.RefreshDue(ctx, 5*time.Minute); err != nil {
+			return nil, fmt.Errorf("refresh startup credentials: %w", err)
+		}
+	}
 	a.routes()
-	a.refreshBridgeStatus(ctx)
+	if cfg.DataPlane != "native" {
+		a.refreshBridgeStatus(ctx)
+	}
 	a.wg.Add(1)
 	go a.maintenance()
 	return a, nil
@@ -106,7 +139,13 @@ func (a *App) maintenance() {
 	for {
 		select {
 		case <-ticker.C:
-			a.refreshBridgeStatus(context.Background())
+			if a.cfg.DataPlane == "native" {
+				if err := a.authManager.RefreshDue(context.Background(), 5*time.Minute); err != nil {
+					slog.Warn("refresh upstream credentials", "error", err)
+				}
+			} else {
+				a.refreshBridgeStatus(context.Background())
+			}
 			if count, err := a.store.DeleteExpiredAgentSetups(context.Background(), time.Now()); err != nil {
 				slog.Error("delete expired agent setups", "error", err)
 			} else if count > 0 {
@@ -118,18 +157,26 @@ func (a *App) maintenance() {
 				slog.Info("reclaimed expired reservations", "count", count)
 			}
 		case <-initialQuotaSync.C:
-			a.refreshParentQuotas(context.Background())
+			if a.cfg.DataPlane != "native" {
+				a.refreshParentQuotas(context.Background())
+			}
 		case <-initialPricingSync.C:
-			if err := a.refreshPricingCatalog(context.Background(), true); err != nil {
-				slog.Warn("initial pricing catalog sync", "error", err)
+			if a.cfg.DataPlane != "native" {
+				if err := a.refreshPricingCatalog(context.Background(), true); err != nil {
+					slog.Warn("initial pricing catalog sync", "error", err)
+				}
 			}
 		case <-initialRetention.C:
 			a.runRetention(context.Background())
 		case <-quotaTicker.C:
-			a.refreshParentQuotas(context.Background())
+			if a.cfg.DataPlane != "native" {
+				a.refreshParentQuotas(context.Background())
+			}
 		case <-pricingTicker.C:
-			if err := a.refreshPricingCatalog(context.Background(), false); err != nil {
-				slog.Warn("periodic pricing catalog sync", "error", err)
+			if a.cfg.DataPlane != "native" {
+				if err := a.refreshPricingCatalog(context.Background(), false); err != nil {
+					slog.Warn("periodic pricing catalog sync", "error", err)
+				}
 			}
 		case <-retentionTicker.C:
 			a.runRetention(context.Background())
@@ -334,17 +381,24 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = sqlDB.PingContext(ctx)
 	}
-	cpaErr := a.cpa.Ready(ctx)
+	var cpaErr error
+	if a.cfg.DataPlane != "native" {
+		cpaErr = a.cpa.Ready(ctx)
+	}
 	activeSubscriptions, subscriptionErr := a.store.HasActiveChildSubscriptions(ctx, time.Now())
-	bridgeRequired := subscriptionErr == nil && activeSubscriptions
+	var credentialErr error
+	if a.cfg.DataPlane == "native" && a.credentials.Len() == 0 {
+		credentialErr = errors.New("no enabled upstream credentials")
+	}
+	bridgeRequired := a.cfg.DataPlane != "native" && subscriptionErr == nil && activeSubscriptions
 	bridgeOK := !bridgeRequired || a.bridgeReady.Load()
 	status := http.StatusOK
-	if err != nil || cpaErr != nil || subscriptionErr != nil || !bridgeOK {
+	if err != nil || cpaErr != nil || credentialErr != nil || subscriptionErr != nil || !bridgeOK {
 		status = http.StatusServiceUnavailable
 	}
 	bridgeVersion, _ := a.bridgeVersion.Load().(string)
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "cpa": errorText(cpaErr),
+		"database": errorText(err), "data_plane": a.cfg.DataPlane, "upstream_credentials": errorText(credentialErr), "cpa": errorText(cpaErr),
 		"cpa_admission": a.cpa.AdmissionStatus(), "subscriptions": errorText(subscriptionErr),
 		"bridge": map[string]any{"required": bridgeRequired, "ready": a.bridgeReady.Load(), "version": bridgeVersion}})
 }

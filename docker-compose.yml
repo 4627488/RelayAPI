@@ -4,6 +4,14 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      RELAY_CPA_IMPORT_AUTH_DIR: /migration/cpa-auths
+      RELAY_CPA_IMPORT_CONFIG: /migration/cpa-config.yaml
+    volumes:
+      # Temporary read-only migration source. Native encrypted copies live in
+      # Postgres, so these mounts can be removed after the CPA cutover.
+      - ./cliproxyapi/config.yaml:/migration/cpa-config.yaml:ro
+      - ./cliproxyapi/auths:/migration/cpa-auths:ro
     ports:
       - "8080:3000"
     depends_on:

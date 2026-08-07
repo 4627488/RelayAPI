@@ -32,6 +32,9 @@ type Config struct {
 	QuotaSyncInterval          time.Duration
 	UnpricedModelPolicy        string
 	CPAPluginSecret            string
+	DataPlane                  string
+	CPAImportAuthDir           string
+	CPAImportConfigPath        string
 	WebDistDir                 string
 	RequestLogRetentionDays    int
 	RequestDetailRetentionDays int
@@ -70,6 +73,9 @@ func Load() (Config, error) {
 		QuotaSyncInterval:          time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
 		UnpricedModelPolicy:        strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
 		CPAPluginSecret:            strings.TrimSpace(os.Getenv("CPA_PLUGIN_SECRET")),
+		DataPlane:                  strings.ToLower(env("RELAY_DATA_PLANE", "cpa")),
+		CPAImportAuthDir:           strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_AUTH_DIR")),
+		CPAImportConfigPath:        strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_CONFIG")),
 		WebDistDir:                 strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
 		RequestLogRetentionDays:    int(envInt64("REQUEST_LOG_RETENTION_DAYS", 30)),
 		RequestDetailRetentionDays: int(envInt64("REQUEST_LOG_DETAIL_RETENTION_DAYS", 14)),
@@ -131,6 +137,9 @@ func Load() (Config, error) {
 	}
 	if cfg.UnpricedModelPolicy != "allow" && cfg.UnpricedModelPolicy != "deny" {
 		return Config{}, errors.New("UNPRICED_MODEL_POLICY must be allow or deny")
+	}
+	if cfg.DataPlane != "cpa" && cfg.DataPlane != "native" {
+		return Config{}, errors.New("RELAY_DATA_PLANE must be cpa or native")
 	}
 	if cfg.RequestLogRetentionDays < 0 || cfg.RequestDetailRetentionDays < 0 || cfg.RequestSuccessDetailDays < 0 ||
 		cfg.LifecycleSuccessHours < 0 || cfg.LifecycleErrorDays < 0 || cfg.ReservationRetentionDays < 0 ||

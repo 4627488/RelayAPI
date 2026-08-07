@@ -612,15 +612,31 @@ func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model strin
 	if err != nil {
 		return nil, false, err
 	}
+	parentIDs := make([]string, 0, len(children))
+	seenParents := make(map[string]struct{}, len(children))
+	for _, child := range children {
+		if _, exists := seenParents[child.ParentSubscriptionID]; exists {
+			continue
+		}
+		seenParents[child.ParentSubscriptionID] = struct{}{}
+		parentIDs = append(parentIDs, child.ParentSubscriptionID)
+	}
+	var parents []ParentSubscription
+	if len(parentIDs) > 0 {
+		if err := scoped(ctx, s.DB).Where("id IN ?", parentIDs).Find(&parents).Error; err != nil {
+			return nil, false, err
+		}
+	}
+	parentsByID := make(map[string]ParentSubscription, len(parents))
+	for _, parent := range parents {
+		parentsByID[parent.ID] = parent
+	}
 	hasModelAssignment := false
 	items := make([]SubscriptionCandidate, 0, len(children))
 	for _, child := range children {
-		var parent ParentSubscription
-		if err := scoped(ctx, s.DB).First(&parent, "id = ?", child.ParentSubscriptionID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				continue
-			}
-			return nil, hasModelAssignment, err
+		parent, exists := parentsByID[child.ParentSubscriptionID]
+		if !exists {
+			continue
 		}
 		if !modelAllowed(model, child.ModelAllowlist, parent.ModelAllowlist, parent.CPAModelAllowlist) {
 			continue

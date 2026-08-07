@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -64,6 +65,21 @@ func TestCopyStreamingClassifiesOnlyUpstreamReadFailures(t *testing.T) {
 	writer := &failingResponseWriter{header: make(http.Header)}
 	if err := copyStreaming(writer, strings.NewReader("payload"), nil); err == nil || isUpstreamStreamError(err) {
 		t.Fatalf("downstream write error misclassified: %v", err)
+	}
+}
+
+func TestEnforceLimitsSkipsUsageQueryWhenNoDailyLimitExists(t *testing.T) {
+	a := &App{}
+	if err := a.enforceLimits(context.Background(), store.KeyContext{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetStreamingHeadersDisablesTransformBuffering(t *testing.T) {
+	header := make(http.Header)
+	setStreamingHeaders(header, true)
+	if header.Get("Cache-Control") != "no-cache, no-transform" || header.Get("X-Accel-Buffering") != "no" {
+		t.Fatalf("streaming headers = %#v", header)
 	}
 }
 

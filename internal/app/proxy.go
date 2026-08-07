@@ -21,6 +21,7 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/dataplane"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
@@ -131,6 +132,22 @@ type rollingCapture struct {
 	total  int64
 }
 
+type flushingCaptureWriter struct {
+	response http.ResponseWriter
+	capture  io.Writer
+}
+
+func (w *flushingCaptureWriter) Write(payload []byte) (int, error) {
+	if len(payload) > 0 && w.capture != nil {
+		_, _ = w.capture.Write(payload)
+	}
+	n, err := w.response.Write(payload)
+	if flusher, ok := w.response.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return n, err
+}
+
 func (c *rollingCapture) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -180,6 +197,18 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 无效或已停用")
 		return
 	}
+	keyResolvedAt := time.Now()
+	if a.cfg.DataPlane == "native" && r.Method == http.MethodGet && strings.TrimRight(r.URL.Path, "/") == "/v1/models" {
+		models := a.credentials.Models()
+		data := make([]map[string]any, 0, len(models))
+		for _, model := range models {
+			if allowed(model, key.ModelAllowlist, key.TenantModels) {
+				data = append(data, map[string]any{"id": model, "object": "model", "owned_by": "relayapi"})
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+		return
+	}
 	expectedBodyBytes := r.ContentLength
 	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.CPAMaxRequestBytes {
 		expectedBodyBytes = a.cfg.CPAMaxRequestBytes
@@ -219,8 +248,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "quota_exceeded", err.Error())
 		return
 	}
+	limitsCheckedAt := time.Now()
 
 	var price store.ResolvedPrice
+	var priceSnapshot []byte
 	priceConfigured := false
 	requestID := identity.NewID()
 	admission := store.Admission{RequestID: requestID}
@@ -237,7 +268,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		} else {
 			priceConfigured = true
 		}
-		priceSnapshot := store.EncodePriceSnapshot(price)
+		priceSnapshot = store.EncodePriceSnapshot(price)
 		reserve := int64(0)
 		if priceConfigured {
 			reserve = a.cfg.ReservationNanoUSD
@@ -264,7 +295,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if admission.CPAAuthID != "" && !a.bridgeReady.Load() {
+		if a.cfg.DataPlane != "native" && admission.CPAAuthID != "" && !a.bridgeReady.Load() {
 			a.releaseReservation(requestID, true)
 			writeError(w, http.StatusServiceUnavailable, "cpa_bridge_required", "严格子订阅路由要求 CPA bridge 0.6.0 或更高版本")
 			return
@@ -275,48 +306,80 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 				ServiceTier: meta.ServiceTier, ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
 			}); resolveErr == nil {
 				price = resolved
-				_ = a.store.UpdateReservationPriceSnapshot(r.Context(), requestID, store.EncodePriceSnapshot(price))
+				resolvedSnapshot := store.EncodePriceSnapshot(price)
+				if !bytes.Equal(resolvedSnapshot, priceSnapshot) {
+					_ = a.store.UpdateReservationPriceSnapshot(r.Context(), requestID, resolvedSnapshot)
+					priceSnapshot = resolvedSnapshot
+				}
 			}
 			logContext.price = &price
 		}
 	}
+	admittedAt := time.Now()
 
 	if websocket {
+		if a.cfg.DataPlane == "native" {
+			a.releaseReservation(requestID, billable)
+			writeError(w, http.StatusNotImplemented, "native_websocket_pending", "原生 WebSocket 数据面尚未启用")
+			return
+		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		a.proxyWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
 		return
 	}
 
-	target := a.cpa.URL(r.URL.RequestURI())
-	upstream, err := http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
-	if err != nil {
-		a.releaseReservation(requestID, billable)
-		logContext.errorCode = "proxy_error"
-		logContext.detail.ErrorName = "proxy_error"
-		logContext.detail.ErrorMessage = err.Error()
-		logContext.detail.StageTimings = timingJSON(map[string]int64{
-			"read_body_ms": bodyReadAt.Sub(started).Milliseconds(), "total_ms": time.Since(started).Milliseconds(),
-		})
-		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
-		writeError(w, 500, "proxy_error", err.Error())
-		return
+	upstreamStartedAt := time.Now()
+	var response *http.Response
+	var nativeExchange *dataplane.Exchange
+	if a.cfg.DataPlane == "native" {
+		plan, credential, planErr := a.credentials.Plan(r.URL.Path, admission.CPAAuthID, meta.Model, meta.Stream)
+		if planErr == nil && !a.translator.Supports(plan.Inbound, plan.Upstream, meta.Stream) {
+			planErr = fmt.Errorf("protocol path %s -> %s is unavailable", plan.Inbound, plan.Upstream)
+		}
+		if planErr == nil {
+			nativeExchange, err = a.engine.Do(r.Context(), plan, credential, r.Header, body)
+			if err == nil && nativeExchange.Response.StatusCode == http.StatusUnauthorized &&
+				(plan.Provider == "codex" || plan.Provider == "xai" || plan.Provider == "grok") {
+				if refreshErr := a.authManager.Refresh(r.Context(), credential.ID); refreshErr == nil {
+					nativeExchange.Response.Body.Close()
+					plan, credential, planErr = a.credentials.Plan(r.URL.Path, admission.CPAAuthID, meta.Model, meta.Stream)
+					if planErr == nil {
+						nativeExchange, err = a.engine.Do(r.Context(), plan, credential, r.Header, body)
+					} else {
+						err = planErr
+					}
+				}
+			}
+			if nativeExchange != nil {
+				response = nativeExchange.Response
+				logContext.detail.ForwardedHeaders = sanitizedHeaders(nativeExchange.Request.Header)
+				logContext.detail.ForwardedBody, logContext.detail.ForwardedBodyTruncated, logContext.detail.ForwardedBodyBytes = boundedDetail(nativeExchange.TranslatedRequest)
+			}
+		} else {
+			err = planErr
+		}
+	} else {
+		target := a.cpa.URL(r.URL.RequestURI())
+		var upstream *http.Request
+		upstream, err = http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
+		if err == nil {
+			copyHeaders(upstream.Header, r.Header)
+			upstream.Header.Set("Authorization", "Bearer "+a.cfg.CPAAPIKey)
+			upstream.Header.Del("X-API-Key")
+			upstream.Header.Del("X-Goog-API-Key")
+			upstream.Header.Set("X-Relay-Request-ID", requestID)
+			if admission.CPAAuthID != "" {
+				upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
+				setRoutingSignature(upstream.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
+			}
+			upstream.Host = a.cpa.BaseURL.Host
+			logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
+			logContext.detail.ForwardedBody, logContext.detail.ForwardedBodyTruncated, logContext.detail.ForwardedBodyBytes = boundedDetail(body)
+			response, err = a.cpa.HTTP.Do(upstream)
+		}
 	}
-	copyHeaders(upstream.Header, r.Header)
-	upstream.Header.Set("Authorization", "Bearer "+a.cfg.CPAAPIKey)
-	upstream.Header.Del("X-API-Key")
-	upstream.Header.Del("X-Goog-API-Key")
-	upstream.Header.Set("X-Relay-Request-ID", requestID)
-	if admission.CPAAuthID != "" {
-		upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
-		setRoutingSignature(upstream.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
-	}
-	upstream.Host = a.cpa.BaseURL.Host
-	logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
-	logContext.detail.ForwardedBody, logContext.detail.ForwardedBodyTruncated, logContext.detail.ForwardedBodyBytes = boundedDetail(body)
-
-	response, err := a.cpa.HTTP.Do(upstream)
 	if err != nil {
-		if r.Context().Err() == nil {
+		if a.cfg.DataPlane != "native" && r.Context().Err() == nil {
 			a.cpa.RecordTransportResult(err)
 		}
 		a.releaseReservation(requestID, billable)
@@ -328,26 +391,51 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			"read_body_ms": bodyReadAt.Sub(started).Milliseconds(), "total_ms": time.Since(started).Milliseconds(),
 		})
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
-		writeCPATransportError(w, r, err, "awaiting_headers", requestID)
+		if a.cfg.DataPlane == "native" {
+			writeError(w, http.StatusBadGateway, "upstream_unavailable", err.Error())
+		} else {
+			writeCPATransportError(w, r, err, "awaiting_headers", requestID)
+		}
 		return
 	}
-	a.cpa.RecordTransportResult(nil)
+	if a.cfg.DataPlane != "native" {
+		a.cpa.RecordTransportResult(nil)
+	}
 	upstreamHeadersAt := time.Now()
 	defer response.Body.Close()
 	copyHeaders(w.Header(), response.Header)
+	if nativeExchange != nil {
+		if meta.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+		} else if response.StatusCode < http.StatusBadRequest {
+			w.Header().Set("Content-Type", "application/json")
+		}
+	}
+	setStreamingHeaders(w.Header(), meta.Stream)
 	w.Header().Set("X-Relay-Request-ID", requestID)
 	if admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)
 	}
 	w.WriteHeader(response.StatusCode)
+	if meta.Stream {
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
 	capture := &rollingCapture{max: 2 << 20}
 	var firstByteAt time.Time
-	copyErr := copyStreaming(w, io.TeeReader(response.Body, capture), func() {
+	firstByte := func() {
 		if firstByteAt.IsZero() {
 			firstByteAt = time.Now()
 		}
-	})
-	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
+	}
+	var copyErr error
+	if nativeExchange != nil && response.StatusCode < http.StatusBadRequest {
+		copyErr = a.engine.CopyResponse(r.Context(), &flushingCaptureWriter{response: w, capture: capture}, nativeExchange, firstByte)
+	} else {
+		copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
+	}
+	if a.cfg.DataPlane != "native" && isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
 		a.cpa.RecordTransportResult(copyErr)
 	}
 
@@ -404,9 +492,15 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		logContext.ttftMS = &ttft
 	}
 	logContext.detail.StageTimings = timingJSON(map[string]int64{
-		"read_body_ms":        bodyReadAt.Sub(started).Milliseconds(),
+		"resolve_key_ms":      keyResolvedAt.Sub(started).Milliseconds(),
+		"read_body_ms":        bodyReadAt.Sub(keyResolvedAt).Milliseconds(),
+		"limits_ms":           limitsCheckedAt.Sub(bodyReadAt).Milliseconds(),
+		"admission_ms":        admittedAt.Sub(limitsCheckedAt).Milliseconds(),
+		"upstream_start_ms":   upstreamStartedAt.Sub(started).Milliseconds(),
+		"upstream_wait_ms":    upstreamHeadersAt.Sub(upstreamStartedAt).Milliseconds(),
 		"upstream_headers_ms": upstreamHeadersAt.Sub(started).Milliseconds(),
-		"first_byte_ms":       valueOrZero(logContext.ttftMS), "total_ms": time.Since(started).Milliseconds(),
+		"first_byte_ms":       valueOrZero(logContext.ttftMS),
+		"total_ms":            time.Since(started).Milliseconds(),
 	})
 	if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
 		logContext.errorCode = "upstream_http_error"
@@ -631,15 +725,17 @@ func maxDuration(a, b time.Duration) time.Duration {
 }
 
 func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
-	tenantTokens, keyTokens, err := a.store.DailyTokens(ctx, key.TenantID, key.ID)
-	if err != nil {
-		return err
-	}
-	if key.TenantTokenLimit != nil && tenantTokens >= *key.TenantTokenLimit {
-		return errors.New("租户今日 Token 额度已用尽")
-	}
-	if key.TokenLimitDaily != nil && keyTokens >= *key.TokenLimitDaily {
-		return errors.New("API Key 今日 Token 额度已用尽")
+	if key.TenantTokenLimit != nil || key.TokenLimitDaily != nil {
+		tenantTokens, keyTokens, err := a.store.DailyTokens(ctx, key.TenantID, key.ID)
+		if err != nil {
+			return err
+		}
+		if key.TenantTokenLimit != nil && tenantTokens >= *key.TenantTokenLimit {
+			return errors.New("租户今日 Token 额度已用尽")
+		}
+		if key.TokenLimitDaily != nil && keyTokens >= *key.TokenLimitDaily {
+			return errors.New("API Key 今日 Token 额度已用尽")
+		}
 	}
 	// Per-minute admission is intentionally process-local; PostgreSQL remains the source of truth for billing.
 	limit := key.RateLimitPerMinute
@@ -650,6 +746,14 @@ func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
 		return errors.New("每分钟请求次数超限")
 	}
 	return nil
+}
+
+func setStreamingHeaders(header http.Header, stream bool) {
+	if !stream {
+		return
+	}
+	header.Set("Cache-Control", "no-cache, no-transform")
+	header.Set("X-Accel-Buffering", "no")
 }
 
 func expired(value *time.Time) bool { return value != nil && !value.After(time.Now()) }
