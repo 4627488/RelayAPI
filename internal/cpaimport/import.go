@@ -42,6 +42,7 @@ type openAIKeyEntry struct {
 type openAIModel struct {
 	Name  string `yaml:"name"`
 	Alias string `yaml:"alias"`
+	Image bool   `yaml:"image,omitempty"`
 }
 
 func Import(ctx context.Context, dataStore store.Store, authDir, configPath string, overwrite bool) (Report, error) {
@@ -125,7 +126,7 @@ func Import(ctx context.Context, dataStore store.Store, authDir, configPath stri
 				continue
 			}
 			models = append(models, public)
-			routes = append(routes, dataplane.ModelRoute{Public: public, Upstream: strings.TrimSpace(model.Name)})
+			routes = append(routes, dataplane.ModelRoute{Public: public, Upstream: strings.TrimSpace(model.Name), Image: model.Image})
 		}
 		for keyIndex, key := range provider.APIKeyEntries {
 			proxyURL := strings.TrimSpace(key.ProxyURL)

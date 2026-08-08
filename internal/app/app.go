@@ -26,26 +26,32 @@ import (
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstreamauth"
+	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
 
 type App struct {
-	cfg           config.Config
-	store         store.Store
-	cpa           *cpa.Client
-	mux           *http.ServeMux
-	stop          chan struct{}
-	wg            sync.WaitGroup
-	bridgeReady   atomic.Bool
-	bridgeVersion atomic.Value
-	pricingSyncMu sync.Mutex
-	oauthMu       sync.Mutex
-	oauthSession  *managedOAuthSession
-	setupBox      identity.SecretBox
-	translator    *dataplane.Translator
-	credentials   *dataplane.CredentialCatalog
-	transports    *dataplane.TransportPool
-	engine        *dataplane.Engine
-	authManager   *upstreamauth.Manager
+	cfg               config.Config
+	store             store.Store
+	cpa               *cpa.Client
+	mux               *http.ServeMux
+	stop              chan struct{}
+	wg                sync.WaitGroup
+	bridgeReady       atomic.Bool
+	bridgeVersion     atomic.Value
+	pricingSyncMu     sync.Mutex
+	oauthMu           sync.Mutex
+	oauthSession      *managedOAuthSession
+	setupBox          identity.SecretBox
+	translator        *dataplane.Translator
+	credentials       *dataplane.CredentialCatalog
+	transports        *dataplane.TransportPool
+	engine            *dataplane.Engine
+	authManager       *upstreamauth.Manager
+	nativeCPA         *cpa.Client
+	nativeCPARuntime  *relaybridge.Runtime
+	nativeCPAServer   *http.Server
+	nativeCPAServeErr atomic.Value
+	nativeSettings    settingsState
 }
 
 type contextKey string
@@ -58,7 +64,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := cpa.NewWithOptions(cfg.CPAURL, cfg.CPAAPIKey, cfg.CPAManagementKey, cpa.Options{
+	cpaAPIKey := cfg.CPAAPIKey
+	if cfg.DataPlane == "native" && strings.TrimSpace(cpaAPIKey) == "" {
+		cpaAPIKey = "native-unused"
+	}
+	client, err := cpa.NewWithOptions(cfg.CPAURL, cpaAPIKey, cfg.CPAManagementKey, cpa.Options{
 		ResponseHeaderTimeout: cfg.RequestTimeout, MaxInFlight: cfg.CPAMaxInFlight, MaxQueue: cfg.CPAMaxQueue,
 		MaxRequestBytesInFlight: cfg.CPARequestBytesInFlight,
 		QueueTimeout:            cfg.CPAQueueTimeout, CircuitFailureThreshold: cfg.CPACircuitFailureThreshold,
@@ -82,20 +92,12 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		}
 		slog.Info("CPA credentials imported", "imported", report.Imported, "unchanged", report.Skipped)
 	}
-	catalog := dataplane.NewCredentialCatalog()
 	a := &App{
 		cfg: cfg, store: dataStore, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
-		translator: dataplane.NewTranslator(), credentials: catalog,
-		transports: dataplane.NewTransportPool(cfg.CPAMaxInFlight, cfg.RequestTimeout),
-	}
-	a.engine = dataplane.NewEngine(a.translator, a.transports)
-	a.authManager = upstreamauth.NewManager(dataStore, catalog, a.transports)
-	if err := a.authManager.Reload(ctx); err != nil {
-		return nil, fmt.Errorf("build credential catalog: %w", err)
 	}
 	if cfg.DataPlane == "native" {
-		if err := a.authManager.RefreshDue(ctx, 5*time.Minute); err != nil {
-			return nil, fmt.Errorf("refresh startup credentials: %w", err)
+		if err := a.startEmbeddedCPA(ctx); err != nil {
+			return nil, err
 		}
 	}
 	a.routes()
@@ -108,6 +110,14 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 }
 
 func (a *App) Close() {
+	if a.nativeCPAServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = a.nativeCPAServer.Shutdown(ctx)
+		cancel()
+	}
+	if a.nativeCPARuntime != nil {
+		_ = a.nativeCPARuntime.Close(context.Background())
+	}
 	if a.engine != nil {
 		a.engine.CloseCompatibilitySessions()
 		a.transports.CloseIdleConnections()
@@ -147,9 +157,6 @@ func (a *App) maintenance() {
 		case <-ticker.C:
 			if a.cfg.DataPlane == "native" {
 				a.reclaimExecutorCachesUnderPressure()
-				if err := a.authManager.RefreshDue(context.Background(), 5*time.Minute); err != nil {
-					slog.Warn("refresh upstream credentials", "error", err)
-				}
 			} else {
 				a.refreshBridgeStatus(context.Background())
 			}
@@ -194,7 +201,7 @@ func (a *App) maintenance() {
 }
 
 func (a *App) reclaimExecutorCachesUnderPressure() {
-	if a == nil || a.engine == nil || a.cfg.ExecutorCachePressureBytes == 0 {
+	if a == nil || a.cfg.ExecutorCachePressureBytes == 0 {
 		return
 	}
 	var stats runtime.MemStats
@@ -202,7 +209,10 @@ func (a *App) reclaimExecutorCachesUnderPressure() {
 	if stats.HeapAlloc < a.cfg.ExecutorCachePressureBytes {
 		return
 	}
-	a.engine.ClearCompatibilityCaches()
+	if a.engine != nil {
+		a.engine.ClearCompatibilityCaches()
+	}
+	relaybridge.ClearReasoningCaches()
 	debug.FreeOSMemory()
 	slog.Warn("cleared executor compatibility caches under heap pressure",
 		"heap_alloc_bytes", stats.HeapAlloc, "threshold_bytes", a.cfg.ExecutorCachePressureBytes)
@@ -317,6 +327,7 @@ func (a *App) routes() {
 		a.mux.Handle(method+" /api/admin/cpa/{resource...}", a.withAdmin(http.HandlerFunc(a.adminCPA)))
 	}
 	a.mux.Handle("GET /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
+	a.mux.Handle("POST /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/models", a.withAdmin(http.HandlerFunc(a.adminProviderModels)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
@@ -326,6 +337,8 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/admin/providers/oauth/callback", a.withAdmin(http.HandlerFunc(a.adminOAuthCallback)))
 	a.mux.Handle("GET /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
 	a.mux.Handle("PATCH /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
+	a.mux.Handle("GET /api/admin/runtime/settings", a.withAdmin(http.HandlerFunc(a.adminNativeSettings)))
+	a.mux.Handle("PATCH /api/admin/runtime/settings", a.withAdmin(http.HandlerFunc(a.adminNativeSettings)))
 	a.mux.Handle("GET /api/admin/overview", a.withAdmin(http.HandlerFunc(a.adminOverview)))
 	a.mux.Handle("GET /api/admin/usage", a.withAdmin(http.HandlerFunc(a.adminUsage)))
 	a.mux.Handle("GET /api/admin/logs", a.withAdmin(http.HandlerFunc(a.adminLogs)))
@@ -390,7 +403,7 @@ func (a *App) frontend(w http.ResponseWriter, r *http.Request) {
 func (a *App) serviceInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":        "RelayAPI",
-		"description": "multi-tenant gateway for CLIProxyAPI",
+		"description": "multi-tenant native model gateway",
 		"health":      "/healthz",
 		"models":      "/v1/models",
 	})
@@ -409,8 +422,13 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	}
 	activeSubscriptions, subscriptionErr := a.store.HasActiveChildSubscriptions(ctx, time.Now())
 	var credentialErr error
-	if a.cfg.DataPlane == "native" && a.credentials.Len() == 0 {
+	if a.cfg.DataPlane == "native" && (a.nativeCPARuntime == nil || a.nativeCPARuntime.CredentialCount() == 0) {
 		credentialErr = errors.New("no enabled upstream credentials")
+	}
+	if a.cfg.DataPlane == "native" {
+		if serveErr := a.nativeCPAServeErr.Load(); serveErr != nil {
+			cpaErr, _ = serveErr.(error)
+		}
 	}
 	bridgeRequired := a.cfg.DataPlane != "native" && subscriptionErr == nil && activeSubscriptions
 	bridgeOK := !bridgeRequired || a.bridgeReady.Load()
@@ -421,7 +439,7 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	bridgeVersion, _ := a.bridgeVersion.Load().(string)
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
 		"database": errorText(err), "data_plane": a.cfg.DataPlane, "upstream_credentials": errorText(credentialErr), "cpa": errorText(cpaErr),
-		"cpa_admission": a.cpa.AdmissionStatus(), "subscriptions": errorText(subscriptionErr),
+		"cpa_admission": a.inferenceCPA().AdmissionStatus(), "subscriptions": errorText(subscriptionErr),
 		"bridge": map[string]any{"required": bridgeRequired, "ready": a.bridgeReady.Load(), "version": bridgeVersion}})
 }
 

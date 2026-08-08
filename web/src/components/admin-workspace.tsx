@@ -23,6 +23,7 @@ import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
 import { PricingView } from "@/components/pricing-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
+import { RuntimeSettingsView } from "@/components/runtime-settings-view"
 import { AdminSubscriptionsView } from "@/components/subscriptions-view"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -135,6 +136,7 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
   if (page === "users") return <UsersView users={users} currentUserId={currentUserId} onChanged={load} />
   if (page === "invitations") return <InvitationsView items={invitations} onChanged={load} />
   if (page === "providers") return <ProvidersView />
+  if (page === "settings") return <RuntimeSettingsView />
   if (page === "subscriptions") return <AdminSubscriptionsView />
   if (page === "logs") return <RequestLogsWorkbench admin />
   if (page === "pricing") return <PricingView />

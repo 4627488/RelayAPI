@@ -238,7 +238,7 @@ export interface ProviderAccount {
   unavailable?: boolean
   success?: number
   failed?: number
-  source?: "oauth" | "config"
+  source?: "oauth" | "config" | "native"
   config_path?: string
   config_index?: number
   base_url?: string
@@ -248,6 +248,8 @@ export interface ProviderAccount {
   can_inspect?: boolean
   can_toggle?: boolean
   can_delete?: boolean
+  proxy_configured?: boolean
+  revision?: number
 }
 
 type ApiErrorBody = {

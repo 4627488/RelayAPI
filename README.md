@@ -1,15 +1,15 @@
 # RelayAPI
 
-RelayAPI 是位于 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
-前面的 Go 多租户网关。CLIProxyAPI 负责模型/提供商协议互操作，RelayAPI 负责租户
-API Key、额度、计费和审计。因此 CLIProxyAPI 新增模型后无需修改 RelayAPI。
+RelayAPI 是内置 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 执行器的
+Go 多租户模型网关。默认 `native` 数据平面在同一进程内完成协议兼容、凭据路由、
+额度、计费和审计，不需要单独运行 CLIProxyAPI 服务。
 
 详细设计见 [docs/architecture.md](docs/architecture.md)，父/子订阅与严格凭据路由见
 [docs/subscriptions.md](docs/subscriptions.md)。
 
 ## 启动
 
-需要 Go 1.24+、PostgreSQL 和一个已配置的 CLIProxyAPI 实例。
+需要 Go 1.26+ 和 PostgreSQL。
 
 ```bash
 cp .env.example .env
@@ -43,37 +43,30 @@ WebSocket 入口。
 | 变量 | 用途 |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL DSN |
-| `CPA_URL` | CLIProxyAPI 私网地址 |
-| `CPA_API_KEY` | RelayAPI 访问 CLIProxyAPI 的 API Key |
 | `RELAY_SESSION_SECRET` | Cookie 签名密钥（至少 32 字符） |
 | `RELAY_API_KEY_ENCRYPTION_KEY` | API Key 静态加密密钥（至少 32 字符，必须稳定备份） |
 
 `RELAY_API_KEY_ENCRYPTION_KEY` 未设置时兼容性回退到 `RELAY_SESSION_SECRET`。生产环境
 建议单独设置且持久备份；直接更换会导致已有 Key 无法再次显示，但不会影响其哈希鉴权。
 
-`CPA_MANAGEMENT_KEY` 用于管理员面板中的 CPA 凭据、Codex OAuth 与运行策略管理。
-`CPA_PLUGIN_SECRET` 用于 CPA bridge 与 Relay 相互认证。仅使用遥测时可不配置；
-启用父/子订阅的严格 AuthID 路由时必须配置，并与 CPA 插件配置一致。
-`CPA_QUOTA_SYNC_INTERVAL_SECONDS` 控制父订阅额度自动观测周期，默认 300 秒，最小
-60 秒。上游额度由 bridge 在 CPA 进程内读取并脱敏；子订阅 `allocation_ppm` 是
-管理员的业务分配策略，不能也不应由 CPA 自动决定。
+`RELAY_DATA_PLANE` 默认为 `native`。历史部署可临时设为 `cpa`，同时配置
+`CPA_URL`、`CPA_API_KEY`、`CPA_MANAGEMENT_KEY` 和 `CPA_PLUGIN_SECRET`，并使用
+`docker compose --profile legacy-cpa up` 启动外置兼容服务。
 
-CPA 被当作“可恢复、可替换的协议适配器”，而不是与 RelayAPI 同生共死的进程：
-推理请求默认最多 16 个并发、32 个等待者，排队最多 2 秒；单请求体默认最多
+内置执行器由 RelayAPI 的准入控制保护：推理请求默认最多 16 个并发、32 个等待者，排队最多 2 秒；单请求体默认最多
 16 MiB，所有在途请求体合计最多 32 MiB。连续 3 次
-CPA 传输故障后熔断 15 秒，恢复时只允许一个探针。`CPA_REQUEST_TIMEOUT_SECONDS`
-只限制等待响应头，不会中断已经开始的 SSE/WebSocket。Compose 还给 CPA 设置
-384 MiB Go 软限制和 512 MiB cgroup 硬限制，OOM 后由 restart policy 拉起。
-推理与健康/管理使用独立连接池，因此长连接不会饿死健康检查并触发误重启。
-上述值均可用 `.env.example` 中的 `CPA_*` 参数调整；提高并发或请求体上限时应同步
-提高 CPA 内存预算，而不是只放大其中一项。
+上游传输故障后熔断 15 秒，恢复时只允许一个探针。`CPA_REQUEST_TIMEOUT_SECONDS`
+只限制等待响应头，不会中断已经开始的 SSE/WebSocket。推理与管理路径使用独立
+连接池。上述值均可用 `.env.example` 中的 `CPA_*`
+兼容命名参数调整；提高并发或请求体上限时应同步提高 RelayAPI 内存预算。
 
 ## 客户端兼容
 
-Relay 原样提供 CPA 的 OpenAI Responses、OpenAI Chat Completions、Anthropic
+Relay 原样提供内置执行器的 OpenAI Responses、OpenAI Chat Completions、Anthropic
 Messages、Gemini native 和 Codex direct 路径。Grok/xAI 与其他 OpenAI-compatible
-模型共用 `/v1/chat/completions` 或 `/v1/responses`，由请求中的 `model` 和 CPA
-凭据配置选择提供商。
+模型共用 `/v1/chat/completions` 或 `/v1/responses`，由请求中的 `model` 和 native
+凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在“系统设置”中热更新
+代理、重试、调度、图像/视频和连接行为。
 
 用户面板的“接入向导”会生成 5 分钟有效的一键 Bash 或 PowerShell 命令，可同时
 配置 Codex、Claude Code 与 OpenCode。脚本先验证 `/v1/models`，可选择安装缺失

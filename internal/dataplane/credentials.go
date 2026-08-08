@@ -12,6 +12,7 @@ import (
 type ModelRoute struct {
 	Public   string `json:"public" yaml:"public"`
 	Upstream string `json:"upstream" yaml:"upstream"`
+	Image    bool   `json:"image,omitempty" yaml:"image,omitempty"`
 }
 
 // Credential is an immutable, decrypted runtime snapshot. It is never

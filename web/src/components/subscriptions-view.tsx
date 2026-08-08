@@ -81,7 +81,7 @@ export function AdminSubscriptionsView() {
     try {
       const result = await postJSON<{ synced: number; quota?: Array<{ status: string; supported: boolean }> }>("/api/admin/subscriptions/sync", {})
       const supported = result.quota?.filter((item) => item.supported && item.status !== "error").length ?? 0
-      toast.success(`已同步 ${result.synced} 个 CPA 父账户，${supported} 个支持自动额度`)
+      toast.success(`已同步 ${result.synced} 个上游账户，${supported} 个支持自动额度`)
       await load()
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "同步失败")
@@ -237,11 +237,11 @@ export function AdminSubscriptionsView() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">父订阅与子订阅</h1>
-          <p className="text-sm text-muted-foreground">OAuth 账户可拆分上游额度；API Key 账户可作为余额计费通道分发，密钥始终保留在 CPA 内部。</p>
+          <p className="text-sm text-muted-foreground">将 native 上游凭据映射为父订阅，再按租户分配模型范围和额度。</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => void syncParents()} disabled={pending}>
-            {pending ? <Spinner /> : <RefreshCwIcon />}同步 CPA 父账户
+            {pending ? <Spinner /> : <RefreshCwIcon />}同步上游账户
           </Button>
         </div>
       </div>
@@ -259,7 +259,7 @@ export function AdminSubscriptionsView() {
         onDraftRemove={(rowID) => removeDistributionRow(view.item.id, rowID)} onSave={() => void saveDistribution(view)}
         onSync={() => void syncParentQuota(view.item.id)} onConfigure={() => setParentEditor(view)} onEdit={setChildEditor}
         onToggle={(child) => void toggleChild(child)} onRemove={(id) => void removeChild(id)}
-      />)}</div> : <Empty><EmptyHeader><EmptyMedia variant="icon"><PackageOpenIcon /></EmptyMedia><EmptyTitle>还没有父订阅</EmptyTitle><EmptyDescription>先同步 CPA 凭据，再从父订阅直接分配给多个租户。</EmptyDescription></EmptyHeader></Empty>}
+      />)}</div> : <Empty><EmptyHeader><EmptyMedia variant="icon"><PackageOpenIcon /></EmptyMedia><EmptyTitle>还没有父订阅</EmptyTitle><EmptyDescription>先同步 native 凭据，再从父订阅直接分配给多个租户。</EmptyDescription></EmptyHeader></Empty>}
 
       <ParentEditor value={parentEditor} pending={pending} onPending={setPending} onClose={() => setParentEditor(null)} onSaved={load} />
       <ChildEditor value={childEditor} parents={parents} pending={pending} onPending={setPending} onClose={() => setChildEditor(null)} onSaved={load} />
@@ -410,9 +410,9 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
         <form id="parent-subscription-form" onSubmit={save}>
           <FieldGroup>
             <Field><FieldLabel htmlFor="parent-name">名称</FieldLabel><Input id="parent-name" name="name" defaultValue={current.item.name} required /></Field>
-            <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel>容量模式</FieldLabel><Select value={mode} onValueChange={changeMode}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{capacityModes.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><Field><FieldLabel>上游计划</FieldLabel><div className="flex h-9 items-center gap-2 rounded-md border bg-muted/30 px-3"><Badge variant="secondary">{current.item.plan_type || "未识别"}</Badge><span className="text-xs text-muted-foreground">由 CPA 自动同步</span></div></Field></div>
+            <div className="grid gap-4 sm:grid-cols-2"><Field><FieldLabel>容量模式</FieldLabel><Select value={mode} onValueChange={changeMode}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectGroup>{capacityModes.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectGroup></SelectContent></Select></Field><Field><FieldLabel>上游计划</FieldLabel><div className="flex h-9 items-center gap-2 rounded-md border bg-muted/30 px-3"><Badge variant="secondary">{current.item.plan_type || "未识别"}</Badge><span className="text-xs text-muted-foreground">由凭据仓库同步</span></div></Field></div>
             {mode !== "unmetered" ? <Field><FieldLabel htmlFor="parent-limit">可分配上限（%）</FieldLabel><Input id="parent-limit" name="allocation_limit" type="number" min="0.0001" step="0.0001" defaultValue={current.item.allocation_limit_ppm / 10_000} required /><FieldDescription>这是子订阅业务分配策略；100% 表示不超售，大于 100% 才表示明确允许超售。</FieldDescription></Field> : <Field><FieldLabel htmlFor="parent-billing-source">结算方式</FieldLabel><Input id="parent-billing-source" value="按租户账户总余额结算" readOnly /><FieldDescription>适用于按量付费的上游 API Key。可创建多个子订阅，实际请求按模型价格预扣并结算。</FieldDescription></Field>}
-            <Field><FieldLabel htmlFor="parent-models">模型策略范围</FieldLabel><ModelSelector id="parent-models" options={current.item.cpa_model_allowlist ?? []} value={models} onChange={setModels} /><FieldDescription>CPA 已同步 {current.item.cpa_model_allowlist?.length ?? 0} 个模型；不选择表示允许该凭据的全部模型。</FieldDescription></Field>
+            <Field><FieldLabel htmlFor="parent-models">模型策略范围</FieldLabel><ModelSelector id="parent-models" options={current.item.cpa_model_allowlist ?? []} value={models} onChange={setModels} /><FieldDescription>凭据仓库已同步 {current.item.cpa_model_allowlist?.length ?? 0} 个模型；不选择表示允许该凭据的全部模型。</FieldDescription></Field>
             {mode === "observed" ? <div className="flex flex-col gap-3 rounded-lg border p-3">
               <div><p className="font-medium">自动观测窗口</p><p className="text-xs text-muted-foreground">窗口名称、数量、使用率和重置时间由 bridge 自动观测；你只定义每个窗口对应的 USD 容量。</p></div>
               <QuotaSnapshot snapshot={current.item.quota_snapshot} status={current.item.quota_probe_status} error={current.item.quota_probe_error} observedAt={current.item.quota_observed_at} />
@@ -587,7 +587,7 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
               {models.map((model) => <Badge key={model} variant="outline" className="font-mono font-normal">{model}</Badge>)}
             </div>
           ) : (
-            <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">CPA 尚未同步完整模型清单，或当前模型策略包含无法直接枚举的通配范围；请管理员刷新模型账户。</div>
+            <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">尚未同步完整模型清单，或当前模型策略包含无法直接枚举的通配范围；请管理员刷新模型账户。</div>
           )}
         </section>
       </CardContent>

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -21,7 +23,6 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/cpa"
-	"github.com/4627488/RelayAPI/internal/dataplane"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
@@ -64,10 +65,54 @@ func readRequestMeta(body []byte, requestPath string) requestMeta {
 func requestMetadata(body []byte, r *http.Request) requestMeta {
 	meta := readRequestMeta(body, r.URL.Path)
 	if meta.Model == "" {
+		meta = readFormRequestMeta(body, r.Header.Get("Content-Type"), meta)
+	}
+	if meta.Model == "" {
 		meta.Model = strings.TrimSpace(r.URL.Query().Get("model"))
 	}
 	if isWebSocketUpgrade(r) {
 		meta.Stream = true
+	}
+	return meta
+}
+
+func readFormRequestMeta(body []byte, contentType string, meta requestMeta) requestMeta {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return meta
+	}
+	switch mediaType {
+	case "application/x-www-form-urlencoded":
+		values, parseErr := url.ParseQuery(string(body))
+		if parseErr == nil {
+			meta.Model = strings.TrimSpace(values.Get("model"))
+			meta.Stream, _ = strconv.ParseBool(values.Get("stream"))
+		}
+	case "multipart/form-data":
+		boundary := strings.TrimSpace(params["boundary"])
+		if boundary == "" {
+			return meta
+		}
+		reader := multipart.NewReader(bytes.NewReader(body), boundary)
+		for {
+			part, partErr := reader.NextPart()
+			if partErr != nil {
+				break
+			}
+			name := part.FormName()
+			if part.FileName() != "" || (name != "model" && name != "stream") {
+				_ = part.Close()
+				continue
+			}
+			value, _ := io.ReadAll(io.LimitReader(part, 4<<10))
+			_ = part.Close()
+			switch name {
+			case "model":
+				meta.Model = strings.TrimSpace(string(value))
+			case "stream":
+				meta.Stream, _ = strconv.ParseBool(strings.TrimSpace(string(value)))
+			}
+		}
 	}
 	return meta
 }
@@ -198,24 +243,18 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keyResolvedAt := time.Now()
-	if a.cfg.DataPlane == "native" && r.Method == http.MethodGet && strings.TrimRight(r.URL.Path, "/") == "/v1/models" {
-		models := a.credentials.Models()
-		data := make([]map[string]any, 0, len(models))
-		for _, model := range models {
-			if allowed(model, key.ModelAllowlist, key.TenantModels) {
-				data = append(data, map[string]any{"id": model, "object": "model", "owned_by": "relayapi"})
-			}
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+	if a.cfg.DataPlane == "native" && isNativeModelCatalogRequest(r) {
+		a.proxyNativeModels(w, r, key)
 		return
 	}
 	expectedBodyBytes := r.ContentLength
 	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.CPAMaxRequestBytes {
 		expectedBodyBytes = a.cfg.CPAMaxRequestBytes
 	}
-	lease, err := a.cpa.Acquire(r.Context(), expectedBodyBytes)
+	targetCPA := a.inferenceCPA()
+	lease, err := targetCPA.Acquire(r.Context(), expectedBodyBytes)
 	if err != nil {
-		writeCPAAdmissionError(w, err, a.cpa.AdmissionStatus())
+		writeCPAAdmissionError(w, err, targetCPA.AdmissionStatus())
 		return
 	}
 	defer lease.Release()
@@ -228,7 +267,9 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	bodyReadAt := time.Now()
 	logContext := requestLogContext{detail: baseRequestDetail(r, body)}
 	meta := requestMetadata(body, r)
-	resolved := resolveAPIKeyModel(meta.Model, key.ModelAliases)
+	clientRequestedModel := meta.Model
+	resolved := resolveAPIKeyModel(resolveClaudeCatalogModel(meta.Model), key.ModelAliases)
+	resolved.RequestedModel = clientRequestedModel
 	resolved.Stream = meta.Stream
 	resolved.ServiceTier = meta.ServiceTier
 	resolved.ReasoningEffort = meta.ReasoningEffort
@@ -318,10 +359,6 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	admittedAt := time.Now()
 
 	if websocket {
-		if a.cfg.DataPlane == "native" {
-			a.proxyNativeWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
-			return
-		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		a.proxyWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
 		return
@@ -329,63 +366,29 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 
 	upstreamStartedAt := time.Now()
 	var response *http.Response
-	var nativeExchange *dataplane.Exchange
-	if a.cfg.DataPlane == "native" {
-		plan, credential, planErr := a.credentials.Plan(r.URL.Path, admission.CPAAuthID, meta.Model, meta.Stream)
-		if planErr == nil && !a.translator.Supports(plan.Inbound, plan.Upstream, meta.Stream) {
-			planErr = fmt.Errorf("protocol path %s -> %s is unavailable", plan.Inbound, plan.Upstream)
-		}
-		if planErr == nil {
-			nativeExchange, err = a.engine.Do(r.Context(), plan, credential, r.Header, body)
-			unauthorized := executorStatusCode(err) == http.StatusUnauthorized
-			if err == nil && nativeExchange != nil && nativeExchange.Response != nil {
-				unauthorized = nativeExchange.Response.StatusCode == http.StatusUnauthorized
-			}
-			if unauthorized &&
-				(plan.Provider == "codex" || plan.Provider == "xai" || plan.Provider == "grok") {
-				if refreshErr := a.authManager.Refresh(r.Context(), credential.ID); refreshErr == nil {
-					if nativeExchange != nil && nativeExchange.Response != nil && nativeExchange.Response.Body != nil {
-						nativeExchange.Response.Body.Close()
-					}
-					plan, credential, planErr = a.credentials.Plan(r.URL.Path, admission.CPAAuthID, meta.Model, meta.Stream)
-					if planErr == nil {
-						nativeExchange, err = a.engine.Do(r.Context(), plan, credential, r.Header, body)
-					} else {
-						err = planErr
-					}
-				}
-			}
-			if nativeExchange != nil {
-				response = nativeExchange.Response
-				logContext.detail.ForwardedHeaders = sanitizedHeaders(nativeExchange.Request.Header)
-				logContext.detail.ForwardedBody, logContext.detail.ForwardedBodyTruncated, logContext.detail.ForwardedBodyBytes = boundedDetail(nativeExchange.TranslatedRequest)
-			}
-		} else {
-			err = planErr
-		}
-	} else {
-		target := a.cpa.URL(r.URL.RequestURI())
-		var upstream *http.Request
-		upstream, err = http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
-		if err == nil {
-			copyHeaders(upstream.Header, r.Header)
-			upstream.Header.Set("Authorization", "Bearer "+a.cfg.CPAAPIKey)
-			upstream.Header.Del("X-API-Key")
-			upstream.Header.Del("X-Goog-API-Key")
-			upstream.Header.Set("X-Relay-Request-ID", requestID)
-			if admission.CPAAuthID != "" {
-				upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
+	target := targetCPA.URL(r.URL.RequestURI())
+	var upstream *http.Request
+	upstream, err = http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
+	if err == nil {
+		copyHeaders(upstream.Header, r.Header)
+		upstream.Header.Set("Authorization", "Bearer "+targetCPA.APIKey)
+		upstream.Header.Del("X-API-Key")
+		upstream.Header.Del("X-Goog-API-Key")
+		upstream.Header.Set("X-Relay-Request-ID", requestID)
+		if admission.CPAAuthID != "" {
+			upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
+			if a.cfg.DataPlane != "native" {
 				setRoutingSignature(upstream.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
 			}
-			upstream.Host = a.cpa.BaseURL.Host
-			logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
-			logContext.detail.ForwardedBody, logContext.detail.ForwardedBodyTruncated, logContext.detail.ForwardedBodyBytes = boundedDetail(body)
-			response, err = a.cpa.HTTP.Do(upstream)
 		}
+		upstream.Host = targetCPA.BaseURL.Host
+		logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
+		logContext.detail.ForwardedBody, logContext.detail.ForwardedBodyTruncated, logContext.detail.ForwardedBodyBytes = boundedDetail(body)
+		response, err = targetCPA.HTTP.Do(upstream)
 	}
 	if err != nil {
-		if a.cfg.DataPlane != "native" && r.Context().Err() == nil {
-			a.cpa.RecordTransportResult(err)
+		if r.Context().Err() == nil {
+			targetCPA.RecordTransportResult(err)
 		}
 		a.releaseReservation(requestID, billable)
 		classified := classifyCPATransportError(err, r.Context().Err(), "awaiting_headers")
@@ -396,30 +399,13 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			"read_body_ms": bodyReadAt.Sub(started).Milliseconds(), "total_ms": time.Since(started).Milliseconds(),
 		})
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
-		if a.cfg.DataPlane == "native" {
-			status := executorStatusCode(err)
-			if status < 400 || status > 599 {
-				status = http.StatusBadGateway
-			}
-			writeError(w, status, "upstream_error", err.Error())
-		} else {
-			writeCPATransportError(w, r, err, "awaiting_headers", requestID)
-		}
+		writeCPATransportError(w, r, err, "awaiting_headers", requestID)
 		return
 	}
-	if a.cfg.DataPlane != "native" {
-		a.cpa.RecordTransportResult(nil)
-	}
+	targetCPA.RecordTransportResult(nil)
 	upstreamHeadersAt := time.Now()
 	defer response.Body.Close()
 	copyHeaders(w.Header(), response.Header)
-	if nativeExchange != nil {
-		if meta.Stream {
-			w.Header().Set("Content-Type", "text/event-stream")
-		} else if response.StatusCode < http.StatusBadRequest {
-			w.Header().Set("Content-Type", "application/json")
-		}
-	}
 	setStreamingHeaders(w.Header(), meta.Stream)
 	w.Header().Set("X-Relay-Request-ID", requestID)
 	if admission.ChildSubscriptionID != "" {
@@ -439,13 +425,9 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var copyErr error
-	if nativeExchange != nil && response.StatusCode < http.StatusBadRequest {
-		copyErr = a.engine.CopyResponse(r.Context(), &flushingCaptureWriter{response: w, capture: capture}, nativeExchange, firstByte)
-	} else {
-		copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
-	}
-	if a.cfg.DataPlane != "native" && isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
-		a.cpa.RecordTransportResult(copyErr)
+	copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
+	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
+		targetCPA.RecordTransportResult(copyErr)
 	}
 
 	parsed := billing.ParseResponse(capture.Bytes())
@@ -523,6 +505,24 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	a.writeRequestLog(key, requestID, admission, meta, r, response.StatusCode, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
+}
+
+func resolveClaudeCatalogModel(model string) string {
+	const prefix = "claude-fable-5-dd-"
+	model = strings.TrimSpace(model)
+	base, suffix := model, ""
+	if open := strings.LastIndex(model, "("); open > 0 && strings.HasSuffix(model, ")") {
+		base = model[:open]
+		suffix = model[open:]
+	}
+	if !strings.HasPrefix(strings.ToLower(base), prefix) {
+		return model
+	}
+	encoded := base[len(prefix):]
+	if encoded == "" {
+		return model
+	}
+	return reverseString(encoded) + suffix
 }
 
 func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
@@ -611,18 +611,19 @@ func isWebSocketUpgrade(r *http.Request) bool {
 
 func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
-	proxy := httputil.NewSingleHostReverseProxy(a.cpa.BaseURL)
-	proxy.Transport = a.cpa.HTTP.Transport
+	targetCPA := a.inferenceCPA()
+	proxy := httputil.NewSingleHostReverseProxy(targetCPA.BaseURL)
+	proxy.Transport = targetCPA.HTTP.Transport
 	statusCode := 0
 	proxy.ModifyResponse = func(response *http.Response) error {
 		statusCode = response.StatusCode
-		a.cpa.RecordTransportResult(nil)
+		targetCPA.RecordTransportResult(nil)
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, request *http.Request, err error) {
 		statusCode = http.StatusBadGateway
 		if request == nil || request.Context().Err() == nil {
-			a.cpa.RecordTransportResult(err)
+			targetCPA.RecordTransportResult(err)
 		}
 		slog.Error("websocket proxy", "request_id", requestID, "error", err)
 		writeError(w, statusCode, "cpa_unavailable", "CPA 暂时不可用")
@@ -631,13 +632,15 @@ func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.K
 	proxy.Director = func(request *http.Request) {
 		original(request)
 		stripRelayHeaders(request.Header)
-		request.Header.Set("Authorization", "Bearer "+a.cfg.CPAAPIKey)
+		request.Header.Set("Authorization", "Bearer "+targetCPA.APIKey)
 		request.Header.Del("X-API-Key")
 		request.Header.Del("X-Goog-API-Key")
 		request.Header.Set("X-Relay-Request-ID", requestID)
 		if admission.CPAAuthID != "" {
 			request.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
-			setRoutingSignature(request.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
+			if a.cfg.DataPlane != "native" {
+				setRoutingSignature(request.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
+			}
 		}
 	}
 	w.Header().Set("X-Relay-Request-ID", requestID)

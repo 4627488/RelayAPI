@@ -244,6 +244,10 @@ func (a *App) adminParentObservations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Request) {
+	if a.cfg.DataPlane == "native" {
+		a.syncNativeParentSubscriptions(w, r)
+		return
+	}
 	if !a.requireCPAManagement(w) {
 		return
 	}
@@ -310,6 +314,40 @@ func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Reques
 	a.refreshBridgeStatus(r.Context())
 	quota := a.syncParentQuotas(r.Context(), items)
 	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": quota})
+}
+
+func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Request) {
+	syncStartedAt := time.Now()
+	rows, err := a.store.ListUpstreamCredentials(r.Context())
+	if err != nil {
+		writeError(w, 500, "database_error", err.Error())
+		return
+	}
+	items := make([]store.ParentSubscription, 0, len(rows))
+	seen := make([]string, 0, len(rows))
+	for _, row := range rows {
+		status := "available"
+		if !row.Enabled {
+			status = "disabled"
+		}
+		now := time.Now()
+		item, syncErr := a.store.SyncParentSubscription(r.Context(), store.ParentSubscription{
+			CPAAuthID: row.ID, CPAAuthIndex: row.ID, CPAAuthName: row.ID, Name: row.Name, Provider: row.Provider,
+			PlanType: "native", Status: status, CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
+			Enabled: true, CPAUnavailable: !row.Enabled, CPAModelAllowlist: row.Models, Metadata: json.RawMessage(`{"source":"native"}`), LastSyncedAt: &now,
+		})
+		if syncErr != nil {
+			writeError(w, 500, "database_error", syncErr.Error())
+			return
+		}
+		items = append(items, item)
+		seen = append(seen, row.ID)
+	}
+	if err = a.store.MarkMissingParentSubscriptions(r.Context(), seen, syncStartedAt); err != nil {
+		writeError(w, 500, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": map[string]any{"supported": 0, "mode": "native"}})
 }
 
 func (a *App) cpaAuthModels(r *http.Request, name string) ([]string, bool) {

@@ -169,7 +169,7 @@ export function PricingView() {
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="已接入模型" value={prices.available_models.length} hint="CPA 当前可调用" />
+        <Stat label="已接入模型" value={prices.available_models.length} hint="native 运行时可调用" />
         <Stat label="已定价" value={prices.available_models.filter((item) => item.priced).length} hint="可计算请求费用" />
         <Stat label="未定价" value={prices.available_models.filter((item) => !item.priced).length} hint="需要配置价格" />
         <Stat label="管理员覆盖" value={prices.available_models.filter((item) => item.source === "admin").length} hint="本站手动价格" />
@@ -198,7 +198,7 @@ export function PricingView() {
       <Card>
         <CardHeader>
           <CardTitle>已接入模型价目表</CardTitle>
-          <CardDescription>模型来自 CPA 当前模型列表。价格单位为 USD / 1M tokens。</CardDescription>
+          <CardDescription>模型来自 native 运行时目录。价格单位为 USD / 1M tokens。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="relative max-w-sm">
@@ -240,7 +240,7 @@ export function PricingView() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle>CPA 多维倍率规则</CardTitle><CardDescription>可用字段：{fields.join("、")}</CardDescription></CardHeader>
+          <CardHeader><CardTitle>多维倍率规则</CardTitle><CardDescription>可用字段：{fields.join("、")}</CardDescription></CardHeader>
           <CardContent className="flex flex-col gap-3">
             <Textarea value={ruleText} onChange={(event) => setRuleText(event.target.value)} className="min-h-52 font-mono text-xs" />
             <Button variant="outline" onClick={() => void saveJSON("rules")}>保存 {rules.length} 条规则</Button>

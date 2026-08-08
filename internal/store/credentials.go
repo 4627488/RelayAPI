@@ -97,6 +97,17 @@ func (s Store) ListUpstreamCredentials(ctx context.Context) ([]UpstreamCredentia
 	return result, nil
 }
 
+func (s Store) DeleteUpstreamCredential(ctx context.Context, id string) error {
+	result := scoped(ctx, s.DB).Delete(&db.UpstreamCredential{}, "id = ?", strings.TrimSpace(id))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s Store) openUpstreamCredential(item db.UpstreamCredential) (UpstreamCredentialSnapshot, error) {
 	document, err := s.secretBox.Open(item.SealedDocument, credentialAssociatedData(item.ID))
 	if err != nil {

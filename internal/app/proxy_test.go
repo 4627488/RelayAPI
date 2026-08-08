@@ -1,12 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -107,6 +109,28 @@ func TestRequestMetadataReadsWebSocketQueryModel(t *testing.T) {
 	meta := requestMetadata(nil, request)
 	if meta.Model != "gpt-realtime" || !meta.Stream {
 		t.Fatalf("metadata = %+v", meta)
+	}
+}
+
+func TestRequestMetadataReadsMultipartImageModel(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("model", "gpt-image-1"); err != nil {
+		t.Fatal(err)
+	}
+	file, err := writer.CreateFormFile("image", "input.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.Write([]byte("not-a-real-png"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	meta := requestMetadata(body.Bytes(), request)
+	if meta.Model != "gpt-image-1" {
+		t.Fatalf("model = %q", meta.Model)
 	}
 }
 

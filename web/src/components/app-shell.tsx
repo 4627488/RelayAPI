@@ -14,6 +14,7 @@ import {
   PlugIcon,
   SendIcon,
   ShieldCheckIcon,
+  SlidersHorizontalIcon,
   SunIcon,
   UserRoundIcon,
   UsersIcon,
@@ -53,7 +54,7 @@ import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
 import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
 
-export type Page = "overview" | "usage" | "keys" | "logs" | "guide" | "users" | "invitations" | "providers" | "subscriptions" | "pricing"
+export type Page = "overview" | "usage" | "keys" | "logs" | "guide" | "users" | "invitations" | "providers" | "settings" | "subscriptions" | "pricing"
 export type Workspace = "user" | "admin"
 
 interface NavigationItem {
@@ -103,6 +104,7 @@ const adminItems: NavigationItem[] = [
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "invitations", label: "邀请", icon: SendIcon },
   { id: "providers", label: "模型账户", icon: PlugIcon },
+  { id: "settings", label: "系统设置", icon: SlidersHorizontalIcon },
   { id: "subscriptions", label: "订阅分配", icon: PackageOpenIcon },
   { id: "usage", label: "全局用量", icon: BarChart3Icon },
   { id: "pricing", label: "模型定价", icon: CircleDollarSignIcon },

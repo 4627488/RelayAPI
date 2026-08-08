@@ -44,7 +44,7 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 		&BillingLedger{}, &UsageDailyRollup{}, &RequestLog{}, &RequestLogDetail{}, &CPALifecycleEvent{}, &Invitation{}, &AgentSetup{},
 		&ParentSubscription{}, &ParentQuotaWindow{}, &ParentQuotaObservation{},
 		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{},
-		&UpstreamCredential{},
+		&UpstreamCredential{}, &RuntimeSetting{},
 	); err != nil {
 		return nil, fmt.Errorf("gorm automigrate: %w", err)
 	}
