@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -246,11 +247,19 @@ func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Request) {
-	syncStartedAt := time.Now()
-	rows, err := a.store.ListUpstreamCredentials(r.Context())
+	items, err := a.syncNativeParentSubscriptionRows(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": map[string]any{"mode": "native"}})
+}
+
+func (a *App) syncNativeParentSubscriptionRows(ctx context.Context) ([]store.ParentSubscription, error) {
+	syncStartedAt := time.Now()
+	rows, err := a.store.ListUpstreamCredentials(ctx)
+	if err != nil {
+		return nil, err
 	}
 	items := make([]store.ParentSubscription, 0, len(rows))
 	seen := make([]string, 0, len(rows))
@@ -260,23 +269,21 @@ func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Reque
 			status = "disabled"
 		}
 		now := time.Now()
-		item, syncErr := a.store.SyncNativeParentSubscription(r.Context(), store.ParentSubscription{
+		item, syncErr := a.store.SyncNativeParentSubscription(ctx, store.ParentSubscription{
 			CPAAuthID: row.ID, CPAAuthIndex: row.ID, CPAAuthName: row.ID, Name: row.Name, Provider: row.Provider,
 			PlanType: "native", Status: status, CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
 			Enabled: true, CPAUnavailable: !row.Enabled, CPAModelAllowlist: row.Models, Metadata: json.RawMessage(`{"source":"native"}`), LastSyncedAt: &now,
 		})
 		if syncErr != nil {
-			writeError(w, 500, "database_error", syncErr.Error())
-			return
+			return nil, syncErr
 		}
 		items = append(items, item)
 		seen = append(seen, row.ID)
 	}
-	if err = a.store.MarkMissingParentSubscriptions(r.Context(), seen, syncStartedAt); err != nil {
-		writeError(w, 500, "database_error", err.Error())
-		return
+	if err = a.store.MarkMissingParentSubscriptions(ctx, seen, syncStartedAt); err != nil {
+		return nil, err
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": map[string]any{"mode": "native"}})
+	return items, nil
 }
 
 func (a *App) adminChildSubscriptions(w http.ResponseWriter, r *http.Request) {

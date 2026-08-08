@@ -70,6 +70,9 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	a := &App{
 		cfg: cfg, store: dataStore, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
 	}
+	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
+		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
+	}
 	if err := a.startEmbeddedCPA(ctx); err != nil {
 		return nil, err
 	}
