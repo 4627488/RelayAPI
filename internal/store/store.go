@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -876,9 +877,9 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	}
 	switch input.Status {
 	case "success":
-		query = query.Where("status_code >= 200 AND status_code < 400")
+		query = query.Where("(status_code = ? OR (status_code >= 200 AND status_code < 400)) AND COALESCE(error_code, '') = ''", http.StatusSwitchingProtocols)
 	case "error":
-		query = query.Where("status_code = 0 OR status_code >= 400")
+		query = query.Where("status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> ''")
 	case "stream":
 		query = query.Where("stream = ?", true)
 	}
@@ -906,7 +907,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	}
 	var summary LogSummary
 	if err := summaryQuery.Select(
-		"count(*) AS requests, COALESCE(sum(CASE WHEN status_code = 0 OR status_code >= 400 THEN 1 ELSE 0 END),0) AS errors, " +
+		"count(*) AS requests, COALESCE(sum(CASE WHEN status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
 			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, COALESCE(avg(latency_ms),0) AS average_latency",
 	).Scan(&summary).Error; err != nil {
@@ -1052,7 +1053,7 @@ func (s Store) AdminOverview(ctx context.Context) (map[string]any, error) {
 	if err := database.Model(&db.RequestLog{}).Select(
 		"count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+
 			"COALESCE(sum(cost_nano_usd),0) AS cost, "+
-			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 THEN 1 ELSE 0 END),0) AS errors",
+			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors",
 	).Where("started_at >= ?", dayStart).Scan(&today).Error; err != nil {
 		return nil, err
 	}
@@ -1087,7 +1088,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	var total summary
 	if err := base.Joins("LEFT JOIN parent_subscriptions ON parent_subscriptions.id = request_logs.parent_subscription_id").Select(
 		"count(*) AS requests, " +
-			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 THEN 1 ELSE 0 END),0) AS errors, " +
+			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(request_logs.error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
 			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode = 'observed' THEN cost_nano_usd ELSE 0 END),0) AS subscription_covered, " +
 			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode = 'observed' THEN 0 ELSE cost_nano_usd END),0) AS balance_charged",
@@ -1124,7 +1125,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	dailyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
 			"to_char(started_at, 'YYYY-MM-DD') AS date, count(*) AS requests, "+
-				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 THEN 1 ELSE 0 END),0) AS errors, "+
+				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
 		).Where("started_at >= ?", since)
 	if tenantID != "" {
@@ -1216,7 +1217,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	apiKeyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
 			"api_key_id, api_key_name, api_key_prefix, tenant_name, count(*) AS requests, "+
-				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 THEN 1 ELSE 0 END),0) AS errors, "+
+				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
 		).Where("started_at >= ?", since)
 	if tenantID != "" {

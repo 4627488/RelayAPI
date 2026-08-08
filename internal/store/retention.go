@@ -217,7 +217,7 @@ func (s Store) compactRequestLogs(ctx context.Context, cutoff time.Time, batch i
 		var rollups []db.UsageDailyRollup
 		if err := tx.Raw(`SELECT date_trunc('day', l.started_at)::date AS day, l.tenant_id, l.model,
 			count(*) AS requests,
-			COALESCE(sum(CASE WHEN l.status_code >= 400 OR l.status_code = 0 THEN 1 ELSE 0 END),0) AS errors,
+			COALESCE(sum(CASE WHEN l.status_code >= 400 OR l.status_code = 0 OR COALESCE(l.error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors,
 			COALESCE(sum(l.prompt_tokens),0) AS prompt_tokens, COALESCE(sum(l.completion_tokens),0) AS completion_tokens,
 			COALESCE(sum(l.cached_tokens),0) AS cached_tokens, COALESCE(sum(l.cache_write_tokens),0) AS cache_write_tokens,
 			COALESCE(sum(l.reasoning_tokens),0) AS reasoning_tokens, COALESCE(sum(l.total_tokens),0) AS total_tokens,

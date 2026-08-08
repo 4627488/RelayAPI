@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/4627488/RelayAPI/internal/store"
 )
 
 func TestSanitizedHeadersRedactsSecrets(t *testing.T) {
@@ -94,9 +96,12 @@ func TestRequestTypeRecognizesSupportedSurfaces(t *testing.T) {
 		"/v1beta/models/gemini:streamGenerateContent": "gemini.streamGenerateContent",
 	}
 	for path, expected := range tests {
-		if got := requestType(path); got != expected {
+		if got := requestType(path, false); got != expected {
 			t.Fatalf("requestType(%q) = %q, want %q", path, got, expected)
 		}
+	}
+	if got := requestType("/v1/responses/ws", true); got != "responses.websocket" {
+		t.Fatalf("websocket request type = %q", got)
 	}
 }
 
@@ -119,5 +124,13 @@ func TestBoundedErrorTextNeverReturnsInvalidUTF8(t *testing.T) {
 	value = boundedErrorText(string([]byte{'a', 0xff, 'b'}))
 	if !utf8.ValidString(value) || value != "a�b" {
 		t.Fatalf("invalid input was not normalized: %q", value)
+	}
+}
+
+func TestCaptureWebSocketRequestStoresFirstFrame(t *testing.T) {
+	detail := &store.LogDetailInput{}
+	captureWebSocketRequest(detail, []byte(`{"type":"response.create","model":"gpt-5.6"}`))
+	if !strings.Contains(detail.RequestBody, "response.create") || detail.RequestBodyBytes == 0 || detail.RequestBodyTruncated {
+		t.Fatalf("captured websocket request = %+v", detail)
 	}
 }

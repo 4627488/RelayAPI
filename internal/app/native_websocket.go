@@ -21,7 +21,7 @@ const responsesWebSocketBeta = "responses_websockets=2026-02-06"
 
 func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
-	connected, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, admission, meta, requestID)
+	connected, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, admission, meta, requestID, logContext.detail)
 	if resolvedMeta.Model != "" {
 		meta = resolvedMeta
 	}
@@ -48,14 +48,20 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	if err != nil && !normalWebSocketClose(err) {
 		slog.Warn("native websocket proxy", "request_id", requestID, "error", err)
+		if connected {
+			logContext.errorCode = "websocket_session_error"
+		}
+		logContext.detail.ErrorName = logContext.errorCode
+		logContext.detail.ErrorMessage = boundedErrorText(err.Error())
 	}
-	logContext.detail.StageTimings = timingJSON(map[string]int64{"total_ms": time.Since(started).Milliseconds()})
+	duration := time.Since(started).Milliseconds()
+	logContext.detail.StageTimings = timingJSON(map[string]int64{"websocket_duration_ms": duration, "total_ms": duration})
 	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, nil, false, settled, actual, errorString(err), logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
 func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, admission store.Admission,
-	meta requestMeta, requestID string) (bool, requestMeta, error) {
+	meta requestMeta, requestID string, logDetail *store.LogDetailInput) (bool, requestMeta, error) {
 	subprotocols := websocket.Subprotocols(r)
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout:  30 * time.Second,
@@ -80,6 +86,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		writeNativeWebSocketError(downstream, "invalid_request", err.Error())
 		return false, meta, err
 	}
+	captureWebSocketRequest(logDetail, firstFrame)
 	if meta.Model == "" {
 		frameMeta := readRequestMeta(firstFrame, r.URL.Path)
 		meta = resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)

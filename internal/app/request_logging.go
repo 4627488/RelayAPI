@@ -76,7 +76,13 @@ func sampledRequest(requestID string, ppm int) bool {
 	return int(hash.Sum64()%1_000_000) < ppm
 }
 
-func requestType(path string) string {
+func requestType(path string, websocket bool) string {
+	if websocket {
+		if strings.Contains(path, "/responses") {
+			return "responses.websocket"
+		}
+		return "websocket"
+	}
 	switch {
 	case strings.Contains(path, "/responses"):
 		return "responses"
@@ -95,6 +101,13 @@ func requestType(path string) string {
 	default:
 		return strings.Trim(strings.TrimSpace(path), "/")
 	}
+}
+
+func captureWebSocketRequest(detail *store.LogDetailInput, payload []byte) {
+	if detail == nil {
+		return
+	}
+	detail.RequestBody, detail.RequestBodyTruncated, detail.RequestBodyBytes = boundedDetail(payload)
 }
 
 func baseRequestDetail(r *http.Request, body []byte) *store.LogDetailInput {

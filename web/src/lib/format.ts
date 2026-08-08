@@ -35,3 +35,13 @@ export function dateTime(value: string | null | undefined) {
 export function initials(name?: string) {
   return (name?.trim().slice(0, 2) || "RA").toUpperCase()
 }
+
+export function requestLogSucceeded(statusCode: number, errorCode?: string) {
+  return !errorCode && (statusCode === 101 || (statusCode >= 200 && statusCode < 400))
+}
+
+export function requestLogStatus(statusCode: number) {
+  if (!statusCode) return "中断"
+  if (statusCode === 101) return "101 · WS"
+  return String(statusCode)
+}

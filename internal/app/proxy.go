@@ -586,7 +586,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 	err := a.store.WriteLog(context.WithoutCancel(r.Context()), store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
 		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
-		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path),
+		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
 		AuthIndex: admission.CPAAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
 		ChildSubscriptionID: admission.ChildSubscriptionID,
@@ -703,7 +703,8 @@ func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.K
 			slog.Error("settle websocket request", "request_id", requestID, "error", err)
 		}
 	}
-	logContext.detail.StageTimings = timingJSON(map[string]int64{"total_ms": time.Since(started).Milliseconds()})
+	duration := time.Since(started).Milliseconds()
+	logContext.detail.StageTimings = timingJSON(map[string]int64{"websocket_duration_ms": duration, "total_ms": duration})
 	if statusCode != http.StatusSwitchingProtocols {
 		logContext.errorCode = "websocket_proxy_error"
 	}

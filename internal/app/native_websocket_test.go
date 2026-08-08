@@ -59,7 +59,7 @@ func TestNativeResponsesWebSocketEndToEnd(t *testing.T) {
 	}
 	app.engine = dataplane.NewEngine(translator, app.transports)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, store.Admission{}, requestMeta{}, "request-test")
+		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, store.Admission{}, requestMeta{}, "request-test", nil)
 	}))
 	defer downstream.Close()
 
@@ -140,7 +140,7 @@ func TestNativeResponsesWebSocketReusesCPAExecutorSession(t *testing.T) {
 		translator: translator, transports: dataplane.NewTransportPool(4, time.Minute)}
 	app.engine = dataplane.NewEngine(translator, app.transports)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, store.Admission{}, requestMeta{}, "session-test")
+		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, store.Admission{}, requestMeta{}, "session-test", nil)
 	}))
 	defer downstream.Close()
 

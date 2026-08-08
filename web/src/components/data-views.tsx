@@ -37,7 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { RequestLog, UsageReport } from "@/lib/api"
-import { compact, compactTokens, dateTime, money } from "@/lib/format"
+import { compact, compactTokens, dateTime, money, requestLogStatus, requestLogSucceeded } from "@/lib/format"
 
 interface Metric {
   label: string
@@ -249,8 +249,8 @@ export function LogsTable({ logs }: { logs: RequestLog[] }) {
                 <TableRow key={log.id}>
                   <TableCell className="text-muted-foreground">{dateTime(log.started_at)}</TableCell>
                   <TableCell>
-                    <Badge variant={log.status_code >= 200 && log.status_code < 400 ? "secondary" : "destructive"}>
-                      {log.status_code || "中断"}
+                    <Badge variant={requestLogSucceeded(log.status_code, log.error_code) ? "secondary" : "destructive"}>
+                      {requestLogStatus(log.status_code)}
                     </Badge>
                   </TableCell>
                   <TableCell className="max-w-52 truncate font-mono text-xs">{log.model || log.path}</TableCell>

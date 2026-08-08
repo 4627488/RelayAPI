@@ -29,7 +29,7 @@ import {
   type RequestLogDetail,
   type RequestLogPage,
 } from "@/lib/api"
-import { compact, compactTokens, dateTime, money } from "@/lib/format"
+import { compact, compactTokens, dateTime, money, requestLogStatus, requestLogSucceeded } from "@/lib/format"
 
 const emptyPage: RequestLogPage = {
   items: [],
@@ -160,8 +160,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                 <TableRow key={log.id} className="cursor-pointer" onClick={() => void openDetail(log)}>
                   <TableCell className="whitespace-nowrap text-muted-foreground">{dateTime(log.started_at)}</TableCell>
                   <TableCell>
-                    <Badge variant={log.status_code >= 200 && log.status_code < 400 ? "secondary" : "destructive"}>
-                      {log.status_code || "中断"}
+                    <Badge variant={requestLogSucceeded(log.status_code, log.error_code) ? "secondary" : "destructive"}>
+                      {requestLogStatus(log.status_code)}
                     </Badge>
                   </TableCell>
                   <TableCell>

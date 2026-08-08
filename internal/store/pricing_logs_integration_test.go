@@ -181,6 +181,30 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		item.InputNanoUSDPerToken != 10 || item.RequestCount != 1 {
 		t.Fatalf("pending historical price = %+v", item)
 	}
+
+	for _, item := range []struct {
+		id, errorCode string
+	}{
+		{id: identity.NewID()},
+		{id: identity.NewID(), errorCode: "websocket_session_error"},
+	} {
+		if err := dataStore.WriteLog(ctx, LogInput{
+			ID: item.id, TenantID: tenantID, APIKeyID: keyID, Model: "ws-model",
+			Method: "GET", Path: "/v1/responses/ws", RequestType: "responses.websocket",
+			StatusCode: 101, Stream: true, ErrorCode: item.errorCode,
+			Settled: true, StartedAt: started, CompletedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	successPage, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Model: "ws-model", Status: "success"})
+	if err != nil || successPage.Total != 1 || successPage.Summary.Errors != 0 {
+		t.Fatalf("successful websocket logs = %+v, err=%v", successPage, err)
+	}
+	errorPage, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Model: "ws-model", Status: "error"})
+	if err != nil || errorPage.Total != 1 || errorPage.Summary.Errors != 1 {
+		t.Fatalf("failed websocket logs = %+v, err=%v", errorPage, err)
+	}
 }
 
 func TestPostgresStringArrayPreservesEmptyArray(t *testing.T) {
