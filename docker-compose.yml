@@ -10,13 +10,6 @@ services:
       GOMEMLIMIT: ${RELAY_GOMEMLIMIT:-576MiB}
       GOGC: "50"
       GODEBUG: madvdontneed=1
-      RELAY_CPA_IMPORT_AUTH_DIR: /migration/cpa-auths
-      RELAY_CPA_IMPORT_CONFIG: /migration/cpa-config.yaml
-    volumes:
-      # Temporary read-only migration source. Native encrypted copies live in
-      # Postgres, so these mounts can be removed after the CPA cutover.
-      - ./cliproxyapi/config.yaml:/migration/cpa-config.yaml:ro
-      - ./cliproxyapi/auths:/migration/cpa-auths:ro
     ports:
       - "8080:3000"
     depends_on:
@@ -29,7 +22,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: relay
-      POSTGRES_PASSWORD: change-me
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: relay
     volumes:
       - relay-postgres:/var/lib/postgresql/data
@@ -38,25 +31,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    networks: [relay]
-
-  # Optional migration/rollback service. It is not started in native mode.
-  cliproxyapi:
-    profiles: ["legacy-cpa"]
-    image: eceasy/cli-proxy-api:latest
-    restart: unless-stopped
-    mem_limit: ${CPA_MEMORY_LIMIT:-512m}
-    mem_reservation: ${CPA_MEMORY_RESERVATION:-384m}
-    stop_grace_period: 20s
-    environment:
-      GOMEMLIMIT: ${CPA_GOMEMLIMIT:-384MiB}
-      GOGC: "50"
-      GODEBUG: madvdontneed=1
-    volumes:
-      # Writable so the authenticated Relay admin panel can persist CPA's
-      # complete configuration through /v0/management/config.yaml.
-      - ./cliproxyapi/config.yaml:/CLIProxyAPI/config.yaml
-      - ./cliproxyapi/auths:/root/.cli-proxy-api
     networks: [relay]
 
 volumes:
