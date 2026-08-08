@@ -148,8 +148,8 @@ func (a *App) persistEmbeddedCredential(ctx context.Context, id string, document
 }
 
 func (a *App) inferenceCPA() *cpa.Client {
-	if a != nil && a.cfg.DataPlane == "native" && a.nativeCPA != nil {
+	if a != nil && a.nativeCPA != nil {
 		return a.nativeCPA
 	}
-	return a.cpa
+	return nil
 }

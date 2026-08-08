@@ -3,9 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +11,6 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"strings"
@@ -261,7 +257,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keyResolvedAt := time.Now()
-	if a.cfg.DataPlane == "native" && isNativeModelCatalogRequest(r) {
+	if isNativeModelCatalogRequest(r) {
 		a.proxyNativeModels(w, r, key)
 		return
 	}
@@ -375,14 +371,6 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			a.writeRejectedRequestLog(key, requestID, admission, meta, r, status, started, code, message, detail)
 			return
 		}
-		if a.cfg.DataPlane != "native" && admission.CPAAuthID != "" && !a.bridgeReady.Load() {
-			a.releaseReservation(requestID, true)
-			const message = "严格子订阅路由要求 CPA bridge 0.6.0 或更高版本"
-			writeError(w, http.StatusServiceUnavailable, "cpa_bridge_required", message)
-			detail := rejectedRequestDetail(r, body, true, "cpa_bridge_required", message, started)
-			a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusServiceUnavailable, started, "cpa_bridge_required", message, detail)
-			return
-		}
 		if priceConfigured {
 			if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
 				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
@@ -402,11 +390,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 
 	if websocket {
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		if a.cfg.DataPlane == "native" {
-			a.proxyNativeWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
-			return
-		}
-		a.proxyWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
+		a.proxyNativeWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
 		return
 	}
 
@@ -423,9 +407,6 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		upstream.Header.Set("X-Relay-Request-ID", requestID)
 		if admission.CPAAuthID != "" {
 			upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
-			if a.cfg.DataPlane != "native" {
-				setRoutingSignature(upstream.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
-			}
 		}
 		upstream.Host = targetCPA.BaseURL.Host
 		logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
@@ -655,67 +636,6 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
 }
 
-func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
-	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
-	targetCPA := a.inferenceCPA()
-	proxy := httputil.NewSingleHostReverseProxy(targetCPA.BaseURL)
-	proxy.Transport = targetCPA.HTTP.Transport
-	statusCode := 0
-	proxy.ModifyResponse = func(response *http.Response) error {
-		statusCode = response.StatusCode
-		targetCPA.RecordTransportResult(nil)
-		return nil
-	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, request *http.Request, err error) {
-		statusCode = http.StatusBadGateway
-		if request == nil || request.Context().Err() == nil {
-			targetCPA.RecordTransportResult(err)
-		}
-		slog.Error("websocket proxy", "request_id", requestID, "error", err)
-		writeError(w, statusCode, "cpa_unavailable", "CPA 暂时不可用")
-	}
-	original := proxy.Director
-	proxy.Director = func(request *http.Request) {
-		original(request)
-		stripRelayHeaders(request.Header)
-		request.Header.Set("Authorization", "Bearer "+targetCPA.APIKey)
-		request.Header.Del("X-API-Key")
-		request.Header.Del("X-Goog-API-Key")
-		request.Header.Set("X-Relay-Request-ID", requestID)
-		if admission.CPAAuthID != "" {
-			request.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
-			if a.cfg.DataPlane != "native" {
-				setRoutingSignature(request.Header, requestID, admission.CPAAuthID, a.cfg.CPAPluginSecret, time.Now())
-			}
-		}
-	}
-	w.Header().Set("X-Relay-Request-ID", requestID)
-	proxy.ServeHTTP(w, r)
-	actual := max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
-	settled := !billable
-	if billable {
-		var err error
-		if statusCode == http.StatusSwitchingProtocols {
-			err = a.store.SettleRequestReservation(context.Background(), requestID, actual, false)
-		} else {
-			actual = 0
-			err = a.store.ReleaseRequestReservation(context.Background(), requestID)
-		}
-		if err == nil {
-			settled = true
-		} else {
-			slog.Error("settle websocket request", "request_id", requestID, "error", err)
-		}
-	}
-	duration := time.Since(started).Milliseconds()
-	logContext.detail.StageTimings = timingJSON(map[string]int64{"websocket_duration_ms": duration, "total_ms": duration})
-	if statusCode != http.StatusSwitchingProtocols {
-		logContext.errorCode = "websocket_proxy_error"
-	}
-	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, nil, false, settled, actual, "", logContext)
-	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
-}
-
 func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.AdmissionStatus) cpaTransportError {
 	retryAfter := int64(1)
 	httpStatus := http.StatusServiceUnavailable
@@ -838,13 +758,6 @@ func stripRelayHeaders(header http.Header) {
 	}
 }
 
-func setRoutingSignature(header http.Header, requestID, authID, secret string, now time.Time) {
-	timestamp := strconv.FormatInt(now.Unix(), 10)
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(requestID + "\n" + authID + "\n" + timestamp))
-	header.Set("X-Relay-Plugin-Timestamp", timestamp)
-	header.Set("X-Relay-Plugin-Signature", hex.EncodeToString(mac.Sum(nil)))
-}
 func hopHeader(name string) bool {
 	switch strings.ToLower(name) {
 	case "connection", "proxy-connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade":

@@ -3,9 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"mime/multipart"
@@ -256,26 +253,5 @@ func TestStripRelayHeaders(t *testing.T) {
 	}
 	if header.Get("X-Api-Key") != "public-key" {
 		t.Fatal("non-Relay headers must be preserved")
-	}
-}
-
-func TestSetRoutingSignature(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	header := make(http.Header)
-	setRoutingSignature(header, "request-1", "auth-2", "shared-secret", now)
-	mac := hmac.New(sha256.New, []byte("shared-secret"))
-	_, _ = mac.Write([]byte("request-1\nauth-2\n1800000000"))
-	if got := header.Get("X-Relay-Plugin-Signature"); got != hex.EncodeToString(mac.Sum(nil)) {
-		t.Fatalf("signature = %q", got)
-	}
-}
-
-func TestExtractModelsFromCPAResponse(t *testing.T) {
-	models := extractModels(map[string]any{"models": []any{
-		map[string]any{"id": "gpt-5.4"},
-		map[string]any{"name": "claude-sonnet-4-6"},
-	}})
-	if len(models) != 2 || models[0] != "gpt-5.4" || models[1] != "claude-sonnet-4-6" {
-		t.Fatalf("models = %#v", models)
 	}
 }

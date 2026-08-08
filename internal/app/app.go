@@ -20,12 +20,10 @@ import (
 	"github.com/4627488/RelayAPI/internal/config"
 	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/cpaimport"
-	"github.com/4627488/RelayAPI/internal/dataplane"
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
-	"github.com/4627488/RelayAPI/internal/upstreamauth"
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
 
@@ -36,17 +34,10 @@ type App struct {
 	mux               *http.ServeMux
 	stop              chan struct{}
 	wg                sync.WaitGroup
-	bridgeReady       atomic.Bool
-	bridgeVersion     atomic.Value
 	pricingSyncMu     sync.Mutex
 	oauthMu           sync.Mutex
 	oauthSession      *managedOAuthSession
 	setupBox          identity.SecretBox
-	translator        *dataplane.Translator
-	credentials       *dataplane.CredentialCatalog
-	transports        *dataplane.TransportPool
-	engine            *dataplane.Engine
-	authManager       *upstreamauth.Manager
 	nativeCPA         *cpa.Client
 	nativeCPARuntime  *relaybridge.Runtime
 	nativeCPAServer   *http.Server
@@ -65,7 +56,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	cpaAPIKey := cfg.CPAAPIKey
-	if cfg.DataPlane == "native" && strings.TrimSpace(cpaAPIKey) == "" {
+	if strings.TrimSpace(cpaAPIKey) == "" {
 		cpaAPIKey = "native-unused"
 	}
 	client, err := cpa.NewWithOptions(cfg.CPAURL, cpaAPIKey, cfg.CPAManagementKey, cpa.Options{
@@ -86,7 +77,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	if cfg.CPAImportAuthDir != "" || cfg.CPAImportConfigPath != "" {
-		report, importErr := cpaimport.Import(ctx, dataStore, cfg.CPAImportAuthDir, cfg.CPAImportConfigPath, cfg.DataPlane != "native")
+		report, importErr := cpaimport.Import(ctx, dataStore, cfg.CPAImportAuthDir, cfg.CPAImportConfigPath, false)
 		if importErr != nil {
 			return nil, fmt.Errorf("import CPA credentials: %w", importErr)
 		}
@@ -95,15 +86,10 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	a := &App{
 		cfg: cfg, store: dataStore, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
 	}
-	if cfg.DataPlane == "native" {
-		if err := a.startEmbeddedCPA(ctx); err != nil {
-			return nil, err
-		}
+	if err := a.startEmbeddedCPA(ctx); err != nil {
+		return nil, err
 	}
 	a.routes()
-	if cfg.DataPlane != "native" {
-		a.refreshBridgeStatus(ctx)
-	}
 	a.wg.Add(1)
 	go a.maintenance()
 	return a, nil
@@ -117,10 +103,6 @@ func (a *App) Close() {
 	}
 	if a.nativeCPARuntime != nil {
 		_ = a.nativeCPARuntime.Close(context.Background())
-	}
-	if a.engine != nil {
-		a.engine.CloseCompatibilitySessions()
-		a.transports.CloseIdleConnections()
 	}
 	if a.stop != nil {
 		close(a.stop)
@@ -136,30 +118,14 @@ func (a *App) maintenance() {
 	defer a.wg.Done()
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	quotaInterval := a.cfg.QuotaSyncInterval
-	if quotaInterval < time.Minute {
-		quotaInterval = 5 * time.Minute
-	}
-	quotaTicker := time.NewTicker(quotaInterval)
-	defer quotaTicker.Stop()
-	initialQuotaSync := time.NewTimer(15 * time.Second)
-	defer initialQuotaSync.Stop()
 	retentionTicker := time.NewTicker(time.Hour)
 	defer retentionTicker.Stop()
-	pricingTicker := time.NewTicker(24 * time.Hour)
-	defer pricingTicker.Stop()
-	initialPricingSync := time.NewTimer(2 * time.Second)
-	defer initialPricingSync.Stop()
 	initialRetention := time.NewTimer(30 * time.Second)
 	defer initialRetention.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			if a.cfg.DataPlane == "native" {
-				a.reclaimExecutorCachesUnderPressure()
-			} else {
-				a.refreshBridgeStatus(context.Background())
-			}
+			a.reclaimExecutorCachesUnderPressure()
 			if count, err := a.store.DeleteExpiredAgentSetups(context.Background(), time.Now()); err != nil {
 				slog.Error("delete expired agent setups", "error", err)
 			} else if count > 0 {
@@ -170,28 +136,8 @@ func (a *App) maintenance() {
 			} else if count > 0 {
 				slog.Info("reclaimed expired reservations", "count", count)
 			}
-		case <-initialQuotaSync.C:
-			if a.cfg.DataPlane != "native" {
-				a.refreshParentQuotas(context.Background())
-			}
-		case <-initialPricingSync.C:
-			if a.cfg.DataPlane != "native" {
-				if err := a.refreshPricingCatalog(context.Background(), true); err != nil {
-					slog.Warn("initial pricing catalog sync", "error", err)
-				}
-			}
 		case <-initialRetention.C:
 			a.runRetention(context.Background())
-		case <-quotaTicker.C:
-			if a.cfg.DataPlane != "native" {
-				a.refreshParentQuotas(context.Background())
-			}
-		case <-pricingTicker.C:
-			if a.cfg.DataPlane != "native" {
-				if err := a.refreshPricingCatalog(context.Background(), false); err != nil {
-					slog.Warn("periodic pricing catalog sync", "error", err)
-				}
-			}
 		case <-retentionTicker.C:
 			a.runRetention(context.Background())
 		case <-a.stop:
@@ -208,9 +154,6 @@ func (a *App) reclaimExecutorCachesUnderPressure() {
 	runtime.ReadMemStats(&stats)
 	if stats.HeapAlloc < a.cfg.ExecutorCachePressureBytes {
 		return
-	}
-	if a.engine != nil {
-		a.engine.ClearCompatibilityCaches()
 	}
 	relaybridge.ClearReasoningCaches()
 	debug.FreeOSMemory()
@@ -261,19 +204,6 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	return a.store.ApplyCatalog(ctx, result)
 }
 
-func (a *App) refreshBridgeStatus(ctx context.Context) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	ready, version, err := a.cpa.BridgeReady(ctx)
-	if err != nil {
-		slog.Warn("check CPA bridge", "error", err)
-		ready = false
-	}
-	ready = ready && a.cfg.CPAPluginSecret != ""
-	a.bridgeReady.Store(ready)
-	a.bridgeVersion.Store(version)
-}
-
 func (a *App) Handler() http.Handler {
 	return securityHeaders(a.recoverer(a.mux))
 }
@@ -284,8 +214,6 @@ func (a *App) routes() {
 	a.mux.HandleFunc("HEAD /setup/{token}/install.sh", a.agentSetupScript)
 	a.mux.HandleFunc("GET /setup/{token}/install.ps1", a.agentSetupScript)
 	a.mux.HandleFunc("HEAD /setup/{token}/install.ps1", a.agentSetupScript)
-	a.mux.HandleFunc("POST /internal/cpa/usage", a.cpaPluginUsage)
-	a.mux.HandleFunc("POST /internal/cpa/lifecycle", a.cpaPluginLifecycle)
 	a.mux.HandleFunc("GET /api/auth/status", a.authStatus)
 	a.mux.HandleFunc("POST /api/auth/login", a.tenantLogin)
 	a.mux.HandleFunc("POST /api/auth/register", a.register)
@@ -417,30 +345,21 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 		err = sqlDB.PingContext(ctx)
 	}
 	var cpaErr error
-	if a.cfg.DataPlane != "native" {
-		cpaErr = a.cpa.Ready(ctx)
-	}
 	activeSubscriptions, subscriptionErr := a.store.HasActiveChildSubscriptions(ctx, time.Now())
 	var credentialErr error
-	if a.cfg.DataPlane == "native" && (a.nativeCPARuntime == nil || a.nativeCPARuntime.CredentialCount() == 0) {
+	if a.nativeCPARuntime == nil || a.nativeCPARuntime.CredentialCount() == 0 {
 		credentialErr = errors.New("no enabled upstream credentials")
 	}
-	if a.cfg.DataPlane == "native" {
-		if serveErr := a.nativeCPAServeErr.Load(); serveErr != nil {
-			cpaErr, _ = serveErr.(error)
-		}
+	if serveErr := a.nativeCPAServeErr.Load(); serveErr != nil {
+		cpaErr, _ = serveErr.(error)
 	}
-	bridgeRequired := a.cfg.DataPlane != "native" && subscriptionErr == nil && activeSubscriptions
-	bridgeOK := !bridgeRequired || a.bridgeReady.Load()
 	status := http.StatusOK
-	if err != nil || cpaErr != nil || credentialErr != nil || subscriptionErr != nil || !bridgeOK {
+	if err != nil || cpaErr != nil || credentialErr != nil || subscriptionErr != nil {
 		status = http.StatusServiceUnavailable
 	}
-	bridgeVersion, _ := a.bridgeVersion.Load().(string)
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "data_plane": a.cfg.DataPlane, "upstream_credentials": errorText(credentialErr), "cpa": errorText(cpaErr),
-		"cpa_admission": a.inferenceCPA().AdmissionStatus(), "subscriptions": errorText(subscriptionErr),
-		"bridge": map[string]any{"required": bridgeRequired, "ready": a.bridgeReady.Load(), "version": bridgeVersion}})
+		"database": errorText(err), "data_plane": "embedded_cpa", "upstream_credentials": errorText(credentialErr), "cpa": errorText(cpaErr),
+		"cpa_admission": a.inferenceCPA().AdmissionStatus(), "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
 }
 
 func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {

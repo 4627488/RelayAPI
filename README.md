@@ -49,9 +49,9 @@ WebSocket 入口。
 `RELAY_API_KEY_ENCRYPTION_KEY` 未设置时兼容性回退到 `RELAY_SESSION_SECRET`。生产环境
 建议单独设置且持久备份；直接更换会导致已有 Key 无法再次显示，但不会影响其哈希鉴权。
 
-`RELAY_DATA_PLANE` 默认为 `native`。历史部署可临时设为 `cpa`，同时配置
-`CPA_URL`、`CPA_API_KEY`、`CPA_MANAGEMENT_KEY` 和 `CPA_PLUGIN_SECRET`，并使用
-`docker compose --profile legacy-cpa up` 启动外置兼容服务。
+RelayAPI 只使用内嵌 CPA 数据面，不需要单独部署 CLIProxyAPI、bridge 插件或选择
+数据面模式。HTTP、SSE 与 WebSocket 都通过同一个内嵌 CPA 运行时完成协议转换、
+凭据选择和上游连接。
 
 内置执行器由 RelayAPI 的准入控制保护：推理请求默认最多 16 个并发、32 个等待者，排队最多 2 秒；单请求体默认最多
 16 MiB，所有在途请求体合计最多 32 MiB。连续 3 次
@@ -207,67 +207,10 @@ go test ./...
 go vet ./...
 ```
 
-## CPA 薄插件
+## 内嵌 CPA 边界
 
-CPA bridge 发布为 `ghcr.io/4627488/relayapi-cpa-plugin`。普通余额计费可以不安装；
-父/子订阅的 AuthID 固定路由和通用额度扩展统一要求 bridge `0.6.0+`。0.6
-是控制面专用版本，不注册任何数据面拦截器；旧版 0.5 的请求关联会触发 CPA
-请求体复制和 ABI 序列化放大，不应继续用于生产。用附加 Compose 文件把动态库
-放入 CPA 的私有插件目录：
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
-  --profile plugin-install run --rm cpa-plugin
-docker compose -f docker-compose.yml -f docker-compose.plugin.yml \
-  up -d --no-deps --force-recreate cliproxyapi
-```
-
-在 CPA `config.yaml` 中启用：
-
-```yaml
-plugins:
-  enabled: true
-  dir: /CLIProxyAPI/plugins
-  configs:
-    relayapi-bridge:
-      enabled: true
-      priority: 10
-      secret: 与 CPA_PLUGIN_SECRET 相同
-      delegate: round-robin
-      quota_adapters_mode: append
-    claude-web-search-router:
-      enabled: true
-      priority: 20
-      route: xai_web_search
-      xai_model: grok-4.3
-      require_web_search_only: true
-```
-
-插件只负责 CPA 凭据选择扩展和额度探测。Relay 会用短时 HMAC 签名保护内部
-AuthID 路由指令；指定凭据不在 CPA 当前候选集时，插件会拒绝请求而不会悄悄切换
-到另一账户。计费仍使用 Relay 代理层关联到具体请求的响应用量，避免 CPA 插件
-事件缺少自定义关联 ID 时发生串账。请求体、响应体、TTFT 和终态传输错误均由
-Relay 代理层直接采集，不经过 CPA 插件 ABI 边界。
-
-`0.3.0` 的额度探测内核没有 Codex、xAI 或其他 provider 分支。内核只执行声明式
-adapter：按 provider 扩展键匹配、从 CPA 凭据渲染请求、通过 `host.http.do` 发起
-请求，并用 JSON 路径映射 plan、百分比、原始 limit/remaining 和 reset。Codex/xAI
-只是随 bridge 发布的默认 YAML 扩展包；可通过 `quota_adapters` 增加任意提供商，
-通过 `append` 覆盖默认项、`replace` 只使用自定义包，或设为 `disabled`。完整格式见
-[cliproxyapi-plugin/README.md](cliproxyapi-plugin/README.md)。
-
-## CLIProxyAPI 完整管理面
-
-“模型账户”面板不仅提供脱敏凭据列表和常用路由策略，还能维护 CPA 网关 API
-Keys、直接编辑完整 `config.yaml`，并调用任意 Management API。由此可以配置
-Gemini、Claude、Codex、XAI、Vertex、OpenAI-compatible 提供商、OAuth 模型
-别名/排除、代理、WebSocket、日志、插件与插件市场，以及 CPA 后续新增的管理
-能力，而不需要 RelayAPI 维护一份易过期的提供商注册表。
-
-面板同时提供结构化入口管理 Gemini、Interactions、Claude、Codex、xAI、Vertex、
-OpenAI-compatible API Key，支持 OAuth 模型别名/排除、全局代理、WebSocket 鉴权、
-额度耗尽切换、文件日志、插件市场、CPA Key 用量与事件队列。Kimi/xAI 的设备码
-授权与需要粘贴 localhost 回调地址的 OAuth 流程会采用不同交互。
-
-该桥仅允许 Relay 管理员会话访问，响应禁止缓存，CPA 本身仍应只位于私有网络。
-若启用 YAML 在线编辑，`cliproxyapi/config.yaml` 必须可写；Compose 示例已按此配置。
+RelayAPI 在进程内启动 CPA 的完整推理路由。外层负责租户鉴权、准入、计费和审计；
+内层负责协议语义、模型路由、凭据选择、重试及 WebSocket 会话状态。Responses
+WebSocket 的首帧与后续帧都透明交给内层处理，Relay 只读取终态事件中的 usage 并
+按连接内所有轮次累计结算。旧的外置 CPA 数据面、C-ABI bridge 和直连 executor
+适配层均已移除。

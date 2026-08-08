@@ -23,7 +23,7 @@ OpenAI / Anthropic / Gemini client
  RelayAPI: tenant key -> policy -> optional balance reservation
               |
               v
- CLIProxyAPI: protocol adapter -> model/alias router -> provider credential
+ embedded CPA: protocol adapter -> model/alias router -> provider credential
               |
               v
  RelayAPI: usage parser -> settlement -> audit log
@@ -89,34 +89,23 @@ CLIProxyAPI without silently inventing prices.
 - Routine management endpoints expose typed, validated credential/OAuth and
   runtime-policy operations using CPA's redacted responses. Full configuration
   access is explicitly confined to authenticated Relay administrators.
-- Administrators additionally get a no-store, session-protected transparent
-  Management API bridge. This is the compatibility escape hatch for the full
-  CPA configuration and future providers/plugins; it is never exposed to
-  tenant sessions or public API keys.
-- Health checks test both PostgreSQL and authenticated CLIProxyAPI model
-  discovery.
+- Health checks test PostgreSQL, the embedded runtime and configured upstream
+  credentials.
 
 ## Deployment boundary
 
-CLIProxyAPI should only be reachable on the private Docker network. Its public
-API key and management key are service credentials; tenant clients receive only
-`relay_*` keys. Provider credentials stay entirely inside CLIProxyAPI.
+The embedded CPA listener binds to an ephemeral loopback address and uses a
+random process-local key. Tenant clients receive only `relay_*` keys. Provider
+credentials are encrypted in PostgreSQL and loaded directly into the embedded
+runtime.
 
-## CPA v7 plugin boundary
+## Embedded CPA boundary
 
-`cliproxyapi-plugin/` 0.6+ is a control-plane-only C-ABI plugin with scheduler,
-management, and declarative quota-adapter capabilities. A trusted
-`X-Relay-CPA-Auth-ID` can select a specific candidate;
-otherwise the plugin delegates to CPA's built-in scheduler.
-
-The bridge deliberately declares no request interceptor, response interceptor,
-stream interceptor, usage callback, or completion callback. CPA clones request
-bodies before invoking a request interceptor and its RPC/C-ABI transport JSON
-encodes byte slices, so even a metadata-only interceptor amplifies large bodies
-several times before plugin code can discard them. Keeping the bridge out of
-the data plane removes that OOM multiplier. Relay captures request identity,
-responses, TTFT, terminal transport errors, and billing usage directly in its
-proxy path; `X-CPA-TRACE-ID` is consumed when CPA returns it.
+Relay does not call provider executors directly. HTTP, SSE and WebSocket
+requests enter CPA's complete public handler through a loopback connection, so
+prewarm, replay, compaction, credential pinning and multi-turn state retain CPA
+semantics. Relay observes terminal response events only for accounting and
+does not translate protocol frames.
 
 Relay request logs have separate summary and detail retention. Sensitive
 headers are redacted; bodies carry original byte counts and truncation flags.
@@ -124,11 +113,3 @@ The summary stores tenant/key display snapshots, CPA execution identity, TTFT,
 token breakdown, errors, and the immutable five-part pricing snapshot. Detail
 stores client and translated requests, upstream response, stage timings, and
 structured error context.
-
-Quota discovery follows the same ownership boundary. The bridge obtains one
-credential by stable CPA `auth_index`, executes adapter-declared HTTP requests
-through CPA's host client, and returns only normalized plan/window data. The Go
-runtime contains no provider aliases, endpoints, or response parsers. Bundled
-Codex/xAI definitions and administrator-supplied definitions use the same YAML
-schema and execution path. OAuth tokens, account identifiers, and raw upstream
-responses never cross into RelayAPI.

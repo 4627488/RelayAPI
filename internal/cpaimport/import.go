@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/4627488/RelayAPI/internal/dataplane"
 	"github.com/4627488/RelayAPI/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -43,6 +42,12 @@ type openAIModel struct {
 	Name  string `yaml:"name"`
 	Alias string `yaml:"alias"`
 	Image bool   `yaml:"image,omitempty"`
+}
+
+type modelRoute struct {
+	Public   string `json:"public"`
+	Upstream string `json:"upstream"`
+	Image    bool   `json:"image,omitempty"`
 }
 
 func Import(ctx context.Context, dataStore store.Store, authDir, configPath string, overwrite bool) (Report, error) {
@@ -115,7 +120,7 @@ func Import(ctx context.Context, dataStore store.Store, authDir, configPath stri
 	}
 
 	for providerIndex, provider := range legacyConfig.OpenAICompatibility {
-		routes := make([]dataplane.ModelRoute, 0, len(provider.Models))
+		routes := make([]modelRoute, 0, len(provider.Models))
 		models := make([]string, 0, len(provider.Models))
 		for _, model := range provider.Models {
 			public := strings.TrimSpace(model.Alias)
@@ -126,7 +131,7 @@ func Import(ctx context.Context, dataStore store.Store, authDir, configPath stri
 				continue
 			}
 			models = append(models, public)
-			routes = append(routes, dataplane.ModelRoute{Public: public, Upstream: strings.TrimSpace(model.Name), Image: model.Image})
+			routes = append(routes, modelRoute{Public: public, Upstream: strings.TrimSpace(model.Name), Image: model.Image})
 		}
 		for keyIndex, key := range provider.APIKeyEntries {
 			proxyURL := strings.TrimSpace(key.ProxyURL)

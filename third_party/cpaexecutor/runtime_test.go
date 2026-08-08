@@ -137,3 +137,28 @@ func TestRuntimeRoutesPinnedCredentialAndModelAlias(t *testing.T) {
 		t.Fatalf("route = %#v", response)
 	}
 }
+
+func TestRuntimeLeavesWebSocketModelAliasesToCPAStateMachine(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"public-model"},
+		Document: []byte(`{"type":"codex","access_token":"secret","model_routes":[{"public":"public-model","upstream":"upstream-model"}]}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	request := pluginapi.ModelRouteRequest{
+		RequestedModel: "public-model",
+		Headers: http.Header{
+			"Upgrade":             []string{"websocket"},
+			"X-Relay-Cpa-Auth-Id": []string{"codex"},
+		},
+	}
+	if response, handled := runtime.RouteModel(context.Background(), request); handled {
+		t.Fatalf("websocket model alias was routed outside CPA state machine: %#v", response)
+	}
+	if got := runtime.ResolveCredentialModel("codex", "public-model"); got != "upstream-model" {
+		t.Fatalf("resolved credential model = %q", got)
+	}
+}

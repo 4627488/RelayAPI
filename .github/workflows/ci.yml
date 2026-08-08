@@ -66,42 +66,6 @@ jobs:
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/relayapi
 
-  plugin:
-    name: CPA bridge
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: cliproxyapi-plugin
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: cliproxyapi-plugin/go.mod
-          cache: true
-          cache-dependency-path: cliproxyapi-plugin/go.sum
-
-      - name: Verify dependencies
-        run: go mod verify
-
-      - name: Check formatting
-        shell: bash
-        run: test -z "$(gofmt -l .)"
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test -race -count=1 ./...
-
-      - name: Build
-        run: go build -trimpath .
-
   frontend:
     name: Web frontend
     runs-on: ubuntu-latest
@@ -137,20 +101,10 @@ jobs:
         run: pnpm build
 
   images:
-    name: Build ${{ matrix.name }} image
+    name: Build RelayAPI image
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: RelayAPI
-            context: .
-            cache_scope: relayapi
-          - name: CPA bridge
-            context: ./cliproxyapi-plugin
-            cache_scope: relayapi-cpa-plugin
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -163,7 +117,7 @@ jobs:
       - name: Build image
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.context }}
+          context: .
           push: false
-          cache-from: type=gha,scope=${{ matrix.cache_scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
+          cache-from: type=gha,scope=relayapi
+          cache-to: type=gha,mode=max,scope=relayapi

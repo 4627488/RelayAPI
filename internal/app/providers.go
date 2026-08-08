@@ -51,133 +51,19 @@ func (a *App) relayCPA(w http.ResponseWriter, r *http.Request, method, endpoint 
 }
 
 func (a *App) adminProviderAccounts(w http.ResponseWriter, r *http.Request) {
-	if a.cfg.DataPlane == "native" {
-		a.nativeProviderAccounts(w, r)
-		return
-	}
-	if !a.requireCPAManagement(w) {
-		return
-	}
-	status, payload, err := a.cpa.Management(r.Context(), http.MethodGet, "auth-files", nil)
-	if err != nil || status < 200 || status >= 300 {
-		writeError(w, http.StatusBadGateway, "cpa_unavailable", "无法读取 CPA OAuth 凭据")
-		return
-	}
-	accounts, err := decodeProviderAccounts(payload)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "invalid_cpa_response", "CPA 返回了无效的 OAuth 凭据")
-		return
-	}
-	configWarning := ""
-	configStatus, configPayload, configErr := a.cpa.Management(r.Context(), http.MethodGet, "config", nil)
-	if configErr != nil || configStatus < 200 || configStatus >= 300 {
-		configWarning = "无法读取 CPA API Key 配置"
-	} else if configured, decodeErr := providerConfigAccounts(configPayload); decodeErr != nil {
-		configWarning = "CPA API Key 配置格式无效"
-	} else {
-		accounts = append(accounts, configured...)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": accounts, "warning": configWarning})
+	a.nativeProviderAccounts(w, r)
 }
 
 func (a *App) adminProviderModels(w http.ResponseWriter, r *http.Request) {
-	if a.cfg.DataPlane == "native" {
-		a.nativeProviderModels(w, r)
-		return
-	}
-	name := strings.TrimSpace(r.PathValue("name"))
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "凭据名称不能为空")
-		return
-	}
-	if path, index, ok := parseConfigAccountName(name); ok {
-		items, err := a.loadProviderConfigItems(r, path)
-		if err != nil || index >= len(items) {
-			writeError(w, http.StatusNotFound, "not_found", "API Key 账户不存在")
-			return
-		}
-		var item map[string]any
-		if json.Unmarshal(items[index], &item) != nil {
-			writeError(w, http.StatusBadGateway, "invalid_cpa_response", "CPA API Key 配置格式无效")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"models": providerModelNames(item["models"])})
-		return
-	}
-	a.relayCPA(w, r, http.MethodGet, "auth-files/models?name="+url.QueryEscape(name), nil)
+	a.nativeProviderModels(w, r)
 }
 
 func (a *App) adminProviderAccountUpdate(w http.ResponseWriter, r *http.Request) {
-	if a.cfg.DataPlane == "native" {
-		a.nativeProviderAccountUpdate(w, r)
-		return
-	}
-	var input struct {
-		Disabled *bool `json:"disabled"`
-	}
-	if !decodeJSON(w, r, &input) {
-		return
-	}
-	if input.Disabled == nil {
-		writeError(w, http.StatusBadRequest, "validation_error", "disabled 必填")
-		return
-	}
-	if path, index, ok := parseConfigAccountName(strings.TrimSpace(r.PathValue("name"))); ok {
-		if path != "openai-compatibility" {
-			writeError(w, http.StatusBadRequest, "unsupported_operation", "该 API Key 类型不支持停用，请删除后重新配置")
-			return
-		}
-		items, err := a.loadProviderConfigItems(r, path)
-		if err != nil || index >= len(items) {
-			writeError(w, http.StatusNotFound, "not_found", "兼容端点不存在")
-			return
-		}
-		var item map[string]any
-		if json.Unmarshal(items[index], &item) != nil {
-			writeError(w, http.StatusBadGateway, "invalid_cpa_response", "CPA 兼容端点配置格式无效")
-			return
-		}
-		item["disabled"] = *input.Disabled
-		items[index], _ = json.Marshal(item)
-		status, payload, err := a.saveProviderConfigItems(r, path, items)
-		if err != nil || status < 200 || status >= 300 {
-			writeError(w, http.StatusBadGateway, "cpa_update_failed", fmt.Sprintf("CPA 配置更新失败：%s", string(payload)))
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"disabled": *input.Disabled})
-		return
-	}
-	a.relayCPA(w, r, http.MethodPatch, "auth-files/status", map[string]any{
-		"name": r.PathValue("name"), "disabled": input.Disabled,
-	})
+	a.nativeProviderAccountUpdate(w, r)
 }
 
 func (a *App) adminProviderAccountDelete(w http.ResponseWriter, r *http.Request) {
-	if a.cfg.DataPlane == "native" {
-		a.nativeProviderAccountDelete(w, r)
-		return
-	}
-	name := strings.TrimSpace(r.PathValue("name"))
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "validation_error", "凭据名称不能为空")
-		return
-	}
-	if path, index, ok := parseConfigAccountName(name); ok {
-		items, err := a.loadProviderConfigItems(r, path)
-		if err != nil || index >= len(items) {
-			writeError(w, http.StatusNotFound, "not_found", "API Key 账户不存在")
-			return
-		}
-		items = append(items[:index], items[index+1:]...)
-		status, payload, err := a.saveProviderConfigItems(r, path, items)
-		if err != nil || status < 200 || status >= 300 {
-			writeError(w, http.StatusBadGateway, "cpa_update_failed", fmt.Sprintf("CPA 配置更新失败：%s", string(payload)))
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	a.relayCPA(w, r, http.MethodDelete, "auth-files?name="+url.QueryEscape(name), nil)
+	a.nativeProviderAccountDelete(w, r)
 }
 
 func (a *App) adminCodexOAuth(w http.ResponseWriter, r *http.Request) {
@@ -440,111 +326,38 @@ func (a *App) adminOAuthCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) adminProviderSettings(w http.ResponseWriter, r *http.Request) {
-	if a.cfg.DataPlane == "native" {
-		a.nativeSettings.RLock()
-		current := a.nativeSettings.value
-		a.nativeSettings.RUnlock()
-		if r.Method == http.MethodGet {
-			writeJSON(w, http.StatusOK, providerSettings{RequestRetry: current.RequestRetry, MaxRetryInterval: current.MaxRetryInterval, RoutingStrategy: current.RoutingStrategy})
-			return
-		}
-		var input providerSettings
-		if !decodeJSON(w, r, &input) {
-			return
-		}
-		current.RequestRetry = input.RequestRetry
-		current.MaxRetryInterval = input.MaxRetryInterval
-		current.RoutingStrategy = input.RoutingStrategy
-		if message := validateNativeRuntimeSettings(current); message != "" {
-			writeError(w, http.StatusBadRequest, "validation_error", message)
-			return
-		}
-		a.nativeSettings.RLock()
-		previous := a.nativeSettings.value
-		a.nativeSettings.RUnlock()
-		if err := a.store.PutRuntimeSetting(r.Context(), nativeRuntimeSettingsKey, current); err != nil {
-			writeError(w, http.StatusInternalServerError, "settings_save_failed", "配置持久化失败")
-			return
-		}
-		if err := a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(current)); err != nil {
-			_ = a.store.PutRuntimeSetting(r.Context(), nativeRuntimeSettingsKey, previous)
-			writeError(w, http.StatusInternalServerError, "runtime_update_failed", err.Error())
-			return
-		}
-		a.nativeSettings.Lock()
-		a.nativeSettings.value = current
-		a.nativeSettings.Unlock()
-		writeJSON(w, http.StatusOK, input)
-		return
-	}
-	if !a.requireCPAManagement(w) {
-		return
-	}
+	a.nativeSettings.RLock()
+	current := a.nativeSettings.value
+	a.nativeSettings.RUnlock()
 	if r.Method == http.MethodGet {
-		var result providerSettings
-		for endpoint, target := range map[string]any{
-			"request-retry": &struct {
-				Value *int `json:"request-retry"`
-			}{},
-			"max-retry-interval": &struct {
-				Value *int `json:"max-retry-interval"`
-			}{},
-			"routing/strategy": &struct {
-				Value *string `json:"strategy"`
-			}{},
-		} {
-			status, payload, err := a.cpa.Management(r.Context(), http.MethodGet, endpoint, nil)
-			if err != nil || status < 200 || status >= 300 || json.Unmarshal(payload, target) != nil {
-				writeError(w, http.StatusBadGateway, "cpa_unavailable", "无法读取 CPA 配置")
-				return
-			}
-			switch value := target.(type) {
-			case *struct {
-				Value *int `json:"request-retry"`
-			}:
-				if value.Value != nil {
-					result.RequestRetry = *value.Value
-				}
-			case *struct {
-				Value *int `json:"max-retry-interval"`
-			}:
-				if value.Value != nil {
-					result.MaxRetryInterval = *value.Value
-				}
-			case *struct {
-				Value *string `json:"strategy"`
-			}:
-				if value.Value != nil {
-					result.RoutingStrategy = *value.Value
-				}
-			}
-		}
-		writeJSON(w, http.StatusOK, result)
+		writeJSON(w, http.StatusOK, providerSettings{RequestRetry: current.RequestRetry, MaxRetryInterval: current.MaxRetryInterval, RoutingStrategy: current.RoutingStrategy})
 		return
 	}
 	var input providerSettings
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if input.RequestRetry < 0 || input.RequestRetry > 20 || input.MaxRetryInterval < 0 || input.MaxRetryInterval > 3600 ||
-		(input.RoutingStrategy != "round-robin" && input.RoutingStrategy != "fill-first") {
-		writeError(w, http.StatusBadRequest, "validation_error", "CPA 配置值无效")
+	current.RequestRetry = input.RequestRetry
+	current.MaxRetryInterval = input.MaxRetryInterval
+	current.RoutingStrategy = input.RoutingStrategy
+	if message := validateNativeRuntimeSettings(current); message != "" {
+		writeError(w, http.StatusBadRequest, "validation_error", message)
 		return
 	}
-	updates := []struct {
-		endpoint string
-		value    any
-	}{
-		{"request-retry", input.RequestRetry},
-		{"max-retry-interval", input.MaxRetryInterval},
-		{"routing/strategy", input.RoutingStrategy},
+	a.nativeSettings.RLock()
+	previous := a.nativeSettings.value
+	a.nativeSettings.RUnlock()
+	if err := a.store.PutRuntimeSetting(r.Context(), nativeRuntimeSettingsKey, current); err != nil {
+		writeError(w, http.StatusInternalServerError, "settings_save_failed", "配置持久化失败")
+		return
 	}
-	for _, update := range updates {
-		status, payload, err := a.cpa.Management(r.Context(), http.MethodPatch, update.endpoint, map[string]any{"value": update.value})
-		if err != nil || status < 200 || status >= 300 {
-			writeError(w, http.StatusBadGateway, "cpa_update_failed", fmt.Sprintf("CPA 配置更新失败：%s", string(payload)))
-			return
-		}
+	if err := a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(current)); err != nil {
+		_ = a.store.PutRuntimeSetting(r.Context(), nativeRuntimeSettingsKey, previous)
+		writeError(w, http.StatusInternalServerError, "runtime_update_failed", err.Error())
+		return
 	}
+	a.nativeSettings.Lock()
+	a.nativeSettings.value = current
+	a.nativeSettings.Unlock()
 	writeJSON(w, http.StatusOK, input)
 }

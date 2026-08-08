@@ -9,18 +9,16 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/4627488/RelayAPI/internal/billing"
-	"github.com/4627488/RelayAPI/internal/dataplane"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/gorilla/websocket"
-	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
-
-const responsesWebSocketBeta = "responses_websockets=2026-02-06"
 
 type nativeWebSocketAccounting struct {
 	admission store.Admission
@@ -89,13 +87,16 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
+// serveNativeWebSocket is a billing-aware gateway in front of the embedded CPA
+// server. Relay only inspects the first request for admission and terminal
+// response events for usage; all protocol behavior remains owned by CPA's
+// complete Responses WebSocket handler.
 func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext,
 	meta requestMeta, requestID string, logDetail *store.LogDetailInput, accounting *nativeWebSocketAccounting) (bool, requestMeta, error) {
-	subprotocols := websocket.Subprotocols(r)
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout:  30 * time.Second,
 		EnableCompression: true,
-		Subprotocols:      subprotocols,
+		Subprotocols:      websocket.Subprotocols(r),
 		CheckOrigin:       func(*http.Request) bool { return true },
 	}
 	downstream, err := upgrader.Upgrade(w, r, http.Header{"X-Relay-Request-ID": []string{requestID}})
@@ -110,16 +111,20 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	if err != nil {
 		return false, meta, err
 	}
-	if messageType != websocket.TextMessage || !json.Valid(firstFrame) {
+	if (messageType != websocket.TextMessage && messageType != websocket.BinaryMessage) || !json.Valid(firstFrame) {
 		err = fmt.Errorf("first websocket message must be a JSON response.create frame")
 		writeNativeWebSocketError(downstream, "invalid_request", err.Error())
 		return false, meta, err
 	}
 	captureWebSocketRequest(logDetail, firstFrame)
+	frameMeta := readRequestMeta(firstFrame, r.URL.Path)
 	if meta.Model == "" {
-		frameMeta := readRequestMeta(firstFrame, r.URL.Path)
-		meta = resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
-		meta.Stream = true
+		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
+		resolved.RequestedModel = frameMeta.Model
+		resolved.Stream = true
+		resolved.ServiceTier = frameMeta.ServiceTier
+		resolved.ReasoningEffort = frameMeta.ReasoningEffort
+		meta = resolved
 	}
 	if meta.Model == "" {
 		err = fmt.Errorf("response.create requires model")
@@ -141,52 +146,172 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		accounting.price = price
 		accounting.billable = true
 	}
-	plan, credential, err := a.credentials.Plan(r.URL.Path, accounting.admission.CPAAuthID, meta.Model, true)
-	if err != nil {
-		writeNativeWebSocketError(downstream, "route_unavailable", err.Error())
-		return false, meta, err
-	}
-	if plan.Upstream != dataplane.ProtocolCodex {
-		err = fmt.Errorf("provider %q does not support Responses WebSocket", plan.Provider)
-		writeNativeWebSocketError(downstream, "websocket_unsupported", err.Error())
-		return false, meta, err
-	}
-	defer a.engine.CloseWebSocketSession(plan.Provider, requestID)
-	connected := false
-	frame := firstFrame
-	for {
-		requireExisting := connected && websocketFrameRequiresSession(frame)
-		stream, executeErr := a.engine.ExecuteWebSocketTurn(r.Context(), requestID, plan, credential, r.Header, frame, requireExisting)
-		if executeErr != nil && executorStatusCode(executeErr) == http.StatusUnauthorized &&
-			(plan.Provider == "codex" || plan.Provider == "xai" || plan.Provider == "grok") {
-			if refreshErr := a.authManager.Refresh(r.Context(), credential.ID); refreshErr == nil {
-				plan, credential, executeErr = a.credentials.Plan(r.URL.Path, accounting.admission.CPAAuthID, meta.Model, true)
-				if executeErr == nil {
-					stream, executeErr = a.engine.ExecuteWebSocketTurn(r.Context(), requestID, plan, credential, r.Header, frame, requireExisting)
-				}
+	if a.nativeCPARuntime != nil {
+		upstreamModel := a.nativeCPARuntime.ResolveCredentialModel(accounting.admission.CPAAuthID, meta.Model)
+		if upstreamModel != "" && upstreamModel != frameMeta.Model {
+			firstFrame, err = rewriteRequestModel(firstFrame, r.URL, frameMeta.Model, upstreamModel)
+			if err != nil {
+				writeNativeWebSocketError(downstream, "invalid_request", "unable to resolve websocket model")
+				return false, meta, err
 			}
 		}
-		if executeErr != nil {
-			writeNativeWebSocketError(downstream, "upstream_unavailable", executeErr.Error())
-			return connected, meta, executeErr
-		}
-		connected = true
-		turnResult, forwardErr := forwardExecutorWebSocketTurn(r.Context(), downstream, stream.Chunks)
-		mergeNativeWebSocketResult(&accounting.result, turnResult)
-		if forwardErr != nil {
-			err = forwardErr
-			return connected, meta, err
-		}
+	}
 
-		messageType, frame, err = downstream.ReadMessage()
+	upstream, response, err := a.dialEmbeddedCPAWebSocket(r.Context(), r, accounting.admission, requestID)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	if err != nil {
+		writeNativeWebSocketError(downstream, "embedded_cpa_unavailable", err.Error())
+		return false, meta, err
+	}
+	defer upstream.Close()
+	upstream.SetReadLimit(a.cfg.CPAMaxRequestBytes)
+	if err = upstream.WriteMessage(messageType, firstFrame); err != nil {
+		return false, meta, err
+	}
+
+	stopCancel := context.AfterFunc(r.Context(), func() {
+		_ = downstream.Close()
+		_ = upstream.Close()
+	})
+	defer stopCancel()
+	type pumpResult struct {
+		err error
+	}
+	results := make(chan pumpResult, 2)
+	go func() {
+		results <- pumpResult{err: pumpWebSocketMessages(downstream, upstream, nil)}
+	}()
+	go func() {
+		results <- pumpResult{err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) {
+			mergeNativeWebSocketResult(&accounting.result, parseNativeWebSocketUsage(payload))
+		})}
+	}()
+
+	first := <-results
+	_ = downstream.Close()
+	_ = upstream.Close()
+	<-results
+	return true, meta, first.err
+}
+
+func (a *App) dialEmbeddedCPAWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (
+	*websocket.Conn, *http.Response, error) {
+	if a.nativeCPA == nil || a.nativeCPA.BaseURL == nil {
+		return nil, nil, fmt.Errorf("embedded CPA runtime is not available")
+	}
+	target, err := url.Parse(a.nativeCPA.URL(embeddedCPAWebSocketPath(r.URL)))
+	if err != nil {
+		return nil, nil, err
+	}
+	switch target.Scheme {
+	case "http":
+		target.Scheme = "ws"
+	case "https":
+		target.Scheme = "wss"
+	default:
+		return nil, nil, fmt.Errorf("embedded CPA URL uses unsupported scheme %q", target.Scheme)
+	}
+	header := embeddedCPAWebSocketHeaders(r.Header)
+	header.Set("Authorization", "Bearer "+a.nativeCPA.APIKey)
+	header.Set("X-Relay-Request-ID", requestID)
+	if admission.CPAAuthID != "" {
+		header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
+	}
+	dialer := websocket.Dialer{
+		HandshakeTimeout:  30 * time.Second,
+		EnableCompression: true,
+		Subprotocols:      websocket.Subprotocols(r),
+	}
+	return dialer.DialContext(ctx, target.String(), header)
+}
+
+func embeddedCPAWebSocketPath(requestURL *url.URL) string {
+	if requestURL == nil {
+		return "/v1/responses"
+	}
+	path := requestURL.RequestURI()
+	if strings.HasSuffix(strings.TrimSuffix(requestURL.Path, "/"), "/responses/ws") {
+		copyURL := *requestURL
+		copyURL.Path = strings.TrimSuffix(strings.TrimSuffix(requestURL.Path, "/"), "/ws")
+		copyURL.RawPath = ""
+		path = copyURL.RequestURI()
+	}
+	return path
+}
+
+func embeddedCPAWebSocketHeaders(source http.Header) http.Header {
+	header := source.Clone()
+	stripRelayHeaders(header)
+	for _, name := range []string{
+		"Authorization", "Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version",
+		"Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol",
+	} {
+		header.Del(name)
+	}
+	return header
+}
+
+func pumpWebSocketMessages(source, destination *websocket.Conn, observe func([]byte)) error {
+	for {
+		messageType, payload, err := source.ReadMessage()
 		if err != nil {
-			return connected, meta, err
+			forwardWebSocketClose(destination, err)
+			return err
 		}
-		if messageType != websocket.TextMessage || !json.Valid(frame) {
-			err = fmt.Errorf("websocket message must be JSON")
-			writeNativeWebSocketError(downstream, "invalid_request", err.Error())
-			return connected, meta, err
+		if observe != nil {
+			observe(payload)
 		}
+		if err = destination.WriteMessage(messageType, payload); err != nil {
+			return err
+		}
+	}
+}
+
+func forwardWebSocketClose(destination *websocket.Conn, sourceErr error) {
+	code := websocket.CloseInternalServerErr
+	message := boundedErrorText(sourceErr.Error())
+	var closeErr *websocket.CloseError
+	if errors.As(sourceErr, &closeErr) {
+		code = closeErr.Code
+		message = closeErr.Text
+	} else if normalWebSocketClose(sourceErr) {
+		code = websocket.CloseNormalClosure
+		message = ""
+	}
+	// 1005, 1006 and 1015 are receive-only sentinel values and cannot appear
+	// in a close frame. Translate them before relaying an abnormal disconnect.
+	if code == websocket.CloseNoStatusReceived || code == websocket.CloseAbnormalClosure || code == websocket.CloseTLSHandshake {
+		code = websocket.CloseInternalServerErr
+	}
+	message = websocketCloseReason(message)
+	_ = destination.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, message), time.Now().Add(time.Second))
+}
+
+func websocketCloseReason(message string) string {
+	const maxBytes = 123
+	if len(message) <= maxBytes {
+		return message
+	}
+	for len(message) > maxBytes || !utf8.ValidString(message) {
+		message = message[:len(message)-1]
+	}
+	return message
+}
+
+func parseNativeWebSocketUsage(payload []byte) billing.Result {
+	var event struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &event) != nil {
+		return billing.Result{}
+	}
+	switch event.Type {
+	case "response.completed", "response.incomplete", "response.done":
+		return billing.ParseResponse(payload)
+	default:
+		return billing.Result{}
 	}
 }
 
@@ -234,61 +359,6 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 	return admission, &price, "", nil
 }
 
-func websocketFrameRequiresSession(payload []byte) bool {
-	var frame struct {
-		Type               string `json:"type"`
-		PreviousResponseID string `json:"previous_response_id"`
-	}
-	if json.Unmarshal(payload, &frame) != nil {
-		return false
-	}
-	return frame.Type == "response.append" || strings.TrimSpace(frame.PreviousResponseID) != ""
-}
-
-func executorStatusCode(err error) int {
-	var status interface{ StatusCode() int }
-	if errors.As(err, &status) {
-		return status.StatusCode()
-	}
-	return 0
-}
-
-func forwardExecutorWebSocketTurn(ctx context.Context, downstream *websocket.Conn,
-	chunks <-chan cliproxyexecutor.StreamChunk) (billing.Result, error) {
-	var result billing.Result
-	completed := false
-	for {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		case chunk, ok := <-chunks:
-			if !ok {
-				if !completed {
-					return result, fmt.Errorf("upstream stream closed before response.completed")
-				}
-				return result, nil
-			}
-			if chunk.Err != nil {
-				return result, chunk.Err
-			}
-			for _, payload := range websocketPayloadsFromStreamChunk(chunk.Payload) {
-				var event struct {
-					Type string `json:"type"`
-				}
-				_ = json.Unmarshal(payload, &event)
-				if event.Type == "response.completed" || event.Type == "response.incomplete" || event.Type == "response.done" {
-					completed = true
-					parsed := billing.ParseResponse(payload)
-					mergeNativeWebSocketResult(&result, parsed)
-				}
-				if err := downstream.WriteMessage(websocket.TextMessage, payload); err != nil {
-					return result, err
-				}
-			}
-		}
-	}
-}
-
 func mergeNativeWebSocketResult(target *billing.Result, turn billing.Result) {
 	if turn.RequestID != "" {
 		target.RequestID = turn.RequestID
@@ -310,28 +380,6 @@ func saturatingAdd(left, right int64) int64 {
 		return math.MaxInt64
 	}
 	return left + right
-}
-
-func websocketPayloadsFromStreamChunk(chunk []byte) [][]byte {
-	trimmed := bytes.TrimSpace(chunk)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("[DONE]")) {
-		return nil
-	}
-	if json.Valid(trimmed) {
-		return [][]byte{bytes.Clone(trimmed)}
-	}
-	var payloads [][]byte
-	for _, line := range bytes.Split(trimmed, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-		payload := bytes.TrimSpace(line[len("data:"):])
-		if json.Valid(payload) {
-			payloads = append(payloads, bytes.Clone(payload))
-		}
-	}
-	return payloads
 }
 
 func writeNativeWebSocketError(conn *websocket.Conn, code, message string) {

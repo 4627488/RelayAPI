@@ -32,8 +32,6 @@ type Config struct {
 	CPACircuitOpenDuration     time.Duration
 	QuotaSyncInterval          time.Duration
 	UnpricedModelPolicy        string
-	CPAPluginSecret            string
-	DataPlane                  string
 	CPAImportAuthDir           string
 	CPAImportConfigPath        string
 	WebDistDir                 string
@@ -74,8 +72,6 @@ func Load() (Config, error) {
 		CPACircuitOpenDuration:     time.Duration(envInt64("CPA_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
 		QuotaSyncInterval:          time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
 		UnpricedModelPolicy:        strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
-		CPAPluginSecret:            strings.TrimSpace(os.Getenv("CPA_PLUGIN_SECRET")),
-		DataPlane:                  strings.ToLower(env("RELAY_DATA_PLANE", "native")),
 		CPAImportAuthDir:           strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_AUTH_DIR")),
 		CPAImportConfigPath:        strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_CONFIG")),
 		WebDistDir:                 strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
@@ -97,9 +93,6 @@ func Load() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
-	}
-	if cfg.DataPlane != "native" && cfg.CPAAPIKey == "" {
-		return Config{}, errors.New("CPA_API_KEY is required")
 	}
 	if len(cfg.SessionSecret) < 32 {
 		return Config{}, errors.New("RELAY_SESSION_SECRET must contain at least 32 characters")
@@ -142,9 +135,6 @@ func Load() (Config, error) {
 	}
 	if cfg.UnpricedModelPolicy != "allow" && cfg.UnpricedModelPolicy != "deny" {
 		return Config{}, errors.New("UNPRICED_MODEL_POLICY must be allow or deny")
-	}
-	if cfg.DataPlane != "cpa" && cfg.DataPlane != "native" {
-		return Config{}, errors.New("RELAY_DATA_PLANE must be cpa or native")
 	}
 	if cfg.RequestLogRetentionDays < 0 || cfg.RequestDetailRetentionDays < 0 || cfg.RequestSuccessDetailDays < 0 ||
 		cfg.LifecycleSuccessHours < 0 || cfg.LifecycleErrorDays < 0 || cfg.ReservationRetentionDays < 0 ||

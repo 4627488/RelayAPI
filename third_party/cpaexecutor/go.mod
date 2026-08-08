@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/gin-gonic/gin v1.10.1
-	github.com/router-for-me/CLIProxyAPI/v7 v7.2.122
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.123
 )
 
 require (

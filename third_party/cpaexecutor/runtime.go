@@ -457,6 +457,30 @@ func (r *Runtime) pinCredentialMiddleware() gin.HandlerFunc {
 // HasModelRouters enables the request-scoped Relay route below.
 func (r *Runtime) HasModelRouters() bool { return true }
 
+// ResolveCredentialModel returns the provider-facing model name for a pinned
+// credential without taking model routing away from CPA's WebSocket handler.
+func (r *Runtime) ResolveCredentialModel(authID, requestedModel string) string {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if r == nil || requestedModel == "" {
+		return requestedModel
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	route, ok := r.routes[strings.TrimSpace(authID)]
+	if !ok {
+		route, ok = r.modelRoutes[strings.ToLower(requestedModel)]
+	}
+	if !ok {
+		return requestedModel
+	}
+	for public, model := range route.models {
+		if strings.EqualFold(public, requestedModel) && strings.TrimSpace(model.upstream) != "" {
+			return strings.TrimSpace(model.upstream)
+		}
+	}
+	return requestedModel
+}
+
 // RouteModel binds CPA execution to the provider selected by Relay admission
 // and applies the per-credential public-to-upstream model alias.
 func (r *Runtime) RouteModel(_ context.Context, request pluginapi.ModelRouteRequest) (pluginapi.ModelRouteResponse, bool) {
@@ -473,6 +497,13 @@ func (r *Runtime) RouteModel(_ context.Context, request pluginapi.ModelRouteRequ
 		return pluginapi.ModelRouteResponse{}, false
 	}
 	targetModel := strings.TrimSpace(request.RequestedModel)
+	if strings.EqualFold(strings.TrimSpace(request.Headers.Get("Upgrade")), "websocket") {
+		// Credential pinning is already enforced by middleware and the gateway
+		// resolves the first frame's alias through ResolveCredentialModel.
+		// Reporting any route override here makes every continuation look like a
+		// transport change and forces an HTTP replay.
+		return pluginapi.ModelRouteResponse{}, false
+	}
 	if alias, exists := route.models[targetModel]; exists && alias.upstream != "" {
 		targetModel = alias.upstream
 	} else {

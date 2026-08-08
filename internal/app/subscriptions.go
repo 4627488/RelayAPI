@@ -3,9 +3,7 @@ package app
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -244,76 +242,7 @@ func (a *App) adminParentObservations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Request) {
-	if a.cfg.DataPlane == "native" {
-		a.syncNativeParentSubscriptions(w, r)
-		return
-	}
-	if !a.requireCPAManagement(w) {
-		return
-	}
-	syncStartedAt := time.Now()
-	status, payload, err := a.cpa.Management(r.Context(), http.MethodGet, "auth-files", nil)
-	if err != nil || status < 200 || status >= 300 {
-		writeError(w, 502, "cpa_unavailable", "无法同步 CPA 凭据")
-		return
-	}
-	var response map[string]any
-	if json.Unmarshal(payload, &response) != nil {
-		writeError(w, 502, "invalid_cpa_response", "CPA 凭据响应无效")
-		return
-	}
-	rows, ok := response["files"].([]any)
-	if !ok {
-		writeError(w, 502, "invalid_cpa_response", "CPA 凭据列表字段无效")
-		return
-	}
-	items := make([]store.ParentSubscription, 0, len(rows))
-	seen := make([]string, 0, len(rows))
-	for _, raw := range rows {
-		row, _ := raw.(map[string]any)
-		authID := firstString(row, "id", "name")
-		authIndex := firstString(row, "auth_index", "authIndex", "AuthIndex")
-		if authIndex == "" {
-			authIndex = authID
-		}
-		name := firstString(row, "name", "file")
-		if authID == "" || authIndex == "" {
-			continue
-		}
-		provider := firstString(row, "provider", "type")
-		display := firstString(row, "label", "email", "name")
-		models, modelsOK := a.cpaAuthModels(r, name)
-		if !modelsOK {
-			if existing, existingErr := a.store.GetParentSubscriptionByCPAAuthIndex(r.Context(), authIndex); existingErr == nil {
-				models = existing.CPAModelAllowlist
-			}
-		}
-		now := time.Now()
-		statusValue := firstString(row, "status")
-		if statusValue == "" {
-			statusValue = "available"
-		}
-		enabled := !boolField(row, "disabled") && !boolField(row, "unavailable")
-		item, err := a.store.SyncParentSubscription(r.Context(), store.ParentSubscription{
-			CPAAuthID: authID, CPAAuthIndex: authIndex, CPAAuthName: name, Name: display, Provider: provider,
-			PlanType: firstString(row, "plan_type", "plan", "account_type"), Status: statusValue,
-			CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
-			Enabled: true, CPAUnavailable: !enabled, CPAModelAllowlist: models, Metadata: json.RawMessage(`{}`), LastSyncedAt: &now,
-		})
-		if err != nil {
-			writeError(w, 500, "database_error", err.Error())
-			return
-		}
-		items = append(items, item)
-		seen = append(seen, authIndex)
-	}
-	if err := a.store.MarkMissingParentSubscriptions(r.Context(), seen, syncStartedAt); err != nil {
-		writeError(w, 500, "database_error", err.Error())
-		return
-	}
-	a.refreshBridgeStatus(r.Context())
-	quota := a.syncParentQuotas(r.Context(), items)
-	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": quota})
+	a.syncNativeParentSubscriptions(w, r)
 }
 
 func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -348,21 +277,6 @@ func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": map[string]any{"supported": 0, "mode": "native"}})
-}
-
-func (a *App) cpaAuthModels(r *http.Request, name string) ([]string, bool) {
-	if strings.TrimSpace(name) == "" {
-		return nil, false
-	}
-	status, payload, err := a.cpa.Management(r.Context(), http.MethodGet, "auth-files/models?name="+url.QueryEscape(name), nil)
-	if err != nil || status < 200 || status >= 300 {
-		return nil, false
-	}
-	var value any
-	if json.Unmarshal(payload, &value) != nil {
-		return nil, false
-	}
-	return extractModels(value), true
 }
 
 func (a *App) adminChildSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -478,46 +392,4 @@ func writeSubscriptionError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, 400, "subscription_error", err.Error())
 	}
-}
-
-func firstString(value map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if raw, ok := value[key]; ok && raw != nil {
-			text := strings.TrimSpace(fmt.Sprint(raw))
-			if text != "" && text != "<nil>" {
-				return text
-			}
-		}
-	}
-	return ""
-}
-
-func boolField(value map[string]any, key string) bool {
-	result, _ := value[key].(bool)
-	return result
-}
-
-func extractModels(value any) []string {
-	if object, ok := value.(map[string]any); ok {
-		for _, key := range []string{"models", "items", "data"} {
-			if nested, exists := object[key]; exists {
-				return extractModels(nested)
-			}
-		}
-	}
-	rows, _ := value.([]any)
-	result := make([]string, 0, len(rows))
-	for _, row := range rows {
-		switch item := row.(type) {
-		case string:
-			if strings.TrimSpace(item) != "" {
-				result = append(result, strings.TrimSpace(item))
-			}
-		case map[string]any:
-			if name := firstString(item, "id", "name", "model"); name != "" {
-				result = append(result, name)
-			}
-		}
-	}
-	return result
 }

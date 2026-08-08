@@ -9,10 +9,9 @@ the stable CPA AuthID and accounting metadata.
 ## Invariants
 
 1. Client-supplied `X-Relay-*` headers are never trusted or forwarded.
-2. A quota-enforced request is pinned to exactly one CPA AuthID. The CPA bridge
-   must fail when that AuthID is not an eligible scheduler candidate; it must
-   never silently delegate to another credential. Routing instructions carry
-   a short-lived HMAC signature and are accepted only from Relay.
+2. A quota-enforced request is pinned to exactly one embedded CPA credential.
+   The runtime must fail when that AuthID is not an eligible scheduler
+   candidate and never silently delegate to another credential.
 3. Metered allocation shares use integer parts-per-million (`allocation_ppm`).
    Enabled allocations may not exceed the parent's configured oversell limit.
    Unmetered parents use children as access grants and do not impose an
@@ -93,7 +92,7 @@ tenant key
   -> eligible child subscriptions
   -> lock and reserve balance + child windows
   -> set internal X-Relay-CPA-Auth-ID
-  -> CPA bridge strictly pins the parent AuthID
+  -> embedded CPA strictly pins the parent AuthID
   -> protocol/provider request handled by CPA
   -> parse response usage
   -> idempotently settle both reservations
@@ -102,7 +101,7 @@ tenant key
 Candidates are ordered by explicit priority and stable creation order.
 Exhausted children are skipped before the upstream request. CPA model metadata
 is cached per parent so obviously incompatible parents are not selected; the
-strict plugin remains the final authority on candidate validity.
+embedded runtime remains the final authority on candidate validity.
 
 A child subscription only claims the models allowed by its effective child,
 parent, and CPA model policies. If a tenant requests a model that is not

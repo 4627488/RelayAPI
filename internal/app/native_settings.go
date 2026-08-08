@@ -109,7 +109,7 @@ func runtimeBridgeSettings(value nativeRuntimeSettings) relaybridge.Settings {
 }
 
 func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
-	if a.cfg.DataPlane != "native" || a.nativeCPARuntime == nil {
+	if a.nativeCPARuntime == nil {
 		writeError(w, http.StatusConflict, "native_mode_required", "此配置仅适用于 native 数据平面")
 		return
 	}
