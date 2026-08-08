@@ -402,6 +402,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 
 	if websocket {
 		r.Body = io.NopCloser(bytes.NewReader(body))
+		if a.cfg.DataPlane == "native" {
+			a.proxyNativeWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
+			return
+		}
 		a.proxyWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
 		return
 	}

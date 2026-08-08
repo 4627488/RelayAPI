@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/dataplane"
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/gorilla/websocket"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -19,23 +22,49 @@ import (
 
 const responsesWebSocketBeta = "responses_websockets=2026-02-06"
 
+type nativeWebSocketAccounting struct {
+	admission store.Admission
+	price     *store.ResolvedPrice
+	billable  bool
+	result    billing.Result
+}
+
 func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
-	connected, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, admission, meta, requestID, logContext.detail)
+	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
+	connected, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
 	if resolvedMeta.Model != "" {
 		meta = resolvedMeta
 	}
+	admission = accounting.admission
+	billable = accounting.billable
+	logContext.price = accounting.price
 	statusCode := http.StatusSwitchingProtocols
 	if !connected {
 		statusCode = http.StatusBadGateway
 		logContext.errorCode = "websocket_proxy_error"
 	}
+	if accounting.price != nil && accounting.result.ResponseServiceTier != "" {
+		if resolved, resolveErr := a.store.ResolvePrice(context.Background(), pricing.Dimensions{
+			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
+			ServiceTier: meta.ServiceTier, ResponseServiceTier: accounting.result.ResponseServiceTier,
+			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+		}); resolveErr == nil {
+			accounting.price = &resolved
+			logContext.price = &resolved
+			_ = a.store.UpdateReservationPriceSnapshot(context.Background(), requestID, store.EncodePriceSnapshot(resolved))
+		}
+	}
+	pricingComplete := billable && accounting.result.Found && accounting.price != nil
 	actual := max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
 	settled := !billable
 	if billable {
 		var settleErr error
 		if connected {
-			settleErr = a.store.SettleRequestReservation(context.Background(), requestID, actual, false)
+			if pricingComplete {
+				actual = billing.Cost(*accounting.price, accounting.result.Usage)
+			}
+			settleErr = a.store.SettleRequestReservation(context.Background(), requestID, actual, pricingComplete)
 		} else {
 			actual = 0
 			settleErr = a.store.ReleaseRequestReservation(context.Background(), requestID)
@@ -56,12 +85,12 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	duration := time.Since(started).Milliseconds()
 	logContext.detail.StageTimings = timingJSON(map[string]int64{"websocket_duration_ms": duration, "total_ms": duration})
-	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, nil, false, settled, actual, errorString(err), logContext)
+	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, &accounting.result, pricingComplete, settled, actual, errorString(err), logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
-func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, admission store.Admission,
-	meta requestMeta, requestID string, logDetail *store.LogDetailInput) (bool, requestMeta, error) {
+func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext,
+	meta requestMeta, requestID string, logDetail *store.LogDetailInput, accounting *nativeWebSocketAccounting) (bool, requestMeta, error) {
 	subprotocols := websocket.Subprotocols(r)
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout:  30 * time.Second,
@@ -102,7 +131,17 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		writeNativeWebSocketError(downstream, "model_not_allowed", err.Error())
 		return false, meta, err
 	}
-	plan, credential, err := a.credentials.Plan(r.URL.Path, admission.CPAAuthID, meta.Model, true)
+	if !accounting.billable {
+		admission, price, code, admitErr := a.admitNativeWebSocket(r.Context(), key, meta, requestID, r.URL.Path)
+		if admitErr != nil {
+			writeNativeWebSocketError(downstream, code, admitErr.Error())
+			return false, meta, admitErr
+		}
+		accounting.admission = admission
+		accounting.price = price
+		accounting.billable = true
+	}
+	plan, credential, err := a.credentials.Plan(r.URL.Path, accounting.admission.CPAAuthID, meta.Model, true)
 	if err != nil {
 		writeNativeWebSocketError(downstream, "route_unavailable", err.Error())
 		return false, meta, err
@@ -121,7 +160,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		if executeErr != nil && executorStatusCode(executeErr) == http.StatusUnauthorized &&
 			(plan.Provider == "codex" || plan.Provider == "xai" || plan.Provider == "grok") {
 			if refreshErr := a.authManager.Refresh(r.Context(), credential.ID); refreshErr == nil {
-				plan, credential, executeErr = a.credentials.Plan(r.URL.Path, admission.CPAAuthID, meta.Model, true)
+				plan, credential, executeErr = a.credentials.Plan(r.URL.Path, accounting.admission.CPAAuthID, meta.Model, true)
 				if executeErr == nil {
 					stream, executeErr = a.engine.ExecuteWebSocketTurn(r.Context(), requestID, plan, credential, r.Header, frame, requireExisting)
 				}
@@ -132,7 +171,10 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			return connected, meta, executeErr
 		}
 		connected = true
-		if err = forwardExecutorWebSocketTurn(r.Context(), downstream, stream.Chunks); err != nil {
+		turnResult, forwardErr := forwardExecutorWebSocketTurn(r.Context(), downstream, stream.Chunks)
+		mergeNativeWebSocketResult(&accounting.result, turnResult)
+		if forwardErr != nil {
+			err = forwardErr
 			return connected, meta, err
 		}
 
@@ -146,6 +188,50 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			return connected, meta, err
 		}
 	}
+}
+
+func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, meta requestMeta, requestID, endpoint string) (
+	store.Admission, *store.ResolvedPrice, string, error) {
+	dimensions := pricing.Dimensions{APIGroupKey: key.ID, Model: meta.Model, ServiceTier: meta.ServiceTier,
+		ReasoningEffort: meta.ReasoningEffort, Endpoint: endpoint}
+	price, priceErr := a.store.ResolvePrice(ctx, dimensions)
+	priceConfigured := priceErr == nil
+	if !priceConfigured && a.cfg.UnpricedModelPolicy == "deny" {
+		return store.Admission{}, nil, "price_not_configured", fmt.Errorf("模型尚未配置价格")
+	}
+	reserve := int64(0)
+	if priceConfigured {
+		reserve = a.cfg.ReservationNanoUSD
+	}
+	admission, err := a.store.AdmitRequest(ctx, store.AdmissionInput{
+		RequestID: requestID, Key: key, Model: meta.Model,
+		BalanceReserve: reserve, QuotaReserve: reserve, PriceConfigured: priceConfigured,
+		PriceSnapshot: store.EncodePriceSnapshot(price), ExpiresAt: time.Now().Add(24 * time.Hour),
+	})
+	if err != nil {
+		code, message := "admission_failed", "余额不足或订阅不可用"
+		switch {
+		case errors.Is(err, store.ErrSubscriptionPrice):
+			code, message = "price_not_configured", "计量子订阅要求先配置模型价格"
+		case errors.Is(err, store.ErrSubscriptionRequired):
+			code, message = "subscription_not_available", "没有可用于该模型的子订阅"
+		case errors.Is(err, store.ErrSubscriptionExhausted):
+			code, message = "subscription_quota_exceeded", "所有可用子订阅额度均已耗尽"
+		}
+		return store.Admission{}, nil, code, fmt.Errorf("%s", message)
+	}
+	if !priceConfigured {
+		return admission, nil, "", nil
+	}
+	dimensions.AuthIndex = admission.CPAAuthIndex
+	if resolved, resolveErr := a.store.ResolvePrice(ctx, dimensions); resolveErr == nil {
+		resolvedSnapshot := store.EncodePriceSnapshot(resolved)
+		if !bytes.Equal(resolvedSnapshot, store.EncodePriceSnapshot(price)) {
+			_ = a.store.UpdateReservationPriceSnapshot(ctx, requestID, resolvedSnapshot)
+		}
+		price = resolved
+	}
+	return admission, &price, "", nil
 }
 
 func websocketFrameRequiresSession(payload []byte) bool {
@@ -168,21 +254,22 @@ func executorStatusCode(err error) int {
 }
 
 func forwardExecutorWebSocketTurn(ctx context.Context, downstream *websocket.Conn,
-	chunks <-chan cliproxyexecutor.StreamChunk) error {
+	chunks <-chan cliproxyexecutor.StreamChunk) (billing.Result, error) {
+	var result billing.Result
 	completed := false
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return result, ctx.Err()
 		case chunk, ok := <-chunks:
 			if !ok {
 				if !completed {
-					return fmt.Errorf("upstream stream closed before response.completed")
+					return result, fmt.Errorf("upstream stream closed before response.completed")
 				}
-				return nil
+				return result, nil
 			}
 			if chunk.Err != nil {
-				return chunk.Err
+				return result, chunk.Err
 			}
 			for _, payload := range websocketPayloadsFromStreamChunk(chunk.Payload) {
 				var event struct {
@@ -191,13 +278,38 @@ func forwardExecutorWebSocketTurn(ctx context.Context, downstream *websocket.Con
 				_ = json.Unmarshal(payload, &event)
 				if event.Type == "response.completed" || event.Type == "response.incomplete" || event.Type == "response.done" {
 					completed = true
+					parsed := billing.ParseResponse(payload)
+					mergeNativeWebSocketResult(&result, parsed)
 				}
 				if err := downstream.WriteMessage(websocket.TextMessage, payload); err != nil {
-					return err
+					return result, err
 				}
 			}
 		}
 	}
+}
+
+func mergeNativeWebSocketResult(target *billing.Result, turn billing.Result) {
+	if turn.RequestID != "" {
+		target.RequestID = turn.RequestID
+	}
+	if turn.ResponseServiceTier != "" {
+		target.ResponseServiceTier = turn.ResponseServiceTier
+	}
+	target.Found = target.Found || turn.Found
+	target.Usage.Prompt = saturatingAdd(target.Usage.Prompt, turn.Usage.Prompt)
+	target.Usage.Completion = saturatingAdd(target.Usage.Completion, turn.Usage.Completion)
+	target.Usage.Cached = saturatingAdd(target.Usage.Cached, turn.Usage.Cached)
+	target.Usage.CacheWrite = saturatingAdd(target.Usage.CacheWrite, turn.Usage.CacheWrite)
+	target.Usage.Reasoning = saturatingAdd(target.Usage.Reasoning, turn.Usage.Reasoning)
+	target.Usage.Total = saturatingAdd(target.Usage.Total, turn.Usage.Total)
+}
+
+func saturatingAdd(left, right int64) int64 {
+	if right > 0 && left > math.MaxInt64-right {
+		return math.MaxInt64
+	}
+	return left + right
 }
 
 func websocketPayloadsFromStreamChunk(chunk []byte) [][]byte {

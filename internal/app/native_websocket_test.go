@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/config"
 	"github.com/4627488/RelayAPI/internal/dataplane"
 	"github.com/4627488/RelayAPI/internal/store"
@@ -23,6 +24,7 @@ func TestNativeResponsesWebSocketEndToEnd(t *testing.T) {
 		Body          map[string]any
 	}
 	observedCh := make(chan observed, 1)
+	accountingCh := make(chan billing.Result, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
 		if err != nil {
@@ -36,7 +38,9 @@ func TestNativeResponsesWebSocketEndToEnd(t *testing.T) {
 		var body map[string]any
 		_ = json.Unmarshal(payload, &body)
 		observedCh <- observed{Authorization: r.Header.Get("Authorization"), Beta: r.Header.Get("OpenAI-Beta"), Body: body}
-		_ = conn.WriteJSON(map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_test"}})
+		_ = conn.WriteJSON(map[string]any{"type": "response.completed", "response": map[string]any{
+			"id": "resp_test", "usage": map[string]any{"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+		}})
 		_, _, _ = conn.ReadMessage()
 	}))
 	defer upstream.Close()
@@ -59,7 +63,9 @@ func TestNativeResponsesWebSocketEndToEnd(t *testing.T) {
 	}
 	app.engine = dataplane.NewEngine(translator, app.transports)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, store.Admission{}, requestMeta{}, "request-test", nil)
+		accounting := &nativeWebSocketAccounting{billable: true}
+		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "request-test", nil, accounting)
+		accountingCh <- accounting.result
 	}))
 	defer downstream.Close()
 
@@ -98,6 +104,14 @@ func TestNativeResponsesWebSocketEndToEnd(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for upstream websocket request")
+	}
+	select {
+	case got := <-accountingCh:
+		if !got.Found || got.RequestID != "resp_test" || got.Usage.Prompt != 11 || got.Usage.Completion != 7 || got.Usage.Total != 18 {
+			t.Fatalf("accounting result = %#v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for websocket accounting")
 	}
 }
 
@@ -140,7 +154,8 @@ func TestNativeResponsesWebSocketReusesCPAExecutorSession(t *testing.T) {
 		translator: translator, transports: dataplane.NewTransportPool(4, time.Minute)}
 	app.engine = dataplane.NewEngine(translator, app.transports)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, store.Admission{}, requestMeta{}, "session-test", nil)
+		accounting := &nativeWebSocketAccounting{billable: true}
+		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "session-test", nil, accounting)
 	}))
 	defer downstream.Close()
 
@@ -177,5 +192,19 @@ func TestNativeResponsesWebSocketReusesCPAExecutorSession(t *testing.T) {
 	}
 	if got := connections.Load(); got != 1 {
 		t.Fatalf("upstream websocket connections = %d, want 1", got)
+	}
+}
+
+func TestMergeNativeWebSocketResultSumsTurns(t *testing.T) {
+	var result billing.Result
+	mergeNativeWebSocketResult(&result, billing.Result{RequestID: "resp_1", Found: true,
+		Usage: store.Usage{Prompt: 10, Completion: 4, Total: 14}})
+	mergeNativeWebSocketResult(&result, billing.Result{RequestID: "resp_2", ResponseServiceTier: "priority", Found: true,
+		Usage: store.Usage{Prompt: 6, Completion: 3, Cached: 2, Reasoning: 1, Total: 9}})
+
+	if result.RequestID != "resp_2" || result.ResponseServiceTier != "priority" ||
+		result.Usage.Prompt != 16 || result.Usage.Completion != 7 || result.Usage.Cached != 2 ||
+		result.Usage.Reasoning != 1 || result.Usage.Total != 23 {
+		t.Fatalf("merged result = %#v", result)
 	}
 }
