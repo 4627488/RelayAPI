@@ -288,6 +288,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bodyReadAt := time.Now()
+	originalBody := body
 	logContext := requestLogContext{detail: baseRequestDetail(r, body)}
 	meta := requestMetadata(body, r)
 	clientRequestedModel := meta.Model
@@ -410,7 +411,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		upstream.Host = targetCPA.BaseURL.Host
 		logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
-		logContext.detail.ForwardedBody, logContext.detail.ForwardedBodyTruncated, logContext.detail.ForwardedBodyBytes = boundedDetail(body)
+		captureForwardedRequest(logContext.detail, originalBody, body)
 		response, err = targetCPA.HTTP.Do(upstream)
 	}
 	if err != nil {
@@ -523,7 +524,6 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
 		logContext.errorCode = "upstream_http_error"
 		logContext.detail.ErrorName = logContext.errorCode
-		logContext.detail.ErrorDetail = logContext.detail.UpstreamBody
 		errorMessage = upstreamErrorMessage(response.StatusCode, rawResponse)
 	}
 	if copyErr != nil {
@@ -565,7 +565,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 		costPointer = &cost
 	}
 	detail := logContext.detail
-	if status > 0 && status < http.StatusBadRequest && pricingComplete && !sampledRequest(requestID, a.cfg.RequestSuccessSamplePPM) {
+	if !shouldRetainRequestDetail(requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
 		detail = nil
 	}
 	err := a.store.WriteLog(context.WithoutCancel(r.Context()), store.LogInput{

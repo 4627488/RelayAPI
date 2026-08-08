@@ -88,6 +88,36 @@ func TestSampledRequestIsDeterministicAndHonorsBounds(t *testing.T) {
 	}
 }
 
+func TestShouldRetainRequestDetail(t *testing.T) {
+	if shouldRetainRequestDetail("success", http.StatusOK, "", 0) {
+		t.Fatal("successful request detail should be disabled at zero sampling")
+	}
+	if !shouldRetainRequestDetail("error", http.StatusBadGateway, "upstream_http_error", 0) {
+		t.Fatal("HTTP error detail must be retained")
+	}
+	if !shouldRetainRequestDetail("websocket-error", http.StatusSwitchingProtocols, "websocket_session_error", 0) {
+		t.Fatal("protocol error detail must be retained even with a success-class status")
+	}
+	if !shouldRetainRequestDetail("sampled", http.StatusOK, "", 1_000_000) {
+		t.Fatal("successful request detail should honor explicit sampling")
+	}
+}
+
+func TestCaptureForwardedRequestDoesNotDuplicateIdenticalBody(t *testing.T) {
+	detail := &store.LogDetailInput{}
+	body := []byte(`{"model":"gpt-test"}`)
+	captureForwardedRequest(detail, body, body)
+	if detail.ForwardedBody != "" || detail.ForwardedBodyBytes != int64(len(body)) {
+		t.Fatalf("identical forwarded body was retained: %#v", detail)
+	}
+
+	rewritten := []byte(`{"model":"gpt-upstream"}`)
+	captureForwardedRequest(detail, body, rewritten)
+	if detail.ForwardedBody != string(rewritten) || detail.ForwardedBodyBytes != int64(len(rewritten)) {
+		t.Fatalf("rewritten forwarded body was not retained: %#v", detail)
+	}
+}
+
 func TestRequestTypeRecognizesSupportedSurfaces(t *testing.T) {
 	tests := map[string]string{
 		"/v1/responses":        "responses",

@@ -145,7 +145,8 @@ func (s Store) deleteSuccessDetails(ctx context.Context, cutoff time.Time, polic
 		result := tx.Exec(`WITH selected AS (
 			SELECT d.request_log_id FROM request_log_details d
 			JOIN request_logs l ON l.id = d.request_log_id
-			WHERE l.completed_at < ? AND l.status_code > 0 AND l.status_code < 400 AND l.pricing_complete = true
+			WHERE l.completed_at < ? AND l.status_code > 0 AND l.status_code < 400
+				AND COALESCE(l.error_code, '') = ''
 			ORDER BY l.completed_at LIMIT ? FOR UPDATE OF d SKIP LOCKED
 		) DELETE FROM request_log_details AS detail USING selected
 		WHERE detail.request_log_id = selected.request_log_id`, cutoff, batch)

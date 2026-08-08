@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,10 @@ import (
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
-const requestLogDetailLimit = 128 << 10
+// Raw bodies are diagnostic data, not accounting data. Keep the error detail
+// ceiling small enough that a burst of bad requests cannot become a storage
+// incident; request_logs still retains the complete structured summary.
+const requestLogDetailLimit = 32 << 10
 
 type cpaTransportError struct {
 	Status    int
@@ -76,6 +80,13 @@ func sampledRequest(requestID string, ppm int) bool {
 	return int(hash.Sum64()%1_000_000) < ppm
 }
 
+func shouldRetainRequestDetail(requestID string, status int, errorCode string, successSamplePPM int) bool {
+	if status <= 0 || status >= http.StatusBadRequest || strings.TrimSpace(errorCode) != "" {
+		return true
+	}
+	return sampledRequest(requestID, successSamplePPM)
+}
+
 func requestType(path string, websocket bool) string {
 	if websocket {
 		if strings.Contains(path, "/responses") {
@@ -116,6 +127,19 @@ func baseRequestDetail(r *http.Request, body []byte) *store.LogDetailInput {
 		RequestHeaders: sanitizedHeaders(r.Header), RequestBody: text,
 		RequestBodyTruncated: truncated, RequestBodyBytes: size, StageTimings: "{}",
 	}
+}
+
+func captureForwardedRequest(detail *store.LogDetailInput, original, forwarded []byte) {
+	if detail == nil {
+		return
+	}
+	detail.ForwardedBodyBytes = int64(len(forwarded))
+	if bytes.Equal(original, forwarded) {
+		// The client body is already stored. Retaining an identical second copy
+		// adds no diagnostic information.
+		return
+	}
+	detail.ForwardedBody, detail.ForwardedBodyTruncated, _ = boundedDetail(forwarded)
 }
 
 func timingJSON(values map[string]int64) string {

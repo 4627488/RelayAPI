@@ -109,6 +109,8 @@ does not translate protocol frames.
 
 Relay request logs have separate summary and detail retention. Sensitive
 headers are redacted; bodies carry original byte counts and truncation flags.
+Successful requests retain summaries only by default. Error bodies are capped
+at 32 KiB, and identical client/forwarded bodies are stored only once.
 The summary stores tenant/key display snapshots, CPA execution identity, TTFT,
 token breakdown, errors, and the immutable five-part pricing snapshot. Detail
 stores client and translated requests, upstream response, stage timings, and

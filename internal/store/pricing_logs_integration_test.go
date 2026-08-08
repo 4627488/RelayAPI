@@ -207,6 +207,72 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}
 }
 
+func TestRetentionDeletesSuccessfulUnpricedDetails(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err := database.Exec(`TRUNCATE cpa_lifecycle_events, request_log_details, request_reservations,
+		child_quota_windows, child_subscriptions, parent_quota_observations, parent_quota_windows,
+		parent_subscriptions, billing_ledgers, request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tenantID, keyID := identity.NewID(), identity.NewID()
+	if err := database.Create(&db.Tenant{ID: tenantID, Name: "retention", OwnerEmail: "retention@example.test",
+		PasswordHash: "test", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&db.APIKey{ID: keyID, TenantID: tenantID, Name: "retention",
+		KeyHash: []byte("retention-test-key"), Prefix: "relay_ret", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	dataStore := Store{DB: database}
+	completed := time.Now().Add(-48 * time.Hour)
+	for _, item := range []struct {
+		id, errorCode string
+		status        int
+	}{
+		{id: identity.NewID(), status: 200},
+		{id: identity.NewID(), status: 502, errorCode: "upstream_http_error"},
+	} {
+		if err := dataStore.WriteLog(ctx, LogInput{ID: item.id, TenantID: tenantID, APIKeyID: keyID,
+			Method: "GET", Path: "/v1/models", RequestType: "v1/models", StatusCode: item.status,
+			PricingComplete: false, Settled: true, ErrorCode: item.errorCode, StartedAt: completed, CompletedAt: completed,
+			Detail: &LogDetailInput{RequestHeaders: `{}`, UpstreamHeaders: `{}`, UpstreamBody: `{"data":[]}`,
+				StageTimings: `{}`}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stats, err := dataStore.RunRetention(ctx, time.Now(), RetentionPolicy{
+		SuccessDetailDays: 1, ErrorDetailDays: 14, BatchSize: 100, MaxRuntime: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Details != 1 {
+		t.Fatalf("deleted details = %d, want 1", stats.Details)
+	}
+	var remaining int64
+	if err := database.Model(&db.RequestLogDetail{}).Count(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("remaining details = %d, want only the error detail", remaining)
+	}
+}
+
 func TestPostgresStringArrayPreservesEmptyArray(t *testing.T) {
 	value, err := postgresStringArray(nil).Value()
 	if err != nil {
