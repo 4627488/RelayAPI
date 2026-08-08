@@ -4,7 +4,6 @@ import "testing"
 
 func TestLoadDoesNotRequireExternalCPAKey(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example.invalid/relay")
-	t.Setenv("CPA_API_KEY", "")
 	t.Setenv("RELAY_SESSION_SECRET", "01234567890123456789012345678901")
 	t.Setenv("RELAY_API_KEY_ENCRYPTION_KEY", "01234567890123456789012345678901")
 	_, err := Load()

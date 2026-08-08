@@ -1,10 +1,9 @@
 # Parent and child subscription architecture
 
-RelayAPI models every capacity-bearing CLIProxyAPI authentication identity as a
+RelayAPI models every capacity-bearing encrypted upstream credential as a
 parent subscription. Administrators split a parent into child subscriptions
-assigned to tenants. CLIProxyAPI continues to own credentials, OAuth, protocol
-translation, aliases, retries, and the provider registry; RelayAPI stores only
-the stable CPA AuthID and accounting metadata.
+assigned to tenants. RelayAPI owns encrypted credential storage and accounting;
+the embedded CPA runtime owns protocol translation, retries, and routing.
 
 ## Invariants
 
@@ -36,11 +35,10 @@ the stable CPA AuthID and accounting metadata.
 
 ### Parent subscriptions
 
-`parent_subscriptions` mirrors a redacted CPA authentication identity:
+`parent_subscriptions` mirrors a redacted native credential identity:
 
-- CPA scheduler `id` stored as `cpa_auth_id` and used only for strict picks;
-- stable management `auth_index` stored separately for synchronization,
-  observations, request attribution, and credential administration;
+- native credential ID stored as both `cpa_auth_id` and `cpa_auth_index`, and
+  used for strict picks, observations, and request attribution;
 - CPA auth-file name, provider, display name, status, and cached model list;
 - capacity mode: `unmetered` or `observed`;
 - allocation/oversell limit and synchronization timestamps.
@@ -136,9 +134,9 @@ rejects the request instead of silently bypassing the configured subscription.
   rejected. The active estimate is the median of up to 21 recent accepted
   samples rather than the latest sample alone.
 
-## Quota extension boundary
+## Native quota boundary
 
-The bridge quota runtime is provider-neutral. An adapter manifest declares:
+The quota runtime executes inside RelayAPI. Built-in provider adapters declare:
 
 - one or more provider extension keys and upstream HTTP requests;
 - credential templates such as `${auth.access_token}`;
@@ -147,10 +145,9 @@ The bridge quota runtime is provider-neutral. An adapter manifest declares:
   and reset timestamps;
 - which windows are safe to enforce and calibrate.
 
-The bundled Codex and xAI entries are default adapter data, not Go branches.
-Custom entries run through the exact same engine and may override or replace
-the bundled pack. A CPA credential may instead expose normalized `relay_quota`
-metadata directly. In every case the bridge response excludes credential
+Codex and xAI are probed directly with the encrypted native credential and the
+same proxy configuration used by the embedded runtime. A credential may instead
+expose normalized `relay_quota` metadata directly. Reports exclude credential
 fields and raw upstream payloads.
 
 The CPA credential table and parent-subscription table render the same stored
@@ -168,15 +165,16 @@ CPA scheduler weight is not a tenant allocation share.
 
 ## Migration and rollout
 
-The feature is additive. Existing tenants remain balance-only until they are
-assigned an enabled child subscription. Strict subscription routing requires a
-healthy bridge advertising the scheduler capability. Rollout order:
+Existing tenants remain balance-only until they are assigned an enabled child
+subscription. Legacy scheduler hashes are migrated in place to native
+credential IDs, preserving parent IDs and every child foreign-key association.
+Rollout order:
 
-1. deploy header isolation and strict bridge behavior;
-2. create parent/child/accounting tables;
-3. synchronize CPA AuthIDs and create parent records;
-4. assign children while enforcement is disabled;
-5. enable enforcement per tenant after model and quota validation;
+1. import and encrypt credentials in PostgreSQL;
+2. synchronize native credential IDs into existing parent rows;
+3. verify native quota observations and reset generations;
+4. enable enforcement after model and quota validation;
+5. remove the external CPA service and legacy watchdog;
 6. reconcile and monitor incomplete-pricing requests before global enablement.
 
 The legacy Next.js implementation is a behavioral reference, not a storage or

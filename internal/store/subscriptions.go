@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"path"
@@ -164,6 +165,41 @@ func (s Store) SyncParentSubscription(ctx context.Context, item ParentSubscripti
 	}
 	var result ParentSubscription
 	err = scoped(ctx, s.DB).First(&result, "cpa_auth_index = ?", item.CPAAuthIndex).Error
+	return result, err
+}
+
+// SyncNativeParentSubscription uses the credential ID as the durable identity.
+// Native credentials do not have the separate scheduler auth index used by the
+// legacy external CPA control plane.
+func (s Store) SyncNativeParentSubscription(ctx context.Context, item ParentSubscription) (ParentSubscription, error) {
+	if item.ID == "" {
+		item.ID = identity.NewID()
+	}
+	item.CPAAuthID = strings.TrimSpace(item.CPAAuthID)
+	if item.CPAAuthID == "" {
+		return ParentSubscription{}, fmt.Errorf("native parent credential id is required")
+	}
+	item.CPAAuthIndex = item.CPAAuthID
+	item.CPAAuthName = firstNonEmpty(strings.TrimSpace(item.CPAAuthName), item.CPAAuthID)
+	item.Name = firstNonEmpty(strings.TrimSpace(item.Name), item.CPAAuthName)
+	item.Provider = strings.TrimSpace(item.Provider)
+	if len(item.Metadata) == 0 {
+		item.Metadata = json.RawMessage(`{}`)
+	}
+	if len(item.QuotaSnapshot) == 0 {
+		item.QuotaSnapshot = json.RawMessage(`{}`)
+	}
+	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "cpa_auth_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"cpa_auth_index", "cpa_auth_name", "provider", "plan_type", "status", "cpa_unavailable", "cpa_model_allowlist", "metadata", "last_synced_at", "updated_at",
+		}),
+	}).Create(&item).Error
+	if err != nil {
+		return ParentSubscription{}, err
+	}
+	var result ParentSubscription
+	err = scoped(ctx, s.DB).First(&result, "cpa_auth_id = ?", item.CPAAuthID).Error
 	return result, err
 }
 

@@ -30,13 +30,10 @@ import (
 type App struct {
 	cfg               config.Config
 	store             store.Store
-	cpa               *cpa.Client
 	mux               *http.ServeMux
 	stop              chan struct{}
 	wg                sync.WaitGroup
 	pricingSyncMu     sync.Mutex
-	oauthMu           sync.Mutex
-	oauthSession      *managedOAuthSession
 	setupBox          identity.SecretBox
 	nativeCPA         *cpa.Client
 	nativeCPARuntime  *relaybridge.Runtime
@@ -52,19 +49,6 @@ const sessionCookie = "relay_session"
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
 	database, err := db.Open(ctx, cfg.DatabaseURL)
-	if err != nil {
-		return nil, err
-	}
-	cpaAPIKey := cfg.CPAAPIKey
-	if strings.TrimSpace(cpaAPIKey) == "" {
-		cpaAPIKey = "native-unused"
-	}
-	client, err := cpa.NewWithOptions(cfg.CPAURL, cpaAPIKey, cfg.CPAManagementKey, cpa.Options{
-		ResponseHeaderTimeout: cfg.RequestTimeout, MaxInFlight: cfg.CPAMaxInFlight, MaxQueue: cfg.CPAMaxQueue,
-		MaxRequestBytesInFlight: cfg.CPARequestBytesInFlight,
-		QueueTimeout:            cfg.CPAQueueTimeout, CircuitFailureThreshold: cfg.CPACircuitFailureThreshold,
-		CircuitOpenDuration: cfg.CPACircuitOpenDuration,
-	})
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +68,10 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		slog.Info("CPA credentials imported", "imported", report.Imported, "unchanged", report.Skipped)
 	}
 	a := &App{
-		cfg: cfg, store: dataStore, cpa: client, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
+		cfg: cfg, store: dataStore, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
+	}
+	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
+		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
 	}
 	if err := a.startEmbeddedCPA(ctx); err != nil {
 		return nil, err
@@ -118,6 +105,10 @@ func (a *App) maintenance() {
 	defer a.wg.Done()
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
+	quotaTicker := time.NewTicker(a.cfg.QuotaSyncInterval)
+	defer quotaTicker.Stop()
+	initialQuotaSync := time.NewTimer(15 * time.Second)
+	defer initialQuotaSync.Stop()
 	retentionTicker := time.NewTicker(time.Hour)
 	defer retentionTicker.Stop()
 	initialRetention := time.NewTimer(30 * time.Second)
@@ -138,6 +129,10 @@ func (a *App) maintenance() {
 			}
 		case <-initialRetention.C:
 			a.runRetention(context.Background())
+		case <-initialQuotaSync.C:
+			a.refreshParentQuotas(context.Background())
+		case <-quotaTicker.C:
+			a.refreshParentQuotas(context.Background())
 		case <-retentionTicker.C:
 			a.runRetention(context.Background())
 		case <-a.stop:
@@ -193,7 +188,10 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	client, err := a.cpa.OutboundHTTPClient(ctx, 30*time.Second)
+	a.nativeSettings.RLock()
+	proxyURL := a.nativeSettings.value.ProxyURL
+	a.nativeSettings.RUnlock()
+	client, err := cpa.NativeOutboundHTTPClient(proxyURL, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -251,18 +249,11 @@ func (a *App) routes() {
 	a.mux.Handle("PUT /api/admin/pricing/rules", a.withAdmin(http.HandlerFunc(a.adminPricingRules)))
 	a.mux.Handle("GET /api/admin/pricing/sync", a.withAdmin(http.HandlerFunc(a.adminPricingSync)))
 	a.mux.Handle("POST /api/admin/pricing/sync", a.withAdmin(http.HandlerFunc(a.adminPricingSync)))
-	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
-		a.mux.Handle(method+" /api/admin/cpa/{resource...}", a.withAdmin(http.HandlerFunc(a.adminCPA)))
-	}
 	a.mux.Handle("GET /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("POST /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/models", a.withAdmin(http.HandlerFunc(a.adminProviderModels)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
-	a.mux.Handle("POST /api/admin/providers/codex/oauth", a.withAdmin(http.HandlerFunc(a.adminCodexOAuth)))
-	a.mux.Handle("POST /api/admin/providers/{provider}/oauth", a.withAdmin(http.HandlerFunc(a.adminProviderOAuth)))
-	a.mux.Handle("GET /api/admin/providers/oauth/status", a.withAdmin(http.HandlerFunc(a.adminOAuthStatus)))
-	a.mux.Handle("POST /api/admin/providers/oauth/callback", a.withAdmin(http.HandlerFunc(a.adminOAuthCallback)))
 	a.mux.Handle("GET /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
 	a.mux.Handle("PATCH /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
 	a.mux.Handle("GET /api/admin/runtime/settings", a.withAdmin(http.HandlerFunc(a.adminNativeSettings)))

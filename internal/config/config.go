@@ -13,9 +13,6 @@ import (
 type Config struct {
 	ListenAddr                 string
 	DatabaseURL                string
-	CPAURL                     string
-	CPAAPIKey                  string
-	CPAManagementKey           string
 	SessionSecret              string
 	APIKeyEncryptionKey        string
 	PublicURL                  string
@@ -53,9 +50,6 @@ func Load() (Config, error) {
 	cfg := Config{
 		ListenAddr:                 env("LISTEN_ADDR", ":3000"),
 		DatabaseURL:                strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		CPAURL:                     strings.TrimRight(env("CPA_URL", "http://cliproxyapi:8317"), "/"),
-		CPAAPIKey:                  strings.TrimSpace(os.Getenv("CPA_API_KEY")),
-		CPAManagementKey:           strings.TrimSpace(os.Getenv("CPA_MANAGEMENT_KEY")),
 		SessionSecret:              strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),
 		APIKeyEncryptionKey:        strings.TrimSpace(os.Getenv("RELAY_API_KEY_ENCRYPTION_KEY")),
 		PublicURL:                  strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
@@ -150,7 +144,7 @@ func Load() (Config, error) {
 	if cfg.RetentionMaxRuntime < time.Second || cfg.RetentionMaxRuntime > 10*time.Minute {
 		return Config{}, errors.New("RETENTION_MAX_RUNTIME_SECONDS must be between 1 and 600")
 	}
-	for name, value := range map[string]string{"CPA_URL": cfg.CPAURL, "RELAY_PUBLIC_URL": cfg.PublicURL} {
+	for name, value := range map[string]string{"RELAY_PUBLIC_URL": cfg.PublicURL} {
 		if parsed, err := url.Parse(value); err != nil || parsed.Scheme == "" || parsed.Host == "" {
 			return Config{}, fmt.Errorf("%s must be an absolute URL", name)
 		}

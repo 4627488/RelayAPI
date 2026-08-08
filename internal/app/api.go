@@ -2,10 +2,8 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -563,7 +561,13 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	availableModels, availableModelsError := a.cpa.Models(r.Context())
+	var availableModels []string
+	var availableModelsError error
+	if a.nativeCPARuntime == nil {
+		availableModelsError = errors.New("embedded CPA runtime is unavailable")
+	} else {
+		availableModels = a.nativeCPARuntime.Models()
+	}
 	available := make([]store.AvailableModelPrice, 0)
 	if availableModelsError == nil {
 		available, err = a.store.AvailableModelPrices(r.Context(), availableModels)
@@ -711,35 +715,4 @@ func (a *App) adminPricingSync(w http.ResponseWriter, r *http.Request) {
 		"source": result.Source, "version": result.Version, "url": result.URL,
 		"count": len(result.Entries), "applied": r.Method == http.MethodPost, "samples": samples,
 	})
-}
-
-func (a *App) adminCPA(w http.ResponseWriter, r *http.Request) {
-	if !a.requireCPAManagement(w) {
-		return
-	}
-	resource := strings.TrimSpace(r.PathValue("resource"))
-	if resource == "" || strings.Contains(resource, "..") || strings.ContainsAny(resource, "\\\x00") {
-		writeError(w, http.StatusBadRequest, "invalid_cpa_path", "CPA 管理路径无效")
-		return
-	}
-	if r.URL.RawQuery != "" {
-		resource += "?" + r.URL.RawQuery
-	}
-	var body io.Reader
-	if r.Body != nil {
-		body = http.MaxBytesReader(w, r.Body, 32<<20)
-	}
-	status, headers, payload, err := a.cpa.ManagementRaw(r.Context(), r.Method, resource, r.Header.Get("Content-Type"), body)
-	if err != nil {
-		writeCPATransportError(w, r, err, "management", "")
-		return
-	}
-	if value := headers.Get("Content-Type"); value != "" {
-		w.Header().Set("Content-Type", value)
-	} else if json.Valid(payload) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_, _ = w.Write(payload)
 }

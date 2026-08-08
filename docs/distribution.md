@@ -15,7 +15,7 @@ postgres:17-alpine
 
 不再发布或部署外置 CLIProxyAPI 数据面、CPA bridge 镜像和 C-ABI 插件。
 RelayAPI 的公开入口负责鉴权、准入与计费，进程内 CPA 负责协议、提供商凭据、
-模型路由和 WebSocket 会话。
+模型路由和 WebSocket 会话；上游额度也由 RelayAPI 内嵌适配器定时观测。
 
 ## GHCR 标签
 
