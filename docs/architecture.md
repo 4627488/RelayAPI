@@ -71,8 +71,9 @@ CLIProxyAPI without silently inventing prices.
 - CPA transport failures feed a circuit breaker. After repeated failures the
   circuit rejects traffic for a cooldown period and permits only one recovery
   probe, so an OOM-restarting CPA is not flooded as soon as its port reopens.
-- Request bodies default to 16 MiB (configurable up to 64 MiB), aggregate
-  in-flight request bodies have a separate 32 MiB budget, response-log captures
+- Request bodies default to 1 GiB (configurable up to 64 GiB), aggregate
+  in-flight request bodies have a separate 8 GiB budget (configurable up to
+  256 GiB), response-log captures
   remain bounded, and the CPA connection pool cannot exceed the inference
   concurrency limit.
 - SSE and WebSocket operations have no whole-request client timeout. Only the

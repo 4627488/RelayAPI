@@ -11,6 +11,8 @@ import (
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
+const maxModelCatalogBytes int64 = 256 << 20
+
 func isNativeModelCatalogRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodGet {
 		return false
@@ -39,7 +41,7 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 		return
 	}
 	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 16<<20))
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxModelCatalogBytes))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "model_catalog_error", "无法读取模型列表")
 		return

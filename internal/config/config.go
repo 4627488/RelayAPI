@@ -59,9 +59,9 @@ func Load() (Config, error) {
 		CPAMaxInFlight:             int(envInt64("CPA_MAX_IN_FLIGHT", 16)),
 		CPAMaxQueue:                int(envInt64("CPA_MAX_QUEUE", 32)),
 		CPAQueueTimeout:            time.Duration(envInt64("CPA_QUEUE_TIMEOUT_MILLISECONDS", 2_000)) * time.Millisecond,
-		CPAMaxRequestBytes:         envInt64("CPA_MAX_REQUEST_MIB", 16) << 20,
-		CPARequestBytesInFlight:    envInt64("CPA_REQUEST_BYTES_IN_FLIGHT_MIB", 32) << 20,
-		ExecutorCachePressureBytes: uint64(envInt64("RELAY_EXECUTOR_CACHE_PRESSURE_MIB", 384)) << 20,
+		CPAMaxRequestBytes:         envInt64("CPA_MAX_REQUEST_MIB", 1_024) << 20,
+		CPARequestBytesInFlight:    envInt64("CPA_REQUEST_BYTES_IN_FLIGHT_MIB", 8_192) << 20,
+		ExecutorCachePressureBytes: uint64(envInt64("RELAY_EXECUTOR_CACHE_PRESSURE_MIB", 8_192)) << 20,
 		CPACircuitFailureThreshold: int(envInt64("CPA_CIRCUIT_FAILURE_THRESHOLD", 3)),
 		CPACircuitOpenDuration:     time.Duration(envInt64("CPA_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
 		QuotaSyncInterval:          time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
@@ -109,14 +109,14 @@ func Load() (Config, error) {
 	if cfg.CPAQueueTimeout < 0 || cfg.CPAQueueTimeout > time.Minute {
 		return Config{}, errors.New("CPA_QUEUE_TIMEOUT_MILLISECONDS must be between 0 and 60000")
 	}
-	if cfg.CPAMaxRequestBytes < 1<<20 || cfg.CPAMaxRequestBytes > 64<<20 {
-		return Config{}, errors.New("CPA_MAX_REQUEST_MIB must be between 1 and 64")
+	if cfg.CPAMaxRequestBytes < 1<<20 || cfg.CPAMaxRequestBytes > 64<<30 {
+		return Config{}, errors.New("CPA_MAX_REQUEST_MIB must be between 1 and 65536")
 	}
-	if cfg.CPARequestBytesInFlight < cfg.CPAMaxRequestBytes || cfg.CPARequestBytesInFlight > 1<<30 {
-		return Config{}, errors.New("CPA_REQUEST_BYTES_IN_FLIGHT_MIB must be at least CPA_MAX_REQUEST_MIB and at most 1024")
+	if cfg.CPARequestBytesInFlight < cfg.CPAMaxRequestBytes || cfg.CPARequestBytesInFlight > 256<<30 {
+		return Config{}, errors.New("CPA_REQUEST_BYTES_IN_FLIGHT_MIB must be at least CPA_MAX_REQUEST_MIB and at most 262144")
 	}
-	if cfg.ExecutorCachePressureBytes < 64<<20 || cfg.ExecutorCachePressureBytes > 8<<30 {
-		return Config{}, errors.New("RELAY_EXECUTOR_CACHE_PRESSURE_MIB must be between 64 and 8192")
+	if cfg.ExecutorCachePressureBytes < 64<<20 || cfg.ExecutorCachePressureBytes > 512<<30 {
+		return Config{}, errors.New("RELAY_EXECUTOR_CACHE_PRESSURE_MIB must be between 64 and 524288")
 	}
 	if cfg.CPACircuitFailureThreshold < 1 || cfg.CPACircuitFailureThreshold > 100 {
 		return Config{}, errors.New("CPA_CIRCUIT_FAILURE_THRESHOLD must be between 1 and 100")

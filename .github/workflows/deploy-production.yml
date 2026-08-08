@@ -75,5 +75,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=40 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "/opt/relayapi/deploy-relayapi.sh '$IMAGE'"

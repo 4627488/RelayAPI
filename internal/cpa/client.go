@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const maxControlResponseBytes int64 = 256 << 20
+
 type Client struct {
 	BaseURL       *url.URL
 	APIKey        string
@@ -54,7 +56,7 @@ func NewWithOptions(rawURL, apiKey, managementKey string, options Options) (*Cli
 		options.MaxQueue = 0
 	}
 	if options.MaxRequestBytesInFlight <= 0 {
-		options.MaxRequestBytesInFlight = 32 << 20
+		options.MaxRequestBytesInFlight = 8 << 30
 	}
 	if options.QueueTimeout < 0 {
 		options.QueueTimeout = 0
@@ -113,7 +115,7 @@ func (c *Client) Management(ctx context.Context, method, path string, body any) 
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, maxControlResponseBytes))
 	return resp.StatusCode, payload, err
 }
 
@@ -134,7 +136,7 @@ func (c *Client) ManagementRaw(ctx context.Context, method, path, contentType st
 		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, maxControlResponseBytes))
 	return resp.StatusCode, resp.Header.Clone(), payload, err
 }
 
@@ -175,7 +177,7 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxControlResponseBytes)).Decode(&payload); err != nil {
 		return nil, err
 	}
 	seen := make(map[string]struct{}, len(payload.Data))
