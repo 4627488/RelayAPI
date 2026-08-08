@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -16,6 +17,148 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
+
+type nativeWebSocketTestResult struct {
+	session nativeWebSocketSessionState
+	err     error
+}
+
+func TestNativeResponsesWebSocketProbeDisconnectIsNotAnError(t *testing.T) {
+	app := &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}}
+	resultCh := make(chan nativeWebSocketTestResult, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "probe-test", nil,
+			&nativeWebSocketAccounting{})
+		resultCh <- nativeWebSocketTestResult{session: session, err: err}
+	}))
+	defer server.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = client.UnderlyingConn().Close()
+
+	select {
+	case got := <-resultCh:
+		if !got.session.upgraded || got.session.established || got.err != nil {
+			t.Fatalf("probe result = %#v, error = %v", got.session, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for probe disconnect")
+	}
+}
+
+func TestNativeResponsesWebSocketClientDisconnectIsNotAnError(t *testing.T) {
+	upstreamReady := make(chan struct{}, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err = conn.ReadMessage(); err != nil {
+			return
+		}
+		upstreamReady <- struct{}{}
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer upstream.Close()
+
+	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
+		Document: mustJSON(t, map[string]any{
+			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
+		}),
+	})
+	resultCh := make(chan nativeWebSocketTestResult, 1)
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "disconnect-test", nil,
+			&nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}})
+		resultCh <- nativeWebSocketTestResult{session: session, err: err}
+	}))
+	defer downstream.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+downstream.URL[len("http"):]+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.WriteJSON(map[string]any{"type": "response.create", "model": "gpt-test", "input": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-upstreamReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for upstream request")
+	}
+	_ = client.UnderlyingConn().Close()
+
+	select {
+	case got := <-resultCh:
+		if !got.session.upgraded || !got.session.established || got.err != nil {
+			t.Fatalf("client disconnect result = %#v, error = %v", got.session, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for client disconnect")
+	}
+}
+
+func TestNativeResponsesWebSocketUpstreamDisconnectRemainsAnError(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		if _, _, err = conn.ReadMessage(); err != nil {
+			_ = conn.Close()
+			return
+		}
+		_ = conn.UnderlyingConn().Close()
+	}))
+	defer upstream.Close()
+
+	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
+		Document: mustJSON(t, map[string]any{
+			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
+		}),
+	})
+	resultCh := make(chan nativeWebSocketTestResult, 1)
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "upstream-error-test", nil,
+			&nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}})
+		resultCh <- nativeWebSocketTestResult{session: session, err: err}
+	}))
+	defer downstream.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+downstream.URL[len("http"):]+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err = client.WriteJSON(map[string]any{"type": "response.create", "model": "gpt-test", "input": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = client.ReadMessage()
+
+	select {
+	case got := <-resultCh:
+		if !got.session.upgraded || !got.session.established || got.err == nil {
+			t.Fatalf("upstream disconnect result = %#v, error = %v", got.session, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for upstream disconnect")
+	}
+}
+
+func TestClientWebSocketDisconnectRejectsServiceErrors(t *testing.T) {
+	if !clientWebSocketDisconnect(&websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"}) {
+		t.Fatal("abnormal peer close should be classified as a client disconnect")
+	}
+	if clientWebSocketDisconnect(errors.New("upstream unavailable")) {
+		t.Fatal("service error should not be classified as a client disconnect")
+	}
+}
 
 func TestNativeResponsesWebSocketUsesEmbeddedCPAHandlerAndAccountsUsage(t *testing.T) {
 	type observed struct {

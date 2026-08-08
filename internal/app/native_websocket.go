@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -29,10 +30,15 @@ type nativeWebSocketAccounting struct {
 	errorHTTP int
 }
 
+type nativeWebSocketSessionState struct {
+	upgraded    bool
+	established bool
+}
+
 func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
 	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
-	connected, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
+	session, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
 	if resolvedMeta.Model != "" {
 		meta = resolvedMeta
 	}
@@ -40,15 +46,18 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	billable = accounting.billable
 	logContext.price = accounting.price
 	statusCode := http.StatusSwitchingProtocols
-	if !connected {
+	if accounting.errorHTTP != 0 {
 		statusCode = accounting.errorHTTP
-		if statusCode == 0 {
-			statusCode = http.StatusBadGateway
-		}
 		logContext.errorCode = accounting.errorCode
 		if logContext.errorCode == "" {
 			logContext.errorCode = "websocket_proxy_error"
 		}
+	} else if err != nil && !session.established {
+		statusCode = http.StatusBadGateway
+		logContext.errorCode = firstNonEmptyString(accounting.errorCode, "websocket_proxy_error")
+	} else if !session.upgraded {
+		statusCode = http.StatusBadGateway
+		logContext.errorCode = "websocket_proxy_error"
 	}
 	if accounting.price != nil && accounting.result.ResponseServiceTier != "" {
 		if resolved, resolveErr := a.store.ResolvePrice(context.Background(), pricing.Dimensions{
@@ -66,7 +75,7 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	settled := !billable
 	if billable {
 		var settleErr error
-		if connected {
+		if session.established {
 			if pricingComplete {
 				actual = billing.Cost(*accounting.price, accounting.result.Usage)
 			}
@@ -83,7 +92,7 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	if err != nil && !normalWebSocketClose(err) {
 		slog.Warn("native websocket proxy", "request_id", requestID, "error", err)
-		if connected {
+		if session.established {
 			logContext.errorCode = "websocket_session_error"
 		}
 		logContext.detail.ErrorName = logContext.errorCode
@@ -100,7 +109,8 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 // response events for usage; all protocol behavior remains owned by CPA's
 // complete Responses WebSocket handler.
 func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext,
-	meta requestMeta, requestID string, logDetail *store.LogDetailInput, accounting *nativeWebSocketAccounting) (bool, requestMeta, error) {
+	meta requestMeta, requestID string, logDetail *store.LogDetailInput, accounting *nativeWebSocketAccounting) (nativeWebSocketSessionState, requestMeta, error) {
+	var session nativeWebSocketSessionState
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout:  30 * time.Second,
 		EnableCompression: true,
@@ -109,21 +119,25 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	downstream, err := upgrader.Upgrade(w, r, http.Header{"X-Relay-Request-ID": []string{requestID}})
 	if err != nil {
-		return false, meta, err
+		return session, meta, err
 	}
+	session.upgraded = true
 	defer downstream.Close()
 	downstream.SetReadLimit(a.cfg.CPAMaxRequestBytes)
 	_ = downstream.SetReadDeadline(time.Now().Add(30 * time.Second))
 	messageType, firstFrame, err := downstream.ReadMessage()
 	_ = downstream.SetReadDeadline(time.Time{})
 	if err != nil {
-		return false, meta, err
+		if clientWebSocketDisconnect(err) {
+			return session, meta, nil
+		}
+		return session, meta, err
 	}
 	if (messageType != websocket.TextMessage && messageType != websocket.BinaryMessage) || !json.Valid(firstFrame) {
 		err = fmt.Errorf("first websocket message must be a JSON response.create frame")
 		accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "invalid_request"
 		writeNativeWebSocketError(downstream, "invalid_request", err.Error())
-		return false, meta, err
+		return session, meta, err
 	}
 	captureWebSocketRequest(logDetail, firstFrame)
 	frameMeta := readRequestMeta(firstFrame, r.URL.Path)
@@ -139,20 +153,20 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		err = fmt.Errorf("response.create requires model")
 		accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "model_required"
 		writeNativeWebSocketError(downstream, "model_required", err.Error())
-		return false, meta, err
+		return session, meta, err
 	}
 	if !allowed(meta.Model, key.ModelAllowlist, key.TenantModels) {
 		err = fmt.Errorf("API key is not allowed to use model %q", meta.Model)
 		accounting.errorHTTP, accounting.errorCode = http.StatusForbidden, "model_not_allowed"
 		writeNativeWebSocketError(downstream, "model_not_allowed", err.Error())
-		return false, meta, err
+		return session, meta, err
 	}
 	if !accounting.billable {
 		admission, price, code, admitErr := a.admitNativeWebSocket(r.Context(), key, meta, requestID, r.URL.Path)
 		if admitErr != nil {
 			accounting.errorHTTP, accounting.errorCode = nativeWebSocketAdmissionError(code)
 			writeNativeWebSocketError(downstream, code, admitErr.Error())
-			return false, meta, admitErr
+			return session, meta, admitErr
 		}
 		accounting.admission = admission
 		accounting.price = price
@@ -164,7 +178,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			firstFrame, err = rewriteRequestModel(firstFrame, r.URL, frameMeta.Model, upstreamModel)
 			if err != nil {
 				writeNativeWebSocketError(downstream, "invalid_request", "unable to resolve websocket model")
-				return false, meta, err
+				return session, meta, err
 			}
 		}
 	}
@@ -175,13 +189,14 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	if err != nil {
 		writeNativeWebSocketError(downstream, "embedded_cpa_unavailable", err.Error())
-		return false, meta, err
+		return session, meta, err
 	}
 	defer upstream.Close()
 	upstream.SetReadLimit(a.cfg.CPAMaxRequestBytes)
 	if err = upstream.WriteMessage(messageType, firstFrame); err != nil {
-		return false, meta, err
+		return session, meta, err
 	}
+	session.established = true
 
 	stopCancel := context.AfterFunc(r.Context(), func() {
 		_ = downstream.Close()
@@ -189,14 +204,15 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	})
 	defer stopCancel()
 	type pumpResult struct {
-		err error
+		source string
+		err    error
 	}
 	results := make(chan pumpResult, 2)
 	go func() {
-		results <- pumpResult{err: pumpWebSocketMessages(downstream, upstream, nil)}
+		results <- pumpResult{source: "downstream", err: pumpWebSocketMessages(downstream, upstream, nil)}
 	}()
 	go func() {
-		results <- pumpResult{err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) {
+		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) {
 			mergeNativeWebSocketResult(&accounting.result, parseNativeWebSocketUsage(payload))
 		})}
 	}()
@@ -205,7 +221,10 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	_ = downstream.Close()
 	_ = upstream.Close()
 	<-results
-	return true, meta, first.err
+	if first.source == "downstream" && clientWebSocketDisconnect(first.err) {
+		return session, meta, nil
+	}
+	return session, meta, first.err
 }
 
 func nativeWebSocketAdmissionError(code string) (int, string) {
@@ -415,6 +434,17 @@ func writeNativeWebSocketError(conn *websocket.Conn, code, message string) {
 func normalWebSocketClose(err error) bool {
 	return err == nil || errors.Is(err, context.Canceled) || websocket.IsCloseError(err,
 		websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived)
+}
+
+// clientWebSocketDisconnect identifies peer-side shutdowns that are not a
+// gateway failure. In particular, connectivity probes and process teardown
+// commonly close the TCP connection without sending a WebSocket close frame,
+// which gorilla/websocket reports as close code 1006 with unexpected EOF.
+func clientWebSocketDisconnect(err error) bool {
+	if normalWebSocketClose(err) || errors.Is(err, io.EOF) {
+		return true
+	}
+	return websocket.IsCloseError(err, websocket.CloseAbnormalClosure)
 }
 
 func errorString(err error) string {

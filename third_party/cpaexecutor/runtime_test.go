@@ -11,8 +11,82 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
+
+func TestRuntimeRetriesSoleCredentialAfterShortTransientCooldown(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "codex-only", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
+		Document: []byte(`{"type":"codex","access_token":"test-token"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	failedAt := time.Now()
+	runtime.manager.MarkResult(context.Background(), coreauth.Result{
+		AuthID: "codex-only", Provider: "codex", Model: "gpt-test",
+		Error: &coreauth.Error{HTTPStatus: http.StatusServiceUnavailable, Message: "temporary upstream failure"},
+	})
+	auth, ok := runtime.manager.GetByID("codex-only")
+	if !ok || auth.ModelStates["gpt-test"] == nil {
+		t.Fatal("transient failure did not update model health")
+	}
+	retryAt := auth.ModelStates["gpt-test"].NextRetryAfter
+	if delay := retryAt.Sub(failedAt); delay <= 0 || delay > 2*time.Second {
+		t.Fatalf("transient retry delay = %v, want at most 2s", delay)
+	}
+	if wait := time.Until(retryAt.Add(25 * time.Millisecond)); wait > 0 {
+		time.Sleep(wait)
+	}
+	picked, err := runtime.manager.SelectAuth(context.Background(), "codex", "gpt-test", cliproxyexecutor.Options{})
+	if err != nil {
+		t.Fatalf("sole credential was not retried: %v", err)
+	}
+	if picked.ID != "codex-only" {
+		t.Fatalf("picked credential = %q, want codex-only", picked.ID)
+	}
+
+	quotaFailedAt := time.Now()
+	quotaRetryAfter := 30 * time.Second
+	runtime.manager.MarkResult(context.Background(), coreauth.Result{
+		AuthID: "codex-only", Provider: "codex", Model: "gpt-test",
+		RetryAfter: &quotaRetryAfter,
+		Error:      &coreauth.Error{HTTPStatus: http.StatusTooManyRequests, Message: "quota exceeded"},
+	})
+	auth, _ = runtime.manager.GetByID("codex-only")
+	state := auth.ModelStates["gpt-test"]
+	if !state.Quota.Exceeded || state.NextRetryAfter.Sub(quotaFailedAt) < 29*time.Second {
+		t.Fatalf("quota cooldown was shortened: %#v", state)
+	}
+}
+
+func TestRuntimePrefersHealthyCredentialDuringTransientCooldown(t *testing.T) {
+	credentials := []Credential{
+		{ID: "codex-a", Provider: "codex", Enabled: true, Models: []string{"gpt-test"}, Document: []byte(`{"type":"codex","access_token":"token-a"}`)},
+		{ID: "codex-b", Provider: "codex", Enabled: true, Models: []string{"gpt-test"}, Document: []byte(`{"type":"codex","access_token":"token-b"}`)},
+	}
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	runtime.manager.MarkResult(context.Background(), coreauth.Result{
+		AuthID: "codex-a", Provider: "codex", Model: "gpt-test",
+		Error: &coreauth.Error{HTTPStatus: http.StatusServiceUnavailable, Message: "temporary upstream failure"},
+	})
+	picked, err := runtime.manager.SelectAuth(context.Background(), "codex", "gpt-test", cliproxyexecutor.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if picked.ID != "codex-b" {
+		t.Fatalf("picked credential = %q, want healthy codex-b", picked.ID)
+	}
+}
 
 func TestRuntimeRegistersCompletePublicInferenceSurface(t *testing.T) {
 	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
@@ -80,6 +154,9 @@ func TestRuntimeApplySettingsRebuildsCredentialsWithGlobalProxy(t *testing.T) {
 	}
 	if runtime.cfg.RequestRetry != 4 || runtime.cfg.MaxRetryCredentials != 2 || runtime.cfg.MaxRetryInterval != 12 {
 		t.Fatalf("retry configuration was not updated: %#v", runtime.cfg)
+	}
+	if runtime.cfg.TransientErrorCooldownSeconds != transientCredentialCooldownSeconds {
+		t.Fatalf("transient cooldown = %d, want %d", runtime.cfg.TransientErrorCooldownSeconds, transientCredentialCooldownSeconds)
 	}
 	if runtime.cfg.DisableImageGeneration.String() != "chat" {
 		t.Fatalf("image mode = %s", runtime.cfg.DisableImageGeneration.String())

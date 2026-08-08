@@ -22,6 +22,12 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
+// Keep transport failures long enough to prefer another credential, but short
+// enough that a single-credential pool retries instead of becoming unavailable.
+// Credential-specific failures (for example 401, 403 and 429) retain CPA's
+// provider-aware cooldowns.
+const transientCredentialCooldownSeconds = 1
+
 // Credential is Relay's storage-neutral representation of one CPA credential.
 // Document is the original CPA auth JSON (or a config-derived API-key document).
 type Credential struct {
@@ -119,11 +125,12 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 			Streaming:                  internalconfig.StreamingConfig{KeepAliveSeconds: opts.StreamKeepAliveSeconds, BootstrapRetries: opts.StreamBootstrapRetries},
 			NonStreamKeepAliveInterval: opts.NonStreamKeepAliveInterval,
 		},
-		CommercialMode:      true,
-		WebsocketAuth:       true,
-		RequestRetry:        opts.RequestRetry,
-		MaxRetryCredentials: opts.MaxRetryCredentials,
-		MaxRetryInterval:    maxRetryInterval,
+		CommercialMode:                true,
+		WebsocketAuth:                 true,
+		RequestRetry:                  opts.RequestRetry,
+		MaxRetryCredentials:           opts.MaxRetryCredentials,
+		MaxRetryInterval:              maxRetryInterval,
+		TransientErrorCooldownSeconds: transientCredentialCooldownSeconds,
 	}
 	cfg.DisableImageGeneration = imageGenerationMode(opts.DisableImageGeneration)
 	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, runtimeAuthHook{updated: opts.OnCredentialUpdated})
