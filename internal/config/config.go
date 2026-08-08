@@ -72,7 +72,7 @@ func Load() (Config, error) {
 		RequestLogRetentionDays:    int(envInt64("REQUEST_LOG_RETENTION_DAYS", 30)),
 		RequestDetailRetentionDays: int(envInt64("REQUEST_LOG_DETAIL_RETENTION_DAYS", 14)),
 		RequestSuccessDetailDays:   int(envInt64("REQUEST_LOG_SUCCESS_DETAIL_DAYS", 1)),
-		RequestSuccessSamplePPM:    int(envInt64("REQUEST_LOG_SUCCESS_SAMPLE_PPM", 10_000)),
+		RequestSuccessSamplePPM:    int(envInt64("REQUEST_LOG_SUCCESS_SAMPLE_PPM", 0)),
 		LifecycleSuccessHours:      int(envInt64("CPA_LIFECYCLE_SUCCESS_HOURS", 24)),
 		LifecycleErrorDays:         int(envInt64("CPA_LIFECYCLE_ERROR_DAYS", 7)),
 		ReservationRetentionDays:   int(envInt64("REQUEST_RESERVATION_RETENTION_DAYS", 14)),
