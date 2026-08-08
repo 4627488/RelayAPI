@@ -234,6 +234,24 @@ type requestLogContext struct {
 	errorCode  string
 }
 
+func rejectedRequestDetail(r *http.Request, body []byte, bodyRead bool, code, message string, started time.Time) *store.LogDetailInput {
+	detail := baseRequestDetail(r, body)
+	if !bodyRead && r.ContentLength > 0 {
+		detail.RequestBodyBytes = r.ContentLength
+		detail.RequestBodyTruncated = true
+	}
+	detail.ErrorName = code
+	detail.ErrorMessage = boundedErrorText(message)
+	detail.StageTimings = timingJSON(map[string]int64{"total_ms": time.Since(started).Milliseconds()})
+	return detail
+}
+
+func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta,
+	r *http.Request, status int, started time.Time, code, message string, detail *store.LogDetailInput) {
+	a.writeRequestLog(key, requestID, admission, meta, r, status, started, nil, false, true, 0,
+		boundedErrorText(message), requestLogContext{detail: detail, errorCode: code})
+}
+
 func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	keyValue := bearer(r)
@@ -247,6 +265,8 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		a.proxyNativeModels(w, r, key)
 		return
 	}
+	requestID := identity.NewID()
+	admission := store.Admission{RequestID: requestID}
 	expectedBodyBytes := r.ContentLength
 	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.CPAMaxRequestBytes {
 		expectedBodyBytes = a.cfg.CPAMaxRequestBytes
@@ -254,14 +274,21 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	targetCPA := a.inferenceCPA()
 	lease, err := targetCPA.Acquire(r.Context(), expectedBodyBytes)
 	if err != nil {
-		writeCPAAdmissionError(w, err, targetCPA.AdmissionStatus())
+		classified := writeCPAAdmissionError(w, err, targetCPA.AdmissionStatus())
+		meta := requestMetadata(nil, r)
+		detail := rejectedRequestDetail(r, nil, false, classified.Code, classified.Message, started)
+		a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
 		return
 	}
 	defer lease.Release()
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, a.cfg.CPAMaxRequestBytes))
 	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("请求体超过 %d MiB", a.cfg.CPAMaxRequestBytes>>20))
+		message := fmt.Sprintf("请求体超过 %d MiB", a.cfg.CPAMaxRequestBytes>>20)
+		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", message)
+		meta := requestMetadata(body, r)
+		detail := rejectedRequestDetail(r, body, true, "body_too_large", message, started)
+		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusRequestEntityTooLarge, started, "body_too_large", message, detail)
 		return
 	}
 	bodyReadAt := time.Now()
@@ -276,17 +303,26 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	meta = resolved
 	body, err = rewriteRequestModel(body, r.URL, meta.RequestedModel, meta.Model)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "无法改写请求模型")
+		const message = "无法改写请求模型"
+		writeError(w, http.StatusBadRequest, "invalid_request", message)
+		detail := rejectedRequestDetail(r, body, true, "invalid_request", message, started)
+		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusBadRequest, started, "invalid_request", message, detail)
 		return
 	}
 	websocket := isWebSocketUpgrade(r)
 	billable := meta.Model != "" && (websocket || (r.Method != http.MethodGet && r.Method != http.MethodHead))
 	if meta.Model != "" && !allowed(meta.Model, key.ModelAllowlist, key.TenantModels) {
-		writeError(w, http.StatusForbidden, "model_not_allowed", "该 API Key 无权使用此模型")
+		const message = "该 API Key 无权使用此模型"
+		writeError(w, http.StatusForbidden, "model_not_allowed", message)
+		detail := rejectedRequestDetail(r, body, true, "model_not_allowed", message, started)
+		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusForbidden, started, "model_not_allowed", message, detail)
 		return
 	}
 	if err := a.enforceLimits(r.Context(), key); err != nil {
-		writeError(w, http.StatusTooManyRequests, "quota_exceeded", err.Error())
+		message := boundedErrorText(err.Error())
+		writeError(w, http.StatusTooManyRequests, "quota_exceeded", message)
+		detail := rejectedRequestDetail(r, body, true, "quota_exceeded", message, started)
+		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusTooManyRequests, started, "quota_exceeded", message, detail)
 		return
 	}
 	limitsCheckedAt := time.Now()
@@ -294,8 +330,6 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	var price store.ResolvedPrice
 	var priceSnapshot []byte
 	priceConfigured := false
-	requestID := identity.NewID()
-	admission := store.Admission{RequestID: requestID}
 	if billable {
 		price, err = a.store.ResolvePrice(r.Context(), pricing.Dimensions{
 			APIGroupKey: key.ID, Model: meta.Model, ServiceTier: meta.ServiceTier,
@@ -303,7 +337,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if a.cfg.UnpricedModelPolicy == "deny" {
-				writeError(w, http.StatusBadRequest, "price_not_configured", "模型尚未配置价格")
+				const message = "模型尚未配置价格"
+				writeError(w, http.StatusBadRequest, "price_not_configured", message)
+				detail := rejectedRequestDetail(r, body, true, "price_not_configured", message, started)
+				a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusBadRequest, started, "price_not_configured", message, detail)
 				return
 			}
 		} else {
@@ -324,21 +361,26 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			PriceSnapshot: priceSnapshot, ExpiresAt: time.Now().Add(reservationTTL),
 		})
 		if err != nil {
+			status, code, message := http.StatusPaymentRequired, "admission_failed", "余额不足或订阅不可用"
 			switch {
 			case errors.Is(err, store.ErrSubscriptionPrice):
-				writeError(w, http.StatusBadRequest, "price_not_configured", "计量子订阅要求先配置模型价格")
+				status, code, message = http.StatusBadRequest, "price_not_configured", "计量子订阅要求先配置模型价格"
 			case errors.Is(err, store.ErrSubscriptionRequired):
-				writeError(w, http.StatusForbidden, "subscription_not_available", "没有可用于该模型的子订阅")
+				status, code, message = http.StatusForbidden, "subscription_not_available", "没有可用于该模型的子订阅"
 			case errors.Is(err, store.ErrSubscriptionExhausted):
-				writeError(w, http.StatusTooManyRequests, "subscription_quota_exceeded", "所有可用子订阅额度均已耗尽")
-			default:
-				writeError(w, http.StatusPaymentRequired, "admission_failed", "余额不足或订阅不可用")
+				status, code, message = http.StatusTooManyRequests, "subscription_quota_exceeded", "所有可用子订阅额度均已耗尽"
 			}
+			writeError(w, status, code, message)
+			detail := rejectedRequestDetail(r, body, true, code, message, started)
+			a.writeRejectedRequestLog(key, requestID, admission, meta, r, status, started, code, message, detail)
 			return
 		}
 		if a.cfg.DataPlane != "native" && admission.CPAAuthID != "" && !a.bridgeReady.Load() {
 			a.releaseReservation(requestID, true)
-			writeError(w, http.StatusServiceUnavailable, "cpa_bridge_required", "严格子订阅路由要求 CPA bridge 0.6.0 或更高版本")
+			const message = "严格子订阅路由要求 CPA bridge 0.6.0 或更高版本"
+			writeError(w, http.StatusServiceUnavailable, "cpa_bridge_required", message)
+			detail := rejectedRequestDetail(r, body, true, "cpa_bridge_required", message, started)
+			a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusServiceUnavailable, started, "cpa_bridge_required", message, detail)
 			return
 		}
 		if priceConfigured {
@@ -669,7 +711,7 @@ func (a *App) proxyWebSocket(w http.ResponseWriter, r *http.Request, key store.K
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
-func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.AdmissionStatus) {
+func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.AdmissionStatus) cpaTransportError {
 	retryAfter := int64(1)
 	httpStatus := http.StatusServiceUnavailable
 	retryable := true
@@ -704,6 +746,7 @@ func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.Admissi
 		"code": code, "type": "service_unavailable", "message": message,
 		"details": details,
 	}})
+	return cpaTransportError{Status: httpStatus, Code: code, Message: message, Phase: "admission", Retryable: retryable}
 }
 
 func (a *App) releaseReservation(requestID string, billable bool) {

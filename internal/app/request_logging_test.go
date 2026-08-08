@@ -12,10 +12,11 @@ import (
 func TestSanitizedHeadersRedactsSecrets(t *testing.T) {
 	headers := http.Header{
 		"Authorization": {"Bearer secret"}, "Cookie": {"session=secret"},
-		"X-Request-ID": {"visible"},
+		"X-Goog-Api-Key": {"relay_gemini_secret"},
+		"X-Request-ID":   {"visible"},
 	}
 	value := sanitizedHeaders(headers)
-	if strings.Contains(value, "Bearer secret") || strings.Contains(value, "session=secret") {
+	if strings.Contains(value, "Bearer secret") || strings.Contains(value, "session=secret") || strings.Contains(value, "relay_gemini_secret") {
 		t.Fatalf("sensitive value leaked: %s", value)
 	}
 	if !strings.Contains(value, "visible") || !strings.Contains(value, "[REDACTED]") {
@@ -103,5 +104,20 @@ func TestUpstreamErrorMessageExtractsStructuredMessage(t *testing.T) {
 	got := upstreamErrorMessage(http.StatusBadRequest, []byte(`{"error":{"message":"invalid model"}}`))
 	if got != "invalid model" {
 		t.Fatalf("message = %q", got)
+	}
+}
+
+func TestBoundedErrorTextNeverReturnsInvalidUTF8(t *testing.T) {
+	value := boundedErrorText(strings.Repeat("中", 1_000))
+	if len(value) > 2048 || !utf8.ValidString(value) {
+		t.Fatalf("length=%d valid=%v", len(value), utf8.ValidString(value))
+	}
+	if strings.HasSuffix(value, "�") {
+		t.Fatalf("a rune split at the byte limit: %q", value[len(value)-4:])
+	}
+
+	value = boundedErrorText(string([]byte{'a', 0xff, 'b'}))
+	if !utf8.ValidString(value) || value != "a�b" {
+		t.Fatalf("invalid input was not normalized: %q", value)
 	}
 }

@@ -77,6 +77,18 @@ func TestEnforceLimitsSkipsUsageQueryWhenNoDailyLimitExists(t *testing.T) {
 	}
 }
 
+func TestRejectedRequestDetailMarksUnreadBody(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("request body"))
+	request.Header.Set("X-Goog-Api-Key", "relay_gemini_secret")
+	detail := rejectedRequestDetail(request, nil, false, "cpa_overloaded", "CPA overloaded", time.Now())
+	if detail.RequestBodyBytes != request.ContentLength || !detail.RequestBodyTruncated {
+		t.Fatalf("unread body metadata = bytes %d, truncated %v", detail.RequestBodyBytes, detail.RequestBodyTruncated)
+	}
+	if strings.Contains(detail.RequestHeaders, "relay_gemini_secret") || detail.ErrorName != "cpa_overloaded" {
+		t.Fatalf("rejected detail = %+v", detail)
+	}
+}
+
 func TestSetStreamingHeadersDisablesTransformBuffering(t *testing.T) {
 	header := make(http.Header)
 	setStreamingHeaders(header, true)

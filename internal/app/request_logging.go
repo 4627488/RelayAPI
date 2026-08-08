@@ -28,6 +28,7 @@ type cpaTransportError struct {
 var sensitiveLogHeaders = map[string]struct{}{
 	"api-key": {}, "authorization": {}, "cookie": {}, "set-cookie": {},
 	"x-api-key": {}, "openai-api-key": {}, "proxy-authorization": {},
+	"x-goog-api-key":        {},
 	"x-relay-plugin-secret": {}, "x-relay-plugin-signature": {},
 }
 
@@ -132,9 +133,13 @@ func upstreamErrorMessage(status int, payload []byte) string {
 
 func boundedErrorText(value string) string {
 	const limit = 2048
-	value = strings.TrimSpace(value)
+	value = strings.ToValidUTF8(strings.TrimSpace(value), "\uFFFD")
 	if len(value) > limit {
-		return value[:limit]
+		end := limit
+		for end > 0 && !utf8.RuneStart(value[end]) {
+			end--
+		}
+		return value[:end]
 	}
 	return value
 }
