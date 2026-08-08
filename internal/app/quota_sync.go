@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -26,9 +27,6 @@ type quotaSyncResult struct {
 }
 
 func (a *App) adminSyncParentQuotas(w http.ResponseWriter, r *http.Request) {
-	if !a.requireCPAManagement(w) {
-		return
-	}
 	parents, err := a.store.ListParentSubscriptions(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
@@ -39,9 +37,6 @@ func (a *App) adminSyncParentQuotas(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) adminSyncParentQuota(w http.ResponseWriter, r *http.Request) {
-	if !a.requireCPAManagement(w) {
-		return
-	}
 	parent, err := a.store.GetParentSubscription(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeSubscriptionError(w, err)
@@ -56,20 +51,6 @@ func (a *App) adminSyncParentQuota(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) refreshParentQuotas(ctx context.Context) {
-	if strings.TrimSpace(a.cfg.CPAManagementKey) == "" {
-		return
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	ready, version, err := a.cpa.QuotaReady(probeCtx)
-	cancel()
-	if err != nil {
-		slog.Warn("check CPA quota extension", "error", err)
-		return
-	}
-	if !ready {
-		slog.Debug("skip automatic CPA quota sync", "bridge_version", version, "required", "0.6.0")
-		return
-	}
 	parents, err := a.store.ListParentSubscriptions(ctx)
 	if err != nil {
 		slog.Error("list parents for automatic quota sync", "error", err)
@@ -129,7 +110,20 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 	result := quotaSyncResult{ParentID: parent.ID, AuthIndex: parent.CPAAuthIndex, Provider: parent.Provider}
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	report, err := a.cpa.Quota(probeCtx, parent.CPAAuthIndex)
+	credential, err := a.nativeQuotaCredential(probeCtx, parent)
+	if err != nil {
+		result.Status = "error"
+		result.Error = err.Error()
+		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
+		return result
+	}
+	a.nativeSettings.RLock()
+	proxyURL := a.nativeSettings.value.ProxyURL
+	a.nativeSettings.RUnlock()
+	report, err := cpa.ProbeQuota(probeCtx, cpa.QuotaProbeCredential{
+		AuthIndex: firstNonEmptyString(parent.CPAAuthIndex, parent.CPAAuthID), Provider: firstNonEmptyString(parent.Provider, credential.Provider),
+		Document: credential.Document, ProxyURL: proxyURL,
+	})
 	if err != nil {
 		result.Status = "error"
 		result.Error = err.Error()
@@ -177,6 +171,26 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 		result.Status, result.Error = "error", err.Error()
 	}
 	return result
+}
+
+func (a *App) nativeQuotaCredential(ctx context.Context, parent store.ParentSubscription) (store.UpstreamCredentialSnapshot, error) {
+	identities := []string{parent.CPAAuthID, parent.CPAAuthName, parent.CPAAuthIndex}
+	seen := make(map[string]struct{}, len(identities))
+	for _, identity := range identities {
+		identity = strings.TrimSpace(identity)
+		if identity == "" {
+			continue
+		}
+		if _, exists := seen[identity]; exists {
+			continue
+		}
+		seen[identity] = struct{}{}
+		credential, err := a.store.GetUpstreamCredential(ctx, identity)
+		if err == nil {
+			return credential, nil
+		}
+	}
+	return store.UpstreamCredentialSnapshot{}, fmt.Errorf("native credential for parent %q was not found", parent.Name)
 }
 
 func firstNonEmptyString(values ...string) string {

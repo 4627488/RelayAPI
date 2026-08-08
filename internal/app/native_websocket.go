@@ -25,6 +25,8 @@ type nativeWebSocketAccounting struct {
 	price     *store.ResolvedPrice
 	billable  bool
 	result    billing.Result
+	errorCode string
+	errorHTTP int
 }
 
 func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
@@ -39,8 +41,14 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	logContext.price = accounting.price
 	statusCode := http.StatusSwitchingProtocols
 	if !connected {
-		statusCode = http.StatusBadGateway
-		logContext.errorCode = "websocket_proxy_error"
+		statusCode = accounting.errorHTTP
+		if statusCode == 0 {
+			statusCode = http.StatusBadGateway
+		}
+		logContext.errorCode = accounting.errorCode
+		if logContext.errorCode == "" {
+			logContext.errorCode = "websocket_proxy_error"
+		}
 	}
 	if accounting.price != nil && accounting.result.ResponseServiceTier != "" {
 		if resolved, resolveErr := a.store.ResolvePrice(context.Background(), pricing.Dimensions{
@@ -113,6 +121,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	if (messageType != websocket.TextMessage && messageType != websocket.BinaryMessage) || !json.Valid(firstFrame) {
 		err = fmt.Errorf("first websocket message must be a JSON response.create frame")
+		accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "invalid_request"
 		writeNativeWebSocketError(downstream, "invalid_request", err.Error())
 		return false, meta, err
 	}
@@ -128,17 +137,20 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	if meta.Model == "" {
 		err = fmt.Errorf("response.create requires model")
+		accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "model_required"
 		writeNativeWebSocketError(downstream, "model_required", err.Error())
 		return false, meta, err
 	}
 	if !allowed(meta.Model, key.ModelAllowlist, key.TenantModels) {
 		err = fmt.Errorf("API key is not allowed to use model %q", meta.Model)
+		accounting.errorHTTP, accounting.errorCode = http.StatusForbidden, "model_not_allowed"
 		writeNativeWebSocketError(downstream, "model_not_allowed", err.Error())
 		return false, meta, err
 	}
 	if !accounting.billable {
 		admission, price, code, admitErr := a.admitNativeWebSocket(r.Context(), key, meta, requestID, r.URL.Path)
 		if admitErr != nil {
+			accounting.errorHTTP, accounting.errorCode = nativeWebSocketAdmissionError(code)
 			writeNativeWebSocketError(downstream, code, admitErr.Error())
 			return false, meta, admitErr
 		}
@@ -194,6 +206,19 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	_ = upstream.Close()
 	<-results
 	return true, meta, first.err
+}
+
+func nativeWebSocketAdmissionError(code string) (int, string) {
+	switch code {
+	case "price_not_configured":
+		return http.StatusBadRequest, code
+	case "subscription_not_available", "model_not_allowed":
+		return http.StatusForbidden, code
+	case "subscription_quota_exceeded":
+		return http.StatusTooManyRequests, code
+	default:
+		return http.StatusPaymentRequired, firstNonEmptyString(code, "admission_failed")
+	}
 }
 
 func (a *App) dialEmbeddedCPAWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (

@@ -272,6 +272,13 @@ func newEmbeddedCPATestApp(t *testing.T, credential relaybridge.Credential) *App
 	return &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}, nativeCPA: client, nativeCPARuntime: runtime}
 }
 
+func TestNativeWebSocketAdmissionErrorPreservesQuotaStatus(t *testing.T) {
+	status, code := nativeWebSocketAdmissionError("subscription_quota_exceeded")
+	if status != http.StatusTooManyRequests || code != "subscription_quota_exceeded" {
+		t.Fatalf("status/code = %d/%q", status, code)
+	}
+}
+
 func mustJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	payload, err := json.Marshal(value)

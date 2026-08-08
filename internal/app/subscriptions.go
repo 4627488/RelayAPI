@@ -260,7 +260,7 @@ func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Reque
 			status = "disabled"
 		}
 		now := time.Now()
-		item, syncErr := a.store.SyncParentSubscription(r.Context(), store.ParentSubscription{
+		item, syncErr := a.store.SyncNativeParentSubscription(r.Context(), store.ParentSubscription{
 			CPAAuthID: row.ID, CPAAuthIndex: row.ID, CPAAuthName: row.ID, Name: row.Name, Provider: row.Provider,
 			PlanType: "native", Status: status, CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
 			Enabled: true, CPAUnavailable: !row.Enabled, CPAModelAllowlist: row.Models, Metadata: json.RawMessage(`{"source":"native"}`), LastSyncedAt: &now,
@@ -276,7 +276,7 @@ func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Reque
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": map[string]any{"supported": 0, "mode": "native"}})
+	writeJSON(w, 200, map[string]any{"items": items, "synced": len(items), "quota": map[string]any{"mode": "native"}})
 }
 
 func (a *App) adminChildSubscriptions(w http.ResponseWriter, r *http.Request) {

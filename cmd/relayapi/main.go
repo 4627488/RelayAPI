@@ -35,7 +35,7 @@ func main() {
 		MaxHeaderBytes:    1 << 20,
 	}
 	go func() {
-		slog.Info("RelayAPI started", "listen", cfg.ListenAddr, "cpa", cfg.CPAURL)
+		slog.Info("RelayAPI started", "listen", cfg.ListenAddr, "data_plane", "embedded_cpa")
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("http server", "error", err)
 			os.Exit(1)

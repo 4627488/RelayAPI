@@ -148,26 +148,22 @@ CPA 多维倍率规则和五段费率快照。请求日志采用分层留存：�
 - `GET|POST /api/admin/invitations`：查看或生成单次邀请
 - `DELETE /api/admin/invitations/{id}`：撤销邀请
 - `GET /api/admin/tenants`：用户列表
-- `GET /api/admin/providers/accounts`：CPA 脱敏凭据列表
-- `POST /api/admin/providers/{provider}/oauth`：发起 Codex、Anthropic、
-  Antigravity、Kimi 或 xAI OAuth/设备授权
-- `POST /api/admin/providers/oauth/callback`：提交 OAuth 回调
+- `GET|POST /api/admin/providers/accounts`：管理数据库加密保存的原生凭据
 - `GET|PATCH /api/admin/providers/settings`：重试与凭据调度策略
-- `/api/admin/cpa/*`：管理员会话保护的 CLIProxyAPI Management API 完整桥接；
-  保留方法、查询参数及 JSON/YAML/上传请求体
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
 - `GET /api/admin/logs?tenant_id=...&page=1&page_size=50`：可搜索、筛选和分页的请求日志
 - `GET /api/admin/logs/{id}`：脱敏请求、CPA 转发、上游响应、耗时与历史计费详情
 - `/api/admin/prices`：管理员五段价格覆盖
 - `/api/admin/pricing/aliases`、`/api/admin/pricing/rules`：模型别名与 CPA 多维倍率
 - `GET|POST /api/admin/pricing/sync`：预览或应用 Models.dev 价格目录
-- `POST /api/admin/subscriptions/sync`：同步 CPA scheduler ID 与稳定 auth_index 父订阅映射
-- `POST /api/admin/subscriptions/quota/sync`：立即观测所有父订阅的扩展额度
+- `POST /api/admin/subscriptions/sync`：同步原生凭据与父订阅身份
+- `POST /api/admin/subscriptions/quota/sync`：立即通过内嵌适配器观测所有父订阅额度
 - `POST /api/admin/subscriptions/parents/{id}/quota/sync`：观测单个父订阅额度
 - `/api/admin/subscriptions/parents/*`：父订阅、任意容量窗口与观测样本
 - `/api/admin/subscriptions/children/*`：向租户分配、停用或回收子订阅
 
-CPA 凭据页和父订阅页都会展示最近一次脱敏上游额度快照。自动观测模式不要求
+原生凭据页和父订阅页都会展示最近一次脱敏上游额度快照。RelayAPI 默认每 5 分钟
+直接使用加密凭据观测 Codex 和 xAI 额度，不依赖外置 CPA 或插件。自动观测模式不要求
 填写窗口名称、百分比或重置时间，管理员只填写每个已观测窗口对应的 USD 容量。
 父/子订阅的模型范围从 CPA 已同步的实际可用模型中多选，空选择表示继承全部模型。
 
