@@ -21,12 +21,36 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			Enabled  *bool           `json:"enabled"`
 			Models   []string        `json:"models"`
 			Document json.RawMessage `json:"document"`
+			Method   string          `json:"method"`
+			APIKey   string          `json:"api_key"`
+			BaseURL  string          `json:"base_url"`
+			ProxyURL string          `json:"proxy_url"`
+			Prefix   string          `json:"prefix"`
 		}
 		if !decodeJSON(w, r, &input) {
 			return
 		}
 		input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
 		input.Name = strings.TrimSpace(input.Name)
+		input.Models = uniqueStrings(input.Models)
+		input.Method = strings.ToLower(strings.TrimSpace(input.Method))
+		if input.Method == "api_key" {
+			if strings.TrimSpace(input.APIKey) == "" {
+				writeError(w, http.StatusBadRequest, "validation_error", "API Key 必填")
+				return
+			}
+			document := map[string]any{"type": input.Provider, "api_key": strings.TrimSpace(input.APIKey), "auth_kind": "api_key"}
+			if value := strings.TrimSpace(input.BaseURL); value != "" {
+				document["base_url"] = value
+			}
+			if value := strings.TrimSpace(input.ProxyURL); value != "" {
+				document["proxy_url"] = value
+			}
+			if value := strings.TrimSpace(input.Prefix); value != "" {
+				document["prefix"] = value
+			}
+			input.Document, _ = json.Marshal(document)
+		}
 		if input.Provider == "" || input.Name == "" || len(input.Models) == 0 || !json.Valid(input.Document) {
 			writeError(w, http.StatusBadRequest, "validation_error", "名称、提供商、至少一个模型和有效凭据 JSON 均为必填项")
 			return
@@ -46,7 +70,11 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		if input.Enabled != nil {
 			enabled = *input.Enabled
 		}
-		row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: id, Name: input.Name, Provider: input.Provider, Enabled: enabled, Models: uniqueStrings(input.Models), Document: input.Document, Source: "native"})
+		source := "import"
+		if input.Method == "api_key" {
+			source = "api_key"
+		}
+		row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: id, Name: input.Name, Provider: input.Provider, Enabled: enabled, Models: input.Models, Document: input.Document, Source: source})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
@@ -83,10 +111,36 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 		proxyURL, _ = document["_relay_proxy_url"].(string)
 	}
 	expired := row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now())
-	return map[string]any{"id": row.ID, "auth_index": row.ID, "name": row.ID, "label": row.Name, "provider": row.Provider, "type": row.Provider,
-		"email": email, "disabled": !row.Enabled, "unavailable": expired, "status": "native", "source": "native", "models": row.Models,
-		"base_url": baseURL, "prefix": prefix, "proxy_configured": strings.TrimSpace(proxyURL) != "", "revision": row.Revision,
-		"can_inspect": true, "can_toggle": true, "can_delete": true}
+	result := map[string]any{"id": row.ID, "auth_index": row.ID, "name": row.ID, "label": row.Name, "provider": row.Provider, "type": row.Provider,
+		"disabled": !row.Enabled, "unavailable": expired, "status": "native", "source": row.Source, "models": row.Models,
+		"proxy_configured": strings.TrimSpace(proxyURL) != "", "revision": row.Revision, "can_inspect": true, "can_toggle": true, "can_delete": true}
+	authKind, _ := document["auth_kind"].(string)
+	if authKind == "" {
+		if apiKey, _ := document["api_key"].(string); strings.TrimSpace(apiKey) != "" {
+			authKind = "api_key"
+		} else if accessToken, _ := document["access_token"].(string); strings.TrimSpace(accessToken) != "" {
+			authKind = "oauth"
+		}
+	}
+	if authKind == "" && row.Source == "oauth" {
+		authKind = "oauth"
+	}
+	if authKind == "" && row.Source == "api_key" {
+		authKind = "api_key"
+	}
+	if authKind != "" {
+		result["auth_kind"] = authKind
+	}
+	if strings.TrimSpace(email) != "" {
+		result["email"] = email
+	}
+	if strings.TrimSpace(baseURL) != "" {
+		result["base_url"] = baseURL
+	}
+	if strings.TrimSpace(prefix) != "" {
+		result["prefix"] = prefix
+	}
+	return result
 }
 
 func nativeCredentialID(provider string) string {
@@ -127,13 +181,15 @@ func (a *App) nativeProviderModels(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Disabled *bool `json:"disabled"`
+		Disabled *bool     `json:"disabled"`
+		Name     *string   `json:"name"`
+		Models   *[]string `json:"models"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if input.Disabled == nil {
-		writeError(w, http.StatusBadRequest, "validation_error", "disabled 必填")
+	if input.Disabled == nil && input.Name == nil && input.Models == nil {
+		writeError(w, http.StatusBadRequest, "validation_error", "至少提供一个可更新字段")
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("name"))
@@ -146,9 +202,34 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "credential_unavailable", "无法读取凭据")
 		return
 	}
-	row, err = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: row.ID, Name: row.Name, Provider: row.Provider, Enabled: !*input.Disabled, Models: row.Models, Document: row.Document, Source: row.Source, ExpiresAt: row.ExpiresAt})
-	if err != nil || a.reloadNativeCredentials(r.Context()) != nil {
+	previous := row
+	name, models, enabled := row.Name, row.Models, row.Enabled
+	if input.Disabled != nil {
+		enabled = !*input.Disabled
+	}
+	if input.Name != nil {
+		name = strings.TrimSpace(*input.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "validation_error", "账户名称不能为空")
+			return
+		}
+	}
+	if input.Models != nil {
+		models = uniqueStrings(*input.Models)
+		if len(models) == 0 {
+			writeError(w, http.StatusBadRequest, "validation_error", "至少需要一个公开模型")
+			return
+		}
+	}
+	row, err = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: row.ID, Name: name, Provider: row.Provider, Enabled: enabled, Models: models, Document: row.Document, Source: row.Source, ExpiresAt: row.ExpiresAt})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential_update_failed", "更新 native 凭据失败")
+		return
+	}
+	if err = a.reloadNativeCredentials(r.Context()); err != nil {
+		_, _ = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: previous.ID, Name: previous.Name, Provider: previous.Provider, Enabled: previous.Enabled, Models: previous.Models, Document: previous.Document, Source: previous.Source, ExpiresAt: previous.ExpiresAt})
+		_ = a.reloadNativeCredentials(r.Context())
+		writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, nativeProviderAccount(row))

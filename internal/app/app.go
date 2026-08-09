@@ -39,6 +39,7 @@ type App struct {
 	nativeCPARuntime  *relaybridge.Runtime
 	nativeCPAServer   *http.Server
 	nativeCPAServeErr atomic.Value
+	providerOAuth     providerOAuthSessions
 	nativeSettings    settingsState
 	memoryReclaiming  atomic.Bool
 }
@@ -70,6 +71,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	a := &App{
 		cfg: cfg, store: dataStore, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
+		providerOAuth: newProviderOAuthSessions(),
 	}
 	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
 		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
@@ -276,6 +278,11 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/models", a.withAdmin(http.HandlerFunc(a.adminProviderModels)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
+	a.mux.Handle("POST /api/admin/providers/oauth/sessions", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthStart)))
+	a.mux.Handle("GET /api/admin/providers/oauth/sessions/{state}", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthStatus)))
+	a.mux.Handle("POST /api/admin/providers/oauth/sessions/{state}/callback", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthCallback)))
+	a.mux.Handle("POST /api/admin/providers/oauth/sessions/{state}/finalize", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthFinalize)))
+	a.mux.Handle("DELETE /api/admin/providers/oauth/sessions/{state}", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthCancel)))
 	a.mux.Handle("GET /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
 	a.mux.Handle("PATCH /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
 	a.mux.Handle("GET /api/admin/runtime/settings", a.withAdmin(http.HandlerFunc(a.adminNativeSettings)))

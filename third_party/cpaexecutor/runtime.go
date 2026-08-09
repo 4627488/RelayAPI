@@ -2,9 +2,12 @@ package relaybridge
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -18,8 +21,10 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/wsrelay"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
+	sdkauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Keep transport failures long enough to prefer another credential, but short
@@ -56,6 +61,7 @@ type Options struct {
 	StreamBootstrapRetries     int
 	NonStreamKeepAliveInterval int
 	OnCredentialUpdated        func(context.Context, string, []byte)
+	OnOAuthCredential          func(context.Context, string, string, string, []byte) error
 }
 
 // Settings is the hot-reloadable subset of the embedded CPA configuration.
@@ -76,20 +82,23 @@ type Settings struct {
 }
 
 // Runtime owns CPA's complete public inference router and provider runtime.
-// It intentionally does not enable CPA's management surface.
+// The management surface is not exposed publicly; when OAuth is enabled, Relay
+// calls a password-protected in-process subset through the broker in oauth.go.
 type Runtime struct {
-	mu          sync.RWMutex
-	cfg         *internalconfig.Config
-	manager     *coreauth.Manager
-	handler     http.Handler
-	server      *api.Server
-	wsGateway   *wsrelay.Manager
-	routes      map[string]credentialRoute
-	modelRoutes map[string]credentialRoute
-	modelNames  map[string]string
-	authIDs     map[string]struct{}
-	credentials []Credential
-	globalProxy string
+	mu               sync.RWMutex
+	cfg              *internalconfig.Config
+	manager          *coreauth.Manager
+	handler          http.Handler
+	server           *api.Server
+	wsGateway        *wsrelay.Manager
+	routes           map[string]credentialRoute
+	modelRoutes      map[string]credentialRoute
+	modelNames       map[string]string
+	authIDs          map[string]struct{}
+	credentials      []Credential
+	globalProxy      string
+	managementSecret string
+	oauthDir         string
 }
 
 type credentialRoute struct {
@@ -143,18 +152,47 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 		cfg: cfg, manager: manager, routes: make(map[string]credentialRoute),
 		modelRoutes: make(map[string]credentialRoute), modelNames: make(map[string]string), authIDs: make(map[string]struct{}), globalProxy: strings.TrimSpace(opts.ProxyURL),
 	}
+	if opts.OnOAuthCredential != nil {
+		oauthDir, errTemp := os.MkdirTemp("", "relayapi-oauth-")
+		if errTemp != nil {
+			return nil, fmt.Errorf("create OAuth workspace: %w", errTemp)
+		}
+		var secretBytes [32]byte
+		if _, errRandom := rand.Read(secretBytes[:]); errRandom != nil {
+			_ = os.RemoveAll(oauthDir)
+			return nil, fmt.Errorf("generate OAuth management secret: %w", errRandom)
+		}
+		runtime.oauthDir = oauthDir
+		runtime.managementSecret = hex.EncodeToString(secretBytes[:])
+		cfg.AuthDir = oauthDir
+		managementHash, errHash := bcrypt.GenerateFromPassword([]byte(runtime.managementSecret), bcrypt.DefaultCost)
+		if errHash != nil {
+			_ = os.RemoveAll(oauthDir)
+			return nil, fmt.Errorf("hash OAuth management secret: %w", errHash)
+		}
+		cfg.RemoteManagement.SecretKey = string(managementHash)
+	}
 	runtime.wsGateway = wsrelay.NewManager(wsrelay.Options{Path: "/v1/ws"})
 	runtime.registerBaselineExecutors()
 
 	var engine *gin.Engine
-	server := api.NewServer(cfg, manager, accessManager, "",
+	serverOptions := []api.ServerOption{
 		api.WithMiddleware(runtime.pinCredentialMiddleware()),
 		api.WithEngineConfigurator(func(value *gin.Engine) { engine = value }),
 		api.WithRouterConfigurator(func(_ *gin.Engine, base *handlers.BaseAPIHandler, _ *internalconfig.Config) {
 			base.SetModelRouterHost(runtime)
 		}),
-	)
+	}
+	previousStore := sdkauth.GetTokenStore()
+	if opts.OnOAuthCredential != nil {
+		captureStore := newOAuthCaptureStore(runtime.oauthDir, opts.OnOAuthCredential)
+		sdkauth.RegisterTokenStore(captureStore)
+		defer sdkauth.RegisterTokenStore(previousStore)
+		serverOptions = append(serverOptions, api.WithLocalManagementPassword(runtime.managementSecret))
+	}
+	server := api.NewServer(cfg, manager, accessManager, "", serverOptions...)
 	if engine == nil {
+		_ = os.RemoveAll(runtime.oauthDir)
 		return nil, fmt.Errorf("embedded CPA router was not initialized")
 	}
 	server.AttachWebsocketRoute(runtime.wsGateway.Path(), runtime.wsGateway.Handler())
@@ -550,8 +588,14 @@ func (r *Runtime) Close(ctx context.Context) error {
 			CloseAllExecutionSessions(exec)
 		}
 	}
+	var stopErr error
 	if r.wsGateway != nil {
-		return r.wsGateway.Stop(ctx)
+		stopErr = r.wsGateway.Stop(ctx)
 	}
-	return nil
+	if r.oauthDir != "" {
+		if err := os.RemoveAll(r.oauthDir); stopErr == nil {
+			stopErr = err
+		}
+	}
+	return stopErr
 }

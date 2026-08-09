@@ -55,6 +55,7 @@ func (a *App) startEmbeddedCPA(ctx context.Context) error {
 				slog.Warn("persist embedded CPA credential refresh", "credential_id", id, "error", persistErr)
 			}
 		},
+		OnOAuthCredential: a.captureProviderOAuthCredential,
 	}, credentials)
 	if err != nil {
 		return fmt.Errorf("build embedded CPA runtime: %w", err)

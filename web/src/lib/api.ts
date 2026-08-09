@@ -239,11 +239,12 @@ export interface ProviderAccount {
   label?: string
   status?: string
   status_message?: string
+  auth_kind?: "oauth" | "api_key"
   disabled: boolean
   unavailable?: boolean
   success?: number
   failed?: number
-  source?: "oauth" | "config" | "native"
+  source?: "oauth" | "api_key" | "import" | "config" | "native"
   config_path?: string
   config_index?: number
   base_url?: string
