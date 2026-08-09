@@ -151,6 +151,63 @@ func TestNativeResponsesWebSocketUpstreamDisconnectRemainsAnError(t *testing.T) 
 	}
 }
 
+func TestNativeResponsesWebSocketCompletedThenUpstreamEOFClosesNormally(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, _, err = conn.ReadMessage(); err != nil {
+			t.Error(err)
+			return
+		}
+		if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.completed","response":{"id":"resp_done","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)); err != nil {
+			t.Error(err)
+			return
+		}
+		_ = conn.UnderlyingConn().Close()
+	}))
+	defer upstream.Close()
+
+	internalClient, err := cpa.New(upstream.URL, "embedded-test-key", "", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}, nativeCPA: internalClient}
+	resultCh := make(chan nativeWebSocketTestResult, 1)
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}}
+		session, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "completed-eof-test", nil, accounting)
+		resultCh <- nativeWebSocketTestResult{session: session, err: err}
+	}))
+	defer downstream.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+downstream.URL[len("http"):]+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err = client.WriteJSON(map[string]any{"type": "response.create", "model": "gpt-test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = client.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = client.ReadMessage()
+	if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+		t.Fatalf("close error = %v, want normal closure", err)
+	}
+	select {
+	case got := <-resultCh:
+		if got.err != nil || !got.session.established {
+			t.Fatalf("session = %+v, error = %v", got.session, got.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for websocket relay")
+	}
+}
+
 func TestClientWebSocketDisconnectRejectsServiceErrors(t *testing.T) {
 	if !clientWebSocketDisconnect(&websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"}) {
 		t.Fatal("abnormal peer close should be classified as a client disconnect")

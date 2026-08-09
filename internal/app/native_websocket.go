@@ -31,6 +31,7 @@ type nativeWebSocketAccounting struct {
 	requestBytes   int64
 	forwardedBytes int64
 	responseBytes  int64
+	terminalSeen   bool
 }
 
 type nativeWebSocketSessionState struct {
@@ -225,18 +226,40 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	go func() {
 		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) {
 			accounting.responseBytes += int64(len(payload))
+			accounting.terminalSeen = accounting.terminalSeen || isNativeWebSocketTerminalEvent(payload)
 			mergeNativeWebSocketResult(&accounting.result, parseNativeWebSocketUsage(payload))
 		})}
 	}()
 
 	first := <-results
+	if first.source == "upstream" {
+		forwardWebSocketClose(downstream, normalizedUpstreamWebSocketClose(first.err, accounting.terminalSeen))
+	} else {
+		forwardWebSocketClose(upstream, first.err)
+	}
+	// Give the peer a brief opportunity to acknowledge the close frame. Closing
+	// the TCP connection immediately after WriteControl can make an otherwise
+	// successful session surface as close 1006 at the client or reverse proxy.
+	select {
+	case <-results:
+	case <-time.After(time.Second):
+	}
 	_ = downstream.Close()
 	_ = upstream.Close()
-	<-results
 	if first.source == "downstream" && clientWebSocketDisconnect(first.err) {
 		return session, meta, nil
 	}
+	if first.source == "upstream" && accounting.terminalSeen && clientWebSocketDisconnect(first.err) {
+		return session, meta, nil
+	}
 	return session, meta, first.err
+}
+
+func normalizedUpstreamWebSocketClose(err error, terminalResponseSeen bool) error {
+	if terminalResponseSeen && clientWebSocketDisconnect(err) {
+		return &websocket.CloseError{Code: websocket.CloseNormalClosure}
+	}
+	return err
 }
 
 func nativeWebSocketAdmissionError(code string) (int, string) {
@@ -313,7 +336,6 @@ func pumpWebSocketMessages(source, destination *websocket.Conn, observe func([]b
 	for {
 		messageType, payload, err := source.ReadMessage()
 		if err != nil {
-			forwardWebSocketClose(destination, err)
 			return err
 		}
 		if observe != nil {
@@ -368,6 +390,21 @@ func parseNativeWebSocketUsage(payload []byte) billing.Result {
 		return billing.ParseResponse(payload)
 	default:
 		return billing.Result{}
+	}
+}
+
+func isNativeWebSocketTerminalEvent(payload []byte) bool {
+	var event struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &event) != nil {
+		return false
+	}
+	switch event.Type {
+	case "error", "response.completed", "response.incomplete", "response.done":
+		return true
+	default:
+		return false
 	}
 }
 

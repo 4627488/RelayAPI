@@ -28,6 +28,7 @@ type Config struct {
 	CPACircuitFailureThreshold int
 	CPACircuitOpenDuration     time.Duration
 	QuotaSyncInterval          time.Duration
+	UpstreamWebSockets         bool
 	UnpricedModelPolicy        string
 	CPAImportAuthDir           string
 	CPAImportConfigPath        string
@@ -65,6 +66,7 @@ func Load() (Config, error) {
 		CPACircuitFailureThreshold: int(envInt64("CPA_CIRCUIT_FAILURE_THRESHOLD", 3)),
 		CPACircuitOpenDuration:     time.Duration(envInt64("CPA_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
 		QuotaSyncInterval:          time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
+		UpstreamWebSockets:         envBool("RELAY_UPSTREAM_WEBSOCKETS", false),
 		UnpricedModelPolicy:        strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
 		CPAImportAuthDir:           strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_AUTH_DIR")),
 		CPAImportConfigPath:        strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_CONFIG")),

@@ -22,7 +22,7 @@ func (a *App) startEmbeddedCPA(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	credentials := bridgeCredentials(rows)
+	credentials := bridgeCredentials(rows, a.cfg.UpstreamWebSockets)
 	settings, settingsFound, err := a.loadNativeRuntimeSettings(ctx)
 	if err != nil {
 		return fmt.Errorf("load native runtime settings: %w", err)
@@ -110,12 +110,23 @@ func importedGlobalProxy(rows []store.UpstreamCredentialSnapshot) string {
 	return ""
 }
 
-func bridgeCredentials(rows []store.UpstreamCredentialSnapshot) []relaybridge.Credential {
+func bridgeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSockets bool) []relaybridge.Credential {
 	now := time.Now()
 	credentials := make([]relaybridge.Credential, 0, len(rows))
 	for _, row := range rows {
 		enabled := row.Enabled && (row.ExpiresAt == nil || row.ExpiresAt.After(now))
-		credentials = append(credentials, relaybridge.Credential{ID: row.ID, Label: row.Name, Provider: row.Provider, Enabled: enabled, Models: append([]string(nil), row.Models...), Document: append([]byte(nil), row.Document...)})
+		document := append([]byte(nil), row.Document...)
+		provider := strings.ToLower(strings.TrimSpace(row.Provider))
+		if !upstreamWebSockets && (provider == "codex" || provider == "xai") {
+			var value map[string]any
+			if json.Unmarshal(document, &value) == nil {
+				value["websockets"] = false
+				if encoded, marshalErr := json.Marshal(value); marshalErr == nil {
+					document = encoded
+				}
+			}
+		}
+		credentials = append(credentials, relaybridge.Credential{ID: row.ID, Label: row.Name, Provider: row.Provider, Enabled: enabled, Models: append([]string(nil), row.Models...), Document: document})
 	}
 	return credentials
 }
@@ -128,7 +139,7 @@ func (a *App) reloadNativeCredentials(ctx context.Context) error {
 	if a.nativeCPARuntime == nil {
 		return fmt.Errorf("native CPA runtime is not available")
 	}
-	return a.nativeCPARuntime.ReplaceCredentials(ctx, bridgeCredentials(rows))
+	return a.nativeCPARuntime.ReplaceCredentials(ctx, bridgeCredentials(rows, a.cfg.UpstreamWebSockets))
 }
 
 func (a *App) persistEmbeddedCredential(ctx context.Context, id string, document []byte) error {
