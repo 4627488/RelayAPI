@@ -27,14 +27,36 @@ func TestBridgeCredentialsDisablesProviderWebSocketsInRelayMode(t *testing.T) {
 	}
 }
 
-func TestBridgeCredentialsPreservesProviderWebSocketsWhenEnabled(t *testing.T) {
+func TestBridgeCredentialsEnablesProviderWebSocketsInRelayMode(t *testing.T) {
+	for _, original := range []string{
+		`{"type":"xai","api_key":"secret"}`,
+		`{"type":"xai","api_key":"secret","websockets":false}`,
+	} {
+		rows := []store.UpstreamCredentialSnapshot{{
+			ID: "xai", Provider: "xai", Enabled: true, Document: json.RawMessage(original),
+		}}
+		credentials := bridgeCredentials(rows, true)
+		var document map[string]any
+		if len(credentials) != 1 || json.Unmarshal(credentials[0].Document, &document) != nil || document["websockets"] != true {
+			t.Fatalf("compiled credentials = %#v document=%#v", credentials, document)
+		}
+		if string(rows[0].Document) != original {
+			t.Fatalf("stored credential was mutated: %s", rows[0].Document)
+		}
+	}
+}
+
+func TestBridgeCredentialsDoesNotAddWebSocketsToUnsupportedProvider(t *testing.T) {
 	rows := []store.UpstreamCredentialSnapshot{{
-		ID: "xai", Provider: "xai", Enabled: true,
-		Document: json.RawMessage(`{"type":"xai","api_key":"secret","websockets":true}`),
+		ID: "gemini", Provider: "gemini", Enabled: true,
+		Document: json.RawMessage(`{"type":"gemini","api_key":"secret"}`),
 	}}
 	credentials := bridgeCredentials(rows, true)
 	var document map[string]any
-	if len(credentials) != 1 || json.Unmarshal(credentials[0].Document, &document) != nil || document["websockets"] != true {
-		t.Fatalf("compiled credentials = %#v document=%#v", credentials, document)
+	if len(credentials) != 1 || json.Unmarshal(credentials[0].Document, &document) != nil {
+		t.Fatalf("compiled credentials = %#v", credentials)
+	}
+	if _, exists := document["websockets"]; exists {
+		t.Fatalf("unsupported provider received websocket capability: %#v", document)
 	}
 }

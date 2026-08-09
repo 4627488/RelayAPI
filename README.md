@@ -58,7 +58,7 @@ RelayAPI 默认完整保留 CPA 原生 Codex/xAI WebSocket：一个客户端连�
 会按顺序转发当前轮终态与上游断线，避免断线通知抢先关闭客户端连接；完整的新一轮
 可自动重连上游，依赖已丢失上游状态的增量轮次会返回标准 `1012` 要求完整重放。
 只有在提供商本身不支持稳定 WebSocket 时，才设置
-`RELAY_UPSTREAM_WEBSOCKETS=false` 使用 HTTP 流式回退。
+`RELAY_UPSTREAM_WEBSOCKETS=true`（默认）会为 CPA 支持的 Codex/xAI 凭据明确启用原生上游 WebSocket；这也适用于未携带 `websockets` 字段的旧导入凭据。设为 `false` 时统一使用 HTTP 流式回退。该运行时策略不会改写数据库中加密保存的凭据文档。
 
 内置执行器由 RelayAPI 的准入控制保护：推理请求默认最多 16 个并发、32 个等待者，排队最多 2 秒；单请求体默认最多
 1 GiB，所有在途请求体合计最多 8 GiB。单请求可配置到 64 GiB，在途预算可配置到 256 GiB。连续 3 次

@@ -23,6 +23,14 @@ func (a *App) startEmbeddedCPA(ctx context.Context) error {
 		return err
 	}
 	credentials := bridgeCredentials(rows, a.cfg.UpstreamWebSockets)
+	webSocketCredentials := 0
+	for _, credential := range credentials {
+		provider := strings.ToLower(strings.TrimSpace(credential.Provider))
+		if credential.Enabled && (provider == "codex" || provider == "xai") {
+			webSocketCredentials++
+		}
+	}
+	slog.Info("embedded CPA upstream websocket policy", "enabled", a.cfg.UpstreamWebSockets, "eligible_credentials", webSocketCredentials)
 	settings, settingsFound, err := a.loadNativeRuntimeSettings(ctx)
 	if err != nil {
 		return fmt.Errorf("load native runtime settings: %w", err)
@@ -117,10 +125,13 @@ func bridgeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSocke
 		enabled := row.Enabled && (row.ExpiresAt == nil || row.ExpiresAt.After(now))
 		document := append([]byte(nil), row.Document...)
 		provider := strings.ToLower(strings.TrimSpace(row.Provider))
-		if !upstreamWebSockets && (provider == "codex" || provider == "xai") {
+		if provider == "codex" || provider == "xai" {
 			var value map[string]any
 			if json.Unmarshal(document, &value) == nil {
-				value["websockets"] = false
+				// CPA treats this field as a per-credential capability flag. Make the
+				// Relay-level switch authoritative so imported and OAuth credentials
+				// do not silently fall back to HTTP merely because the field is absent.
+				value["websockets"] = upstreamWebSockets
 				if encoded, marshalErr := json.Marshal(value); marshalErr == nil {
 					document = encoded
 				}
