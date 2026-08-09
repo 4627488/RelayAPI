@@ -63,6 +63,14 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 			writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("模型列表格式无效: %v", filterErr))
 			return
 		}
+		if _, codexCatalog := r.URL.Query()["client_version"]; codexCatalog {
+			if expanded, expandErr := addCodexModelAliases(payload, key.ModelAliases); expandErr == nil {
+				payload = expanded
+			} else {
+				writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型列表格式无效: %v", expandErr))
+				return
+			}
+		}
 	}
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Del("Content-Length")
@@ -126,12 +134,70 @@ func filterModelCatalog(payload []byte, allowedModels []string) ([]byte, error) 
 }
 
 func catalogModelID(item map[string]any) string {
-	for _, key := range []string{"id", "model", "name"} {
+	for _, key := range []string{"id", "model", "name", "slug"} {
 		if value, ok := item[key].(string); ok && strings.TrimSpace(value) != "" {
 			return strings.TrimSpace(value)
 		}
 	}
 	return ""
+}
+
+// addCodexModelAliases exposes API-key aliases in Codex's private model
+// catalog. Each alias inherits the target model's capabilities while keeping
+// the alias as the client-visible slug used in subsequent requests.
+func addCodexModelAliases(payload []byte, aliases []store.APIKeyModelAlias) ([]byte, error) {
+	if len(aliases) == 0 {
+		return payload, nil
+	}
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		return nil, err
+	}
+	items, ok := document["models"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("missing models array")
+	}
+	targets := make(map[string]map[string]any, len(items))
+	positions := make(map[string]int, len(items)+len(aliases))
+	for index, raw := range items {
+		item, itemOK := raw.(map[string]any)
+		if !itemOK {
+			continue
+		}
+		id := strings.ToLower(catalogModelID(item))
+		if id == "" {
+			continue
+		}
+		targets[id] = item
+		positions[id] = index
+	}
+	for _, mapping := range aliases {
+		alias := strings.TrimSpace(mapping.Alias)
+		targetID := strings.TrimSpace(mapping.Model)
+		if alias == "" || targetID == "" {
+			continue
+		}
+		target := targets[strings.ToLower(targetID)]
+		if target == nil {
+			continue
+		}
+		cloned := make(map[string]any, len(target)+1)
+		for key, value := range target {
+			cloned[key] = value
+		}
+		cloned["slug"] = alias
+		cloned["display_name"] = alias
+		cloned["description"] = fmt.Sprintf("RelayAPI 模型别名，映射到 %s", targetID)
+		aliasKey := strings.ToLower(alias)
+		if index, exists := positions[aliasKey]; exists {
+			items[index] = cloned
+		} else {
+			positions[aliasKey] = len(items)
+			items = append(items, cloned)
+		}
+	}
+	document["models"] = items
+	return json.Marshal(document)
 }
 
 func reverseString(value string) string {
