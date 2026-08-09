@@ -72,10 +72,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/deploy_key \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=40 \
-            "$DEPLOY_USER@$DEPLOY_HOST" \
-            "/opt/relayapi/deploy-relayapi.sh '$IMAGE'"
+          for attempt in $(seq 1 40); do
+            if ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=40 \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "/opt/relayapi/deploy-relayapi.sh '$IMAGE'"; then
+              exit 0
+            else
+              status=$?
+            fi
+            if [ "$status" -ne 3 ]; then
+              exit "$status"
+            fi
+            echo "Another deployment is still running; retrying in 30 seconds ($attempt/40)"
+            sleep 30
+          done
+          echo "Timed out waiting for the production deployment lock" >&2
+          exit 3
