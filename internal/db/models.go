@@ -165,6 +165,9 @@ type RequestLog struct {
 	RequestType            string    `gorm:"not null;default:'';index" json:"request_type"`
 	StatusCode             int       `gorm:"not null;default:0" json:"status_code"`
 	Stream                 bool      `gorm:"not null;default:false" json:"stream"`
+	RequestBodyBytes       int64     `gorm:"not null;default:0" json:"request_body_bytes"`
+	ForwardedBodyBytes     int64     `gorm:"not null;default:0" json:"forwarded_body_bytes"`
+	ResponseBodyBytes      int64     `gorm:"not null;default:0" json:"response_body_bytes"`
 	PromptTokens           int64     `gorm:"not null;default:0" json:"prompt_tokens"`
 	CompletionTokens       int64     `gorm:"not null;default:0" json:"completion_tokens"`
 	CachedTokens           int64     `gorm:"not null;default:0" json:"cached_tokens"`

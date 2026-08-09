@@ -91,6 +91,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		StatusCode: 200, Usage: Usage{Prompt: 10, Completion: 2, Total: 12},
 		CostNanoUSD: &cost, Price: &resolved, PricingComplete: true, Settled: true,
 		StartedAt: started, CompletedAt: time.Now(), LatencyMS: 1000,
+		RequestBodyBytes: 128, ForwardedBodyBytes: 144, ResponseBodyBytes: 512,
 		Detail: &LogDetailInput{RequestHeaders: `{}`, RequestBody: `{}`, ForwardedHeaders: `{}`,
 			ForwardedBody: `{}`, UpstreamHeaders: `{}`, UpstreamBody: `{}`, StageTimings: `{}`},
 	}); err != nil {
@@ -103,6 +104,9 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if detailed.Log.CPAExecutionID != "cpa-execution" || detailed.Log.ActualModel != "actual-model" || detailed.Detail == nil {
 		t.Fatalf("lifecycle enrichment missing: %+v / %+v", detailed.Log, detailed.Detail)
 	}
+	if detailed.Log.RequestBodyBytes != 128 || detailed.Log.ForwardedBodyBytes != 144 || detailed.Log.ResponseBodyBytes != 512 {
+		t.Fatalf("payload sizes were not persisted in the request summary: %+v", detailed.Log)
+	}
 	var lifecycleCount int64
 	if err := database.Model(&db.CPALifecycleEvent{}).Where("request_log_id = ?", requestID).Count(&lifecycleCount).Error; err != nil || lifecycleCount != 0 {
 		t.Fatalf("temporary lifecycle rows = %d, err=%v", lifecycleCount, err)
@@ -111,7 +115,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		t.Fatalf("empty subscription IDs must be stored as NULL: %+v", detailed.Log)
 	}
 	page, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Query: "cpa-trace", PageSize: 25})
-	if err != nil || page.Total != 1 || page.Summary.Tokens != 12 {
+	if err != nil || page.Total != 1 || page.Summary.Tokens != 12 || page.Summary.RequestBytes != 128 || page.Summary.ResponseBytes != 512 {
 		t.Fatalf("log query = %+v, err=%v", page, err)
 	}
 

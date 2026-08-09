@@ -70,7 +70,7 @@ type LogInput struct {
 	Usage                                                                                                                     Usage
 	CostNanoUSD                                                                                                               *int64
 	Price                                                                                                                     *ResolvedPrice
-	ReservedNanoUSD, LatencyMS                                                                                                int64
+	ReservedNanoUSD, LatencyMS, RequestBodyBytes, ForwardedBodyBytes, ResponseBodyBytes                                       int64
 	TTFTMS                                                                                                                    *int64
 	ErrorCode, ErrorMessage                                                                                                   string
 	StartedAt, CompletedAt                                                                                                    time.Time
@@ -744,7 +744,8 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 		ChildSubscriptionID:  nullableIdentifier(l.ChildSubscriptionID),
 		TenantName:           l.TenantName, APIKeyName: l.APIKeyName, APIKeyPrefix: l.APIKeyPrefix,
 		Method: l.Method, Path: l.Path, RequestType: l.RequestType, StatusCode: l.StatusCode,
-		Stream: l.Stream, PromptTokens: l.Usage.Prompt, CompletionTokens: l.Usage.Completion,
+		Stream: l.Stream, RequestBodyBytes: l.RequestBodyBytes, ForwardedBodyBytes: l.ForwardedBodyBytes,
+		ResponseBodyBytes: l.ResponseBodyBytes, PromptTokens: l.Usage.Prompt, CompletionTokens: l.Usage.Completion,
 		CachedTokens: l.Usage.Cached, CacheWriteTokens: l.Usage.CacheWrite, ReasoningTokens: l.Usage.Reasoning,
 		TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,
 		Settled: l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS,
@@ -847,6 +848,8 @@ type LogSummary struct {
 	CachedTokens   int64   `json:"cached_tokens"`
 	CostNanoUSD    int64   `json:"cost_nano_usd"`
 	AverageLatency float64 `json:"average_latency_ms"`
+	RequestBytes   int64   `json:"request_bytes"`
+	ResponseBytes  int64   `json:"response_bytes"`
 }
 
 type LogPage struct {
@@ -909,7 +912,8 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if err := summaryQuery.Select(
 		"count(*) AS requests, COALESCE(sum(CASE WHEN status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
-			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, COALESCE(avg(latency_ms),0) AS average_latency",
+			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, COALESCE(avg(latency_ms),0) AS average_latency, " +
+			"COALESCE(sum(request_body_bytes),0) AS request_bytes, COALESCE(sum(response_body_bytes),0) AS response_bytes",
 	).Scan(&summary).Error; err != nil {
 		return LogPage{}, err
 	}

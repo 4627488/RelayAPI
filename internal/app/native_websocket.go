@@ -22,12 +22,15 @@ import (
 )
 
 type nativeWebSocketAccounting struct {
-	admission store.Admission
-	price     *store.ResolvedPrice
-	billable  bool
-	result    billing.Result
-	errorCode string
-	errorHTTP int
+	admission      store.Admission
+	price          *store.ResolvedPrice
+	billable       bool
+	result         billing.Result
+	errorCode      string
+	errorHTTP      int
+	requestBytes   int64
+	forwardedBytes int64
+	responseBytes  int64
 }
 
 type nativeWebSocketSessionState struct {
@@ -99,6 +102,9 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		logContext.detail.ErrorMessage = boundedErrorText(err.Error())
 	}
 	duration := time.Since(started).Milliseconds()
+	logContext.requestBytes = accounting.requestBytes
+	logContext.forwardedBytes = accounting.forwardedBytes
+	logContext.responseBytes = accounting.responseBytes
 	logContext.detail.StageTimings = timingJSON(map[string]int64{"websocket_duration_ms": duration, "total_ms": duration})
 	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, &accounting.result, pricingComplete, settled, actual, errorString(err), logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
@@ -140,6 +146,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		return session, meta, err
 	}
 	captureWebSocketRequest(logDetail, firstFrame)
+	accounting.requestBytes = int64(len(firstFrame))
 	frameMeta := readRequestMeta(firstFrame, r.URL.Path)
 	if meta.Model == "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
@@ -196,6 +203,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	if err = upstream.WriteMessage(messageType, firstFrame); err != nil {
 		return session, meta, err
 	}
+	accounting.forwardedBytes = int64(len(firstFrame))
 	session.established = true
 
 	stopCancel := context.AfterFunc(r.Context(), func() {
@@ -209,10 +217,14 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	results := make(chan pumpResult, 2)
 	go func() {
-		results <- pumpResult{source: "downstream", err: pumpWebSocketMessages(downstream, upstream, nil)}
+		results <- pumpResult{source: "downstream", err: pumpWebSocketMessages(downstream, upstream, func(payload []byte) {
+			accounting.requestBytes += int64(len(payload))
+			accounting.forwardedBytes += int64(len(payload))
+		})}
 	}()
 	go func() {
 		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) {
+			accounting.responseBytes += int64(len(payload))
 			mergeNativeWebSocketResult(&accounting.result, parseNativeWebSocketUsage(payload))
 		})}
 	}()

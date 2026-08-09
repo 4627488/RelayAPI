@@ -245,16 +245,19 @@ func (c *rollingCapture) Info() ([]byte, bool, int64) {
 }
 
 type requestLogContext struct {
-	price      *store.ResolvedPrice
-	detail     *store.LogDetailInput
-	ttftMS     *int64
-	cpaTraceID string
-	errorCode  string
+	price          *store.ResolvedPrice
+	detail         *store.LogDetailInput
+	ttftMS         *int64
+	cpaTraceID     string
+	errorCode      string
+	requestBytes   int64
+	forwardedBytes int64
+	responseBytes  int64
 }
 
-func rejectedRequestDetail(r *http.Request, body []byte, bodyRead bool, code, message string, started time.Time) *store.LogDetailInput {
+func rejectedRequestDetail(r *http.Request, body []byte, _ bool, code, message string, started time.Time) *store.LogDetailInput {
 	detail := baseRequestDetail(r, body)
-	if !bodyRead && r.ContentLength > 0 {
+	if r.ContentLength > detail.RequestBodyBytes {
 		detail.RequestBodyBytes = r.ContentLength
 		detail.RequestBodyTruncated = true
 	}
@@ -266,8 +269,12 @@ func rejectedRequestDetail(r *http.Request, body []byte, bodyRead bool, code, me
 
 func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta,
 	r *http.Request, status int, started time.Time, code, message string, detail *store.LogDetailInput) {
+	requestBytes := int64(0)
+	if detail != nil {
+		requestBytes = detail.RequestBodyBytes
+	}
 	a.writeRequestLog(key, requestID, admission, meta, r, status, started, nil, false, true, 0,
-		boundedErrorText(message), requestLogContext{detail: detail, errorCode: code})
+		boundedErrorText(message), requestLogContext{detail: detail, errorCode: code, requestBytes: requestBytes})
 }
 
 func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +322,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	bodyReadAt := time.Now()
 	originalBody := body
-	logContext := requestLogContext{detail: baseRequestDetail(r, body)}
+	logContext := requestLogContext{detail: baseRequestDetail(r, body), requestBytes: int64(len(body))}
 	meta := requestMetadata(body, r)
 	clientRequestedModel := meta.Model
 	resolved := resolveAPIKeyModel(resolveClaudeCatalogModel(meta.Model), key.ModelAliases)
@@ -438,6 +445,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		upstream.Host = targetCPA.BaseURL.Host
 		logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
 		captureForwardedRequest(logContext.detail, originalBody, body)
+		logContext.forwardedBytes = int64(len(body))
 		response, err = targetCPA.HTTP.Do(upstream)
 	}
 	// The transport has completely sent the request by the time Do returns.
@@ -539,6 +547,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	logContext.detail.UpstreamBody, _, _ = boundedDetail(rawResponse)
 	logContext.detail.UpstreamBodyTruncated = responseTruncated || responseBytes > requestLogDetailLimit
 	logContext.detail.UpstreamBodyBytes = responseBytes
+	logContext.responseBytes = responseBytes
 	if !firstByteAt.IsZero() {
 		ttft := firstByteAt.Sub(started).Milliseconds()
 		logContext.ttftMS = &ttft
@@ -598,6 +607,17 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 		costPointer = &cost
 	}
 	detail := logContext.detail
+	if detail != nil {
+		if logContext.requestBytes == 0 {
+			logContext.requestBytes = detail.RequestBodyBytes
+		}
+		if logContext.forwardedBytes == 0 {
+			logContext.forwardedBytes = detail.ForwardedBodyBytes
+		}
+		if logContext.responseBytes == 0 {
+			logContext.responseBytes = detail.UpstreamBodyBytes
+		}
+	}
 	if !shouldRetainRequestDetail(requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
 		detail = nil
 	}
@@ -611,6 +631,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
 		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
 		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: time.Since(started).Milliseconds(),
+		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
 		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
 		StartedAt: started, CompletedAt: time.Now(), Detail: detail,
 	})

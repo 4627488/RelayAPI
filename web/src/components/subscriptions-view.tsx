@@ -415,7 +415,7 @@ function ParentEditor({ value, pending, onPending, onClose, onSaved }: { value: 
             <Field><FieldLabel htmlFor="parent-models">模型策略范围</FieldLabel><ModelSelector id="parent-models" options={current.item.cpa_model_allowlist ?? []} value={models} onChange={setModels} /><FieldDescription>凭据仓库已同步 {current.item.cpa_model_allowlist?.length ?? 0} 个模型；不选择表示允许该凭据的全部模型。</FieldDescription></Field>
             {mode === "observed" ? <div className="flex flex-col gap-3 rounded-lg border p-3">
               <div><p className="font-medium">自动观测窗口</p><p className="text-xs text-muted-foreground">窗口名称、数量、使用率和重置时间由 bridge 自动观测；你只定义每个窗口对应的 USD 容量。</p></div>
-              <QuotaSnapshot snapshot={current.item.quota_snapshot} status={current.item.quota_probe_status} error={current.item.quota_probe_error} observedAt={current.item.quota_observed_at} />
+              <QuotaSnapshot snapshot={current.item.quota_snapshot} status={current.item.quota_probe_status} error={current.item.quota_probe_error} observedAt={current.item.quota_observed_at} configuredWindows={current.windows} />
               {windows.length ? <FieldGroup>{windows.map((item) => <Field key={item.key} orientation="horizontal">
                 <div className="min-w-0 flex-1"><FieldLabel htmlFor={`${item.key}-observed-limit`}>{item.kind}</FieldLabel><FieldDescription>{dateTime(new Date(item.reset).toISOString())} 重置</FieldDescription></div>
                 <Input id={`${item.key}-observed-limit`} className="w-40" type="number" min="0.000001" step="0.000001" value={item.limit} onChange={(event) => updateWindow(item.key, "limit", event.target.value)} placeholder="USD 容量" required />
@@ -456,13 +456,17 @@ function ParentDistributionCard({ view, children, tenants, drafts, pending, onAd
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2"><CardTitle>{view.item.name}</CardTitle><Badge variant="outline">{view.item.provider || "未知提供商"}</Badge><ParentReadiness view={view} /><QuotaProbeBadge item={view.item} /></div>
-          <CardDescription>{capacityModes.find((mode) => mode.value === view.item.capacity_mode)?.label} · {view.item.plan_type || "未识别计划"} · {view.windows.length ? view.windows.map((window) => `${quotaWindowLabel(window.kind)} ${money(window.limit_nano_usd)}`).join(" · ") : "尚无美元额度窗口"}</CardDescription>
+          <CardDescription>{capacityModes.find((mode) => mode.value === view.item.capacity_mode)?.label} · {view.item.plan_type || "未识别计划"}</CardDescription>
         </div>
         <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={pending} onClick={onSync}><RefreshCwIcon data-icon="inline-start" />同步额度</Button><Button size="sm" variant="outline" onClick={onConfigure}>配置父订阅</Button></div>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-sm"><Badge variant="secondary"><UsersIcon data-icon="inline-start" />{children.length} 个子订阅</Badge>{view.item.capacity_mode !== "unmetered" ? <span className="text-muted-foreground">已分 {percent(view.allocated_ppm)}{drafts.length ? `，保存后 ${percent(projectedPPM)}` : ""} / 上限 {percent(view.item.allocation_limit_ppm)}</span> : <span className="text-muted-foreground">所有子订阅按各自租户余额结算</span>}</div>
     </CardHeader>
     <CardContent className="flex flex-col gap-4">
+      {view.item.capacity_mode === "observed" ? <div className="flex flex-col gap-3">
+        <div><p className="font-medium">限额窗口</p><p className="text-xs text-muted-foreground">展示上游可读取的窗口，并合并管理员配置的 USD 容量。</p></div>
+        <QuotaSnapshot snapshot={view.item.quota_snapshot} status={view.item.quota_probe_status} error={view.item.quota_probe_error} observedAt={view.item.quota_observed_at} configuredWindows={view.windows} />
+      </div> : null}
       <Table>
         <TableHeader><TableRow><TableHead>租户</TableHead><TableHead>子订阅名称</TableHead>{view.item.capacity_mode !== "unmetered" ? <TableHead>父容量份额</TableHead> : null}<TableHead>优先级</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
         <TableBody>

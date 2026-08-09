@@ -84,6 +84,9 @@ export interface RequestLog {
   path: string
   status_code: number
   stream: boolean
+  request_body_bytes: number
+  forwarded_body_bytes: number
+  response_body_bytes: number
   prompt_tokens: number
   completion_tokens: number
   cached_tokens: number
@@ -146,6 +149,8 @@ export interface RequestLogPage {
     cached_tokens: number
     cost_nano_usd: number
     average_latency_ms: number
+    request_bytes: number
+    response_bytes: number
   }
 }
 
