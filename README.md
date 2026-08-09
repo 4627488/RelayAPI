@@ -53,10 +53,12 @@ RelayAPI 只使用内嵌 CPA 数据面，不需要单独部署 CLIProxyAPI、bri
 数据面模式。HTTP、SSE 与 WebSocket 都通过同一个内嵌 CPA 运行时完成协议转换、
 凭据选择和上游连接。
 
-RelayAPI 默认作为稳定的 WebSocket 终止与中转端：客户端仍连接
-`/v1/responses`，内嵌 CPA 对提供商使用可重试的 HTTP 流式传输，避免提供商未发送
-Close 帧就断开时把 `1006 unexpected EOF` 泄漏给客户端。仅在确认上游连接稳定时
-设置 `RELAY_UPSTREAM_WEBSOCKETS=true`，启用 Codex/xAI 的持久上游 WebSocket。
+RelayAPI 默认完整保留 CPA 原生 Codex/xAI WebSocket：一个客户端连接可承载多轮
+`response.create` / `response.append`，复用上游连接、会话状态和凭据亲和性。Relay
+会按顺序转发当前轮终态与上游断线，避免断线通知抢先关闭客户端连接；完整的新一轮
+可自动重连上游，依赖已丢失上游状态的增量轮次会返回标准 `1012` 要求完整重放。
+只有在提供商本身不支持稳定 WebSocket 时，才设置
+`RELAY_UPSTREAM_WEBSOCKETS=false` 使用 HTTP 流式回退。
 
 内置执行器由 RelayAPI 的准入控制保护：推理请求默认最多 16 个并发、32 个等待者，排队最多 2 秒；单请求体默认最多
 1 GiB，所有在途请求体合计最多 8 GiB。单请求可配置到 64 GiB，在途预算可配置到 256 GiB。连续 3 次

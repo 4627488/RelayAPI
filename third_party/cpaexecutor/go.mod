@@ -2,9 +2,12 @@ module github.com/router-for-me/CLIProxyAPI/v7/relaybridge
 
 go 1.26.0
 
+replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260809163245-5fb799089d90
+
 require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/router-for-me/CLIProxyAPI/v7 v7.2.123
+	golang.org/x/crypto v0.54.0
 )
 
 require (
@@ -63,7 +66,6 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/arch v0.8.0 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect

@@ -151,8 +151,10 @@ func TestNativeResponsesWebSocketUpstreamDisconnectRemainsAnError(t *testing.T) 
 	}
 }
 
-func TestNativeResponsesWebSocketCompletedThenUpstreamEOFClosesNormally(t *testing.T) {
+func TestNativeResponsesWebSocketCompletedThenUpstreamEOFReconnectsNextFullTurn(t *testing.T) {
+	var connections atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		turn := connections.Add(1)
 		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
 		if err != nil {
 			t.Error(err)
@@ -162,7 +164,10 @@ func TestNativeResponsesWebSocketCompletedThenUpstreamEOFClosesNormally(t *testi
 			t.Error(err)
 			return
 		}
-		if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.completed","response":{"id":"resp_done","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`)); err != nil {
+		response := mustJSON(t, map[string]any{"type": "response.completed", "response": map[string]any{
+			"id": "resp_done", "usage": map[string]any{"input_tokens": turn, "output_tokens": 1, "total_tokens": turn + 1},
+		}})
+		if err = conn.WriteMessage(websocket.TextMessage, response); err != nil {
 			t.Error(err)
 			return
 		}
@@ -170,11 +175,10 @@ func TestNativeResponsesWebSocketCompletedThenUpstreamEOFClosesNormally(t *testi
 	}))
 	defer upstream.Close()
 
-	internalClient, err := cpa.New(upstream.URL, "embedded-test-key", "", time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	app := &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}, nativeCPA: internalClient}
+	app := newEmbeddedCPATestApp(t, relaybridge.Credential{ID: "codex", Provider: "codex", Enabled: true,
+		Models: []string{"gpt-test"}, Document: mustJSON(t, map[string]any{
+			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
+		})})
 	resultCh := make(chan nativeWebSocketTestResult, 1)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}}
@@ -194,10 +198,16 @@ func TestNativeResponsesWebSocketCompletedThenUpstreamEOFClosesNormally(t *testi
 	if _, _, err = client.ReadMessage(); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = client.ReadMessage()
-	if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-		t.Fatalf("close error = %v, want normal closure", err)
+	if err = client.WriteJSON(map[string]any{"type": "response.create", "model": "gpt-test", "input": []any{}}); err != nil {
+		t.Fatal(err)
 	}
+	if _, _, err = client.ReadMessage(); err != nil {
+		t.Fatalf("second turn did not reconnect upstream: %v", err)
+	}
+	if got := connections.Load(); got != 2 {
+		t.Fatalf("upstream connections = %d, want 2", got)
+	}
+	_ = client.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 	select {
 	case got := <-resultCh:
 		if got.err != nil || !got.session.established {
@@ -214,6 +224,46 @@ func TestClientWebSocketDisconnectRejectsServiceErrors(t *testing.T) {
 	}
 	if clientWebSocketDisconnect(errors.New("upstream unavailable")) {
 		t.Fatal("service error should not be classified as a client disconnect")
+	}
+}
+
+func TestNativeWebSocketHeartbeatSendsPing(t *testing.T) {
+	pingSeen := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		conn.SetPingHandler(func(string) error {
+			select {
+			case pingSeen <- struct{}{}:
+			default:
+			}
+			return nil
+		})
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer server.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- keepWebSocketAlive(stop, client, 10*time.Millisecond) }()
+
+	select {
+	case <-pingSeen:
+		close(stop)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for websocket heartbeat")
+	}
+	if err = <-done; err != nil {
+		t.Fatalf("heartbeat returned error: %v", err)
 	}
 }
 

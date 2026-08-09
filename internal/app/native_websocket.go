@@ -39,6 +39,8 @@ type nativeWebSocketSessionState struct {
 	established bool
 }
 
+const nativeWebSocketHeartbeatInterval = 30 * time.Second
+
 func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
 	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
@@ -206,6 +208,14 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	accounting.forwardedBytes = int64(len(firstFrame))
 	session.established = true
+	heartbeatStop := make(chan struct{})
+	defer close(heartbeatStop)
+	go func() {
+		if heartbeatErr := keepWebSocketAlive(heartbeatStop, downstream, nativeWebSocketHeartbeatInterval); heartbeatErr != nil {
+			_ = downstream.Close()
+			_ = upstream.Close()
+		}
+	}()
 
 	stopCancel := context.AfterFunc(r.Context(), func() {
 		_ = downstream.Close()
@@ -253,6 +263,24 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		return session, meta, nil
 	}
 	return session, meta, first.err
+}
+
+func keepWebSocketAlive(stop <-chan struct{}, conn *websocket.Conn, interval time.Duration) error {
+	if conn == nil || interval <= 0 {
+		return nil
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return nil
+		case timestamp := <-ticker.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, timestamp.Add(10*time.Second)); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func normalizedUpstreamWebSocketClose(err error, terminalResponseSeen bool) error {
