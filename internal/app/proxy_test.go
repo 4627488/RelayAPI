@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -169,9 +170,12 @@ func TestResolveAPIKeyModelIsCaseInsensitive(t *testing.T) {
 func TestRewriteRequestModelCoversBodyPathAndQuery(t *testing.T) {
 	t.Run("json body preserves other raw values", func(t *testing.T) {
 		request, _ := http.NewRequest(http.MethodPost, "http://relay.test/v1/responses", nil)
-		body, err := rewriteRequestModel([]byte(`{"model":"fast","large":9007199254740993}`), request.URL, "fast", "gpt-5.6")
+		body, err := rewriteRequestModel([]byte("{ \n  \"model\": \"fast\", \"large\":9007199254740993}"), request.URL, "fast", "gpt-5.6")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if string(body) != "{ \n  \"model\": \"gpt-5.6\", \"large\":9007199254740993}" {
+			t.Fatalf("rewrite changed unrelated JSON bytes: %s", body)
 		}
 		var object map[string]json.RawMessage
 		if err := json.Unmarshal(body, &object); err != nil {
@@ -199,6 +203,33 @@ func TestRewriteRequestModelCoversBodyPathAndQuery(t *testing.T) {
 			t.Fatalf("rewritten query = %q", request.URL.RawQuery)
 		}
 	})
+}
+
+func TestReadBoundedRequestBody(t *testing.T) {
+	t.Run("known content length", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("payload"))
+		body, err := readBoundedRequestBody(httptest.NewRecorder(), request, 16)
+		if err != nil || string(body) != "payload" {
+			t.Fatalf("body = %q, err = %v", body, err)
+		}
+	})
+	t.Run("too large", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("payload"))
+		body, err := readBoundedRequestBody(httptest.NewRecorder(), request, 4)
+		if err == nil || len(body) > 4 {
+			t.Fatalf("body bytes = %d, err = %v", len(body), err)
+		}
+	})
+}
+
+func TestReleaseBufferedRequestBreaksBodyRetention(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("payload"))
+	request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("payload")), nil }
+	response := &http.Response{Request: request}
+	releaseBufferedRequest(request, response)
+	if request.Body != nil || request.GetBody != nil || response.Request.Body != nil || response.Request.GetBody != nil {
+		t.Fatal("request body remained reachable from the response")
+	}
 }
 
 func TestBearerSupportsCompatibleClientHeaders(t *testing.T) {

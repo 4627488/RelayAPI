@@ -40,6 +40,7 @@ type App struct {
 	nativeCPAServer   *http.Server
 	nativeCPAServeErr atomic.Value
 	nativeSettings    settingsState
+	memoryReclaiming  atomic.Bool
 }
 
 type contextKey string
@@ -141,6 +142,8 @@ func (a *App) maintenance() {
 	}
 }
 
+const largeRequestMemoryReleaseBytes = 8 << 20
+
 func (a *App) reclaimExecutorCachesUnderPressure() {
 	if a == nil || a.cfg.ExecutorCachePressureBytes == 0 {
 		return
@@ -150,10 +153,29 @@ func (a *App) reclaimExecutorCachesUnderPressure() {
 	if stats.HeapAlloc < a.cfg.ExecutorCachePressureBytes {
 		return
 	}
+	a.reclaimExecutorMemory("heap_pressure", stats.HeapAlloc)
+}
+
+func (a *App) reclaimAfterLargeRequest(requestBytes int) {
+	if a == nil || requestBytes < largeRequestMemoryReleaseBytes {
+		return
+	}
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	a.reclaimExecutorMemory("large_request_complete", stats.HeapAlloc)
+}
+
+func (a *App) reclaimExecutorMemory(reason string, heapAlloc uint64) {
+	if !a.memoryReclaiming.CompareAndSwap(false, true) {
+		return
+	}
+	defer a.memoryReclaiming.Store(false)
 	relaybridge.ClearReasoningCaches()
 	debug.FreeOSMemory()
-	slog.Warn("cleared executor compatibility caches under heap pressure",
-		"heap_alloc_bytes", stats.HeapAlloc, "threshold_bytes", a.cfg.ExecutorCachePressureBytes)
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	slog.Info("released executor memory", "reason", reason,
+		"heap_alloc_bytes_before", heapAlloc, "heap_alloc_bytes_after", after.HeapAlloc)
 }
 
 func (a *App) runRetention(ctx context.Context) {

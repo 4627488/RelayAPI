@@ -17,7 +17,7 @@ func TestLoadDoesNotRequireExternalCPAKey(t *testing.T) {
 	}
 }
 
-func TestLoadUsesLargeRequestDefaults(t *testing.T) {
+func TestLoadUsesMemoryBoundedRequestDefaults(t *testing.T) {
 	validEnvironment(t)
 	t.Setenv("CPA_MAX_REQUEST_MIB", "")
 	t.Setenv("CPA_REQUEST_BYTES_IN_FLIGHT_MIB", "")
@@ -27,14 +27,14 @@ func TestLoadUsesLargeRequestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CPAMaxRequestBytes != 1<<30 {
-		t.Fatalf("max request bytes = %d, want %d", cfg.CPAMaxRequestBytes, int64(1<<30))
+	if cfg.CPAMaxRequestBytes != 32<<20 {
+		t.Fatalf("max request bytes = %d, want %d", cfg.CPAMaxRequestBytes, int64(32<<20))
 	}
-	if cfg.CPARequestBytesInFlight != 8<<30 {
-		t.Fatalf("in-flight request bytes = %d, want %d", cfg.CPARequestBytesInFlight, int64(8<<30))
+	if cfg.CPARequestBytesInFlight != 32<<20 {
+		t.Fatalf("in-flight request bytes = %d, want %d", cfg.CPARequestBytesInFlight, int64(32<<20))
 	}
-	if cfg.ExecutorCachePressureBytes != 8<<30 {
-		t.Fatalf("executor cache pressure = %d, want %d", cfg.ExecutorCachePressureBytes, uint64(8<<30))
+	if cfg.ExecutorCachePressureBytes != 256<<20 {
+		t.Fatalf("executor cache pressure = %d, want %d", cfg.ExecutorCachePressureBytes, uint64(256<<20))
 	}
 }
 

@@ -3,11 +3,11 @@ services:
     image: ghcr.io/4627488/relayapi:latest
     build: .
     restart: unless-stopped
-    mem_limit: ${RELAY_MEMORY_LIMIT:-16g}
-    mem_reservation: ${RELAY_MEMORY_RESERVATION:-12g}
+    mem_limit: ${RELAY_MEMORY_LIMIT:-768m}
+    mem_reservation: ${RELAY_MEMORY_RESERVATION:-384m}
     env_file: .env
     environment:
-      GOMEMLIMIT: ${RELAY_GOMEMLIMIT:-12GiB}
+      GOMEMLIMIT: ${RELAY_GOMEMLIMIT:-448MiB}
       GOGC: "50"
       GODEBUG: madvdontneed=1
     ports:

@@ -22,6 +22,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
+	"github.com/tidwall/gjson"
 )
 
 type requestMeta struct {
@@ -130,19 +131,16 @@ func rewriteRequestModel(body []byte, requestURL *url.URL, requested, actual str
 	if requested == "" || actual == "" || strings.EqualFold(requested, actual) {
 		return body, nil
 	}
-	var object map[string]json.RawMessage
-	if len(body) > 0 && json.Unmarshal(body, &object) == nil {
-		if raw, exists := object["model"]; exists {
-			var bodyModel string
-			if json.Unmarshal(raw, &bodyModel) == nil && strings.EqualFold(strings.TrimSpace(bodyModel), requested) {
-				replacement, _ := json.Marshal(actual)
-				object["model"] = replacement
-				var err error
-				body, err = json.Marshal(object)
-				if err != nil {
-					return nil, err
-				}
-			}
+	if result := gjson.GetBytes(body, "model"); result.Type == gjson.String && result.Index > 0 &&
+		strings.EqualFold(strings.TrimSpace(result.String()), requested) {
+		replacement, _ := json.Marshal(actual)
+		end := result.Index + len(result.Raw)
+		if end <= len(body) {
+			rewritten := make([]byte, len(body)-len(result.Raw)+len(replacement))
+			at := copy(rewritten, body[:result.Index])
+			at += copy(rewritten[at:], replacement)
+			copy(rewritten[at:], body[end:])
+			body = rewritten
 		}
 	}
 	const marker = "/models/"
@@ -163,6 +161,30 @@ func rewriteRequestModel(body []byte, requestURL *url.URL, requested, actual str
 		requestURL.RawQuery = query.Encode()
 	}
 	return body, nil
+}
+
+func readBoundedRequestBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	reader := http.MaxBytesReader(w, r.Body, limit)
+	var buffer bytes.Buffer
+	// io.ReadAll grows geometrically without knowing the HTTP content length.
+	// Large JSON requests are common here, so reserve the exact known size and
+	// avoid retaining a substantially oversized backing array.
+	if r.ContentLength > 0 && r.ContentLength <= limit {
+		buffer.Grow(int(r.ContentLength))
+	}
+	_, err := buffer.ReadFrom(reader)
+	return buffer.Bytes(), err
+}
+
+func releaseBufferedRequest(upstream *http.Request, response *http.Response) {
+	if upstream != nil {
+		upstream.Body = nil
+		upstream.GetBody = nil
+	}
+	if response != nil && response.Request != nil {
+		response.Request.Body = nil
+		response.Request.GetBody = nil
+	}
 }
 
 type rollingCapture struct {
@@ -278,7 +300,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer lease.Release()
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, a.cfg.CPAMaxRequestBytes))
+	body, err := readBoundedRequestBody(w, r, a.cfg.CPAMaxRequestBytes)
 	if err != nil {
 		message := fmt.Sprintf("请求体超过 %d MiB", a.cfg.CPAMaxRequestBytes>>20)
 		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", message)
@@ -286,6 +308,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		detail := rejectedRequestDetail(r, body, true, "body_too_large", message, started)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusRequestEntityTooLarge, started, "body_too_large", message, detail)
 		return
+	}
+	bufferedBodyBytes := len(body)
+	if bufferedBodyBytes >= largeRequestMemoryReleaseBytes {
+		defer a.reclaimAfterLargeRequest(bufferedBodyBytes)
 	}
 	bodyReadAt := time.Now()
 	originalBody := body
@@ -414,6 +440,13 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		captureForwardedRequest(logContext.detail, originalBody, body)
 		response, err = targetCPA.HTTP.Do(upstream)
 	}
+	// The transport has completely sent the request by the time Do returns.
+	// Break the response -> request -> bytes.Reader retention chain before a
+	// potentially long SSE response keeps the full client payload alive.
+	releaseBufferedRequest(upstream, response)
+	body = nil
+	originalBody = nil
+	upstream = nil
 	if err != nil {
 		if r.Context().Err() == nil {
 			targetCPA.RecordTransportResult(err)
