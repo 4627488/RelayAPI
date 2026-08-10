@@ -121,3 +121,23 @@ type RequestReservation struct {
 	CreatedAt              time.Time       `json:"created_at"`
 	SettledAt              *time.Time      `json:"settled_at"`
 }
+
+// WebSocketTurn makes terminal Responses events durable before the enclosing
+// WebSocket session ends. RequestID + TurnID is the idempotency key used when a
+// terminal frame is replayed by either side of the relay.
+type WebSocketTurn struct {
+	RequestID              string    `gorm:"type:uuid;primaryKey" json:"request_id"`
+	TurnID                 string    `gorm:"primaryKey" json:"turn_id"`
+	PromptTokens           int64     `gorm:"not null;default:0" json:"prompt_tokens"`
+	CompletionTokens       int64     `gorm:"not null;default:0" json:"completion_tokens"`
+	CachedTokens           int64     `gorm:"not null;default:0" json:"cached_tokens"`
+	CacheWriteTokens       int64     `gorm:"not null;default:0" json:"cache_write_tokens"`
+	ReasoningTokens        int64     `gorm:"not null;default:0" json:"reasoning_tokens"`
+	ImageInputTokens       int64     `gorm:"not null;default:0" json:"image_input_tokens"`
+	CachedImageInputTokens int64     `gorm:"not null;default:0" json:"cached_image_input_tokens"`
+	ImageOutputTokens      int64     `gorm:"not null;default:0" json:"image_output_tokens"`
+	TotalTokens            int64     `gorm:"not null;default:0" json:"total_tokens"`
+	CostNanoUSD            int64     `gorm:"not null;default:0" json:"cost_nano_usd"`
+	PricingComplete        bool      `gorm:"not null;default:false" json:"pricing_complete"`
+	CreatedAt              time.Time `gorm:"not null" json:"created_at"`
+}

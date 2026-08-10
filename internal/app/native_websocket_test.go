@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -354,6 +355,79 @@ func TestNativeResponsesWebSocketUsesEmbeddedCPAHandlerAndAccountsUsage(t *testi
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for websocket accounting")
+	}
+}
+
+func TestNativeResponsesWebSocketPersistsTerminalBeforeForwarding(t *testing.T) {
+	persistStarted := make(chan struct{})
+	releasePersistence := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err = conn.ReadMessage(); err != nil {
+			return
+		}
+		_ = conn.WriteJSON(map[string]any{"type": "response.completed", "response": map[string]any{
+			"id": "resp_durable", "usage": map[string]any{"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
+		}})
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer upstream.Close()
+
+	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
+		Document: mustJSON(t, map[string]any{
+			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
+		}),
+	})
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}}
+		accounting.persistTurn = func(_ requestMeta, turn, cumulative billing.Result, _ []byte) (bool, error) {
+			if turn.RequestID != "resp_durable" || cumulative.Usage.Total != 10 {
+				return false, fmt.Errorf("unexpected terminal accounting: turn=%+v cumulative=%+v", turn, cumulative)
+			}
+			close(persistStarted)
+			<-releasePersistence
+			return true, nil
+		}
+		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "durable-test", nil, accounting)
+	}))
+	defer downstream.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+downstream.URL[len("http"):]+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err = client.WriteJSON(map[string]any{"type": "response.create", "model": "gpt-test"}); err != nil {
+		t.Fatal(err)
+	}
+	readResult := make(chan error, 1)
+	go func() {
+		_, _, readErr := client.ReadMessage()
+		readResult <- readErr
+	}()
+	select {
+	case <-persistStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminal persistence was not invoked")
+	}
+	select {
+	case readErr := <-readResult:
+		t.Fatalf("terminal reached client before persistence committed: %v", readErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releasePersistence)
+	select {
+	case readErr := <-readResult:
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminal was not forwarded after persistence")
 	}
 }
 

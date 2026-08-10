@@ -43,7 +43,7 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 		&Tenant{}, &APIKey{}, &APIKeyModelAlias{}, &ModelPrice{}, &ModelCatalogPrice{}, &ModelAlias{}, &ModelPriceRule{},
 		&BillingLedger{}, &UsageDailyRollup{}, &RequestLog{}, &RequestLogDetail{}, &CPALifecycleEvent{}, &Invitation{}, &AgentSetup{},
 		&ParentSubscription{}, &ParentQuotaWindow{}, &ParentQuotaObservation{},
-		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{},
+		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{}, &WebSocketTurn{},
 		&UpstreamCredential{}, &RuntimeSetting{},
 	); err != nil {
 		return nil, fmt.Errorf("gorm automigrate: %w", err)

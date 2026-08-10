@@ -373,3 +373,170 @@ func TestModelWithoutChildAssignmentFallsBackToTenantBalance(t *testing.T) {
 		t.Fatalf("assigned admission = %+v", assigned)
 	}
 }
+
+func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err := database.Exec(`TRUNCATE web_socket_turns, request_reservations, child_quota_windows, child_subscriptions,
+		parent_quota_observations, parent_quota_windows, parent_subscriptions, billing_ledgers,
+		request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tenantID, keyID, requestID := identity.NewID(), identity.NewID(), identity.NewID()
+	if err := database.Create(&db.Tenant{
+		ID: tenantID, Name: "websocket", OwnerEmail: "websocket@example.test",
+		PasswordHash: "test", Enabled: true, BalanceNanoUSD: 100,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&db.APIKey{
+		ID: keyID, TenantID: tenantID, Name: "test", KeyHash: []byte("websocket-unique-hash"),
+		Prefix: "rk_ws", Enabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	store := Store{DB: database}
+	if _, err := store.AdmitRequest(ctx, AdmissionInput{
+		RequestID: requestID, Key: KeyContext{APIKey: db.APIKey{ID: keyID, TenantID: tenantID}},
+		Model: "model", BalanceReserve: 10, QuotaReserve: 10, PriceConfigured: true,
+		PriceSnapshot: json.RawMessage(`{"model":"model"}`), ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	log := LogInput{
+		ID: requestID, TenantID: tenantID, APIKeyID: keyID, Model: "model", ActualModel: "model",
+		Method: "GET", Path: "/v1/responses", RequestType: "responses.websocket", StatusCode: 101,
+		Stream: true, PricingComplete: true, Settled: true, Usage: Usage{Prompt: 20, Completion: 10, Total: 30},
+		CostNanoUSD: int64Pointer(25), ReservedNanoUSD: 10, StartedAt: time.Now(), CompletedAt: time.Now(),
+	}
+	input := WebSocketTurnAccrual{
+		RequestID: requestID, TurnID: "resp_1", Usage: log.Usage, CostNanoUSD: 25,
+		PricingComplete: true, Log: log,
+	}
+	inserted, err := store.AccrueWebSocketTurn(ctx, input)
+	if err != nil || !inserted {
+		t.Fatalf("first accrual inserted=%v, err=%v", inserted, err)
+	}
+	inserted, err = store.AccrueWebSocketTurn(ctx, input)
+	if err != nil || inserted {
+		t.Fatalf("duplicate accrual inserted=%v, err=%v", inserted, err)
+	}
+
+	var tenant db.Tenant
+	if err := database.First(&tenant, "id = ?", tenantID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tenant.BalanceNanoUSD != 65 {
+		t.Fatalf("balance while reserve is held = %d, want 65", tenant.BalanceNanoUSD)
+	}
+	var reservation RequestReservation
+	if err := database.First(&reservation, "request_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reservation.ActualNanoUSD == nil || *reservation.ActualNanoUSD != 25 || reservation.Status != db.ReservationActive {
+		t.Fatalf("active reservation = %+v", reservation)
+	}
+	var requestLog db.RequestLog
+	if err := database.First(&requestLog, "id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if requestLog.TotalTokens != 30 || requestLog.CostNanoUSD == nil || *requestLog.CostNanoUSD != 25 {
+		t.Fatalf("durable websocket log = %+v", requestLog)
+	}
+
+	reclaimed, err := store.ReclaimExpiredReservations(ctx, time.Now().Add(2*time.Minute))
+	if err != nil || reclaimed != 1 {
+		t.Fatalf("reclaimed=%d, err=%v", reclaimed, err)
+	}
+	if err := database.First(&tenant, "id = ?", tenantID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tenant.BalanceNanoUSD != 75 {
+		t.Fatalf("balance after expiry = %d, want 75", tenant.BalanceNanoUSD)
+	}
+	if err := database.First(&reservation, "request_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reservation.Status != db.ReservationExpired || reservation.ActualNanoUSD == nil || *reservation.ActualNanoUSD != 25 {
+		t.Fatalf("expired reservation lost accrued usage: %+v", reservation)
+	}
+	var turns int64
+	if err := database.Model(&db.WebSocketTurn{}).Where("request_id = ?", requestID).Count(&turns).Error; err != nil {
+		t.Fatal(err)
+	}
+	if turns != 1 {
+		t.Fatalf("turn rows = %d, want 1", turns)
+	}
+
+	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
+		CPAAuthID: "ws-auth-id", CPAAuthIndex: "ws-auth-index", CPAAuthName: "ws.json",
+		Name: "ws parent", Provider: "test", CapacityMode: db.ParentCapacityObserved,
+		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	if err := store.SetParentQuotaWindows(ctx, parent.ID, []ParentQuotaWindow{{
+		Kind: "daily", LimitNanoUSD: 1_000, ResetsAt: reset, Source: db.ParentQuotaSourceManualConversion,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := store.CreateChildSubscription(ctx, ChildSubscription{
+		TenantID: tenantID, ParentSubscriptionID: parent.ID, Name: "ws child",
+		AllocationPPM: 1_000_000, Priority: 100, Enabled: true, StartsAt: time.Now().Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quotaRequestID := identity.NewID()
+	if _, err := store.AdmitRequest(ctx, AdmissionInput{
+		RequestID: quotaRequestID, Key: KeyContext{APIKey: db.APIKey{ID: keyID, TenantID: tenantID}},
+		Model: "model", BalanceReserve: 10, QuotaReserve: 10, PriceConfigured: true,
+		PriceSnapshot: json.RawMessage(`{"model":"model"}`), ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	quotaLog := log
+	quotaLog.ID = quotaRequestID
+	quotaInput := input
+	quotaInput.RequestID = quotaRequestID
+	quotaInput.TurnID = "resp_quota"
+	quotaInput.Log = quotaLog
+	inserted, err = store.AccrueWebSocketTurn(ctx, quotaInput)
+	if err != nil || !inserted {
+		t.Fatalf("quota accrual inserted=%v, err=%v", inserted, err)
+	}
+	var window db.ChildQuotaWindow
+	if err := database.First(&window, "child_subscription_id = ? AND kind = ?", child.ID, "daily").Error; err != nil {
+		t.Fatal(err)
+	}
+	if window.ReservedNanoUSD != 10 || window.SettledNanoUSD != 25 {
+		t.Fatalf("quota after terminal accrual = %+v", window)
+	}
+	if err := store.SettleRequestReservation(ctx, quotaRequestID, 25, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.First(&window, "child_subscription_id = ? AND kind = ?", child.ID, "daily").Error; err != nil {
+		t.Fatal(err)
+	}
+	if window.ReservedNanoUSD != 0 || window.SettledNanoUSD != 25 {
+		t.Fatalf("quota finalization double-counted a durable turn: %+v", window)
+	}
+}
+
+func int64Pointer(value int64) *int64 { return &value }

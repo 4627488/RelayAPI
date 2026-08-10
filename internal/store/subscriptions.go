@@ -44,6 +44,7 @@ type ParentQuotaObservation = db.ParentQuotaObservation
 type ChildSubscription = db.ChildSubscription
 type ChildQuotaWindow = db.ChildQuotaWindow
 type RequestReservation = db.RequestReservation
+type WebSocketTurn = db.WebSocketTurn
 
 type SubscriptionCandidate struct {
 	Child  ChildSubscription
@@ -69,6 +70,15 @@ type Admission struct {
 	CPAAuthIndex           string
 	BalanceReservedNanoUSD int64
 	QuotaReservedNanoUSD   int64
+}
+
+type WebSocketTurnAccrual struct {
+	RequestID       string
+	TurnID          string
+	Usage           Usage
+	CostNanoUSD     int64
+	PricingComplete bool
+	Log             LogInput
 }
 
 type quotaWindowReservation struct {
@@ -964,20 +974,120 @@ func (s Store) SettleRequestReservation(ctx context.Context, requestID string, a
 	return s.finishReservation(ctx, requestID, actual, pricingComplete, db.ReservationSettled)
 }
 
+// AccrueWebSocketTurn durably charges one terminal WebSocket response and
+// refreshes the session log in the same transaction. Replayed terminal frames
+// are ignored by the request_id + turn_id primary key.
+func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccrual) (bool, error) {
+	inserted := false
+	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		var reservation RequestReservation
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&reservation, "request_id = ?", input.RequestID).Error; err != nil {
+			return notFound(err)
+		}
+		if reservation.Status != db.ReservationActive {
+			return fmt.Errorf("request reservation is %s", reservation.Status)
+		}
+		turn := db.WebSocketTurn{
+			RequestID: input.RequestID, TurnID: strings.TrimSpace(input.TurnID),
+			PromptTokens: input.Usage.Prompt, CompletionTokens: input.Usage.Completion,
+			CachedTokens: input.Usage.Cached, CacheWriteTokens: input.Usage.CacheWrite,
+			ReasoningTokens: input.Usage.Reasoning, ImageInputTokens: input.Usage.ImageInput,
+			CachedImageInputTokens: input.Usage.CachedImageInput, ImageOutputTokens: input.Usage.ImageOutput,
+			TotalTokens: input.Usage.Total, CostNanoUSD: input.CostNanoUSD,
+			PricingComplete: input.PricingComplete, CreatedAt: time.Now(),
+		}
+		if turn.TurnID == "" {
+			return errors.New("websocket turn id is required")
+		}
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&turn)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		inserted = true
+
+		usesBalance, err := reservationUsesBalance(tx, reservation)
+		if err != nil {
+			return err
+		}
+		if usesBalance && input.CostNanoUSD != 0 {
+			var tenant Tenant
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", reservation.TenantID).Error; err != nil {
+				return err
+			}
+			tenant.BalanceNanoUSD -= input.CostNanoUSD
+			if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
+				return err
+			}
+			requestID := reservation.RequestID
+			if err := tx.Create(&db.BillingLedger{
+				ID: identity.NewID(), TenantID: tenant.ID, RequestID: &requestID, Kind: "settlement",
+				AmountNanoUSD: -input.CostNanoUSD, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
+				Note: "websocket terminal turn settlement",
+			}).Error; err != nil {
+				return err
+			}
+		}
+		if reservation.ChildSubscriptionID != nil && reservation.QuotaReservedNanoUSD > 0 && input.CostNanoUSD != 0 {
+			var reservedWindows []quotaWindowReservation
+			if err := json.Unmarshal(reservation.QuotaWindows, &reservedWindows); err != nil {
+				return err
+			}
+			for _, reservedWindow := range reservedWindows {
+				var window ChildQuotaWindow
+				err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&window,
+					"child_subscription_id = ? AND kind = ? AND resets_at = ?",
+					*reservation.ChildSubscriptionID, reservedWindow.Kind, reservedWindow.ResetsAt).Error
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if err := tx.Model(&window).Update("settled_nano_usd", window.SettledNanoUSD+input.CostNanoUSD).Error; err != nil {
+					return err
+				}
+			}
+		}
+		accrued := input.CostNanoUSD
+		pricingComplete := input.PricingComplete
+		if reservation.ActualNanoUSD != nil {
+			accrued += *reservation.ActualNanoUSD
+			pricingComplete = reservation.PricingComplete && input.PricingComplete
+		}
+		if err := tx.Model(&reservation).Updates(map[string]any{
+			"actual_nano_usd": accrued, "pricing_complete": pricingComplete,
+		}).Error; err != nil {
+			return err
+		}
+		return writeLogTx(tx, input.Log, true)
+	})
+	if err != nil {
+		return false, err
+	}
+	return inserted, err
+}
+
 func (s Store) ReleaseRequestReservation(ctx context.Context, requestID string) error {
 	return s.finishReservation(ctx, requestID, 0, false, db.ReservationReleased)
 }
 
 func (s Store) ReclaimExpiredReservations(ctx context.Context, now time.Time) (int, error) {
-	var requestIDs []string
+	var reservations []RequestReservation
 	if err := scoped(ctx, s.DB).Model(&RequestReservation{}).
 		Where("status = ? AND expires_at <= ?", db.ReservationActive, now).
-		Pluck("request_id", &requestIDs).Error; err != nil {
+		Find(&reservations).Error; err != nil {
 		return 0, err
 	}
 	reclaimed := 0
-	for _, requestID := range requestIDs {
-		if err := s.finishReservation(ctx, requestID, 0, false, db.ReservationExpired); err != nil {
+	for _, reservation := range reservations {
+		actual := int64(0)
+		if reservation.ActualNanoUSD != nil {
+			actual = *reservation.ActualNanoUSD
+		}
+		if err := s.finishReservation(ctx, reservation.RequestID, actual, reservation.PricingComplete, db.ReservationExpired); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				continue
 			}
@@ -1019,22 +1129,30 @@ func (s Store) finishReservation(ctx context.Context, requestID string, actual i
 		if err != nil {
 			return err
 		}
-		balanceActual := int64(0)
-		if status == db.ReservationSettled && usesBalance {
-			balanceActual = actual
-		} else if status != db.ReservationSettled {
-			balanceActual = 0
+		accrued := int64(0)
+		if reservation.ActualNanoUSD != nil {
+			accrued = *reservation.ActualNanoUSD
 		}
-		delta := reservation.BalanceReservedNanoUSD - balanceActual
-		if delta != 0 {
-			tenant.BalanceNanoUSD += delta
+		finalActual := int64(0)
+		if status == db.ReservationSettled || status == db.ReservationExpired {
+			finalActual = actual
+		}
+		balanceDelta := int64(0)
+		if usesBalance {
+			// The initial reserve and every durable WebSocket turn have already
+			// been debited. Finalization only reconciles that held/accrued amount
+			// to the final cumulative cost.
+			balanceDelta = reservation.BalanceReservedNanoUSD + accrued - finalActual
+		}
+		if balanceDelta != 0 {
+			tenant.BalanceNanoUSD += balanceDelta
 			if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
 				return err
 			}
 			if err := tx.Create(&db.BillingLedger{
 				ID: identity.NewID(), TenantID: tenant.ID, RequestID: &requestID,
 				Kind:          map[bool]string{true: "settlement", false: "refund"}[status == db.ReservationSettled],
-				AmountNanoUSD: delta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
+				AmountNanoUSD: balanceDelta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
 				Note: "request reservation finalized",
 			}).Error; err != nil {
 				return err
@@ -1045,10 +1163,7 @@ func (s Store) finishReservation(ctx context.Context, requestID string, actual i
 			if err := json.Unmarshal(reservation.QuotaWindows, &reservedWindows); err != nil {
 				return err
 			}
-			quotaActual := actual
-			if status != db.ReservationSettled {
-				quotaActual = 0
-			}
+			quotaDelta := finalActual - accrued
 			for _, reservedWindow := range reservedWindows {
 				var window ChildQuotaWindow
 				err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&window,
@@ -1066,11 +1181,15 @@ func (s Store) finishReservation(ctx context.Context, requestID string, actual i
 				if reserved < 0 {
 					reserved = 0
 				}
+				settled := window.SettledNanoUSD + quotaDelta
+				if settled < 0 {
+					settled = 0
+				}
 				if err := tx.Model(&ChildQuotaWindow{}).
 					Where("child_subscription_id = ? AND kind = ?", window.ChildSubscriptionID, window.Kind).
 					Updates(map[string]any{
 						"reserved_nano_usd": reserved,
-						"settled_nano_usd":  window.SettledNanoUSD + quotaActual,
+						"settled_nano_usd":  settled,
 						"updated_at":        time.Now(),
 					}).Error; err != nil {
 					return err
@@ -1078,7 +1197,7 @@ func (s Store) finishReservation(ctx context.Context, requestID string, actual i
 			}
 		}
 		now := time.Now()
-		actualValue := actual
+		actualValue := finalActual
 		return tx.Model(&reservation).Updates(map[string]any{
 			"actual_nano_usd": &actualValue, "pricing_complete": pricingComplete,
 			"status": status, "settled_at": &now,
