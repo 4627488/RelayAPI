@@ -225,17 +225,6 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
   )
 }
 
-const preferredKeyModels = ["gpt-5.6-sol", "grok-4.5"]
-
-function preferredModelsFrom(options: string[]) {
-  return preferredKeyModels.flatMap((preferred) => {
-    const match = options.find(
-      (model) => model === preferred || model.endsWith(`/${preferred}`)
-    )
-    return match ? [match] : []
-  })
-}
-
 function KeysView({
   keys,
   tenantModels,
@@ -251,9 +240,9 @@ function KeysView({
   const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({})
   const [revealingKeyID, setRevealingKeyID] = useState("")
   const [modelOptions, setModelOptions] = useState<string[]>(tenantModels)
-  const [selectedModels, setSelectedModels] = useState<string[]>(() =>
-    preferredModelsFrom(tenantModels)
-  )
+  const [selectedModels, setSelectedModels] = useState<string[]>(() => [
+    ...tenantModels,
+  ])
   const [modelAliases, setModelAliases] = useState<ModelAliasDraft[]>([])
   const modelSelectionTouched = useRef(false)
 
@@ -291,14 +280,14 @@ function KeysView({
 
   useEffect(() => {
     if (createOpen && !modelSelectionTouched.current) {
-      setSelectedModels(preferredModelsFrom(modelOptions))
+      setSelectedModels([...modelOptions])
     }
   }, [createOpen, modelOptions])
 
   function openCreateDialog() {
     modelSelectionTouched.current = false
     setEditingKey(null)
-    setSelectedModels(preferredModelsFrom(modelOptions))
+    setSelectedModels([...modelOptions])
     setModelAliases([])
     setCreateOpen(true)
   }
@@ -655,7 +644,8 @@ function KeysView({
                   allLabel="全部可用模型"
                 />
                 <FieldDescription>
-                  默认选择推荐模型；可按需调整，不选择表示允许全部可用模型。
+                  新建 Key
+                  默认全选当前全部可用模型；可按需取消，不选择表示允许全部可用模型。
                 </FieldDescription>
               </Field>
               <ApiKeyModelAliasEditor

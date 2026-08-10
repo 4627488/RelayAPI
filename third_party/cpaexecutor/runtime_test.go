@@ -11,10 +11,127 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
+
+func TestRuntimeUsesCPAStaticModelsWhenCredentialModelsAreEmpty(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "codex-static", Provider: "codex", Enabled: true,
+		Document: []byte(`{"type":"codex","access_token":"test-token"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	models, source, err := runtime.DiscoverCredentialModels(context.Background(), "codex-static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source != "cpa_static" || len(models) == 0 {
+		t.Fatalf("models = %v, source = %q; want CPA static registry", models, source)
+	}
+	if got := runtime.CredentialModels("codex-static"); len(got) != len(models) {
+		t.Fatalf("credential models = %d, discovered = %d", len(got), len(models))
+	}
+}
+
+func TestRuntimeUsesCPACodexPlanAndModelMetadata(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "codex-free", Provider: "codex", Enabled: true,
+		Document: []byte(`{"type":"codex","access_token":"test-token","plan_type":"free"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	got := runtime.CredentialModels("codex-free")
+	want := modelIDs(registry.GetCodexFreeModels())
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("free plan models differ from CPA registry\ngot: %v\nwant: %v", got, want)
+	}
+	registered := registry.GetGlobalRegistry().GetModelsForClient("codex-free")
+	hasCapabilityMetadata := false
+	for _, model := range registered {
+		if model != nil && (model.ContextLength > 0 || model.MaxContextLength > 0 || model.Thinking != nil || len(model.SupportedInputModalities) > 0) {
+			hasCapabilityMetadata = true
+			break
+		}
+	}
+	if !hasCapabilityMetadata {
+		t.Fatal("CPA model capability metadata was discarded")
+	}
+}
+
+func TestRuntimeHonorsCPAOAuthModelExclusionsAndAliases(t *testing.T) {
+	baseModels := registry.GetCodexFreeModels()
+	if len(baseModels) < 2 {
+		t.Fatal("CPA free model catalog is unexpectedly small")
+	}
+	excluded := baseModels[0].ID
+	aliased := baseModels[1].ID
+	document, _ := json.Marshal(map[string]any{
+		"type": "codex", "access_token": "test-token", "plan_type": "free",
+		"excluded_models": []string{excluded},
+		"model_aliases":   []map[string]any{{"name": aliased, "alias": "oauth-visible-alias"}},
+	})
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "codex-oauth-policy", Provider: "codex", Enabled: true, Document: document,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	models, source, err := runtime.DiscoverCredentialModels(context.Background(), "codex-oauth-policy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := "\n" + strings.Join(models, "\n") + "\n"
+	if source != "cpa_static" || strings.Contains(joined, "\n"+excluded+"\n") {
+		t.Fatalf("excluded model remained in CPA catalog: %v", models)
+	}
+	if strings.Contains(joined, "\n"+aliased+"\n") || !strings.Contains(joined, "\noauth-visible-alias\n") {
+		t.Fatalf("CPA OAuth alias policy was not applied: %v", models)
+	}
+}
+
+func TestRuntimeDiscoversOpenAICompatibleModelsThroughCPAExecutor(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %q, want /v1/models", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer dashscope-test-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"qwen-plus"},{"id":"qwen-max"},{"id":"qwen-plus"}]}`))
+	}))
+	defer upstream.Close()
+
+	document, _ := json.Marshal(map[string]any{
+		"type": "openai-compatibility", "api_key": "dashscope-test-key", "base_url": upstream.URL + "/v1",
+	})
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "bailian", Provider: "aliyun-bailian", Enabled: true, Document: document,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	models, source, err := runtime.DiscoverCredentialModels(context.Background(), "bailian")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source != "cpa_upstream" || strings.Join(models, ",") != "qwen-max,qwen-plus" {
+		t.Fatalf("models = %v, source = %q", models, source)
+	}
+}
 
 func TestRuntimeRetriesSoleCredentialAfterShortTransientCooldown(t *testing.T) {
 	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{

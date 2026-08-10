@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
+	codexauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
@@ -32,6 +35,8 @@ import (
 // Credential-specific failures (for example 401, 403 and 429) retain CPA's
 // provider-aware cooldowns.
 const transientCredentialCooldownSeconds = 1
+
+const maxDiscoveredModelCatalogBytes int64 = 16 << 20
 
 // Credential is Relay's storage-neutral representation of one CPA credential.
 // Document is the original CPA auth JSON (or a config-derived API-key document).
@@ -264,6 +269,284 @@ func (r *Runtime) Models() []string {
 	return models
 }
 
+// CredentialModels returns the public models CPA registered for one
+// credential. Unlike the unified /v1/models catalog, this preserves the
+// credential boundary used by Relay's subscription admission.
+func (r *Runtime) CredentialModels(id string) []string {
+	id = strings.TrimSpace(id)
+	if r == nil || id == "" {
+		return nil
+	}
+	r.mu.RLock()
+	route, ok := r.routes[id]
+	r.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	models := make([]string, 0, len(route.models))
+	for model := range route.models {
+		if model = strings.TrimSpace(model); model != "" {
+			models = append(models, model)
+		}
+	}
+	sort.Strings(models)
+	return models
+}
+
+// DiscoverCredentialModels asks CPA for the best credential-scoped model
+// catalog it can provide. OpenAI-compatible credentials are probed through
+// CPA's executor so credential headers, custom headers and proxy policy are
+// identical to inference requests. Other providers use CPA's registered
+// provider catalog. A registry fallback may be returned together with a probe
+// error so callers can keep serving the last known-good list.
+func (r *Runtime) DiscoverCredentialModels(ctx context.Context, id string) ([]string, string, error) {
+	id = strings.TrimSpace(id)
+	if r == nil || id == "" {
+		return nil, "", fmt.Errorf("CPA credential requires an ID")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	auth, ok := r.manager.GetByID(id)
+	if !ok || auth == nil {
+		return nil, "", fmt.Errorf("CPA credential %q is not registered", id)
+	}
+	fallback := r.CredentialModels(id)
+	if !isOpenAICompatibleAuth(auth) {
+		models := modelIDs(cpaStaticModelsForAuth(auth.Provider, auth))
+		if len(models) > 0 {
+			return models, "cpa_static", nil
+		}
+		if len(fallback) == 0 {
+			return nil, "", fmt.Errorf("CPA has no models registered for credential %q", id)
+		}
+		return fallback, "cpa_registry", nil
+	}
+	baseURL := strings.TrimSpace(auth.Attributes["base_url"])
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		err = fmt.Errorf("CPA credential %q requires an absolute base_url for model discovery", id)
+		if len(fallback) > 0 {
+			return fallback, "cpa_registry", err
+		}
+		return nil, "", err
+	}
+	targetURL := strings.TrimRight(parsed.String(), "/") + "/models"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return fallback, fallbackModelSource(fallback), err
+	}
+	request.Header.Set("Accept", "application/json")
+	response, err := r.manager.HttpRequest(ctx, auth, request)
+	if err != nil {
+		return fallback, fallbackModelSource(fallback), fmt.Errorf("CPA model discovery failed: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		err = fmt.Errorf("CPA model discovery returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(message)))
+		return fallback, fallbackModelSource(fallback), err
+	}
+	payload, err := io.ReadAll(io.LimitReader(response.Body, maxDiscoveredModelCatalogBytes+1))
+	if err != nil {
+		return fallback, fallbackModelSource(fallback), fmt.Errorf("read CPA model catalog: %w", err)
+	}
+	if int64(len(payload)) > maxDiscoveredModelCatalogBytes {
+		return fallback, fallbackModelSource(fallback), fmt.Errorf("CPA model catalog exceeds %d bytes", maxDiscoveredModelCatalogBytes)
+	}
+	models, err := decodeDiscoveredModels(payload)
+	if err != nil {
+		return fallback, fallbackModelSource(fallback), err
+	}
+	models = filterExcludedModelIDs(models, auth)
+	if len(models) == 0 {
+		err = fmt.Errorf("CPA model discovery returned an empty catalog")
+		return fallback, fallbackModelSource(fallback), err
+	}
+	return models, "cpa_upstream", nil
+}
+
+func cpaStaticModelsForAuth(provider string, auth *coreauth.Auth) []*registry.ModelInfo {
+	provider = normalizeProvider(provider)
+	var models []*registry.ModelInfo
+	if provider != "codex" {
+		models = registry.GetStaticModelDefinitionsByChannel(provider)
+		return applyCPAAuthModelAliases(filterCPAExcludedModels(models, auth), auth)
+	}
+	planType := ""
+	if auth != nil {
+		planType = strings.ToLower(strings.TrimSpace(auth.Attributes["plan_type"]))
+	}
+	switch planType {
+	case "free":
+		models = registry.GetCodexFreeModels()
+	case "team", "business", "go":
+		models = registry.GetCodexTeamModels()
+	case "plus":
+		models = registry.GetCodexPlusModels()
+	default:
+		models = registry.GetCodexProModels()
+	}
+	return applyCPAAuthModelAliases(filterCPAExcludedModels(models, auth), auth)
+}
+
+func applyCPAAuthModelAliases(models []*registry.ModelInfo, auth *coreauth.Auth) []*registry.ModelInfo {
+	if len(models) == 0 || auth == nil {
+		return models
+	}
+	aliases := coreauth.OAuthModelAliasesFromAttributes(auth.Attributes)
+	if len(aliases) == 0 {
+		return models
+	}
+	byModel := make(map[string][]internalconfig.OAuthModelAlias, len(aliases))
+	for _, alias := range aliases {
+		name := strings.ToLower(strings.TrimSpace(alias.Name))
+		if name != "" && strings.TrimSpace(alias.Alias) != "" && !strings.EqualFold(alias.Name, alias.Alias) {
+			byModel[name] = append(byModel[name], alias)
+		}
+	}
+	result := make([]*registry.ModelInfo, 0, len(models)+len(aliases))
+	seen := make(map[string]struct{}, len(models)+len(aliases))
+	for _, model := range models {
+		if model == nil || strings.TrimSpace(model.ID) == "" {
+			continue
+		}
+		entries := byModel[strings.ToLower(strings.TrimSpace(model.ID))]
+		keepOriginal := len(entries) == 0
+		for _, alias := range entries {
+			if alias.Fork {
+				keepOriginal = true
+			}
+		}
+		if keepOriginal {
+			key := strings.ToLower(strings.TrimSpace(model.ID))
+			if _, ok := seen[key]; !ok {
+				seen[key] = struct{}{}
+				result = append(result, model)
+			}
+		}
+		for _, alias := range entries {
+			aliasID := strings.TrimSpace(alias.Alias)
+			key := strings.ToLower(aliasID)
+			if aliasID == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			cloned := *model
+			cloned.ID = aliasID
+			if displayName := strings.TrimSpace(alias.DisplayName); displayName != "" {
+				cloned.DisplayName = displayName
+			}
+			result = append(result, &cloned)
+		}
+	}
+	return result
+}
+
+func filterCPAExcludedModels(models []*registry.ModelInfo, auth *coreauth.Auth) []*registry.ModelInfo {
+	if len(models) == 0 || auth == nil {
+		return models
+	}
+	excluded := make(map[string]struct{})
+	for _, model := range strings.Split(auth.Attributes["excluded_models"], ",") {
+		if model = strings.ToLower(strings.TrimSpace(model)); model != "" {
+			excluded[model] = struct{}{}
+		}
+	}
+	if len(excluded) == 0 {
+		return models
+	}
+	filtered := make([]*registry.ModelInfo, 0, len(models))
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		if _, skip := excluded[strings.ToLower(strings.TrimSpace(model.ID))]; !skip {
+			filtered = append(filtered, model)
+		}
+	}
+	return filtered
+}
+
+func modelIDs(infos []*registry.ModelInfo) []string {
+	seen := make(map[string]string, len(infos))
+	for _, info := range infos {
+		if info == nil {
+			continue
+		}
+		model := strings.TrimSpace(info.ID)
+		if model != "" {
+			seen[strings.ToLower(model)] = model
+		}
+	}
+	models := make([]string, 0, len(seen))
+	for _, model := range seen {
+		models = append(models, model)
+	}
+	sort.Slice(models, func(i, j int) bool { return strings.ToLower(models[i]) < strings.ToLower(models[j]) })
+	return models
+}
+
+func isOpenAICompatibleAuth(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	provider := normalizeProvider(auth.Provider)
+	if provider == "openai" || provider == "openai-compatibility" {
+		return true
+	}
+	compatName := strings.ToLower(strings.TrimSpace(auth.Attributes["compat_name"]))
+	return compatName == "openai" || compatName == "openai-compatibility"
+}
+
+func fallbackModelSource(models []string) string {
+	if len(models) > 0 {
+		return "cpa_registry"
+	}
+	return ""
+}
+
+func decodeDiscoveredModels(payload []byte) ([]string, error) {
+	type modelEntry struct {
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Model string `json:"model"`
+	}
+	var catalog struct {
+		Data   []modelEntry `json:"data"`
+		Models []modelEntry `json:"models"`
+		Output struct {
+			Models []modelEntry `json:"models"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(payload, &catalog); err != nil {
+		return nil, fmt.Errorf("decode CPA model catalog: %w", err)
+	}
+	entries := append(append(catalog.Data, catalog.Models...), catalog.Output.Models...)
+	seen := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		model := strings.TrimSpace(entry.ID)
+		if model == "" {
+			model = strings.TrimSpace(entry.Model)
+		}
+		if model == "" {
+			model = strings.TrimSpace(entry.Name)
+		}
+		if model != "" {
+			seen[strings.ToLower(model)] = model
+		}
+	}
+	models := make([]string, 0, len(seen))
+	for _, model := range seen {
+		models = append(models, model)
+	}
+	sort.Slice(models, func(i, j int) bool { return strings.ToLower(models[i]) < strings.ToLower(models[j]) })
+	return models, nil
+}
+
 // ReplaceCredentials atomically replaces Relay-owned auth records and their
 // model registrations while leaving CPA executor state intact.
 func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credential) error {
@@ -388,6 +671,7 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	for _, key := range []string{
 		"api_key", "base_url", "compat_name", "provider_key", "account_id", "project_id",
 		"location", "region", "priority", "prefix", "cloak_mode", "token_endpoint",
+		"plan_type", "auth_kind",
 	} {
 		if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
 			attrs[key] = strings.TrimSpace(value)
@@ -411,16 +695,29 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 		ProxyURL: proxyURL, Attributes: attrs, Metadata: metadata,
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
+	if provider == "codex" && strings.TrimSpace(auth.Attributes["plan_type"]) == "" {
+		if idToken := stringValue(metadata, "id_token"); idToken != "" {
+			if claims, parseErr := codexauth.ParseJWTToken(idToken); parseErr == nil && claims != nil {
+				auth.Attributes["plan_type"] = strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType)
+			}
+		}
+	}
+	applyCPAAuthModelMetadata(auth, metadata)
 	coreauth.ApplyCustomHeadersFromMetadata(auth)
 	if err := coreauth.ValidateAuthWeight(auth); err != nil {
 		return nil, credentialRoute{}, nil, fmt.Errorf("CPA credential %q has invalid weight: %w", id, err)
 	}
 
 	aliases := modelAliases(metadata)
+	publicModels := append([]string(nil), item.Models...)
+	if len(publicModels) == 0 {
+		publicModels = modelIDs(cpaStaticModelsForAuth(provider, auth))
+	}
+	publicModels = filterExcludedModelIDs(publicModels, auth)
 	route := credentialRoute{provider: provider, models: make(map[string]modelRoute)}
-	modelInfos := make([]*registry.ModelInfo, 0, len(item.Models)*2)
+	modelInfos := make([]*registry.ModelInfo, 0, len(publicModels)*2)
 	seen := make(map[string]struct{})
-	for _, public := range item.Models {
+	for _, public := range publicModels {
 		public = strings.TrimSpace(public)
 		if public == "" {
 			continue
@@ -440,7 +737,16 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 				continue
 			}
 			seen[key] = struct{}{}
-			info := &registry.ModelInfo{ID: model}
+			lookupID := model
+			if strings.EqualFold(model, public) && upstream != "" {
+				lookupID = upstream
+			}
+			info := lookupCPAStaticModelInfo(lookupID, auth)
+			if info == nil {
+				info = &registry.ModelInfo{ID: model}
+			} else {
+				info.ID = model
+			}
 			if alias.image {
 				info.Type = registry.OpenAIImageModelType
 			}
@@ -448,6 +754,87 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 		}
 	}
 	return auth, route, modelInfos, nil
+}
+
+func lookupCPAStaticModelInfo(modelID string, auth *coreauth.Auth) *registry.ModelInfo {
+	for _, info := range cpaStaticModelsForAuth(auth.Provider, auth) {
+		if info != nil && strings.EqualFold(strings.TrimSpace(info.ID), strings.TrimSpace(modelID)) {
+			cloned := *info
+			return &cloned
+		}
+	}
+	return registry.LookupStaticModelInfo(modelID)
+}
+
+func applyCPAAuthModelMetadata(auth *coreauth.Auth, metadata map[string]any) {
+	if auth == nil || metadata == nil {
+		return
+	}
+	excluded := metadataStringSlice(metadata, "excluded_models", "excluded-models")
+	if len(excluded) > 0 {
+		normalized := make([]string, 0, len(excluded))
+		for _, model := range excluded {
+			if model = strings.ToLower(strings.TrimSpace(model)); model != "" {
+				normalized = append(normalized, model)
+			}
+		}
+		sort.Strings(normalized)
+		auth.Attributes["excluded_models"] = strings.Join(normalized, ",")
+	}
+	rawAliases, ok := metadata["model_aliases"]
+	if !ok {
+		rawAliases = metadata["model-aliases"]
+	}
+	if rawAliases != nil {
+		payload, marshalErr := json.Marshal(rawAliases)
+		var aliases []internalconfig.OAuthModelAlias
+		if marshalErr == nil && json.Unmarshal(payload, &aliases) == nil {
+			cfg := internalconfig.Config{OAuthModelAlias: map[string][]internalconfig.OAuthModelAlias{"auth": aliases}}
+			cfg.SanitizeOAuthModelAlias()
+			coreauth.SetOAuthModelAliasesAttribute(auth, cfg.OAuthModelAlias["auth"])
+		}
+	}
+}
+
+func metadataStringSlice(metadata map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		raw, ok := metadata[key]
+		if !ok {
+			continue
+		}
+		values, ok := raw.([]any)
+		if !ok {
+			if stringsValue, stringsOK := raw.([]string); stringsOK {
+				return append([]string(nil), stringsValue...)
+			}
+			continue
+		}
+		result := make([]string, 0, len(values))
+		for _, value := range values {
+			if model, valueOK := value.(string); valueOK {
+				result = append(result, model)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+func filterExcludedModelIDs(models []string, auth *coreauth.Auth) []string {
+	if auth == nil || strings.TrimSpace(auth.Attributes["excluded_models"]) == "" {
+		return models
+	}
+	excluded := make(map[string]struct{})
+	for _, model := range strings.Split(auth.Attributes["excluded_models"], ",") {
+		excluded[strings.ToLower(strings.TrimSpace(model))] = struct{}{}
+	}
+	filtered := make([]string, 0, len(models))
+	for _, model := range models {
+		if _, skip := excluded[strings.ToLower(strings.TrimSpace(model))]; !skip {
+			filtered = append(filtered, model)
+		}
+	}
+	return filtered
 }
 
 func modelAliases(metadata map[string]any) map[string]modelRoute {

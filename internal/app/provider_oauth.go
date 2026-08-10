@@ -268,8 +268,7 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input struct {
-		Name   string   `json:"name"`
-		Models []string `json:"models"`
+		Name string `json:"name"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -281,21 +280,21 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 	if name == "" {
 		name = strings.TrimSpace(session.Label)
 	}
-	models := uniqueStrings(input.Models)
-	if name == "" || len(models) == 0 {
-		writeError(w, http.StatusBadRequest, "validation_error", "账户名称和至少一个公开模型为必填项")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "账户名称必填")
 		return
 	}
 	id := nativeCredentialID(session.Provider)
 	row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{
-		ID: id, Name: name, Provider: session.Provider, Enabled: true, Models: models,
+		ID: id, Name: name, Provider: session.Provider, Enabled: true, Models: nil,
 		Document: session.Document, Source: "oauth",
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存 OAuth 账户失败")
 		return
 	}
-	if err = a.reloadNativeCredentials(r.Context()); err != nil {
+	row, _, err = a.activateNativeCredential(r.Context(), row)
+	if err != nil {
 		_ = a.store.DeleteUpstreamCredential(r.Context(), id)
 		_ = a.reloadNativeCredentials(r.Context())
 		writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())

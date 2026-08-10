@@ -75,6 +75,19 @@ Messages、Gemini native 和 Codex direct 路径。Grok/xAI 与其他 OpenAI-com
 凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在“系统设置”中热更新
 代理、重试、调度、图像/视频和连接行为。
 
+模型账户使用 CPA 的凭据级模型目录：Codex、Claude、
+Gemini、Vertex、AI Studio、Kimi、Antigravity 和 xAI 使用 CPA 静态注册表；OpenAI 及
+OpenAI-compatible 凭据由 CPA executor 携带同一凭据、代理和自定义请求头访问上游
+`GET {base_url}/models`。模型账户不接受自由填写模型名；管理员只能从 CPA 返回的
+凭据目录中勾选公开范围，后端保存时会再次校验，避免把不存在或不兼容的模型注册进
+路由。若兼容服务不提供可枚举的模型目录，该凭据暂不能通过自动接入创建。
+
+阿里云百炼作为 OpenAI-compatible 提供商接入。默认北京公共 Base URL 为
+`https://dashscope.aliyuncs.com/compatible-mode/v1`；业务空间、其他地域、Token Plan 或
+Coding Plan 必须填写与 API Key 匹配的 Base URL。CPA 可代理百炼兼容的 Chat
+Completions、Responses 等接口并枚举兼容端点的模型；仅支持 DashScope 专用协议的模型
+不在该接入范围内。
+
 用户面板的“接入向导”会生成 5 分钟有效的一键 Bash 或 PowerShell 命令，可同时
 配置 Codex、Claude Code 与 OpenCode。脚本先验证 `/v1/models`，可选择安装缺失
 客户端，并以备份、合并、原子替换和失败回滚方式写用户级配置；三个客户端通过

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -32,16 +33,32 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
 		input.Name = strings.TrimSpace(input.Name)
-		input.Models = uniqueStrings(input.Models)
+		// New credentials always derive their initial public catalog from CPA.
+		// Ignore legacy client-supplied model text instead of letting it define
+		// provider capability.
+		input.Models = nil
 		input.Method = strings.ToLower(strings.TrimSpace(input.Method))
 		if input.Method == "api_key" {
 			if strings.TrimSpace(input.APIKey) == "" {
 				writeError(w, http.StatusBadRequest, "validation_error", "API Key 必填")
 				return
 			}
-			document := map[string]any{"type": input.Provider, "api_key": strings.TrimSpace(input.APIKey), "auth_kind": "api_key"}
-			if value := strings.TrimSpace(input.BaseURL); value != "" {
-				document["base_url"] = value
+			documentProvider := input.Provider
+			if input.Provider == "aliyun-bailian" {
+				documentProvider = "openai-compatibility"
+			}
+			document := map[string]any{"type": documentProvider, "api_key": strings.TrimSpace(input.APIKey), "auth_kind": "api_key"}
+			baseURL := strings.TrimSpace(input.BaseURL)
+			if baseURL == "" {
+				switch input.Provider {
+				case "openai":
+					baseURL = "https://api.openai.com/v1"
+				case "aliyun-bailian":
+					baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+				}
+			}
+			if baseURL != "" {
+				document["base_url"] = baseURL
 			}
 			if value := strings.TrimSpace(input.ProxyURL); value != "" {
 				document["proxy_url"] = value
@@ -51,8 +68,8 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			}
 			input.Document, _ = json.Marshal(document)
 		}
-		if input.Provider == "" || input.Name == "" || len(input.Models) == 0 || !json.Valid(input.Document) {
-			writeError(w, http.StatusBadRequest, "validation_error", "名称、提供商、至少一个模型和有效凭据 JSON 均为必填项")
+		if input.Provider == "" || input.Name == "" || !json.Valid(input.Document) {
+			writeError(w, http.StatusBadRequest, "validation_error", "名称、提供商和有效凭据 JSON 均为必填项")
 			return
 		}
 		id := strings.TrimSpace(input.ID)
@@ -79,7 +96,8 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
 		}
-		if err = a.reloadNativeCredentials(r.Context()); err != nil {
+		row, _, err = a.activateNativeCredential(r.Context(), row)
+		if err != nil {
 			_ = a.store.DeleteUpstreamCredential(r.Context(), id)
 			_ = a.reloadNativeCredentials(r.Context())
 			writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())
@@ -176,7 +194,60 @@ func (a *App) nativeProviderModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "credential_unavailable", "无法读取凭据")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"models": row.Models})
+	models := append([]string(nil), row.Models...)
+	source := "configured"
+	var discoveryError string
+	if a.nativeCPARuntime != nil && row.Enabled {
+		discovered, discoveredSource, discoverErr := a.nativeCPARuntime.DiscoverCredentialModels(r.Context(), row.ID)
+		if len(discovered) > 0 {
+			models = discovered
+			source = discoveredSource
+		}
+		if discoverErr != nil {
+			discoveryError = discoverErr.Error()
+		}
+	}
+	response := map[string]any{"models": models, "source": source}
+	if discoveryError != "" {
+		response["warning"] = discoveryError
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+// activateNativeCredential installs a newly saved credential into CPA. When
+// no explicit public model list was supplied, CPA becomes the source of truth:
+// native providers use its static registry and OpenAI-compatible providers
+// (including Alibaba Cloud Model Studio) enumerate the upstream /models API
+// through CPA's credential-aware executor.
+func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCredentialSnapshot) (store.UpstreamCredentialSnapshot, string, error) {
+	if err := a.reloadNativeCredentials(ctx); err != nil {
+		return row, "", err
+	}
+	if len(row.Models) > 0 {
+		return row, "configured", nil
+	}
+	if a.nativeCPARuntime == nil {
+		return row, "", errors.New("embedded CPA runtime is unavailable")
+	}
+	models, source, err := a.nativeCPARuntime.DiscoverCredentialModels(ctx, row.ID)
+	if err != nil && len(models) == 0 {
+		return row, "", err
+	}
+	models = uniqueStrings(models)
+	if len(models) == 0 {
+		return row, "", errors.New("CPA 未能枚举该凭据的模型；当前提供商暂不支持自动接入")
+	}
+	updated, err := a.store.UpsertUpstreamCredential(ctx, store.UpstreamCredentialInput{
+		ID: row.ID, Name: row.Name, Provider: row.Provider, Enabled: row.Enabled,
+		Models: models, Document: row.Document, Source: row.Source, ExpiresAt: row.ExpiresAt,
+	})
+	if err != nil {
+		return row, "", err
+	}
+	if err = a.reloadNativeCredentials(ctx); err != nil {
+		return row, "", err
+	}
+	return updated, source, nil
 }
 
 func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request) {
@@ -215,9 +286,36 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if input.Models != nil {
+		if !row.Enabled {
+			writeError(w, http.StatusConflict, "credential_disabled", "请先启用账户，再从 CPA 选择模型")
+			return
+		}
+		if a.nativeCPARuntime == nil {
+			writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", "embedded CPA runtime is unavailable")
+			return
+		}
 		models = uniqueStrings(*input.Models)
 		if len(models) == 0 {
-			writeError(w, http.StatusBadRequest, "validation_error", "至少需要一个公开模型")
+			writeError(w, http.StatusBadRequest, "validation_error", "至少选择一个 CPA 模型")
+			return
+		}
+		candidates, _, discoverErr := a.nativeCPARuntime.DiscoverCredentialModels(r.Context(), row.ID)
+		if discoverErr != nil && len(candidates) == 0 {
+			writeError(w, http.StatusBadGateway, "model_catalog_unavailable", discoverErr.Error())
+			return
+		}
+		allowedModels := make(map[string]struct{}, len(candidates))
+		for _, candidate := range candidates {
+			allowedModels[strings.ToLower(strings.TrimSpace(candidate))] = struct{}{}
+		}
+		for _, model := range models {
+			if _, ok := allowedModels[strings.ToLower(model)]; !ok {
+				writeError(w, http.StatusBadRequest, "model_not_in_cpa_catalog", "模型 "+model+" 不在 CPA 凭据目录中")
+				return
+			}
+		}
+		if len(candidates) == 0 {
+			writeError(w, http.StatusBadGateway, "model_catalog_empty", "CPA 凭据目录为空")
 			return
 		}
 	}
