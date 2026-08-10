@@ -123,16 +123,21 @@ rejects the request instead of silently bypassing the configured subscription.
   capacity for each automatically discovered window. In that case the upstream
   still owns the window names, window set, percentages, and reset instants;
   automatic synchronization does not overwrite the administrator's USD
-  conversion. An
+  conversion. Clearing an override immediately restores the best estimate from
+  the current generation, and saving one override does not convert or delete
+  other automatically learned windows. An
   observed parent with no calibrated window is admitted in learning mode with
   strict credential routing and normal balance billing, but no child-quota
   reservation. A provider explicitly reported as unsupported is rejected until
   an adapter is installed or the parent is switched to unmetered mode.
   Once accepted samples produce a capacity estimate, subsequent admissions
-  enforce the learned nano-USD windows. Movements of 0.01 percentage points or
-  more can produce a sample; incomplete pricing and cross-reset samples are
-  rejected. The active estimate is the median of up to 21 recent accepted
-  samples rather than the latest sample alone.
+  enforce the learned nano-USD windows. Relay accumulates movement from the
+  last calibration anchor until it reaches 0.1 percentage points, attributes
+  only settled requests by completion time, and rejects intervals containing
+  successful requests with incomplete pricing. The active estimate is the
+  median of up to 21 accepted samples from the current upstream reset
+  generation; older generations and isolated rounding noise cannot contaminate
+  it.
 
 ## Native quota boundary
 

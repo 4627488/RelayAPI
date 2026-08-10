@@ -69,15 +69,26 @@ func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaRepo
 	if report, ok := embeddedQuotaReport(document, provider, credential.AuthIndex, now); ok {
 		return report, nil
 	}
-	proxyURL := strings.TrimSpace(credential.ProxyURL)
-	if override := scalarQuotaText(document["_relay_proxy_url"]); override != "" {
-		proxyURL = override
-	}
+	proxyURL := nativeQuotaProxyURL(document, credential.ProxyURL)
 	client, err := quotaHTTPClient(proxyURL, 25*time.Second)
 	if err != nil {
 		return QuotaReport{}, err
 	}
 	return probeQuotaWithClient(ctx, client, productionQuotaEndpoints, credential.AuthIndex, provider, document, now)
+}
+
+// Match the embedded runtime's configuration ownership. A credential-specific
+// proxy is most specific, the persisted runtime setting is authoritative for
+// global routing, and the import snapshot is only a backwards-compatible
+// fallback when no current runtime setting exists.
+func nativeQuotaProxyURL(document map[string]any, runtimeProxy string) string {
+	if value := scalarQuotaText(document["proxy_url"]); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(runtimeProxy); value != "" {
+		return value
+	}
+	return scalarQuotaText(document["_relay_proxy_url"])
 }
 
 func probeQuotaWithClient(ctx context.Context, client *http.Client, endpoints quotaEndpoints, authIndex, provider string, document map[string]any, now time.Time) (QuotaReport, error) {

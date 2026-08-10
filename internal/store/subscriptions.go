@@ -30,6 +30,14 @@ var (
 // as the same generation; a real reset advances by hours or days.
 const quotaResetJitterTolerance = time.Minute
 
+// Small percentage movements are dominated by provider-side rounding and by
+// requests crossing the observation boundary. Accumulate changes from the
+// last calibration anchor until the upstream meter has moved by at least 0.1%.
+const (
+	quotaCalibrationMinDeltaMicros = int64(100_000)
+	quotaEstimateSampleLimit       = 21
+)
+
 type ParentSubscription = db.ParentSubscription
 type ParentQuotaWindow = db.ParentQuotaWindow
 type ParentQuotaObservation = db.ParentQuotaObservation
@@ -280,7 +288,13 @@ func (s Store) SetParentQuotaWindows(ctx context.Context, parentID string, windo
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&parent, "id = ?", parentID).Error; err != nil {
 			return notFound(err)
 		}
+		var existingManualWindows []ParentQuotaWindow
+		if err := tx.Where("parent_subscription_id = ? AND source = ?", parentID, db.ParentQuotaSourceManualConversion).
+			Find(&existingManualWindows).Error; err != nil {
+			return err
+		}
 		kinds := make([]string, 0, len(windows))
+		kindSet := make(map[string]struct{}, len(windows))
 		for _, window := range windows {
 			window.ParentSubscriptionID = parentID
 			window.Kind = strings.TrimSpace(window.Kind)
@@ -304,6 +318,7 @@ func (s Store) SetParentQuotaWindows(ctx context.Context, parentID string, windo
 				return existingErr
 			}
 			kinds = append(kinds, window.Kind)
+			kindSet[window.Kind] = struct{}{}
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "parent_subscription_id"}, {Name: "kind"}},
 				DoUpdates: clause.AssignmentColumns([]string{"limit_nano_usd", "resets_at", "source", "observed_used_percent", "observed_at", "updated_at"}),
@@ -314,12 +329,41 @@ func (s Store) SetParentQuotaWindows(ctx context.Context, parentID string, windo
 				return err
 			}
 		}
-		deleteQuery := tx.Where("parent_subscription_id = ?", parentID)
+		// This endpoint owns administrator overrides only. Automatically learned
+		// windows keep evolving unless an administrator explicitly replaces the
+		// same kind; saving one override must not erase unrelated estimates.
+		deleteQuery := tx.Where("parent_subscription_id = ? AND source = ?", parentID, db.ParentQuotaSourceManualConversion)
 		if len(kinds) > 0 {
 			deleteQuery = deleteQuery.Where("kind NOT IN ?", kinds)
 		}
 		if err := deleteQuery.Delete(&ParentQuotaWindow{}).Error; err != nil {
 			return err
+		}
+		// Clearing a manual override should immediately reveal the best estimate
+		// already learned for its current generation instead of waiting for the
+		// next scheduled upstream probe.
+		for _, existing := range existingManualWindows {
+			if _, configured := kindSet[existing.Kind]; configured {
+				continue
+			}
+			limit, observed, ok, err := learnedQuotaWindow(tx, parentID, existing.Kind)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				continue
+			}
+			window := ParentQuotaWindow{
+				ParentSubscriptionID: parentID, Kind: existing.Kind, LimitNanoUSD: limit,
+				ResetsAt: observed.ResetsAt, Source: db.ParentCapacityObserved,
+				ObservedUsedPercent: &observed.UsedPercent, ObservedAt: &observed.ObservedAt,
+			}
+			if err := tx.Create(&window).Error; err != nil {
+				return err
+			}
+			if err := syncChildQuotaWindowGeneration(tx, parentID, window.Kind, limit, window.ResetsAt, observed.ObservedAt); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -361,6 +405,16 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 		var previous ParentQuotaObservation
 		previousErr := tx.Where("parent_subscription_id = ? AND kind = ?", parentID, observation.Kind).
 			Order("observed_at DESC").First(&previous).Error
+		if previousErr == nil && currentWindowErr != nil && errors.Is(currentWindowErr, gorm.ErrRecordNotFound) {
+			// A window does not exist until the first estimate is accepted. Normalize
+			// reset jitter against the observation history as well, otherwise a
+			// rounded upstream countdown can keep learning mode stuck forever.
+			delta := resetsAt.Sub(previous.ResetsAt)
+			if delta >= -quotaResetJitterTolerance && delta <= quotaResetJitterTolerance {
+				resetsAt = previous.ResetsAt
+				observation.ResetsAt = resetsAt
+			}
+		}
 		observation.Reason = "initial_sample"
 		unchanged := false
 		if previousErr == nil {
@@ -383,11 +437,12 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 			} else if usedPercent < previous.UsedPercent {
 				observation.Reason = "percentage_decreased"
 			} else {
-				deltaMicros := int64(math.Round((usedPercent - previous.UsedPercent) * 1_000_000))
-				// Upstream providers commonly expose one or two decimal places. A
-				// 0.01% movement is enough for a differential sample; the rolling
-				// median below rejects isolated noisy estimates.
-				if deltaMicros < 10_000 {
+				baseline, baselineErr := quotaCalibrationBaseline(tx, parentID, observation.Kind, resetsAt, previous)
+				if baselineErr != nil {
+					return baselineErr
+				}
+				deltaMicros := int64(math.Round((usedPercent - baseline.UsedPercent) * 1_000_000))
+				if deltaMicros < quotaCalibrationMinDeltaMicros {
 					observation.Reason = "percentage_delta_too_small"
 				} else {
 					type totals struct {
@@ -396,8 +451,9 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 					}
 					var total totals
 					if err := tx.Model(&db.RequestLog{}).Select(
-						"COALESCE(sum(cost_nano_usd),0) AS cost, COALESCE(sum(CASE WHEN pricing_complete = false AND model <> '' THEN 1 ELSE 0 END),0) AS incomplete",
-					).Where("auth_index = ? AND started_at > ? AND started_at <= ?", parent.CPAAuthIndex, previous.ObservedAt, observedAt).
+						"COALESCE(sum(CASE WHEN pricing_complete = true THEN cost_nano_usd ELSE 0 END),0) AS cost, "+
+							"COALESCE(sum(CASE WHEN pricing_complete = false AND status_code >= 200 AND status_code < 300 AND model <> '' THEN 1 ELSE 0 END),0) AS incomplete",
+					).Where("auth_index = ? AND settled = ? AND completed_at > ? AND completed_at <= ?", parent.CPAAuthIndex, true, baseline.ObservedAt, observedAt).
 						Scan(&total).Error; err != nil {
 						return err
 					}
@@ -433,13 +489,11 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 			limit = existing.LimitNanoUSD
 			source = db.ParentQuotaSourceManualConversion
 		} else if observation.EstimatedLimit != nil {
-			var estimates []int64
-			if err := tx.Model(&ParentQuotaObservation{}).
-				Where("parent_subscription_id = ? AND kind = ? AND accepted = ? AND estimated_limit IS NOT NULL", parentID, observation.Kind, true).
-				Order("observed_at DESC").Limit(21).Pluck("estimated_limit", &estimates).Error; err != nil {
-				return err
+			var estimateErr error
+			limit, estimateErr = quotaGenerationEstimate(tx, parentID, observation.Kind, resetsAt)
+			if estimateErr != nil {
+				return estimateErr
 			}
-			limit = medianInt64(estimates)
 		} else if windowErr == nil {
 			limit = existing.LimitNanoUSD
 		}
@@ -461,6 +515,47 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 		return nil
 	})
 	return observation, err
+}
+
+func quotaCalibrationBaseline(tx *gorm.DB, parentID, kind string, resetsAt time.Time, fallback ParentQuotaObservation) (ParentQuotaObservation, error) {
+	var baseline ParentQuotaObservation
+	err := tx.Where(
+		"parent_subscription_id = ? AND kind = ? AND resets_at = ? AND (accepted = ? OR reason IN ?)",
+		parentID, kind, resetsAt, true, []string{"initial_sample", "window_reset", "percentage_decreased"},
+	).Order("observed_at DESC").First(&baseline).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return fallback, nil
+	}
+	return baseline, err
+}
+
+func quotaGenerationEstimate(tx *gorm.DB, parentID, kind string, resetsAt time.Time) (int64, error) {
+	var estimates []int64
+	err := tx.Model(&ParentQuotaObservation{}).
+		Where("parent_subscription_id = ? AND kind = ? AND resets_at = ? AND accepted = ? AND estimated_limit IS NOT NULL",
+			parentID, kind, resetsAt, true).
+		Order("observed_at DESC").Limit(quotaEstimateSampleLimit).Pluck("estimated_limit", &estimates).Error
+	if err != nil {
+		return 0, err
+	}
+	return medianInt64(estimates), nil
+}
+
+func learnedQuotaWindow(tx *gorm.DB, parentID, kind string) (int64, ParentQuotaObservation, bool, error) {
+	var latest ParentQuotaObservation
+	err := tx.Where("parent_subscription_id = ? AND kind = ?", parentID, kind).
+		Order("observed_at DESC").First(&latest).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, ParentQuotaObservation{}, false, nil
+	}
+	if err != nil {
+		return 0, ParentQuotaObservation{}, false, err
+	}
+	if !latest.ResetsAt.After(time.Now()) {
+		return 0, latest, false, nil
+	}
+	limit, err := quotaGenerationEstimate(tx, parentID, kind, latest.ResetsAt)
+	return limit, latest, limit > 0, err
 }
 
 // syncChildQuotaWindowGeneration makes the persisted child state follow the

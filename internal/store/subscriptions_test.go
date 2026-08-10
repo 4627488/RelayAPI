@@ -60,6 +60,13 @@ func TestDifferentialPercentagePrecision(t *testing.T) {
 	if deltaMicros != 10_000 {
 		t.Fatalf("delta micros = %d", deltaMicros)
 	}
+	if deltaMicros >= quotaCalibrationMinDeltaMicros {
+		t.Fatal("a 0.01% movement should accumulate instead of producing a noisy estimate")
+	}
+	stableDelta := int64(math.Round((10.1 - 10.0) * 1_000_000))
+	if stableDelta < quotaCalibrationMinDeltaMicros {
+		t.Fatal("a cumulative 0.1% movement should be eligible for calibration")
+	}
 }
 
 func TestMedianInt64RejectsSingleSampleNoise(t *testing.T) {

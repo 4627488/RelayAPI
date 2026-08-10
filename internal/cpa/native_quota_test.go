@@ -225,6 +225,26 @@ func TestProbeQuotaMarksUnknownProviderUnsupported(t *testing.T) {
 	}
 }
 
+func TestNativeQuotaProxyPrecedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		document map[string]any
+		runtime  string
+		want     string
+	}{
+		{name: "credential wins", document: map[string]any{"proxy_url": "socks5://credential:1080", "_relay_proxy_url": "http://imported:8080"}, runtime: "http://runtime:8080", want: "socks5://credential:1080"},
+		{name: "runtime wins over import snapshot", document: map[string]any{"_relay_proxy_url": "http://imported:8080"}, runtime: "direct", want: "direct"},
+		{name: "import snapshot fallback", document: map[string]any{"_relay_proxy_url": "http://imported:8080"}, want: "http://imported:8080"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := nativeQuotaProxyURL(test.document, test.runtime); got != test.want {
+				t.Fatalf("proxy = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func quotaWindowByKind(t *testing.T, windows []QuotaWindow, kind string) QuotaWindow {
 	t.Helper()
 	for _, window := range windows {

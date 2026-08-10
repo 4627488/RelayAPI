@@ -112,7 +112,7 @@ import {
   type ParentSubscriptionView,
   type User,
 } from "@/lib/api"
-import { dateTime } from "@/lib/format"
+import { dateTime, money } from "@/lib/format"
 
 const capacityModes: Array<{
   value: CapacityMode
@@ -136,6 +136,7 @@ type EditableWindow = {
   kind: string
   limit: string
   reset: string
+  automaticLimit?: number
 }
 
 export function AdminSubscriptionsView() {
@@ -956,13 +957,15 @@ function ParentSettingsDialog({
     }
     onPending(true)
     try {
-      const windowItems = windows.map((window) => {
-        const limit = Math.round(Number(window.limit) * 1_000_000_000)
-        if (!Number.isFinite(limit) || limit <= 0) {
-          throw new Error(`请填写 ${window.kind} 的 USD 容量`)
-        }
-        return { kind: window.kind, limit_nano_usd: limit }
-      })
+      const windowItems = windows
+        .filter((window) => window.limit.trim())
+        .map((window) => {
+          const limit = Math.round(Number(window.limit) * 1_000_000_000)
+          if (!Number.isFinite(limit) || limit <= 0) {
+            throw new Error(`请填写 ${window.kind} 的 USD 容量`)
+          }
+          return { kind: window.kind, limit_nano_usd: limit }
+        })
       await api(`/api/admin/subscriptions/parents/${current.item.id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -1084,6 +1087,9 @@ function ParentSettingsDialog({
                             <FieldDescription>
                               {dateTime(new Date(window.reset).toISOString())}{" "}
                               重置
+                              {window.automaticLimit
+                                ? ` · 当前自动推测 ${money(window.automaticLimit)}`
+                                : " · 留空则继续自动推测"}
                             </FieldDescription>
                           </div>
                           <Input
@@ -1096,8 +1102,7 @@ function ParentSettingsDialog({
                             onChange={(event) =>
                               updateWindow(window.key, event.target.value)
                             }
-                            placeholder="USD 容量"
-                            required
+                            placeholder="自动推测"
                           />
                         </Field>
                       ))}
@@ -1361,7 +1366,7 @@ function AccountStatusBadge({ view }: { view: ParentSubscriptionView }) {
   if (view.item.cpa_unavailable)
     return <Badge variant="destructive">账户不可用</Badge>
   if (view.item.capacity_mode === "observed" && !view.windows.length)
-    return <Badge variant="destructive">额度未配置</Badge>
+    return <Badge variant="outline">额度学习中</Badge>
   return <Badge variant="secondary">可分配</Badge>
 }
 
@@ -1378,14 +1383,20 @@ function ChildStatusBadge({ child }: { child: ChildSubscription }) {
 
 function isAllocatable(view: ParentSubscriptionView) {
   if (!view.item.enabled || view.item.cpa_unavailable) return false
-  return view.item.capacity_mode === "unmetered" || view.windows.length > 0
+  return (
+    view.item.capacity_mode === "unmetered" ||
+    view.windows.length > 0 ||
+    hasObservableQuota(view)
+  )
 }
 
 function accountBlockReason(view: ParentSubscriptionView) {
   if (!view.item.enabled) return "账户分配规则已停用。"
   if (view.item.cpa_unavailable) return "模型账户当前不可用，请先检查账户状态。"
   if (view.item.capacity_mode === "observed" && !view.windows.length)
-    return "共享额度尚未配置。请改为余额结算，或在账户规则中填写额度容量。"
+    return view.item.quota_probe_status === "unsupported"
+      ? "上游不支持额度观测，请改为余额结算。"
+      : "尚未发现可校准的上游额度窗口。"
   return "当前账户不可分配。"
 }
 
@@ -1396,6 +1407,8 @@ function billingLabel(view: ParentSubscriptionView) {
 function accountAllocationHint(view: ParentSubscriptionView) {
   if (view.item.capacity_mode === "unmetered")
     return "请求固定到这个账户，并从租户余额结算。"
+  if (!view.windows.length)
+    return "额度学习中；请求先从租户余额结算，校准完成后自动切换为共享额度。"
   return `还可分配 ${percent(
     Math.max(0, view.item.allocation_limit_ppm - view.allocated_ppm)
   )}；包含 ${view.windows.length} 个额度窗口。`
@@ -1425,13 +1438,25 @@ function observedEditableWindows(value: ParentSubscriptionView) {
     result.push({
       key: crypto.randomUUID(),
       kind,
-      limit: configured?.limit_nano_usd
-        ? String(configured.limit_nano_usd / 1_000_000_000)
-        : "",
+      limit:
+        configured?.limit_nano_usd && configured.source === "manual_conversion"
+          ? String(configured.limit_nano_usd / 1_000_000_000)
+          : "",
       reset: localDateTime(window.resets_at),
+      automaticLimit:
+        configured && configured.source !== "manual_conversion"
+          ? configured.limit_nano_usd
+          : undefined,
     })
   }
   return result
+}
+
+function hasObservableQuota(view: ParentSubscriptionView) {
+  if (view.item.quota_probe_status === "unsupported") return false
+  return (view.item.quota_snapshot?.windows ?? []).some(
+    (window) => window.enforceable && Boolean(window.resets_at)
+  )
 }
 
 function defaultChildName(parent?: ParentSubscription) {
