@@ -127,6 +127,13 @@ func TestRuntimeDiscoversOpenAICompatibleModelsThroughCPAExecutor(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+	auth, ok := runtime.manager.GetByID("bailian")
+	if !ok {
+		t.Fatal("Bailian credential was not installed")
+	}
+	if auth.Attributes["upstream_api"] != "responses" {
+		t.Fatalf("Bailian upstream API = %q, want responses", auth.Attributes["upstream_api"])
+	}
 
 	models, source, err := runtime.DiscoverCredentialModels(context.Background(), "bailian")
 	if err != nil {

@@ -85,9 +85,10 @@ OpenAI-compatible 凭据由 CPA executor 携带同一凭据、代理和自定义
 
 阿里云百炼作为 OpenAI-compatible 提供商接入。默认北京公共 Base URL 为
 `https://dashscope.aliyuncs.com/compatible-mode/v1`；业务空间、其他地域、Token Plan 或
-Coding Plan 必须填写与 API Key 匹配的 Base URL。CPA 可代理百炼兼容的 Chat
-Completions、Responses 等接口并枚举兼容端点的模型；仅支持 DashScope 专用协议的模型
-不在该接入范围内。
+Coding Plan 必须填写与 API Key 匹配的 Base URL。客户端仍可使用 Chat Completions 或
+Responses；百炼请求会统一由 CPA 转换为 Responses 格式并发送到上游 `/v1/responses`，
+同时由 CPA 将响应转换回客户端协议。CPA 继续通过兼容端点枚举模型；仅支持 DashScope
+专用协议的模型不在该接入范围内。
 
 用户面板的“接入向导”会生成 5 分钟有效的一键 Bash 或 PowerShell 命令，可同时
 配置 Codex、Claude Code 与 OpenCode。脚本先验证 `/v1/models`，可选择安装缺失

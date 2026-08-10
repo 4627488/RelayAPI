@@ -703,7 +703,8 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	if err := json.Unmarshal(item.Document, &metadata); err != nil {
 		return nil, credentialRoute{}, nil, fmt.Errorf("decode CPA credential %q: %w", id, err)
 	}
-	provider := normalizeProvider(item.Provider)
+	credentialProvider := normalizeProvider(item.Provider)
+	provider := credentialProvider
 	if rawType, _ := metadata["type"].(string); strings.TrimSpace(rawType) != "" {
 		provider = normalizeProvider(rawType)
 	}
@@ -714,7 +715,7 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	for _, key := range []string{
 		"api_key", "base_url", "compat_name", "provider_key", "account_id", "project_id",
 		"location", "region", "priority", "prefix", "cloak_mode", "token_endpoint",
-		"plan_type", "auth_kind",
+		"plan_type", "auth_kind", "upstream_api",
 	} {
 		if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
 			attrs[key] = strings.TrimSpace(value)
@@ -723,6 +724,9 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	if provider == "openai" || provider == "openai-compatibility" {
 		attrs["compat_name"] = provider
 		attrs["provider_key"] = provider
+	}
+	if credentialProvider == "aliyun-bailian" {
+		attrs["upstream_api"] = "responses"
 	}
 	proxyURL := stringValue(metadata, "proxy_url")
 	if proxyURL == "" {

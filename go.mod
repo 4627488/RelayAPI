@@ -17,7 +17,7 @@ require (
 
 replace github.com/router-for-me/CLIProxyAPI/v7/relaybridge => ./third_party/cpaexecutor
 
-replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260809163245-5fb799089d90
+replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260810152141-0c3e585af309
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
