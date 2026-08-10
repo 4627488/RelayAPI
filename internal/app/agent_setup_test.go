@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,9 @@ func TestNormalizeAgentSetup(t *testing.T) {
 	if input.KeyID != "key-1" || input.Model != "gpt-5.6-sol" || input.ReasoningEffort != "high" || input.OpenCodeProtocol != "responses" {
 		t.Fatalf("normalized input = %+v", input)
 	}
+	if strings.Join(input.Models, ",") != "gpt-5.6-sol" {
+		t.Fatalf("models = %v", input.Models)
+	}
 	if strings.Join(input.Agents, ",") != "codex,claude" {
 		t.Fatalf("agents = %v", input.Agents)
 	}
@@ -36,6 +40,7 @@ func TestNormalizeAgentSetup(t *testing.T) {
 		{KeyID: "key", Agents: []string{"codex"}, Model: "bad\nmodel"},
 		{KeyID: "key", Agents: []string{"codex"}, Model: "gpt", ReasoningEffort: "maximum"},
 		{KeyID: "key", Agents: []string{"opencode"}, Model: "gpt", OpenCodeProtocol: "legacy"},
+		{KeyID: "key", Agents: []string{"opencode"}, Model: "gpt", Models: []string{"other"}},
 	}
 	for index := range invalid {
 		if err := normalizeAgentSetup(&invalid[index]); err == nil {
@@ -47,6 +52,7 @@ func TestNormalizeAgentSetup(t *testing.T) {
 func TestBuildAgentSetupConfiguration(t *testing.T) {
 	input := agentSetupInput{
 		KeyID: "key-1", Agents: []string{"codex", "claude", "opencode"}, Model: "gpt-5.6-sol",
+		Models:          []string{"gpt-5.6-sol", "claude-sonnet-4-6"},
 		ReasoningEffort: "xhigh", OpenCodeProtocol: "responses", InstallMissing: true,
 		VerifyConnection: true, ClaudeGatewayDiscovery: true,
 	}
@@ -73,6 +79,10 @@ func TestBuildAgentSetupConfiguration(t *testing.T) {
 	provider := opencode["provider"].(map[string]any)["relayapi"].(map[string]any)
 	if provider["npm"] != "@ai-sdk/openai" || opencode["model"] != "relayapi/gpt-5.6-sol" {
 		t.Fatalf("opencode patch = %#v", opencode)
+	}
+	models := provider["models"].(map[string]any)
+	if len(models) != 2 || models["gpt-5.6-sol"] == nil || models["claude-sonnet-4-6"] == nil {
+		t.Fatalf("opencode models = %#v", models)
 	}
 
 	var edits []map[string]any
@@ -122,6 +132,112 @@ func TestAgentSetupScriptsRenderAndParse(t *testing.T) {
 		}
 		assertScriptParses(t, platform, output.Bytes())
 	}
+}
+
+func TestOpenCodeSetupReplacesManagedModelsAndResolvesProviderFilters(t *testing.T) {
+	binary, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	home := t.TempDir()
+	binDir := filepath.Join(home, ".local", "bin")
+	configDir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	opencodePath := filepath.Join(binDir, "opencode")
+	if err := os.WriteFile(opencodePath, []byte("#!/usr/bin/env bash\nprintf '1.18.16\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "opencode.json")
+	existing := `{
+  "theme": "system",
+  "disabled_providers": ["relayapi", "anthropic"],
+  "enabled_providers": ["openai"],
+  "provider": {
+    "relayapi": {
+      "models": {
+        "stale-model": {"name": "Stale"},
+        "gpt-5.6-sol": {"name": "Old name"}
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input := agentSetupInput{
+		KeyID: "key", Agents: []string{"opencode"}, Model: "gpt-5.6-sol",
+		Models: []string{"gpt-5.6-sol", "claude-sonnet-4-6"}, OpenCodeProtocol: "responses",
+	}
+	data, err := buildAgentSetupTemplateData("https://relay.example", "relay_secret", input, "bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rendered bytes.Buffer
+	if err := agentSetupShellTemplate.Execute(&rendered, data); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(home, "setup.sh")
+	if err := os.WriteFile(scriptPath, rendered.Bytes(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	homeForShell := filepath.ToSlash(home)
+	scriptForShell := filepath.ToSlash(scriptPath)
+	if runtime.GOOS == "windows" {
+		homeForShell = wslPath(t, home)
+		scriptForShell = wslPath(t, scriptPath)
+	}
+	command := exec.Command(binary, scriptForShell)
+	command.Env = append(os.Environ(), "HOME="+homeForShell, "XDG_CONFIG_HOME="+homeForShell+"/.config")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("run setup: %v\n%s", err, output)
+	}
+	payload, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(payload, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config["theme"] != "system" {
+		t.Fatalf("unrelated config was not preserved: %#v", config)
+	}
+	provider := config["provider"].(map[string]any)["relayapi"].(map[string]any)
+	models := provider["models"].(map[string]any)
+	if len(models) != 2 || models["stale-model"] != nil || models["gpt-5.6-sol"] == nil || models["claude-sonnet-4-6"] == nil {
+		t.Fatalf("managed models were not replaced: %#v", models)
+	}
+	if values := stringSlice(config["disabled_providers"]); strings.Join(values, ",") != "anthropic" {
+		t.Fatalf("disabled providers = %v", values)
+	}
+	if values := stringSlice(config["enabled_providers"]); strings.Join(values, ",") != "openai,relayapi" {
+		t.Fatalf("enabled providers = %v", values)
+	}
+}
+
+func wslPath(t *testing.T, path string) string {
+	t.Helper()
+	output, err := exec.Command("wsl.exe", "wslpath", "-a", "-u", path).CombinedOutput()
+	if err != nil {
+		t.Skipf("WSL path conversion unavailable: %v (%s)", err, output)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func stringSlice(value any) []string {
+	items, _ := value.([]any)
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok {
+			result = append(result, text)
+		}
+	}
+	return result
 }
 
 func TestExpiredAgentSetupTokenIsSealedAndNotCacheable(t *testing.T) {

@@ -93,7 +93,9 @@ Completions、Responses 等接口并枚举兼容端点的模型；仅支持 Dash
 配置 Codex、Claude Code 与 OpenCode。脚本先验证 `/v1/models`，可选择安装缺失
 客户端，并以备份、合并、原子替换和失败回滚方式写用户级配置；三个客户端通过
 权限受限的 `~/.config/relayapi/api-key` 共用凭据，不向 shell profile 或 Codex
-`auth.json` 写入明文。下面的片段仅作为无法执行脚本时的手动回退。
+`auth.json` 写入明文。OpenCode 配置会包含该 API Key 当前可用的完整模型列表；
+重复执行脚本会替换 RelayAPI 管理的模型集合，避免已撤销模型继续出现在选择器中。
+下面的片段仅作为无法执行脚本时的手动回退。
 
 Codex CLI 的 `~/.codex/config.toml`（`base_url` 必须包含 `/v1`）：
 

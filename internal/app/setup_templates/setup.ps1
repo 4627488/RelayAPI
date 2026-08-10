@@ -118,19 +118,33 @@ function Protect-SetupFile([string]$Path) {
     & chmod 600 $Path
   }
 }
-function Merge-SetupObject($Base, $Patch) {
+function Merge-SetupObject($Base, $Patch, [string]$Mode = 'default', [string]$Path = '') {
   foreach ($property in $Patch.PSObject.Properties) {
     $existing = $Base.PSObject.Properties[$property.Name]
     $patchIsObject = $property.Value -is [pscustomobject]
     $baseIsObject = $existing -and $existing.Value -is [pscustomobject]
-    if ($patchIsObject -and $baseIsObject) { Merge-SetupObject $existing.Value $property.Value }
+    $childPath = if ($Path) { "$Path.$($property.Name)" } else { $property.Name }
+    if ($Mode -eq 'opencode' -and $childPath -eq 'provider.relayapi.models') {
+      $Base | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value -Force
+    }
+    elseif ($patchIsObject -and $baseIsObject) { Merge-SetupObject $existing.Value $property.Value $Mode $childPath }
     else { $Base | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value -Force }
   }
 }
-function Merge-SetupJson([string]$Path, [string]$PatchBase64) {
+function Merge-SetupJson([string]$Path, [string]$PatchBase64, [string]$Mode = 'default') {
   $base = if (Test-Path -LiteralPath $Path) { Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json } else { [pscustomobject]@{} }
   $patch = (ConvertFrom-SetupBase64 $PatchBase64) | ConvertFrom-Json
-  Merge-SetupObject $base $patch
+  Merge-SetupObject $base $patch $Mode
+  if ($Mode -eq 'opencode') {
+    $disabled = Get-SetupJsonProperty $base 'disabled_providers'
+    if ($disabled -is [array]) {
+      $base | Add-Member -NotePropertyName 'disabled_providers' -NotePropertyValue @($disabled | Where-Object { $_ -ne 'relayapi' }) -Force
+    }
+    $enabled = Get-SetupJsonProperty $base 'enabled_providers'
+    if ($enabled -is [array] -and $enabled -notcontains 'relayapi') {
+      $base | Add-Member -NotePropertyName 'enabled_providers' -NotePropertyValue (@($enabled) + @('relayapi')) -Force
+    }
+  }
   $stage = "$Path.relayapi-stage.$PID"
   try {
     $json = $base | ConvertTo-Json -Depth 100
@@ -222,7 +236,7 @@ try {
     Write-SetupOk "Codex configured in $codexConfig"
   }
   if ($DoClaude) { Merge-SetupJson $claudeConfig $ClaudePatchBase64; Write-SetupOk "Claude Code configured in $claudeConfig" }
-  if ($DoOpenCode) { Merge-SetupJson $openCodeConfig $OpenCodePatchBase64; Write-SetupOk "OpenCode configured in $openCodeConfig" }
+  if ($DoOpenCode) { Merge-SetupJson $openCodeConfig $OpenCodePatchBase64 'opencode'; Write-SetupOk "OpenCode configured in $openCodeConfig" }
 } catch {
   Write-Warning 'Setup failed; restoring every configuration changed in this run.'
   Restore-SetupTargets

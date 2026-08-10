@@ -169,43 +169,60 @@ unset API_KEY API_KEY_B64
 merge_json() {
   _mj_target=$1
   _mj_patch_b64=$2
+  _mj_mode=${3:-default}
   _mj_patch="$TMPDIR_SETUP/patch.$$.json"
   _mj_stage="$TMPDIR_SETUP/stage.$$.json"
   decode_file "$_mj_patch_b64" "$_mj_patch"
   if [ "$JSON_TOOL" = python3 ]; then
-    python3 - "$_mj_target" "$_mj_patch" "$_mj_stage" <<'PY'
+    python3 - "$_mj_target" "$_mj_patch" "$_mj_stage" "$_mj_mode" <<'PY'
 import json, os, sys
-target, patch_path, stage = sys.argv[1:]
+target, patch_path, stage, mode = sys.argv[1:]
 base = {}
 if os.path.exists(target):
     with open(target, encoding="utf-8-sig") as handle:
         base = json.load(handle)
 with open(patch_path, encoding="utf-8") as handle:
     patch = json.load(handle)
-def merge(left, right):
+def merge(left, right, path=()):
     for key, value in right.items():
-        if isinstance(value, dict) and isinstance(left.get(key), dict):
-            merge(left[key], value)
+        child_path = path + (key,)
+        if mode == "opencode" and child_path == ("provider", "relayapi", "models"):
+            left[key] = value
+        elif isinstance(value, dict) and isinstance(left.get(key), dict):
+            merge(left[key], value, child_path)
         else:
             left[key] = value
 merge(base, patch)
+if mode == "opencode":
+    disabled = base.get("disabled_providers")
+    if isinstance(disabled, list):
+        base["disabled_providers"] = [item for item in disabled if item != "relayapi"]
+    enabled = base.get("enabled_providers")
+    if isinstance(enabled, list) and "relayapi" not in enabled:
+        enabled.append("relayapi")
 with open(stage, "w", encoding="utf-8", newline="\n") as handle:
     json.dump(base, handle, ensure_ascii=False, indent=2)
     handle.write("\n")
 PY
   else
-    node - "$_mj_target" "$_mj_patch" "$_mj_stage" <<'JS'
+    node - "$_mj_target" "$_mj_patch" "$_mj_stage" "$_mj_mode" <<'JS'
 const fs = require("fs");
-const [target, patchPath, stage] = process.argv.slice(2);
+const [target, patchPath, stage, mode] = process.argv.slice(2);
 const base = fs.existsSync(target) ? JSON.parse(fs.readFileSync(target, "utf8")) : {};
 const patch = JSON.parse(fs.readFileSync(patchPath, "utf8"));
-function merge(left, right) {
+function merge(left, right, path = []) {
   for (const [key, value] of Object.entries(right)) {
-    if (value && typeof value === "object" && !Array.isArray(value) && left[key] && typeof left[key] === "object" && !Array.isArray(left[key])) merge(left[key], value);
+    const childPath = [...path, key];
+    if (mode === "opencode" && childPath.join(".") === "provider.relayapi.models") left[key] = value;
+    else if (value && typeof value === "object" && !Array.isArray(value) && left[key] && typeof left[key] === "object" && !Array.isArray(left[key])) merge(left[key], value, childPath);
     else left[key] = value;
   }
 }
 merge(base, patch);
+if (mode === "opencode") {
+  if (Array.isArray(base.disabled_providers)) base.disabled_providers = base.disabled_providers.filter((item) => item !== "relayapi");
+  if (Array.isArray(base.enabled_providers) && !base.enabled_providers.includes("relayapi")) base.enabled_providers.push("relayapi");
+}
 fs.writeFileSync(stage, JSON.stringify(base, null, 2) + "\n");
 JS
   fi
@@ -272,7 +289,7 @@ configure_claude() {
 }
 
 configure_opencode() {
-  merge_json "$OPENCODE_CONFIG" "$OPENCODE_PATCH_B64"
+  merge_json "$OPENCODE_CONFIG" "$OPENCODE_PATCH_B64" opencode
   ok "OpenCode configured in $OPENCODE_CONFIG"
 }
 

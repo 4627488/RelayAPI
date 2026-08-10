@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -34,6 +35,7 @@ type agentSetupInput struct {
 	KeyID                     string   `json:"key_id"`
 	Agents                    []string `json:"agents"`
 	Model                     string   `json:"model"`
+	Models                    []string `json:"models,omitempty"`
 	ReasoningEffort           string   `json:"reasoning_effort"`
 	OpenCodeProtocol          string   `json:"opencode_protocol"`
 	InstallMissing            bool     `json:"install_missing"`
@@ -72,6 +74,18 @@ func normalizeAgentSetup(input *agentSetupInput) error {
 	if len(input.Model) > 255 || strings.ContainsAny(input.Model, "\r\n\x00") {
 		return errors.New("模型名称无效")
 	}
+	input.Models = normalizedModels(input.Models)
+	if len(input.Models) == 0 {
+		input.Models = []string{input.Model}
+	}
+	for _, model := range input.Models {
+		if len(model) > 255 || strings.ContainsAny(model, "\r\n\x00") {
+			return errors.New("OpenCode 模型列表包含无效名称")
+		}
+	}
+	if !slices.Contains(input.Models, input.Model) {
+		return errors.New("默认模型不在 OpenCode 模型列表中")
+	}
 	if input.ReasoningEffort == "" {
 		input.ReasoningEffort = "high"
 	}
@@ -106,12 +120,14 @@ func (a *App) createAgentSetup(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	input.Models = nil
 	if err := normalizeAgentSetup(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
 	tenantID := currentSession(r).TenantID
-	if _, err := a.store.RevealKey(r.Context(), tenantID, input.KeyID); err != nil {
+	plain, err := a.store.RevealKey(r.Context(), tenantID, input.KeyID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "密钥不存在")
 		} else if errors.Is(err, store.ErrKeyNotRecoverable) {
@@ -121,6 +137,16 @@ func (a *App) createAgentSetup(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	models, err := a.agentSetupModels(r.Context(), tenantID, plain)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "setup_failed", "无法读取 API Key 的可用模型")
+		return
+	}
+	if !slices.Contains(models, input.Model) {
+		writeError(w, http.StatusConflict, "model_unavailable", "默认模型已不可用，请刷新后重新选择")
+		return
+	}
+	input.Models = models
 	expires := time.Now().Add(agentSetupTTL)
 	payload, err := json.Marshal(agentSetupClaim{TenantID: tenantID, Expires: expires.Unix(), Setup: input})
 	if err != nil {
@@ -215,6 +241,41 @@ func setSensitiveNoStore(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
+func (a *App) agentSetupModels(ctx context.Context, tenantID, plain string) ([]string, error) {
+	key, err := a.store.ResolveKey(ctx, plain)
+	if err != nil {
+		return nil, err
+	}
+	children, err := a.store.ListChildSubscriptions(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	inherited := make([]string, 0)
+	for _, child := range children {
+		if !child.Enabled || child.StartsAt.After(now) || child.ExpiresAt != nil && !child.ExpiresAt.After(now) {
+			continue
+		}
+		parent, err := a.store.GetParentSubscription(ctx, child.ParentSubscriptionID)
+		if err != nil {
+			return nil, err
+		}
+		models, _ := effectiveSubscriptionModels(parent, child)
+		inherited = append(inherited, models...)
+	}
+	if inherited = normalizedModels(inherited); len(inherited) == 0 {
+		inherited = key.TenantModels
+	}
+	models := append([]string(nil), inherited...)
+	if len(key.ModelAllowlist) > 0 {
+		models = append([]string(nil), key.ModelAllowlist...)
+	}
+	for _, alias := range key.ModelAliases {
+		models = append(models, alias.Alias)
+	}
+	return normalizedModels(models), nil
+}
+
 func buildAgentSetupTemplateData(endpoint, apiKey string, input agentSetupInput, platform string) (agentSetupTemplateData, error) {
 	endpoint = strings.TrimRight(endpoint, "/")
 	keyPath := "~/.config/relayapi/api-key"
@@ -245,13 +306,21 @@ func buildAgentSetupTemplateData(endpoint, apiKey string, input agentSetupInput,
 	if input.OpenCodeProtocol == "chat" {
 		npmPackage = "@ai-sdk/openai-compatible"
 	}
+	openCodeModelIDs := input.Models
+	if len(openCodeModelIDs) == 0 {
+		openCodeModelIDs = []string{input.Model}
+	}
+	openCodeModels := make(map[string]any, len(openCodeModelIDs))
+	for _, model := range openCodeModelIDs {
+		openCodeModels[model] = map[string]any{"name": model}
+	}
 	openCodePatch := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"model":   "relayapi/" + input.Model,
 		"provider": map[string]any{"relayapi": map[string]any{
 			"npm": npmPackage, "name": "RelayAPI",
 			"options": map[string]any{"baseURL": endpoint + "/v1", "apiKey": "{file:" + keyPath + "}"},
-			"models":  map[string]any{input.Model: map[string]any{"name": input.Model}},
+			"models":  openCodeModels,
 		}},
 	}
 	codexEdits := []map[string]any{
