@@ -301,6 +301,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                   <TableHead className="pl-4">时间</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>请求</TableHead>
+                  <TableHead>客户端</TableHead>
                   {admin ? <TableHead>用户</TableHead> : null}
                   <TableHead className="text-right">Token</TableHead>
                   <TableHead className="text-right">负载</TableHead>
@@ -338,6 +339,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                         {log.request_type || `${log.method} ${log.path}`}
                         {log.provider ? ` · ${log.provider}${log.auth_index ? ` / ${log.auth_index}` : ""}` : ""}
                       </p>
+                    </TableCell>
+                    <TableCell title={log.user_agent || undefined}>
+                      <p className="max-w-44 truncate text-sm">{log.client_name || "未知客户端"}</p>
+                      <p className="max-w-44 truncate font-mono text-xs text-muted-foreground">{log.client_version || "—"}</p>
                     </TableCell>
                     {admin ? (
                       <TableCell>
@@ -502,6 +507,8 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
           ["入口", `${log.method} ${log.path}`],
           ["类型", log.request_type],
           ["模型", modelRoute(log)],
+          ["客户端", [log.client_name, log.client_version].filter(Boolean).join(" ")],
+          ["User-Agent", log.user_agent],
           ["时间", dateTime(log.started_at)],
         ]} />
       </DetailGroup>

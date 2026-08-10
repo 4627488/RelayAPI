@@ -160,6 +160,9 @@ type RequestLog struct {
 	TenantName             string    `gorm:"not null;default:''" json:"tenant_name"`
 	APIKeyName             string    `gorm:"not null;default:''" json:"api_key_name"`
 	APIKeyPrefix           string    `gorm:"not null;default:''" json:"api_key_prefix"`
+	ClientName             string    `gorm:"not null;default:''" json:"client_name"`
+	ClientVersion          string    `gorm:"not null;default:''" json:"client_version"`
+	UserAgent              string    `gorm:"type:text;not null;default:''" json:"user_agent"`
 	Method                 string    `gorm:"not null" json:"method"`
 	Path                   string    `gorm:"not null" json:"path"`
 	RequestType            string    `gorm:"not null;default:'';index" json:"request_type"`

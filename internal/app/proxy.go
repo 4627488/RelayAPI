@@ -596,6 +596,7 @@ func resolveClaudeCatalogModel(model string) string {
 
 func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
 	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) {
+	client := identifyClientUserAgent(r.UserAgent())
 	usage := store.Usage{}
 	cpaID := ""
 	if parsed != nil {
@@ -626,6 +627,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
 		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
+		ClientName: client.Name, ClientVersion: client.Version, UserAgent: client.UserAgent,
 		AuthIndex: admission.CPAAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
 		ChildSubscriptionID: admission.ChildSubscriptionID,
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,

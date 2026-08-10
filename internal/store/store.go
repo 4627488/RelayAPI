@@ -65,6 +65,7 @@ type LogInput struct {
 	ID, TenantID, APIKeyID, CPARequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
 	CPATraceID, CPAExecutionID, RequestedModel, ActualModel, ModelAlias, ExecutorType, AuthType                               string
 	ServiceTier, ResponseServiceTier, ReasoningEffort, TenantName, APIKeyName, APIKeyPrefix, RequestType                      string
+	ClientName, ClientVersion, UserAgent                                                                                      string
 	StatusCode                                                                                                                int
 	Stream, PricingComplete, Settled                                                                                          bool
 	Usage                                                                                                                     Usage
@@ -743,6 +744,7 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 		ParentSubscriptionID: nullableIdentifier(l.ParentSubscriptionID),
 		ChildSubscriptionID:  nullableIdentifier(l.ChildSubscriptionID),
 		TenantName:           l.TenantName, APIKeyName: l.APIKeyName, APIKeyPrefix: l.APIKeyPrefix,
+		ClientName: l.ClientName, ClientVersion: l.ClientVersion, UserAgent: l.UserAgent,
 		Method: l.Method, Path: l.Path, RequestType: l.RequestType, StatusCode: l.StatusCode,
 		Stream: l.Stream, RequestBodyBytes: l.RequestBodyBytes, ForwardedBodyBytes: l.ForwardedBodyBytes,
 		ResponseBodyBytes: l.ResponseBodyBytes, PromptTokens: l.Usage.Prompt, CompletionTokens: l.Usage.Completion,
@@ -874,8 +876,8 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if text := strings.TrimSpace(input.Query); text != "" {
 		like := "%" + text + "%"
 		query = query.Where(
-			"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR error_message ILIKE ? OR cpa_trace_id ILIKE ?",
-			like, like, like, like, like, like, like, like, like, like, like,
+			"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR cpa_trace_id ILIKE ?",
+			like, like, like, like, like, like, like, like, like, like, like, like, like, like,
 		)
 	}
 	switch input.Status {

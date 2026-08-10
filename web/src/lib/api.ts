@@ -72,6 +72,9 @@ export interface RequestLog {
   tenant_name?: string
   api_key_name?: string
   api_key_prefix?: string
+  client_name?: string
+  client_version?: string
+  user_agent?: string
   parent_subscription_name?: string
   child_subscription_name?: string
   channel_id?: string

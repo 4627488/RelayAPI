@@ -239,6 +239,7 @@ export function LogsTable({ logs }: { logs: RequestLog[] }) {
                 <TableHead>时间</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead>模型</TableHead>
+                <TableHead>客户端</TableHead>
                 <TableHead className="text-right">Tokens</TableHead>
                 <TableHead className="text-right">耗时</TableHead>
                 <TableHead className="text-right">费用</TableHead>
@@ -254,6 +255,9 @@ export function LogsTable({ logs }: { logs: RequestLog[] }) {
                     </Badge>
                   </TableCell>
                   <TableCell className="max-w-52 truncate font-mono text-xs">{log.model || log.path}</TableCell>
+                  <TableCell className="max-w-44 truncate text-xs" title={log.user_agent || undefined}>
+                    {[log.client_name, log.client_version].filter(Boolean).join(" ") || "未知客户端"}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{compactTokens(log.total_tokens)}</TableCell>
                   <TableCell className="text-right tabular-nums">{log.latency_ms} ms</TableCell>
                   <TableCell className="text-right tabular-nums">{money(log.cost_nano_usd)}</TableCell>
