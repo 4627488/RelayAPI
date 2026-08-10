@@ -35,8 +35,10 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -74,7 +76,9 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { api, deleteRequest, type ProviderAccount } from "@/lib/api"
+import { QuotaSnapshot } from "@/components/quota-snapshot"
+import { api, deleteRequest, postJSON, type ProviderAccount } from "@/lib/api"
+import { dateTime } from "@/lib/format"
 
 const oauthProviders = [
   { value: "codex", label: "OpenAI Codex", detail: "ChatGPT / Codex 订阅账户" },
@@ -144,10 +148,15 @@ function sourceLabel(account: ProviderAccount) {
   return "导入"
 }
 
+function isOAuthAccount(account: ProviderAccount) {
+  return account.auth_kind === "oauth" || account.source === "oauth"
+}
+
 export function ProvidersView() {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
+  const [syncingQuota, setSyncingQuota] = useState(false)
   const [search, setSearch] = useState("")
   const [provider, setProvider] = useState("all")
   const [connectOpen, setConnectOpen] = useState(false)
@@ -208,6 +217,32 @@ export function ProvidersView() {
       toast.error(cause instanceof Error ? cause.message : "更新失败")
     } finally {
       setPending(false)
+    }
+  }
+
+  async function syncQuota() {
+    setSyncingQuota(true)
+    try {
+      await postJSON("/api/admin/subscriptions/sync", {})
+      const result = await postJSON<{
+        items: Array<{ status: string; supported: boolean }>
+      }>("/api/admin/subscriptions/quota/sync", {})
+      const supported = (result.items ?? []).filter(
+        (item) => item.supported && item.status !== "error"
+      ).length
+      const failed = (result.items ?? []).filter(
+        (item) => item.status === "error"
+      ).length
+      toast.success(
+        failed
+          ? `额度已刷新：${supported} 个账户可读取，${failed} 个失败`
+          : `额度已刷新：${supported} 个账户可读取`
+      )
+      await load()
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "额度刷新失败")
+    } finally {
+      setSyncingQuota(false)
     }
   }
 
@@ -273,10 +308,24 @@ export function ProvidersView() {
             连接订阅账户或 API Key，并控制它们可以承载的模型。
           </p>
         </div>
-        <Button onClick={() => setConnectOpen(true)}>
-          <PlusIcon />
-          连接账户
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            disabled={syncingQuota}
+            onClick={() => void syncQuota()}
+          >
+            {syncingQuota ? (
+              <Spinner />
+            ) : (
+              <RefreshCwIcon data-icon="inline-start" />
+            )}
+            刷新额度
+          </Button>
+          <Button onClick={() => setConnectOpen(true)}>
+            <PlusIcon data-icon="inline-start" />
+            连接账户
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg border bg-border">
@@ -340,33 +389,76 @@ export function ProvidersView() {
               key={account.id || account.name}
               className="transition-colors hover:border-foreground/20"
             >
-              <CardHeader className="flex-row items-start justify-between gap-4">
+              <CardHeader>
                 <div className="min-w-0">
                   <div className="mb-1.5 flex items-center gap-2">
                     <CardTitle className="truncate text-base">
                       {displayName(account)}
                     </CardTitle>
                     <Badge variant="outline">{sourceLabel(account)}</Badge>
+                    {account.plan_type ? (
+                      <Badge variant="secondary">{account.plan_type}</Badge>
+                    ) : null}
                   </div>
                   <CardDescription>
                     {providerLabel(account.provider)}
                   </CardDescription>
                 </div>
-                <Badge
-                  variant={
-                    account.disabled || account.unavailable
-                      ? "secondary"
-                      : "default"
-                  }
-                >
-                  {account.disabled
-                    ? "已停用"
-                    : account.unavailable
-                      ? "已过期"
-                      : "可用"}
-                </Badge>
+                <CardAction>
+                  <Badge
+                    title={account.status_message}
+                    variant={
+                      account.disabled || account.unavailable
+                        ? "secondary"
+                        : "default"
+                    }
+                  >
+                    {account.disabled
+                      ? "已停用"
+                      : account.unavailable
+                        ? account.quota_exceeded
+                          ? "额度冷却"
+                          : "暂不可用"
+                        : "可用"}
+                  </Badge>
+                </CardAction>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
+                {isOAuthAccount(account) ? (
+                  <section
+                    className="flex flex-col gap-2"
+                    aria-label="OAuth 账户额度"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium">账户额度</p>
+                      {account.quota_exceeded ? (
+                        <Badge variant="destructive">
+                          {account.quota_recover_at
+                            ? `${dateTime(account.quota_recover_at)} 后重试`
+                            : "CPA 已限流"}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <QuotaSnapshot
+                      compact
+                      snapshot={account.quota_snapshot}
+                      status={account.quota_probe_status}
+                      error={account.quota_probe_error}
+                      observedAt={account.quota_observed_at}
+                    />
+                    {account.last_refreshed_at ||
+                    account.success ||
+                    account.failed ? (
+                      <p className="text-xs text-muted-foreground">
+                        {account.last_refreshed_at
+                          ? `令牌刷新于 ${dateTime(account.last_refreshed_at)}`
+                          : "CPA 运行时"}
+                        {" · "}请求 {account.success ?? 0} 成功 /{" "}
+                        {account.failed ?? 0} 失败
+                      </p>
+                    ) : null}
+                  </section>
+                ) : null}
                 <div className="flex flex-wrap gap-1.5">
                   {(account.models ?? []).slice(0, 5).map((model) => (
                     <Badge
@@ -382,27 +474,32 @@ export function ProvidersView() {
                       +{(account.models?.length ?? 0) - 5}
                     </Badge>
                   ) : null}
-                </div>
-                <div className="flex min-h-8 items-center gap-3 border-t pt-3 text-xs text-muted-foreground">
-                  {account.email ? (
-                    <span className="truncate">{account.email}</span>
-                  ) : null}
-                  {account.proxy_configured ? (
-                    <span className="flex items-center gap-1">
-                      <NetworkIcon className="size-3" />
-                      独立代理
+                  {!(account.models?.length ?? 0) ? (
+                    <span className="text-xs text-muted-foreground">
+                      CPA 尚未同步可用模型
                     </span>
                   ) : null}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="ml-auto"
-                    onClick={() => setSelected(account)}
-                  >
-                    管理
-                  </Button>
                 </div>
               </CardContent>
+              <CardFooter className="flex min-h-12 gap-3 text-xs text-muted-foreground">
+                {account.email ? (
+                  <span className="truncate">{account.email}</span>
+                ) : null}
+                {account.proxy_configured ? (
+                  <span className="flex items-center gap-1">
+                    <NetworkIcon className="size-3" />
+                    独立代理
+                  </span>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => setSelected(account)}
+                >
+                  管理
+                </Button>
+              </CardFooter>
             </Card>
           ))}
         </div>

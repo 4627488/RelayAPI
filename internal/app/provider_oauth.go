@@ -300,6 +300,10 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())
 		return
 	}
+	if _, err = a.syncNativeParentSubscriptionRows(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "subscription_sync_failed", "OAuth 账户已保存，但父订阅同步失败")
+		return
+	}
 	a.providerOAuth.remove(state)
 	writeJSON(w, http.StatusCreated, nativeProviderAccount(row))
 }

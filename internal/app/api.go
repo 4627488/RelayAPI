@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
@@ -700,7 +701,15 @@ func (a *App) adminPricingRules(w http.ResponseWriter, r *http.Request) {
 func (a *App) adminPricingSync(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	result, err := pricing.FetchModelsDev(ctx, nil, pricing.ModelsDevURL)
+	a.nativeSettings.RLock()
+	proxyURL := a.nativeSettings.value.ProxyURL
+	a.nativeSettings.RUnlock()
+	client, err := cpa.NativeOutboundHTTPClient(proxyURL, 30*time.Second)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "pricing_sync_failed", err.Error())
+		return
+	}
+	result, err := pricing.FetchModelsDev(ctx, client, pricing.ModelsDevURL)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "pricing_sync_failed", err.Error())
 		return

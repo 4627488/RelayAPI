@@ -65,6 +65,10 @@ func TestRuntimeUsesCPACodexPlanAndModelMetadata(t *testing.T) {
 	if !hasCapabilityMetadata {
 		t.Fatal("CPA model capability metadata was discarded")
 	}
+	status, ok := runtime.CredentialStatus("codex-free")
+	if !ok || status.Status != string(coreauth.StatusActive) || status.PlanType != "free" {
+		t.Fatalf("credential status = %+v, ok=%v", status, ok)
+	}
 }
 
 func TestRuntimeHonorsCPAOAuthModelExclusionsAndAliases(t *testing.T) {

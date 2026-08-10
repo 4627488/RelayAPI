@@ -199,11 +199,18 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	if firstReservation.QuotaReservedNanoUSD != 0 || string(firstReservation.QuotaWindows) != "[]" {
 		t.Fatalf("learning reservation = %+v", firstReservation)
 	}
-	if firstReservation.BalanceReservedNanoUSD != 0 {
+	if firstReservation.BalanceReservedNanoUSD != 10 {
 		t.Fatalf("learning subscription reserved balance: %+v", firstReservation)
 	}
-	if err := store.ReleaseRequestReservation(ctx, firstID); err != nil {
+	if err := store.SettleRequestReservation(ctx, firstID, 7, true); err != nil {
 		t.Fatal(err)
+	}
+	var learningTenant db.Tenant
+	if err := database.First(&learningTenant, "id = ?", tenantID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if learningTenant.BalanceNanoUSD != 993 {
+		t.Fatalf("learning subscription balance = %d, want 993", learningTenant.BalanceNanoUSD)
 	}
 	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, false, "unsupported", "", "", nil, json.RawMessage(`{"supported":false,"windows":[]}`)); err != nil {
 		t.Fatal(err)

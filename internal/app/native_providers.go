@@ -103,6 +103,10 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())
 			return
 		}
+		if _, err = a.syncNativeParentSubscriptionRows(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "subscription_sync_failed", "账户已保存，但父订阅同步失败")
+			return
+		}
 		writeJSON(w, http.StatusCreated, nativeProviderAccount(row))
 		return
 	}
@@ -111,9 +115,59 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "credentials_unavailable", "无法读取 native 凭据")
 		return
 	}
+	parents, err := a.store.ListParentSubscriptions(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "subscriptions_unavailable", "无法读取账户额度")
+		return
+	}
+	parentsByCredential := make(map[string]store.ParentSubscription, len(parents)*2)
+	for _, parent := range parents {
+		if id := strings.TrimSpace(parent.CPAAuthID); id != "" {
+			parentsByCredential[id] = parent
+		}
+		if index := strings.TrimSpace(parent.CPAAuthIndex); index != "" {
+			parentsByCredential[index] = parent
+		}
+	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, nativeProviderAccount(row))
+		item := nativeProviderAccount(row)
+		if parent, ok := parentsByCredential[row.ID]; ok {
+			item["parent_subscription_id"] = parent.ID
+			item["capacity_mode"] = parent.CapacityMode
+			item["quota_supported"] = parent.QuotaSupported
+			item["quota_probe_status"] = parent.QuotaProbeStatus
+			item["quota_probe_error"] = parent.QuotaProbeError
+			item["quota_observed_at"] = parent.QuotaObservedAt
+			item["quota_snapshot"] = parent.QuotaSnapshot
+			if plan := strings.TrimSpace(parent.PlanType); plan != "" && plan != "native" {
+				item["plan_type"] = plan
+			}
+		}
+		if a.nativeCPARuntime != nil {
+			if status, ok := a.nativeCPARuntime.CredentialStatus(row.ID); ok {
+				item["status"] = status.Status
+				item["status_message"] = status.StatusMessage
+				item["unavailable"] = item["unavailable"].(bool) || status.Unavailable
+				item["success"] = status.Success
+				item["failed"] = status.Failed
+				if !status.LastRefreshedAt.IsZero() {
+					item["last_refreshed_at"] = status.LastRefreshedAt
+				}
+				if !status.NextRetryAfter.IsZero() {
+					item["next_retry_after"] = status.NextRetryAfter
+				}
+				item["quota_exceeded"] = status.QuotaExceeded
+				item["quota_reason"] = status.QuotaReason
+				if !status.QuotaRecoverAt.IsZero() {
+					item["quota_recover_at"] = status.QuotaRecoverAt
+				}
+				if _, exists := item["plan_type"]; !exists && status.PlanType != "" {
+					item["plan_type"] = status.PlanType
+				}
+			}
+		}
+		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"files": items, "mode": "native"})
 }
@@ -157,6 +211,9 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	}
 	if strings.TrimSpace(prefix) != "" {
 		result["prefix"] = prefix
+	}
+	if row.ExpiresAt != nil {
+		result["expires_at"] = row.ExpiresAt
 	}
 	return result
 }
@@ -330,6 +387,10 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())
 		return
 	}
+	if _, err = a.syncNativeParentSubscriptionRows(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "subscription_sync_failed", "账户已更新，但父订阅同步失败")
+		return
+	}
 	writeJSON(w, http.StatusOK, nativeProviderAccount(row))
 }
 
@@ -344,6 +405,10 @@ func (a *App) nativeProviderAccountDelete(w http.ResponseWriter, r *http.Request
 	}
 	if err := a.reloadNativeCredentials(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "runtime_update_failed", "凭据已删除，但运行时刷新失败")
+		return
+	}
+	if _, err := a.syncNativeParentSubscriptionRows(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "subscription_sync_failed", "账户已删除，但父订阅同步失败")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

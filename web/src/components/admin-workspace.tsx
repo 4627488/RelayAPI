@@ -17,14 +17,21 @@ import {
 import { toast } from "sonner"
 
 import type { Page } from "@/components/app-shell"
-import { ApiKeyUsageTable, LogsTable, MetricGrid, ModelTable, UsageChart, UsageMetrics } from "@/components/data-views"
+import {
+  ApiKeyUsageTable,
+  LogsTable,
+  MetricGrid,
+  ModelTable,
+  UsageChart,
+  UsageMetrics,
+} from "@/components/data-views"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
 import { PricingView } from "@/components/pricing-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { RuntimeSettingsView } from "@/components/runtime-settings-view"
-import { AdminSubscriptionsView } from "@/components/subscriptions-view"
+import { AdminSubscriptionsView } from "@/components/admin-subscriptions-view"
 import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
@@ -60,9 +67,18 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
@@ -104,7 +120,13 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
     if (showLoading) setLoading(true)
     setLoadError("")
     try {
-      const [overviewValue, usageValue, usersValue, invitationsValue, logsValue] = await Promise.all([
+      const [
+        overviewValue,
+        usageValue,
+        usersValue,
+        invitationsValue,
+        logsValue,
+      ] = await Promise.all([
         api<AdminOverview>("/api/admin/overview"),
         api<UsageReport>("/api/admin/usage?days=30"),
         api<{ items: User[] }>("/api/admin/tenants"),
@@ -117,7 +139,8 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
       setInvitations(invitationsValue.items ?? [])
       setLogs(logsValue.items ?? [])
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "无法读取管理数据"
+      const message =
+        cause instanceof Error ? cause.message : "无法读取管理数据"
       setLoadError(message)
       if (!showLoading) toast.error(message)
     } finally {
@@ -131,10 +154,19 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
 
   if (loading) return <LoadingView />
   if (!overview || !usage) {
-    return <LoadErrorView message={loadError || "管理数据不完整"} onRetry={() => void load(true)} />
+    return (
+      <LoadErrorView
+        message={loadError || "管理数据不完整"}
+        onRetry={() => void load(true)}
+      />
+    )
   }
-  if (page === "users") return <UsersView users={users} currentUserId={currentUserId} onChanged={load} />
-  if (page === "invitations") return <InvitationsView items={invitations} onChanged={load} />
+  if (page === "users")
+    return (
+      <UsersView users={users} currentUserId={currentUserId} onChanged={load} />
+    )
+  if (page === "invitations")
+    return <InvitationsView items={invitations} onChanged={load} />
   if (page === "providers") return <ProvidersView />
   if (page === "settings") return <RuntimeSettingsView />
   if (page === "subscriptions") return <AdminSubscriptionsView />
@@ -155,14 +187,36 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">管理总览</h1>
-        <p className="text-sm text-muted-foreground">用户增长、系统负载和异常概况。</p>
+        <p className="text-sm text-muted-foreground">
+          用户增长、系统负载和异常概况。
+        </p>
       </div>
       <MetricGrid
         items={[
-          { label: "用户", value: compact(overview.users), hint: `${overview.enabled_users} 个账户正常`, icon: UsersIcon },
-          { label: "有效 Keys", value: compact(overview.active_api_keys), hint: "用户创建的访问凭据", icon: KeyRoundIcon },
-          { label: "今日请求", value: compact(overview.today.requests), hint: `${compactTokens(overview.today.tokens)} tokens`, icon: ActivityIcon },
-          { label: "今日错误", value: compact(overview.today.errors), hint: `费用 ${money(overview.today.cost_nano_usd)}`, icon: TriangleAlertIcon },
+          {
+            label: "用户",
+            value: compact(overview.users),
+            hint: `${overview.enabled_users} 个账户正常`,
+            icon: UsersIcon,
+          },
+          {
+            label: "有效 Keys",
+            value: compact(overview.active_api_keys),
+            hint: "用户创建的访问凭据",
+            icon: KeyRoundIcon,
+          },
+          {
+            label: "今日请求",
+            value: compact(overview.today.requests),
+            hint: `${compactTokens(overview.today.tokens)} tokens`,
+            icon: ActivityIcon,
+          },
+          {
+            label: "今日错误",
+            value: compact(overview.today.errors),
+            hint: `费用 ${money(overview.today.cost_nano_usd)}`,
+            icon: TriangleAlertIcon,
+          },
         ]}
       />
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
@@ -188,7 +242,9 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
                 <UserCheckIcon className="size-4 text-muted-foreground" />
                 <div>
                   <p className="text-sm font-medium">正常用户</p>
-                  <p className="text-xs text-muted-foreground">可登录并调用 API</p>
+                  <p className="text-xs text-muted-foreground">
+                    可登录并调用 API
+                  </p>
                 </div>
               </div>
               <Badge variant="secondary">{overview.enabled_users}</Badge>
@@ -201,7 +257,15 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
   )
 }
 
-function UsersView({ users, currentUserId, onChanged }: { users: User[]; currentUserId: string; onChanged: () => Promise<void> }) {
+function UsersView({
+  users,
+  currentUserId,
+  onChanged,
+}: {
+  users: User[]
+  currentUserId: string
+  onChanged: () => Promise<void>
+}) {
   const [creditUser, setCreditUser] = useState<User | null>(null)
   const [resetUser, setResetUser] = useState<User | null>(null)
   const [deleteUser, setDeleteUser] = useState<User | null>(null)
@@ -213,7 +277,11 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
     if (!creditUser) return
     const data = new FormData(event.currentTarget)
     const amountUSD = Number(data.get("amount_usd"))
-    if (!Number.isFinite(amountUSD) || amountUSD <= 0 || amountUSD > 1_000_000) {
+    if (
+      !Number.isFinite(amountUSD) ||
+      amountUSD <= 0 ||
+      amountUSD > 1_000_000
+    ) {
       toast.error("充值金额必须大于 0 且不超过 1,000,000 USD")
       return
     }
@@ -238,7 +306,10 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
     if (!resetUser) return
     setPending(true)
     try {
-      const result = await postJSON<{ temporary_password: string }>(`/api/admin/tenants/${resetUser.id}/password`, {})
+      const result = await postJSON<{ temporary_password: string }>(
+        `/api/admin/tenants/${resetUser.id}/password`,
+        {}
+      )
       setTemporaryPassword(result.temporary_password)
       await onChanged()
       toast.success(`已重置 ${resetUser.name} 的密码`)
@@ -297,7 +368,9 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">用户</h1>
-        <p className="text-sm text-muted-foreground">受邀注册账户与当前余额。</p>
+        <p className="text-sm text-muted-foreground">
+          受邀注册账户与当前余额。
+        </p>
       </div>
       <Card>
         <CardHeader>
@@ -323,24 +396,45 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
                     <TableCell className="font-medium">
                       <span className="inline-flex items-center gap-2">
                         {user.name}
-                        {user.is_admin ? <Badge variant="outline">管理员</Badge> : null}
+                        {user.is_admin ? (
+                          <Badge variant="outline">管理员</Badge>
+                        ) : null}
                       </span>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{user.owner_email}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {user.owner_email}
+                    </TableCell>
                     <TableCell>
-                      <Badge variant={user.enabled ? "secondary" : "destructive"}>
+                      <Badge
+                        variant={user.enabled ? "secondary" : "destructive"}
+                      >
                         {user.enabled ? "正常" : "停用"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{money(user.balance_nano_usd)}</TableCell>
-                    <TableCell className="text-right text-muted-foreground">{dateTime(user.created_at)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {money(user.balance_nano_usd)}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {dateTime(user.created_at)}
+                    </TableCell>
                     <TableCell className="text-right">
                       <span className="inline-flex gap-2">
-                        <Button size="sm" variant="outline" onClick={() => { setResetUser(user); setTemporaryPassword("") }}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setResetUser(user)
+                            setTemporaryPassword("")
+                          }}
+                        >
                           <KeyRoundIcon data-icon="inline-start" />
                           重置密码
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => setCreditUser(user)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setCreditUser(user)}
+                        >
                           <CircleDollarSignIcon data-icon="inline-start" />
                           充值
                         </Button>
@@ -350,7 +444,11 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
                           disabled={pending || user.id === currentUserId}
                           onClick={() => void toggleUser(user)}
                         >
-                          {user.enabled ? <BanIcon data-icon="inline-start" /> : <CircleCheckIcon data-icon="inline-start" />}
+                          {user.enabled ? (
+                            <BanIcon data-icon="inline-start" />
+                          ) : (
+                            <CircleCheckIcon data-icon="inline-start" />
+                          )}
                           {user.enabled ? "停用" : "启用"}
                         </Button>
                         <Button
@@ -371,15 +469,24 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
           ) : (
             <Empty>
               <EmptyHeader>
-                <EmptyMedia variant="icon"><UsersIcon /></EmptyMedia>
+                <EmptyMedia variant="icon">
+                  <UsersIcon />
+                </EmptyMedia>
                 <EmptyTitle>还没有用户</EmptyTitle>
-                <EmptyDescription>生成邀请链接来添加第一个用户。</EmptyDescription>
+                <EmptyDescription>
+                  生成邀请链接来添加第一个用户。
+                </EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}
         </CardContent>
       </Card>
-      <Dialog open={Boolean(creditUser)} onOpenChange={(open) => { if (!open && !pending) setCreditUser(null) }}>
+      <Dialog
+        open={Boolean(creditUser)}
+        onOpenChange={(open) => {
+          if (!open && !pending) setCreditUser(null)
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>用户充值</DialogTitle>
@@ -402,24 +509,48 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
                   autoFocus
                   required
                 />
-                <FieldDescription>充值后余额：{creditUser ? money(creditUser.balance_nano_usd) : "$0.00"} + 本次金额</FieldDescription>
+                <FieldDescription>
+                  充值后余额：
+                  {creditUser ? money(creditUser.balance_nano_usd) : "$0.00"} +
+                  本次金额
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="credit-note">备注</FieldLabel>
-                <Input id="credit-note" name="note" maxLength={200} placeholder="例如：订单号或线下收款说明" />
+                <Input
+                  id="credit-note"
+                  name="note"
+                  maxLength={200}
+                  placeholder="例如：订单号或线下收款说明"
+                />
               </Field>
             </FieldGroup>
           </form>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreditUser(null)} disabled={pending}>取消</Button>
+            <Button
+              variant="outline"
+              onClick={() => setCreditUser(null)}
+              disabled={pending}
+            >
+              取消
+            </Button>
             <Button type="submit" form="credit-user-form" disabled={pending}>
-              {pending ? <Spinner /> : <CircleDollarSignIcon data-icon="inline-start" />}
+              {pending ? (
+                <Spinner />
+              ) : (
+                <CircleDollarSignIcon data-icon="inline-start" />
+              )}
               确认充值
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <AlertDialog open={Boolean(deleteUser)} onOpenChange={(open) => { if (!open && !pending) setDeleteUser(null) }}>
+      <AlertDialog
+        open={Boolean(deleteUser)}
+        onOpenChange={(open) => {
+          if (!open && !pending) setDeleteUser(null)
+        }}
+      >
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
             <AlertDialogMedia>
@@ -427,22 +558,34 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
             </AlertDialogMedia>
             <AlertDialogTitle>永久删除用户？</AlertDialogTitle>
             <AlertDialogDescription>
-              将永久删除 {deleteUser?.name} 及其 API Key、订阅分配、请求日志和计费记录。此操作无法撤销。
+              将永久删除 {deleteUser?.name} 及其 API
+              Key、订阅分配、请求日志和计费记录。此操作无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={pending}>取消</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" disabled={pending} onClick={() => void removeUser()}>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={pending}
+              onClick={() => void removeUser()}
+            >
               {pending ? <Spinner /> : <Trash2Icon data-icon="inline-start" />}
               确认删除
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <Dialog open={Boolean(resetUser)} onOpenChange={(open) => { if (!open) closeReset() }}>
+      <Dialog
+        open={Boolean(resetUser)}
+        onOpenChange={(open) => {
+          if (!open) closeReset()
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{temporaryPassword ? "临时密码已生成" : "重置用户密码"}</DialogTitle>
+            <DialogTitle>
+              {temporaryPassword ? "临时密码已生成" : "重置用户密码"}
+            </DialogTitle>
             <DialogDescription>
               {temporaryPassword
                 ? `将临时密码发送给 ${resetUser?.name}。该密码关闭后无法再次查看。`
@@ -454,20 +597,31 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
               <Field>
                 <FieldLabel htmlFor="temporary-password">临时密码</FieldLabel>
                 <InputGroup>
-                  <InputGroupInput id="temporary-password" value={temporaryPassword} readOnly className="font-mono" />
+                  <InputGroupInput
+                    id="temporary-password"
+                    value={temporaryPassword}
+                    readOnly
+                    className="font-mono"
+                  />
                   <InputGroupAddon align="inline-end">
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-xs"
                       aria-label="复制临时密码"
-                      onClick={() => void copyText(temporaryPassword).then(() => toast.success("临时密码已复制"))}
+                      onClick={() =>
+                        void copyText(temporaryPassword).then(() =>
+                          toast.success("临时密码已复制")
+                        )
+                      }
                     >
                       <CopyIcon />
                     </Button>
                   </InputGroupAddon>
                 </InputGroup>
-                <FieldDescription>用户首次登录后，该密码会被新密码替换。</FieldDescription>
+                <FieldDescription>
+                  用户首次登录后，该密码会被新密码替换。
+                </FieldDescription>
               </Field>
             </FieldGroup>
           ) : null}
@@ -476,9 +630,23 @@ function UsersView({ users, currentUserId, onChanged }: { users: User[]; current
               <Button onClick={closeReset}>完成</Button>
             ) : (
               <>
-                <Button variant="outline" onClick={closeReset} disabled={pending}>取消</Button>
-                <Button variant="destructive" onClick={() => void resetPassword()} disabled={pending}>
-                  {pending ? <Spinner /> : <KeyRoundIcon data-icon="inline-start" />}
+                <Button
+                  variant="outline"
+                  onClick={closeReset}
+                  disabled={pending}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => void resetPassword()}
+                  disabled={pending}
+                >
+                  {pending ? (
+                    <Spinner />
+                  ) : (
+                    <KeyRoundIcon data-icon="inline-start" />
+                  )}
                   生成临时密码
                 </Button>
               </>
@@ -499,19 +667,27 @@ type GeneratedInvitation = {
 function isGeneratedInvitation(value: unknown): value is GeneratedInvitation {
   if (!value || typeof value !== "object") return false
   const item = value as Partial<GeneratedInvitation>
-  return typeof item.id === "string"
-    && typeof item.invite_url === "string"
-    && typeof item.expires_at === "string"
-    && new Date(item.expires_at).getTime() > Date.now()
+  return (
+    typeof item.id === "string" &&
+    typeof item.invite_url === "string" &&
+    typeof item.expires_at === "string" &&
+    new Date(item.expires_at).getTime() > Date.now()
+  )
 }
 
-function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged: () => Promise<void> }) {
+function InvitationsView({
+  items,
+  onChanged,
+}: {
+  items: Invitation[]
+  onChanged: () => Promise<void>
+}) {
   const [renderedAt, setRenderedAt] = useState(() => Date.now())
   const [open, setOpen] = useState(false)
   const [showResult, setShowResult] = useState(false)
   const [result, setResult] = useSessionStorage<GeneratedInvitation>(
     "relayapi.latest-invitation",
-    isGeneratedInvitation,
+    isGeneratedInvitation
   )
   const [pending, setPending] = useState(false)
 
@@ -523,7 +699,11 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
   useEffect(() => {
     if (!result) return
     const item = items.find((candidate) => candidate.id === result.id)
-    if (new Date(result.expires_at).getTime() <= Date.now() || item?.used_at || item?.revoked_at) {
+    if (
+      new Date(result.expires_at).getTime() <= Date.now() ||
+      item?.used_at ||
+      item?.revoked_at
+    ) {
       setResult(null)
     }
   }, [items, result, setResult])
@@ -533,13 +713,14 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
     const data = new FormData(event.currentTarget)
     setPending(true)
     try {
-      const value = await postJSON<{ item: Invitation; token: string; invite_url: string }>(
-        "/api/admin/invitations",
-        {
-          email: String(data.get("email") ?? ""),
-          expires_in_hours: Number(data.get("hours") ?? 72),
-        },
-      )
+      const value = await postJSON<{
+        item: Invitation
+        token: string
+        invite_url: string
+      }>("/api/admin/invitations", {
+        email: String(data.get("email") ?? ""),
+        expires_in_hours: Number(data.get("hours") ?? 72),
+      })
       setResult({
         id: value.item.id,
         invite_url: value.invite_url,
@@ -571,9 +752,16 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">邀请</h1>
-          <p className="text-sm text-muted-foreground">生成单次邀请链接并追踪使用状态。</p>
+          <p className="text-sm text-muted-foreground">
+            生成单次邀请链接并追踪使用状态。
+          </p>
         </div>
-        <Button onClick={() => { setShowResult(false); setOpen(true) }}>
+        <Button
+          onClick={() => {
+            setShowResult(false)
+            setOpen(true)
+          }}
+        >
           <PlusIcon data-icon="inline-start" />
           生成邀请
         </Button>
@@ -587,7 +775,12 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
                 已临时保留在当前浏览器标签页中，关闭标签页或清除后无法恢复。
               </CardDescription>
             </div>
-            <Button variant="ghost" size="icon-sm" aria-label="清除邀请链接" onClick={() => setResult(null)}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="清除邀请链接"
+              onClick={() => setResult(null)}
+            >
               <XIcon />
             </Button>
           </CardHeader>
@@ -615,16 +808,27 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
               </TableHeader>
               <TableBody>
                 {items.map((item) => {
-                  const expired = new Date(item.expires_at).getTime() <= renderedAt
+                  const expired =
+                    new Date(item.expires_at).getTime() <= renderedAt
                   const active = !item.used_at && !item.revoked_at && !expired
                   return (
                     <TableRow key={item.id}>
                       <TableCell>{item.email || "任意邮箱"}</TableCell>
-                      <TableCell className="text-muted-foreground">{dateTime(item.created_at)}</TableCell>
-                      <TableCell className="text-muted-foreground">{dateTime(item.expires_at)}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {dateTime(item.created_at)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {dateTime(item.expires_at)}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={active ? "secondary" : "outline"}>
-                          {item.used_at ? "已使用" : item.revoked_at ? "已撤销" : expired ? "已过期" : "待使用"}
+                          {item.used_at
+                            ? "已使用"
+                            : item.revoked_at
+                              ? "已撤销"
+                              : expired
+                                ? "已过期"
+                                : "待使用"}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
@@ -646,9 +850,13 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
           ) : (
             <Empty>
               <EmptyHeader>
-                <EmptyMedia variant="icon"><SendIcon /></EmptyMedia>
+                <EmptyMedia variant="icon">
+                  <SendIcon />
+                </EmptyMedia>
                 <EmptyTitle>还没有邀请</EmptyTitle>
-                <EmptyDescription>生成链接，让用户自行完成注册。</EmptyDescription>
+                <EmptyDescription>
+                  生成链接，让用户自行完成注册。
+                </EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}
@@ -658,9 +866,13 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{showResult && result ? "邀请已生成" : "生成邀请"}</DialogTitle>
+            <DialogTitle>
+              {showResult && result ? "邀请已生成" : "生成邀请"}
+            </DialogTitle>
             <DialogDescription>
-              {showResult && result ? "请复制并安全发送；关闭弹窗后仍可在邀请页顶部找到。" : "可选填邮箱来限制邀请使用者。"}
+              {showResult && result
+                ? "请复制并安全发送；关闭弹窗后仍可在邀请页顶部找到。"
+                : "可选填邮箱来限制邀请使用者。"}
             </DialogDescription>
           </DialogHeader>
           {showResult && result ? (
@@ -670,12 +882,27 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
               <FieldGroup>
                 <Field>
                   <FieldLabel htmlFor="invite-email">限定邮箱</FieldLabel>
-                  <Input id="invite-email" name="email" type="email" placeholder="留空则任何人可使用" />
-                  <FieldDescription>限定后，其他邮箱无法完成注册。</FieldDescription>
+                  <Input
+                    id="invite-email"
+                    name="email"
+                    type="email"
+                    placeholder="留空则任何人可使用"
+                  />
+                  <FieldDescription>
+                    限定后，其他邮箱无法完成注册。
+                  </FieldDescription>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="invite-hours">有效小时数</FieldLabel>
-                  <Input id="invite-hours" name="hours" type="number" min="1" max="720" defaultValue="72" required />
+                  <Input
+                    id="invite-hours"
+                    name="hours"
+                    type="number"
+                    min="1"
+                    max="720"
+                    defaultValue="72"
+                    required
+                  />
                 </Field>
               </FieldGroup>
             </form>
@@ -686,7 +913,11 @@ function InvitationsView({ items, onChanged }: { items: Invitation[]; onChanged:
             </Button>
             {!(showResult && result) ? (
               <Button type="submit" form="invite-form" disabled={pending}>
-                {pending ? <Spinner data-icon="inline-start" /> : <SendIcon data-icon="inline-start" />}
+                {pending ? (
+                  <Spinner data-icon="inline-start" />
+                ) : (
+                  <SendIcon data-icon="inline-start" />
+                )}
                 生成
               </Button>
             ) : null}

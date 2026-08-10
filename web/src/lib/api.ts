@@ -256,6 +256,20 @@ export interface ProviderAccount {
   unavailable?: boolean
   success?: number
   failed?: number
+  plan_type?: string
+  expires_at?: string | null
+  last_refreshed_at?: string | null
+  next_retry_after?: string | null
+  quota_exceeded?: boolean
+  quota_reason?: string
+  quota_recover_at?: string | null
+  parent_subscription_id?: string
+  capacity_mode?: "unmetered" | "observed"
+  quota_supported?: boolean
+  quota_probe_status?: "unknown" | "supported" | "unsupported" | "error"
+  quota_probe_error?: string
+  quota_observed_at?: string | null
+  quota_snapshot?: UpstreamQuotaReport | Record<string, never>
   source?: "oauth" | "api_key" | "import" | "config" | "native"
   config_path?: string
   config_index?: number
@@ -378,6 +392,11 @@ export interface ChildSubscription {
   model_source?: "child" | "parent" | "cpa"
   parent_name?: string
   parent_plan_type?: string
+  available?: boolean
+  availability_message?: string
+  billing_mode?: "balance" | "quota"
+  parent_quota_probe_status?: "unknown" | "supported" | "unsupported" | "error"
+  parent_quota_observed_at?: string | null
   entitlement_windows?: SubscriptionEntitlementWindow[]
   starts_at: string
   expires_at?: string | null

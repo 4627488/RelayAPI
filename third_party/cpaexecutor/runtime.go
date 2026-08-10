@@ -86,6 +86,23 @@ type Settings struct {
 	NonStreamKeepAliveInterval int
 }
 
+// CredentialStatus is the secret-free runtime state CPA tracks for one
+// credential. It intentionally excludes attributes, metadata, tokens and
+// provider error payloads so Relay can expose operational health safely.
+type CredentialStatus struct {
+	Status          string
+	StatusMessage   string
+	Unavailable     bool
+	Success         int64
+	Failed          int64
+	PlanType        string
+	LastRefreshedAt time.Time
+	NextRetryAfter  time.Time
+	QuotaExceeded   bool
+	QuotaReason     string
+	QuotaRecoverAt  time.Time
+}
+
 // Runtime owns CPA's complete public inference router and provider runtime.
 // The management surface is not exposed publicly; when OAuth is enabled, Relay
 // calls a password-protected in-process subset through the broker in oauth.go.
@@ -291,6 +308,32 @@ func (r *Runtime) CredentialModels(id string) []string {
 	}
 	sort.Strings(models)
 	return models
+}
+
+// CredentialStatus returns CPA's current scheduler and refresh state for one
+// installed credential without exposing the credential document.
+func (r *Runtime) CredentialStatus(id string) (CredentialStatus, bool) {
+	id = strings.TrimSpace(id)
+	if r == nil || id == "" || r.manager == nil {
+		return CredentialStatus{}, false
+	}
+	auth, ok := r.manager.GetByID(id)
+	if !ok || auth == nil {
+		return CredentialStatus{}, false
+	}
+	return CredentialStatus{
+		Status:          string(auth.Status),
+		StatusMessage:   strings.TrimSpace(auth.StatusMessage),
+		Unavailable:     auth.Unavailable,
+		Success:         auth.Success,
+		Failed:          auth.Failed,
+		PlanType:        strings.TrimSpace(auth.Attributes["plan_type"]),
+		LastRefreshedAt: auth.LastRefreshedAt,
+		NextRetryAfter:  auth.NextRetryAfter,
+		QuotaExceeded:   auth.Quota.Exceeded,
+		QuotaReason:     strings.TrimSpace(auth.Quota.Reason),
+		QuotaRecoverAt:  auth.Quota.NextRecoverAt,
+	}, true
 }
 
 // DiscoverCredentialModels asks CPA for the best credential-scoped model

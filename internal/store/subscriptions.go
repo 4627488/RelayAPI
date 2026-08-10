@@ -192,7 +192,7 @@ func (s Store) SyncNativeParentSubscription(ctx context.Context, item ParentSubs
 	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "cpa_auth_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"cpa_auth_index", "cpa_auth_name", "provider", "plan_type", "status", "cpa_unavailable", "cpa_model_allowlist", "metadata", "last_synced_at", "updated_at",
+			"cpa_auth_index", "cpa_auth_name", "provider", "status", "cpa_unavailable", "cpa_model_allowlist", "metadata", "last_synced_at", "updated_at",
 		}),
 	}).Create(&item).Error
 	if err != nil {
@@ -777,7 +777,6 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 			reservation.CPAAuthID = parent.CPAAuthID
 			reservation.CPAAuthIndex = parent.CPAAuthIndex
 			if parent.CapacityMode != db.ParentCapacityUnmetered {
-				reservation.BalanceReservedNanoUSD = 0
 				if input.QuotaReserve <= 0 {
 					return ErrSubscriptionPrice
 				}
@@ -790,6 +789,11 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 					if parent.CapacityMode != db.ParentCapacityObserved || parent.QuotaProbeStatus == "unsupported" {
 						return ErrSubscriptionExhausted
 					}
+				} else {
+					// Once calibrated windows exist, charge child quota instead of
+					// the tenant balance. Before that, learning mode keeps the
+					// original balance reservation.
+					reservation.BalanceReservedNanoUSD = 0
 				}
 				reservedWindows := make([]quotaWindowReservation, 0, len(parentWindows))
 				for _, parentWindow := range parentWindows {
@@ -891,6 +895,9 @@ func (s Store) ReclaimExpiredReservations(ctx context.Context, now time.Time) (i
 
 func reservationUsesBalance(tx *gorm.DB, reservation RequestReservation) (bool, error) {
 	if reservation.ParentSubscriptionID == nil {
+		return true, nil
+	}
+	if reservation.QuotaReservedNanoUSD == 0 && reservation.BalanceReservedNanoUSD > 0 {
 		return true, nil
 	}
 	var parent ParentSubscription

@@ -336,6 +336,7 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := make([]map[string]any, 0, len(items))
+	now := time.Now()
 	for _, item := range items {
 		parent, err := a.store.GetParentSubscription(r.Context(), item.ParentSubscriptionID)
 		if err != nil {
@@ -357,16 +358,45 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		models, modelSource := effectiveSubscriptionModels(parent, item)
+		available, availabilityMessage := tenantSubscriptionAvailability(parent, item, now)
+		if available && parent.CapacityMode == db.ParentCapacityObserved && len(parentWindows) == 0 && parent.QuotaProbeStatus == "unsupported" {
+			available = false
+			availabilityMessage = "父订阅无法读取额度，请联系管理员"
+		}
+		billingMode := "balance"
+		if parent.CapacityMode != db.ParentCapacityUnmetered && len(parentWindows) > 0 {
+			billingMode = "quota"
+		}
 		result = append(result, map[string]any{
 			"id": item.ID, "name": item.Name, "allocation_ppm": item.AllocationPPM,
 			"priority": item.Priority, "enabled": item.Enabled, "model_allowlist": item.ModelAllowlist,
 			"starts_at": item.StartsAt, "expires_at": item.ExpiresAt, "capacity_mode": parent.CapacityMode, "windows": windows,
 			"parent_name": parent.Name, "parent_plan_type": parent.PlanType,
+			"available": available, "availability_message": availabilityMessage,
+			"billing_mode": billingMode, "parent_quota_probe_status": parent.QuotaProbeStatus,
+			"parent_quota_observed_at":  parent.QuotaObservedAt,
 			"effective_model_allowlist": models, "model_source": modelSource,
 			"entitlement_windows": projectTenantEntitlements(parentWindows, item, windows),
 		})
 	}
 	writeJSON(w, 200, map[string]any{"items": result})
+}
+
+func tenantSubscriptionAvailability(parent store.ParentSubscription, child store.ChildSubscription, now time.Time) (bool, string) {
+	switch {
+	case !child.Enabled:
+		return false, "子订阅已停用"
+	case child.StartsAt.After(now):
+		return false, "子订阅尚未开始"
+	case child.ExpiresAt != nil && !child.ExpiresAt.After(now):
+		return false, "子订阅已过期"
+	case !parent.Enabled:
+		return false, "父订阅已停用"
+	case parent.CPAUnavailable:
+		return false, "上游账户当前不可用"
+	default:
+		return true, ""
+	}
 }
 
 func childFromInput(id string, input childSubscriptionInput) store.ChildSubscription {
