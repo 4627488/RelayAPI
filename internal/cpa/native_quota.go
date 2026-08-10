@@ -1,6 +1,7 @@
 package cpa
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,15 +29,29 @@ type QuotaProbeCredential struct {
 }
 
 type quotaEndpoints struct {
-	codexUsage string
-	xaiCredits string
-	xaiBilling string
+	codexUsage        string
+	claudeUsage       string
+	antigravityLoad   string
+	antigravityModels []string
+	kimiUsage         string
+	kimiUsageFallback string
+	xaiCredits        string
+	xaiBilling        string
 }
 
 var productionQuotaEndpoints = quotaEndpoints{
-	codexUsage: "https://chatgpt.com/backend-api/wham/usage",
-	xaiCredits: "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
-	xaiBilling: "https://cli-chat-proxy.grok.com/v1/billing",
+	codexUsage:      "https://chatgpt.com/backend-api/wham/usage",
+	claudeUsage:     "https://api.anthropic.com/api/oauth/usage",
+	antigravityLoad: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+	antigravityModels: []string{
+		"https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+		"https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+		"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
+	},
+	kimiUsage:         "https://api.kimi.com/coding/v1/usages",
+	kimiUsageFallback: "https://api.moonshot.ai/v1/usages",
+	xaiCredits:        "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
+	xaiBilling:        "https://cli-chat-proxy.grok.com/v1/billing",
 }
 
 func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaReport, error) {
@@ -69,6 +84,12 @@ func probeQuotaWithClient(ctx context.Context, client *http.Client, endpoints qu
 	switch provider {
 	case "codex", "codex-oauth", "chatgpt":
 		return probeCodexQuota(ctx, client, endpoints.codexUsage, authIndex, provider, document, now)
+	case "anthropic", "claude", "claude-code", "claude-oauth":
+		return probeClaudeQuota(ctx, client, endpoints.claudeUsage, authIndex, provider, document, now)
+	case "antigravity", "google-antigravity":
+		return probeAntigravityQuota(ctx, client, endpoints, authIndex, provider, document, now)
+	case "kimi", "kimi-code", "moonshot":
+		return probeKimiQuota(ctx, client, endpoints, authIndex, provider, document, now)
 	case "xai", "x-ai", "grok":
 		return probeXAIQuota(ctx, client, endpoints, authIndex, provider, document, now)
 	default:
@@ -207,11 +228,26 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 }
 
 func requestQuotaJSON(ctx context.Context, client *http.Client, endpoint string, headers http.Header) (map[string]any, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	return requestQuotaJSONBody(ctx, client, http.MethodGet, endpoint, headers, nil)
+}
+
+func requestQuotaJSONBody(ctx context.Context, client *http.Client, method, endpoint string, headers http.Header, body any) (map[string]any, error) {
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("encode upstream request JSON: %w", err)
+		}
+		reader = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return nil, err
 	}
 	request.Header = headers.Clone()
+	if body != nil && request.Header.Get("Content-Type") == "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err

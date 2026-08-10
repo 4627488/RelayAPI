@@ -56,6 +56,25 @@ func TestResolveProviderCandidateAndBundledFallback(t *testing.T) {
 	}
 }
 
+func TestResolveKimiProviderCandidate(t *testing.T) {
+	catalog := []Price{
+		{Model: "moonshotai/kimi-k2.5", InputNanoUSDPerToken: 600, OutputNanoUSDPerToken: 3000, Source: SourceCatalog, PriceMultiplier: 1},
+		{Model: "moonshotai-cn/kimi-k2.5", InputNanoUSDPerToken: 700, OutputNanoUSDPerToken: 3500, Source: SourceCatalog, PriceMultiplier: 1},
+	}
+	snapshot, err := Compile(nil, catalog, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := snapshot.Resolve(Dimensions{Model: "kimi-k2.5"})
+	if !ok || got.PricedModel != "moonshotai/kimi-k2.5" || got.InputNanoUSDPerToken != 600 {
+		t.Fatalf("unexpected Kimi fallback: %+v, ok=%v", got, ok)
+	}
+	got, ok = snapshot.Resolve(Dimensions{Model: "moonshotai-cn/kimi-k2.5"})
+	if !ok || got.PricedModel != "moonshotai-cn/kimi-k2.5" || got.InputNanoUSDPerToken != 700 {
+		t.Fatalf("explicit Kimi provider was not preserved: %+v, ok=%v", got, ok)
+	}
+}
+
 func TestResolvePrefersModalityAwareBundledImagePrice(t *testing.T) {
 	catalog := []Price{{
 		Model: "openai/gpt-image-2", InputNanoUSDPerToken: 5000,

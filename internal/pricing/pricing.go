@@ -204,6 +204,8 @@ func modelCandidates(model string) []string {
 			result = append(result, "google/"+model)
 		case strings.HasPrefix(lower, "deepseek-"):
 			result = append(result, "deepseek/"+model)
+		case strings.HasPrefix(lower, "kimi-"):
+			result = append(result, "moonshotai/"+model)
 		case strings.HasPrefix(lower, "gpt-"), strings.HasPrefix(lower, "codex-"),
 			strings.HasPrefix(lower, "o1-"), strings.HasPrefix(lower, "o3-"), strings.HasPrefix(lower, "o4-"):
 			result = append(result, "openai/"+model)
