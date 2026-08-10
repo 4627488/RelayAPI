@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -22,16 +24,21 @@ import (
 )
 
 type nativeWebSocketAccounting struct {
-	admission      store.Admission
-	price          *store.ResolvedPrice
-	billable       bool
-	result         billing.Result
-	errorCode      string
-	errorHTTP      int
-	requestBytes   int64
-	forwardedBytes int64
-	responseBytes  int64
-	terminalSeen   bool
+	mu              sync.Mutex
+	admission       store.Admission
+	price           *store.ResolvedPrice
+	billable        bool
+	result          billing.Result
+	errorCode       string
+	errorHTTP       int
+	requestBytes    int64
+	forwardedBytes  int64
+	responseBytes   int64
+	terminalSeen    bool
+	turnsSeen       int64
+	accruedNanoUSD  int64
+	pricingComplete bool
+	persistTurn     func(requestMeta, billing.Result, billing.Result, []byte) (bool, error)
 }
 
 type nativeWebSocketSessionState struct {
@@ -44,6 +51,10 @@ const nativeWebSocketHeartbeatInterval = 30 * time.Second
 func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
 	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
+	accounting.persistTurn = func(turnMeta requestMeta, turn, cumulative billing.Result, payload []byte) (bool, error) {
+		return a.persistNativeWebSocketTurn(context.WithoutCancel(r.Context()), r, key, requestID, turnMeta,
+			started, logContext, &accounting, turn, cumulative, payload)
+	}
 	session, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
 	if resolvedMeta.Model != "" {
 		meta = resolvedMeta
@@ -76,15 +87,15 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			_ = a.store.UpdateReservationPriceSnapshot(context.Background(), requestID, store.EncodePriceSnapshot(resolved))
 		}
 	}
-	pricingComplete := billable && accounting.result.Found && accounting.price != nil && billing.UsageComplete(*accounting.price, accounting.result.Usage)
+	pricingComplete := billable && accounting.turnsSeen > 0 && accounting.pricingComplete
 	actual := max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
+	if accounting.turnsSeen > 0 {
+		actual = accounting.accruedNanoUSD
+	}
 	settled := !billable
 	if billable {
 		var settleErr error
 		if session.established {
-			if pricingComplete {
-				actual = billing.Cost(*accounting.price, accounting.result.Usage)
-			}
 			settleErr = a.store.SettleRequestReservation(context.Background(), requestID, actual, pricingComplete)
 		} else {
 			actual = 0
@@ -109,8 +120,69 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	logContext.forwardedBytes = accounting.forwardedBytes
 	logContext.responseBytes = accounting.responseBytes
 	logContext.detail.StageTimings = timingJSON(map[string]int64{"websocket_duration_ms": duration, "total_ms": duration})
-	a.writeRequestLog(key, requestID, admission, meta, r, statusCode, started, &accounting.result, pricingComplete, settled, actual, errorString(err), logContext)
+	input := requestLogInput(key, requestID, admission, meta, r, statusCode, started, &accounting.result,
+		pricingComplete, settled, actual, errorString(err), logContext)
+	if !shouldRetainRequestDetail(requestID, statusCode, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
+		input.Detail = nil
+	}
+	if logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input); logErr != nil {
+		slog.Error("upsert native websocket request log", "request_id", requestID, "error", logErr)
+	}
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
+}
+
+func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, key store.KeyContext, requestID string,
+	meta requestMeta, started time.Time, logContext requestLogContext, accounting *nativeWebSocketAccounting,
+	turn, cumulative billing.Result, payload []byte) (bool, error) {
+	turnPrice := accounting.price
+	if turnPrice != nil && turn.ResponseServiceTier != "" {
+		if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
+			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: accounting.admission.CPAAuthIndex,
+			ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
+			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+		}); err == nil {
+			turnPrice = &resolved
+		}
+	}
+	turnComplete := accounting.billable && turn.Found && turnPrice != nil && billing.UsageComplete(*turnPrice, turn.Usage)
+	turnCost := int64(0)
+	if accounting.billable {
+		turnCost = max64(accounting.admission.BalanceReservedNanoUSD, accounting.admission.QuotaReservedNanoUSD)
+		if turnComplete {
+			turnCost = billing.Cost(*turnPrice, turn.Usage)
+		}
+	}
+	aggregateComplete := turnComplete
+	if accounting.turnsSeen > 0 {
+		aggregateComplete = accounting.pricingComplete && turnComplete
+	}
+	aggregateCost := saturatingAdd(accounting.accruedNanoUSD, turnCost)
+	turnID := strings.TrimSpace(turn.RequestID)
+	if turnID == "" {
+		turnID = fmt.Sprintf("sha256:%x", sha256.Sum256(payload))
+	}
+	logContext.price = turnPrice
+	logContext.requestBytes = accounting.requestBytes
+	logContext.forwardedBytes = accounting.forwardedBytes
+	logContext.responseBytes = accounting.responseBytes
+	logContext.detail = nil
+	duration := time.Since(started).Milliseconds()
+	input := requestLogInput(key, requestID, accounting.admission, meta, r, http.StatusSwitchingProtocols,
+		started, &cumulative, aggregateComplete, true, aggregateCost, "", logContext)
+	input.LatencyMS = duration
+	input.CompletedAt = time.Now()
+	inserted, err := a.store.AccrueWebSocketTurn(ctx, store.WebSocketTurnAccrual{
+		RequestID: requestID, TurnID: turnID, Usage: turn.Usage, CostNanoUSD: turnCost,
+		PricingComplete: turnComplete, Log: input,
+	})
+	if err != nil || !inserted {
+		return inserted, err
+	}
+	accounting.turnsSeen++
+	accounting.accruedNanoUSD = aggregateCost
+	accounting.pricingComplete = aggregateComplete
+	accounting.price = turnPrice
+	return true, nil
 }
 
 // serveNativeWebSocket is a billing-aware gateway in front of the embedded CPA
@@ -228,16 +300,44 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	results := make(chan pumpResult, 2)
 	go func() {
-		results <- pumpResult{source: "downstream", err: pumpWebSocketMessages(downstream, upstream, func(payload []byte) {
+		results <- pumpResult{source: "downstream", err: pumpWebSocketMessages(downstream, upstream, func(payload []byte) error {
+			accounting.mu.Lock()
+			defer accounting.mu.Unlock()
 			accounting.requestBytes += int64(len(payload))
 			accounting.forwardedBytes += int64(len(payload))
+			return nil
 		})}
 	}()
 	go func() {
-		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) {
+		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) error {
+			accounting.mu.Lock()
+			defer accounting.mu.Unlock()
 			accounting.responseBytes += int64(len(payload))
 			accounting.terminalSeen = accounting.terminalSeen || isNativeWebSocketTerminalEvent(payload)
-			mergeNativeWebSocketResult(&accounting.result, parseNativeWebSocketUsage(payload))
+			if !isNativeWebSocketUsageTerminalEvent(payload) {
+				return nil
+			}
+			turn := parseNativeWebSocketUsage(payload)
+			cumulative := accounting.result
+			mergeNativeWebSocketResult(&cumulative, turn)
+			if accounting.persistTurn != nil {
+				inserted, persistErr := accounting.persistTurn(meta, turn, cumulative, payload)
+				if persistErr != nil {
+					return fmt.Errorf("persist websocket terminal usage: %w", persistErr)
+				}
+				if !inserted {
+					return nil
+				}
+			} else {
+				if accounting.turnsSeen == 0 {
+					accounting.pricingComplete = turn.Found
+				} else {
+					accounting.pricingComplete = accounting.pricingComplete && turn.Found
+				}
+				accounting.turnsSeen++
+			}
+			accounting.result = cumulative
+			return nil
 		})}
 	}()
 
@@ -360,14 +460,16 @@ func embeddedCPAWebSocketHeaders(source http.Header) http.Header {
 	return header
 }
 
-func pumpWebSocketMessages(source, destination *websocket.Conn, observe func([]byte)) error {
+func pumpWebSocketMessages(source, destination *websocket.Conn, observe func([]byte) error) error {
 	for {
 		messageType, payload, err := source.ReadMessage()
 		if err != nil {
 			return err
 		}
 		if observe != nil {
-			observe(payload)
+			if err = observe(payload); err != nil {
+				return err
+			}
 		}
 		if err = destination.WriteMessage(messageType, payload); err != nil {
 			return err
@@ -430,6 +532,21 @@ func isNativeWebSocketTerminalEvent(payload []byte) bool {
 	}
 	switch event.Type {
 	case "error", "response.completed", "response.incomplete", "response.done":
+		return true
+	default:
+		return false
+	}
+}
+
+func isNativeWebSocketUsageTerminalEvent(payload []byte) bool {
+	var event struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &event) != nil {
+		return false
+	}
+	switch event.Type {
+	case "response.completed", "response.incomplete", "response.done":
 		return true
 	default:
 		return false

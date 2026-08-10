@@ -747,7 +747,7 @@ func nullableIdentifier(value string) *string {
 	return &value
 }
 
-func (s Store) WriteLog(ctx context.Context, l LogInput) error {
+func requestLogItem(l LogInput) db.RequestLog {
 	item := db.RequestLog{
 		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, CPARequestID: l.CPARequestID,
 		CPATraceID: l.CPATraceID, CPAExecutionID: l.CPAExecutionID,
@@ -781,54 +781,95 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 		item.ImageOutputPriceNanoUSD = l.Price.ImageOutputNanoUSDPerToken
 		item.PriceMultiplier = l.Price.PriceMultiplier
 	}
+	return item
+}
+
+func (s Store) WriteLog(ctx context.Context, l LogInput) error {
+	return s.writeLog(ctx, l, false)
+}
+
+// UpsertLog is used by durable WebSocket accounting: every terminal turn
+// refreshes the same session aggregate, then session teardown finalizes it.
+func (s Store) UpsertLog(ctx context.Context, l LogInput) error {
+	return s.writeLog(ctx, l, true)
+}
+
+func (s Store) writeLog(ctx context.Context, l LogInput, upsert bool) error {
 	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		if item.ParentSubscriptionID != nil {
-			var parent db.ParentSubscription
-			if err := tx.First(&parent, "id = ?", *item.ParentSubscriptionID).Error; err == nil {
-				item.ParentSubscriptionName = parent.Name
-				item.ChannelID, item.ChannelName = parent.ID, parent.Name
-				item.CredentialID, item.CredentialName = parent.CPAAuthID, parent.CPAAuthName
-				if item.Provider == "" {
-					item.Provider = parent.Provider
-				}
-				var metadata map[string]any
-				if json.Unmarshal(parent.Metadata, &metadata) == nil {
-					for _, key := range []string{"email", "account_email", "user_email"} {
-						if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
-							item.CredentialEmail = strings.TrimSpace(value)
-							break
-						}
+		return writeLogTx(tx, l, upsert)
+	})
+}
+
+func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
+	item := requestLogItem(l)
+	if item.ParentSubscriptionID != nil {
+		var parent db.ParentSubscription
+		if err := tx.First(&parent, "id = ?", *item.ParentSubscriptionID).Error; err == nil {
+			item.ParentSubscriptionName = parent.Name
+			item.ChannelID, item.ChannelName = parent.ID, parent.Name
+			item.CredentialID, item.CredentialName = parent.CPAAuthID, parent.CPAAuthName
+			if item.Provider == "" {
+				item.Provider = parent.Provider
+			}
+			var metadata map[string]any
+			if json.Unmarshal(parent.Metadata, &metadata) == nil {
+				for _, key := range []string{"email", "account_email", "user_email"} {
+					if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
+						item.CredentialEmail = strings.TrimSpace(value)
+						break
 					}
 				}
 			}
 		}
-		if item.ChildSubscriptionID != nil {
-			var child db.ChildSubscription
-			if err := tx.First(&child, "id = ?", *item.ChildSubscriptionID).Error; err == nil {
-				item.ChildSubscriptionName = child.Name
-			}
+	}
+	if item.ChildSubscriptionID != nil {
+		var child db.ChildSubscription
+		if err := tx.First(&child, "id = ?", *item.ChildSubscriptionID).Error; err == nil {
+			item.ChildSubscriptionName = child.Name
 		}
-		if err := tx.Create(&item).Error; err != nil {
+	}
+	create := tx
+	if upsert {
+		create = create.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"cpa_request_id", "response_service_tier", "status_code", "request_body_bytes",
+				"forwarded_body_bytes", "response_body_bytes", "prompt_tokens", "completion_tokens",
+				"cached_tokens", "cache_write_tokens", "reasoning_tokens", "image_input_tokens",
+				"cached_image_input_tokens", "image_output_tokens", "total_tokens", "cost_nano_usd",
+				"price_model", "price_source", "price_version", "input_price_nano_usd",
+				"output_price_nano_usd", "cached_price_nano_usd", "cache_write_price_nano_usd",
+				"reasoning_price_nano_usd", "image_input_price_nano_usd",
+				"cached_image_input_price_nano_usd", "image_output_price_nano_usd", "price_multiplier",
+				"pricing_complete", "settled", "reserved_nano_usd", "latency_ms", "ttftms",
+				"error_code", "error_message", "completed_at",
+			}),
+		})
+	}
+	if err := create.Create(&item).Error; err != nil {
+		return err
+	}
+	if l.Detail != nil {
+		detail := db.RequestLogDetail{
+			RequestLogID: l.ID, RequestHeaders: l.Detail.RequestHeaders, RequestBody: l.Detail.RequestBody,
+			RequestBodyTruncated: l.Detail.RequestBodyTruncated, RequestBodyBytes: l.Detail.RequestBodyBytes,
+			ForwardedHeaders: l.Detail.ForwardedHeaders, ForwardedBody: l.Detail.ForwardedBody,
+			ForwardedBodyTruncated: l.Detail.ForwardedBodyTruncated, ForwardedBodyBytes: l.Detail.ForwardedBodyBytes,
+			UpstreamStatus: l.Detail.UpstreamStatus, UpstreamHeaders: l.Detail.UpstreamHeaders,
+			UpstreamBody: l.Detail.UpstreamBody, UpstreamBodyTruncated: l.Detail.UpstreamBodyTruncated,
+			UpstreamBodyBytes: l.Detail.UpstreamBodyBytes, ErrorName: l.Detail.ErrorName,
+			ErrorMessage: l.Detail.ErrorMessage, ErrorStack: l.Detail.ErrorStack, ErrorCause: l.Detail.ErrorCause,
+			ErrorDetail: l.Detail.ErrorDetail, StageTimings: l.Detail.StageTimings,
+		}
+		detailCreate := tx
+		if upsert {
+			detailCreate = detailCreate.Clauses(clause.OnConflict{UpdateAll: true})
+		}
+		if err := detailCreate.Create(&detail).Error; err != nil {
 			return err
 		}
-		if l.Detail != nil {
-			detail := db.RequestLogDetail{
-				RequestLogID: l.ID, RequestHeaders: l.Detail.RequestHeaders, RequestBody: l.Detail.RequestBody,
-				RequestBodyTruncated: l.Detail.RequestBodyTruncated, RequestBodyBytes: l.Detail.RequestBodyBytes,
-				ForwardedHeaders: l.Detail.ForwardedHeaders, ForwardedBody: l.Detail.ForwardedBody,
-				ForwardedBodyTruncated: l.Detail.ForwardedBodyTruncated, ForwardedBodyBytes: l.Detail.ForwardedBodyBytes,
-				UpstreamStatus: l.Detail.UpstreamStatus, UpstreamHeaders: l.Detail.UpstreamHeaders,
-				UpstreamBody: l.Detail.UpstreamBody, UpstreamBodyTruncated: l.Detail.UpstreamBodyTruncated,
-				UpstreamBodyBytes: l.Detail.UpstreamBodyBytes, ErrorName: l.Detail.ErrorName,
-				ErrorMessage: l.Detail.ErrorMessage, ErrorStack: l.Detail.ErrorStack, ErrorCause: l.Detail.ErrorCause,
-				ErrorDetail: l.Detail.ErrorDetail, StageTimings: l.Detail.StageTimings,
-			}
-			if err := tx.Create(&detail).Error; err != nil {
-				return err
-			}
-		}
-		return applyPendingCPALifecycleEvents(tx, l.ID)
-	})
+	}
+	return applyPendingCPALifecycleEvents(tx, l.ID)
 }
 
 func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, error) {

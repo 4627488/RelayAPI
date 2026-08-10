@@ -619,6 +619,17 @@ func resolveClaudeCatalogModel(model string) string {
 
 func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
 	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) {
+	input := requestLogInput(key, requestID, admission, meta, r, status, started, parsed, pricingComplete, settled, cost, errorMessage, logContext)
+	if !shouldRetainRequestDetail(requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
+		input.Detail = nil
+	}
+	if err := a.store.WriteLog(context.WithoutCancel(r.Context()), input); err != nil {
+		slog.Error("write request log", "request_id", requestID, "error", err)
+	}
+}
+
+func requestLogInput(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
+	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) store.LogInput {
 	client := identifyClientUserAgent(r.UserAgent())
 	usage := store.Usage{}
 	cpaID := ""
@@ -642,10 +653,7 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 			logContext.responseBytes = detail.UpstreamBodyBytes
 		}
 	}
-	if !shouldRetainRequestDetail(requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
-		detail = nil
-	}
-	err := a.store.WriteLog(context.WithoutCancel(r.Context()), store.LogInput{
+	return store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
 		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
 		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),
@@ -659,9 +667,6 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
 		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
 		StartedAt: started, CompletedAt: time.Now(), Detail: detail,
-	})
-	if err != nil {
-		slog.Error("write request log", "request_id", requestID, "error", err)
 	}
 }
 

@@ -85,6 +85,14 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS invitations_cleanup_idx ON invitations(created_at, id)`,
 		},
 	},
+	{
+		version: 6,
+		name:    "durable websocket turn accounting",
+		statements: []string{
+			`ALTER TABLE web_socket_turns ADD CONSTRAINT web_socket_turn_request_fk FOREIGN KEY (request_id) REFERENCES request_reservations(request_id) ON DELETE CASCADE`,
+			`CREATE INDEX IF NOT EXISTS web_socket_turns_created_idx ON web_socket_turns(created_at, request_id)`,
+		},
+	},
 }
 
 func runMigrations(ctx context.Context, database *gorm.DB) error {
