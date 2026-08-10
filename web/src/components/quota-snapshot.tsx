@@ -60,7 +60,7 @@ export function QuotaSnapshot({
         ) : null}
         {status === "error" ? (
           <Badge variant="destructive" title={error}>
-            {report ? "快照可用" : "配置可用"} · 刷新失败
+            {report ? "快照可用" : "已有额度可用"} · 刷新失败
           </Badge>
         ) : null}
         {!compact && report?.source ? (
@@ -222,7 +222,10 @@ function compactValue(
 ) {
   const values = []
   if (used != null) values.push(`${formatNumber(used)}%`)
-  if (configured) values.push(money(configured.limit_nano_usd))
+  if (configured) {
+    const source = configured.source === "manual_conversion" ? "手工" : "推测"
+    values.push(`${source} ${money(configured.limit_nano_usd)}`)
+  }
   return values.join(" · ") || amount(window)
 }
 

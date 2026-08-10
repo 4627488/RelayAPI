@@ -112,7 +112,7 @@ import {
   type ParentSubscriptionView,
   type User,
 } from "@/lib/api"
-import { dateTime, money } from "@/lib/format"
+import { dateTime } from "@/lib/format"
 
 const capacityModes: Array<{
   value: CapacityMode
@@ -174,13 +174,22 @@ export function AdminSubscriptionsView() {
         api<{ items: User[] }>("/api/admin/tenants"),
       ])
       const nextParents = parentValue.items ?? []
+      const nextChildren = childValue.items ?? []
+      const parentIDsWithChildren = new Set(
+        nextChildren.map((child) => child.parent_subscription_id)
+      )
+      const nextVisibleParents = nextParents.filter(
+        (view) =>
+          view.item.status !== "missing" ||
+          parentIDsWithChildren.has(view.item.id)
+      )
       setParents(nextParents)
-      setChildren(childValue.items ?? [])
+      setChildren(nextChildren)
       setTenants(tenantValue.items ?? [])
       setSelectedParentID((current) =>
-        nextParents.some((view) => view.item.id === current)
+        nextVisibleParents.some((view) => view.item.id === current)
           ? current
-          : (nextParents[0]?.item.id ?? "")
+          : (nextVisibleParents[0]?.item.id ?? "")
       )
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "无法读取订阅分配")
@@ -204,18 +213,45 @@ export function AdminSubscriptionsView() {
     return counts
   }, [children])
 
-  const filteredParents = useMemo(() => {
+  const visibleParents = useMemo(
+    () =>
+      parents.filter(
+        (view) =>
+          view.item.status !== "missing" ||
+          (childCountByParent.get(view.item.id) ?? 0) > 0
+      ),
+    [parents, childCountByParent]
+  )
+  const currentParents = useMemo(
+    () => visibleParents.filter((view) => view.item.status !== "missing"),
+    [visibleParents]
+  )
+  const historicalParents = useMemo(
+    () => visibleParents.filter((view) => view.item.status === "missing"),
+    [visibleParents]
+  )
+  const filteredCurrentParents = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    if (!needle) return parents
-    return parents.filter((view) =>
+    if (!needle) return currentParents
+    return currentParents.filter((view) =>
       [view.item.name, view.item.provider, view.item.plan_type].some((value) =>
         value?.toLowerCase().includes(needle)
       )
     )
-  }, [parents, query])
+  }, [currentParents, query])
+  const filteredHistoricalParents = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return historicalParents
+    return historicalParents.filter((view) =>
+      [view.item.name, view.item.provider, view.item.plan_type].some((value) =>
+        value?.toLowerCase().includes(needle)
+      )
+    )
+  }, [historicalParents, query])
 
   const selected =
-    parents.find((view) => view.item.id === selectedParentID) ?? parents[0]
+    visibleParents.find((view) => view.item.id === selectedParentID) ??
+    visibleParents[0]
   const selectedChildren = selected
     ? children.filter(
         (child) => child.parent_subscription_id === selected.item.id
@@ -233,7 +269,7 @@ export function AdminSubscriptionsView() {
   }
 
   function changeAssignParent(parentID: string) {
-    const view = parents.find((item) => item.item.id === parentID)
+    const view = currentParents.find((item) => item.item.id === parentID)
     setAssignParentID(parentID)
     setAssignName(defaultChildName(view?.item))
     setAssignPercent("10")
@@ -242,7 +278,7 @@ export function AdminSubscriptionsView() {
 
   async function createAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const view = parents.find((item) => item.item.id === assignParentID)
+    const view = currentParents.find((item) => item.item.id === assignParentID)
     if (!view || !assignTenantID) {
       toast.error("请选择模型账户和租户")
       return
@@ -329,7 +365,9 @@ export function AdminSubscriptionsView() {
     }
   }
 
-  const assignParent = parents.find((view) => view.item.id === assignParentID)
+  const assignParent = currentParents.find(
+    (view) => view.item.id === assignParentID
+  )
   const assignPPM = Math.round(Number(assignPercent || 0) * 10_000)
   const assignRemainingPPM = assignParent
     ? assignParent.item.allocation_limit_ppm -
@@ -347,7 +385,11 @@ export function AdminSubscriptionsView() {
           </p>
         </div>
         <Button
-          disabled={!selected || !tenants.some((tenant) => tenant.enabled)}
+          disabled={
+            !selected ||
+            !isAllocatable(selected) ||
+            !tenants.some((tenant) => tenant.enabled)
+          }
           onClick={() => selected && openAssignment(selected)}
         >
           <UserPlusIcon data-icon="inline-start" />
@@ -357,7 +399,7 @@ export function AdminSubscriptionsView() {
 
       {loading ? (
         <AllocationSkeleton />
-      ) : !parents.length ? (
+      ) : !visibleParents.length ? (
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
@@ -375,7 +417,7 @@ export function AdminSubscriptionsView() {
             <CardHeader>
               <CardTitle>模型账户</CardTitle>
               <CardDescription>
-                {parents.length} 个账户可用于分配
+                {currentParents.length} 个账户可用于分配
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
@@ -392,31 +434,34 @@ export function AdminSubscriptionsView() {
               </InputGroup>
               <Separator />
               <div className="flex max-h-[34rem] flex-col gap-1 overflow-y-auto">
-                {filteredParents.map((view) => {
-                  const active = view.item.id === selected?.item.id
-                  return (
-                    <Button
-                      key={view.item.id}
-                      variant={active ? "secondary" : "ghost"}
-                      className="h-auto w-full justify-start px-2 py-2 text-left"
-                      onClick={() => setSelectedParentID(view.item.id)}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{view.item.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {view.item.provider || "未知提供商"}
-                          {displayPlan(view.item.plan_type)
-                            ? ` · ${displayPlan(view.item.plan_type)}`
-                            : ""}
-                        </p>
-                      </div>
-                      <Badge variant="outline">
-                        {childCountByParent.get(view.item.id) ?? 0}
-                      </Badge>
-                    </Button>
-                  )
-                })}
-                {!filteredParents.length ? (
+                {filteredCurrentParents.map((view) => (
+                  <ParentListButton
+                    key={view.item.id}
+                    view={view}
+                    active={view.item.id === selected?.item.id}
+                    childCount={childCountByParent.get(view.item.id) ?? 0}
+                    onSelect={() => setSelectedParentID(view.item.id)}
+                  />
+                ))}
+                {filteredHistoricalParents.length ? (
+                  <>
+                    <Separator className="my-2" />
+                    <p className="px-2 text-xs font-medium text-muted-foreground">
+                      历史账户
+                    </p>
+                    {filteredHistoricalParents.map((view) => (
+                      <ParentListButton
+                        key={view.item.id}
+                        view={view}
+                        active={view.item.id === selected?.item.id}
+                        childCount={childCountByParent.get(view.item.id) ?? 0}
+                        onSelect={() => setSelectedParentID(view.item.id)}
+                      />
+                    ))}
+                  </>
+                ) : null}
+                {!filteredCurrentParents.length &&
+                !filteredHistoricalParents.length ? (
                   <p className="py-6 text-center text-sm text-muted-foreground">
                     没有匹配的账户
                   </p>
@@ -468,7 +513,7 @@ export function AdminSubscriptionsView() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      {parents.map((view) => (
+                      {currentParents.map((view) => (
                         <SelectItem
                           key={view.item.id}
                           value={view.item.id}
@@ -598,7 +643,7 @@ export function AdminSubscriptionsView() {
       />
       <ChildSettingsDialog
         value={childEditor}
-        parents={parents}
+        parents={visibleParents}
         pending={pending}
         onPending={setPending}
         onClose={() => setChildEditor(null)}
@@ -634,6 +679,37 @@ export function AdminSubscriptionsView() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  )
+}
+
+function ParentListButton({
+  view,
+  active,
+  childCount,
+  onSelect,
+}: {
+  view: ParentSubscriptionView
+  active: boolean
+  childCount: number
+  onSelect: () => void
+}) {
+  return (
+    <Button
+      variant={active ? "secondary" : "ghost"}
+      className="h-auto w-full justify-start px-2 py-2 text-left"
+      onClick={onSelect}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium">{view.item.name}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {view.item.provider || "未知提供商"}
+          {displayPlan(view.item.plan_type)
+            ? ` · ${displayPlan(view.item.plan_type)}`
+            : ""}
+        </p>
+      </div>
+      <Badge variant="outline">{childCount}</Badge>
+    </Button>
   )
 }
 
@@ -681,12 +757,14 @@ function AccountAllocationCard({
             : ""}
           {` · ${billingLabel(view)}`}
         </CardDescription>
-        <CardAction>
-          <Button size="sm" variant="outline" onClick={onConfigure}>
-            <Settings2Icon data-icon="inline-start" />
-            账户规则
-          </Button>
-        </CardAction>
+        {view.item.status !== "missing" ? (
+          <CardAction>
+            <Button size="sm" variant="outline" onClick={onConfigure}>
+              <Settings2Icon data-icon="inline-start" />
+              账户规则
+            </Button>
+          </CardAction>
+        ) : null}
       </CardHeader>
 
       <CardContent className="flex flex-col gap-5">
@@ -1087,23 +1165,29 @@ function ParentSettingsDialog({
                             <FieldDescription>
                               {dateTime(new Date(window.reset).toISOString())}{" "}
                               重置
-                              {window.automaticLimit
-                                ? ` · 当前自动推测 ${money(window.automaticLimit)}`
-                                : " · 留空则继续自动推测"}
+                              {" · 留空则继续自动推测"}
                             </FieldDescription>
                           </div>
-                          <Input
-                            id={`${window.key}-limit`}
-                            className="w-40"
-                            type="number"
-                            min="0.000001"
-                            step="0.000001"
-                            value={window.limit}
-                            onChange={(event) =>
-                              updateWindow(window.key, event.target.value)
-                            }
-                            placeholder="自动推测"
-                          />
+                          <InputGroup className="w-40">
+                            <InputGroupInput
+                              id={`${window.key}-limit`}
+                              type="number"
+                              min="0.000001"
+                              step="0.000001"
+                              value={window.limit}
+                              onChange={(event) =>
+                                updateWindow(window.key, event.target.value)
+                              }
+                              placeholder={
+                                window.automaticLimit
+                                  ? quotaUSDInputValue(window.automaticLimit)
+                                  : "自动推测"
+                              }
+                            />
+                            <InputGroupAddon align="inline-end">
+                              USD
+                            </InputGroupAddon>
+                          </InputGroup>
                         </Field>
                       ))}
                     </FieldGroup>
@@ -1362,6 +1446,8 @@ function ChildSettingsDialog({
 }
 
 function AccountStatusBadge({ view }: { view: ParentSubscriptionView }) {
+  if (view.item.status === "missing")
+    return <Badge variant="outline">账户已删除</Badge>
   if (!view.item.enabled) return <Badge variant="secondary">已停用</Badge>
   if (view.item.cpa_unavailable)
     return <Badge variant="destructive">账户不可用</Badge>
@@ -1391,6 +1477,8 @@ function isAllocatable(view: ParentSubscriptionView) {
 }
 
 function accountBlockReason(view: ParentSubscriptionView) {
+  if (view.item.status === "missing")
+    return "模型账户已删除；历史授权仅可迁移到其他账户或删除。"
   if (!view.item.enabled) return "账户分配规则已停用。"
   if (view.item.cpa_unavailable) return "模型账户当前不可用，请先检查账户状态。"
   if (view.item.capacity_mode === "observed" && !view.windows.length)
@@ -1457,6 +1545,10 @@ function hasObservableQuota(view: ParentSubscriptionView) {
   return (view.item.quota_snapshot?.windows ?? []).some(
     (window) => window.enforceable && Boolean(window.resets_at)
   )
+}
+
+function quotaUSDInputValue(nanoUSD: number) {
+  return (nanoUSD / 1_000_000_000).toFixed(6).replace(/\.?0+$/, "")
 }
 
 function defaultChildName(parent?: ParentSubscription) {
