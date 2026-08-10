@@ -478,12 +478,23 @@ function LogDetailSheet({
 
 function LogOverview({ log, detail, loading }: { log: RequestLog; detail: RequestLogDetail | null; loading: boolean }) {
   const costRows = useMemo(() => {
-    const uncached = Math.max(0, log.prompt_tokens - log.cached_tokens)
+    const imageInput = Math.min(Math.max(0, log.image_input_tokens ?? 0), Math.max(0, log.prompt_tokens))
+    const cachedInput = Math.min(Math.max(0, log.cached_tokens), Math.max(0, log.prompt_tokens))
+    const cachedImage = Math.min(Math.max(0, log.cached_image_input_tokens ?? 0), imageInput, cachedInput)
+    const textInput = Math.max(0, log.prompt_tokens - imageInput)
+    const cachedText = Math.min(textInput, Math.max(0, cachedInput - cachedImage))
+    const imageOutput = Math.min(Math.max(0, log.image_output_tokens ?? 0), Math.max(0, log.completion_tokens))
+    let textOutput = Math.max(0, log.completion_tokens - imageOutput)
+    const reasoningIncluded = log.total_tokens <= log.prompt_tokens || log.total_tokens - log.prompt_tokens <= log.completion_tokens
+    if (reasoningIncluded) textOutput = Math.max(0, textOutput - log.reasoning_tokens)
     return [
-      ["普通输入", uncached, log.input_price_nano_usd_per_token ?? 0],
-      ["缓存读取", log.cached_tokens, log.cached_input_price_nano_usd_per_token ?? 0],
+      ["文本输入", Math.max(0, textInput - cachedText), log.input_price_nano_usd_per_token ?? 0],
+      ["文本缓存读取", cachedText, log.cached_input_price_nano_usd_per_token ?? 0],
+      ["图片输入", Math.max(0, imageInput - cachedImage), log.image_input_price_nano_usd_per_token ?? 0],
+      ["图片缓存读取", cachedImage, log.cached_image_input_price_nano_usd_per_token ?? 0],
       ["缓存写入", log.cache_write_tokens, log.cache_write_price_nano_usd_per_token ?? 0],
-      ["输出", log.completion_tokens, log.output_price_nano_usd_per_token ?? 0],
+      ["文本输出", textOutput, log.output_price_nano_usd_per_token ?? 0],
+      ["图片输出", imageOutput, log.image_output_price_nano_usd_per_token ?? 0],
       ["推理", log.reasoning_tokens, log.reasoning_price_nano_usd_per_token ?? 0],
     ].filter(([, tokens]) => Number(tokens) > 0) as Array<[string, number, number]>
   }, [log])

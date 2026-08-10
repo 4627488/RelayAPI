@@ -59,7 +59,10 @@ type KeyContext struct {
 	TenantExpiresAt  *time.Time
 }
 
-type Usage struct{ Prompt, Completion, Cached, CacheWrite, Reasoning, Total int64 }
+type Usage struct {
+	Prompt, Completion, Cached, CacheWrite, Reasoning, Total int64
+	ImageInput, CachedImageInput, ImageOutput                int64
+}
 
 type LogInput struct {
 	ID, TenantID, APIKeyID, CPARequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
@@ -524,7 +527,8 @@ func (s *Store) UpsertPrice(ctx context.Context, price Price) error {
 		Columns: []clause.Column{{Name: "model"}},
 		DoUpdates: clause.AssignmentColumns([]string{
 			"input_nano_usd_per_token", "output_nano_usd_per_token", "cached_input_nano_usd_per_token",
-			"cache_write_nano_usd_per_token", "reasoning_nano_usd_per_token", "source", "version",
+			"cache_write_nano_usd_per_token", "reasoning_nano_usd_per_token",
+			"image_input_nano_usd_per_token", "cached_image_input_nano_usd_per_token", "image_output_nano_usd_per_token", "source", "version",
 			"price_multiplier", "updated_at",
 		}),
 	}).Create(&price).Error
@@ -629,11 +633,14 @@ func (s *Store) ApplyCatalog(ctx context.Context, result pricing.SyncResult) err
 		for _, entry := range result.Entries {
 			rows = append(rows, db.ModelCatalogPrice{
 				Model: entry.Model, InputNanoUSDPerToken: entry.InputNanoUSDPerToken,
-				OutputNanoUSDPerToken:      entry.OutputNanoUSDPerToken,
-				CachedInputNanoUSDPerToken: entry.CachedInputNanoUSDPerToken,
-				CacheWriteNanoUSDPerToken:  entry.CacheWriteNanoUSDPerToken,
-				ReasoningNanoUSDPerToken:   entry.ReasoningNanoUSDPerToken,
-				Source:                     result.Source, Version: result.Version, SourceModelID: entry.SourceModelID,
+				OutputNanoUSDPerToken:           entry.OutputNanoUSDPerToken,
+				CachedInputNanoUSDPerToken:      entry.CachedInputNanoUSDPerToken,
+				CacheWriteNanoUSDPerToken:       entry.CacheWriteNanoUSDPerToken,
+				ReasoningNanoUSDPerToken:        entry.ReasoningNanoUSDPerToken,
+				ImageInputNanoUSDPerToken:       entry.ImageInputNanoUSDPerToken,
+				CachedImageInputNanoUSDPerToken: entry.CachedImageInputNanoUSDPerToken,
+				ImageOutputNanoUSDPerToken:      entry.ImageOutputNanoUSDPerToken,
+				Source:                          result.Source, Version: result.Version, SourceModelID: entry.SourceModelID,
 				RawJSON: entry.RawJSON, UpdatedAt: now,
 			})
 		}
@@ -684,22 +691,28 @@ func (s *Store) RefreshPricing(ctx context.Context) error {
 		}
 		adminPrices = append(adminPrices, pricing.Price{
 			Model: value.Model, InputNanoUSDPerToken: value.InputNanoUSDPerToken,
-			OutputNanoUSDPerToken:      value.OutputNanoUSDPerToken,
-			CachedInputNanoUSDPerToken: value.CachedInputNanoUSDPerToken,
-			CacheWriteNanoUSDPerToken:  value.CacheWriteNanoUSDPerToken,
-			ReasoningNanoUSDPerToken:   value.ReasoningNanoUSDPerToken,
-			Source:                     pricing.SourceAdmin, Version: value.Version, PriceMultiplier: multiplier,
+			OutputNanoUSDPerToken:           value.OutputNanoUSDPerToken,
+			CachedInputNanoUSDPerToken:      value.CachedInputNanoUSDPerToken,
+			CacheWriteNanoUSDPerToken:       value.CacheWriteNanoUSDPerToken,
+			ReasoningNanoUSDPerToken:        value.ReasoningNanoUSDPerToken,
+			ImageInputNanoUSDPerToken:       value.ImageInputNanoUSDPerToken,
+			CachedImageInputNanoUSDPerToken: value.CachedImageInputNanoUSDPerToken,
+			ImageOutputNanoUSDPerToken:      value.ImageOutputNanoUSDPerToken,
+			Source:                          pricing.SourceAdmin, Version: value.Version, PriceMultiplier: multiplier,
 		})
 	}
 	catalogPrices := make([]pricing.Price, 0, len(catalog))
 	for _, value := range catalog {
 		catalogPrices = append(catalogPrices, pricing.Price{
 			Model: value.Model, InputNanoUSDPerToken: value.InputNanoUSDPerToken,
-			OutputNanoUSDPerToken:      value.OutputNanoUSDPerToken,
-			CachedInputNanoUSDPerToken: value.CachedInputNanoUSDPerToken,
-			CacheWriteNanoUSDPerToken:  value.CacheWriteNanoUSDPerToken,
-			ReasoningNanoUSDPerToken:   value.ReasoningNanoUSDPerToken,
-			Source:                     value.Source, Version: value.Version, PriceMultiplier: 1,
+			OutputNanoUSDPerToken:           value.OutputNanoUSDPerToken,
+			CachedInputNanoUSDPerToken:      value.CachedInputNanoUSDPerToken,
+			CacheWriteNanoUSDPerToken:       value.CacheWriteNanoUSDPerToken,
+			ReasoningNanoUSDPerToken:        value.ReasoningNanoUSDPerToken,
+			ImageInputNanoUSDPerToken:       value.ImageInputNanoUSDPerToken,
+			CachedImageInputNanoUSDPerToken: value.CachedImageInputNanoUSDPerToken,
+			ImageOutputNanoUSDPerToken:      value.ImageOutputNanoUSDPerToken,
+			Source:                          value.Source, Version: value.Version, PriceMultiplier: 1,
 		})
 	}
 	aliasMap := make(map[string]string, len(aliases))
@@ -749,7 +762,8 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 		Stream: l.Stream, RequestBodyBytes: l.RequestBodyBytes, ForwardedBodyBytes: l.ForwardedBodyBytes,
 		ResponseBodyBytes: l.ResponseBodyBytes, PromptTokens: l.Usage.Prompt, CompletionTokens: l.Usage.Completion,
 		CachedTokens: l.Usage.Cached, CacheWriteTokens: l.Usage.CacheWrite, ReasoningTokens: l.Usage.Reasoning,
-		TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,
+		ImageInputTokens: l.Usage.ImageInput, CachedImageInputTokens: l.Usage.CachedImageInput,
+		ImageOutputTokens: l.Usage.ImageOutput, TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,
 		Settled: l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS,
 		ErrorCode: l.ErrorCode, ErrorMessage: l.ErrorMessage, StartedAt: l.StartedAt, CompletedAt: l.CompletedAt,
 	}
@@ -762,6 +776,9 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 		item.CachedPriceNanoUSD = l.Price.CachedInputNanoUSDPerToken
 		item.CacheWritePriceNanoUSD = l.Price.CacheWriteNanoUSDPerToken
 		item.ReasoningPriceNanoUSD = l.Price.ReasoningNanoUSDPerToken
+		item.ImageInputPriceNanoUSD = l.Price.ImageInputNanoUSDPerToken
+		item.CachedImageInputPriceNanoUSD = l.Price.CachedImageInputNanoUSDPerToken
+		item.ImageOutputPriceNanoUSD = l.Price.ImageOutputNanoUSDPerToken
 		item.PriceMultiplier = l.Price.PriceMultiplier
 	}
 	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {

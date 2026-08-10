@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -30,6 +31,7 @@ type requestMeta struct {
 	Stream          bool   `json:"stream"`
 	ServiceTier     string `json:"service_tier"`
 	ReasoningEffort string `json:"reasoning_effort"`
+	ImageCount      int    `json:"n"`
 	Reasoning       struct {
 		Effort string `json:"effort"`
 	} `json:"reasoning"`
@@ -84,6 +86,7 @@ func readFormRequestMeta(body []byte, contentType string, meta requestMeta) requ
 		if parseErr == nil {
 			meta.Model = strings.TrimSpace(values.Get("model"))
 			meta.Stream, _ = strconv.ParseBool(values.Get("stream"))
+			meta.ImageCount, _ = strconv.Atoi(values.Get("n"))
 		}
 	case "multipart/form-data":
 		boundary := strings.TrimSpace(params["boundary"])
@@ -97,7 +100,7 @@ func readFormRequestMeta(body []byte, contentType string, meta requestMeta) requ
 				break
 			}
 			name := part.FormName()
-			if part.FileName() != "" || (name != "model" && name != "stream") {
+			if part.FileName() != "" || (name != "model" && name != "stream" && name != "n") {
 				_ = part.Close()
 				continue
 			}
@@ -108,6 +111,8 @@ func readFormRequestMeta(body []byte, contentType string, meta requestMeta) requ
 				meta.Model = strings.TrimSpace(string(value))
 			case "stream":
 				meta.Stream, _ = strconv.ParseBool(strings.TrimSpace(string(value)))
+			case "n":
+				meta.ImageCount, _ = strconv.Atoi(strings.TrimSpace(string(value)))
 			}
 		}
 	}
@@ -330,6 +335,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	resolved.Stream = meta.Stream
 	resolved.ServiceTier = meta.ServiceTier
 	resolved.ReasoningEffort = meta.ReasoningEffort
+	resolved.ImageCount = meta.ImageCount
 	meta = resolved
 	body, err = rewriteRequestModel(body, r.URL, meta.RequestedModel, meta.Model)
 	if err != nil {
@@ -380,6 +386,13 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		reserve := int64(0)
 		if priceConfigured {
 			reserve = a.cfg.ReservationNanoUSD
+			if price.ImageOutputNanoUSDPerToken > 0 {
+				imageCount := int64(meta.ImageCount)
+				if imageCount < 1 {
+					imageCount = 1
+				}
+				reserve = max64(reserve, saturatingMultiply64(a.cfg.ImageReservationNanoUSD, imageCount))
+			}
 		}
 		reservationTTL := maxDuration(30*time.Minute, a.cfg.RequestTimeout+5*time.Minute)
 		if websocket {
@@ -514,7 +527,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	actual := int64(0)
 	settled := !billable
 	var cost *int64
-	if billable && response.StatusCode < http.StatusBadRequest && parsed.Found && priceConfigured {
+	if billable && response.StatusCode < http.StatusBadRequest && parsed.Found && priceConfigured && billing.UsageComplete(price, parsed.Usage) {
 		actual = billing.Cost(price, parsed.Usage)
 		cost = &actual
 		if err := a.store.SettleRequestReservation(context.WithoutCancel(r.Context()), requestID, actual, true); err == nil {
@@ -574,6 +587,16 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	a.writeRequestLog(key, requestID, admission, meta, r, response.StatusCode, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
+}
+
+func saturatingMultiply64(left, right int64) int64 {
+	if left <= 0 || right <= 0 {
+		return 0
+	}
+	if left > math.MaxInt64/right {
+		return math.MaxInt64
+	}
+	return left * right
 }
 
 func resolveClaudeCatalogModel(model string) string {

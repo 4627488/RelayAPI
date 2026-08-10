@@ -4,14 +4,23 @@ import "math"
 
 type Usage struct {
 	Prompt, Completion, Cached, CacheWrite, Reasoning, Total int64
+	ImageInput, CachedImageInput, ImageOutput                int64
 }
 
 // CostNanoUSD calculates a non-negative, saturating request cost. Some APIs
 // include reasoning tokens inside output tokens (OpenAI), while others report
 // them separately (Gemini). Total disambiguates those two shapes.
 func CostNanoUSD(price SnapshotPrice, usage Usage) int64 {
-	uncached := max64(0, usage.Prompt-usage.Cached)
-	completion := max64(0, usage.Completion)
+	imageInput := min64(max64(0, usage.ImageInput), max64(0, usage.Prompt))
+	cachedInput := min64(max64(0, usage.Cached), max64(0, usage.Prompt))
+	cachedImage := min64(max64(0, usage.CachedImageInput), min64(imageInput, cachedInput))
+	textInput := max64(0, usage.Prompt-imageInput)
+	cachedText := min64(textInput, max64(0, cachedInput-cachedImage))
+	uncachedText := max64(0, textInput-cachedText)
+	uncachedImage := max64(0, imageInput-cachedImage)
+
+	imageOutput := min64(max64(0, usage.ImageOutput), max64(0, usage.Completion))
+	completion := max64(0, usage.Completion-imageOutput)
 	reasoning := max64(0, usage.Reasoning)
 	if reasoning > 0 && reasoningIncludedInCompletion(usage) {
 		completion = max64(0, completion-reasoning)
@@ -19,9 +28,12 @@ func CostNanoUSD(price SnapshotPrice, usage Usage) int64 {
 
 	result := int64(0)
 	for _, item := range [][2]int64{
-		{uncached, price.InputNanoUSDPerToken},
-		{max64(0, usage.Cached), price.CachedInputNanoUSDPerToken},
+		{uncachedText, price.InputNanoUSDPerToken},
+		{cachedText, price.CachedInputNanoUSDPerToken},
+		{uncachedImage, price.ImageInputNanoUSDPerToken},
+		{cachedImage, price.CachedImageInputNanoUSDPerToken},
 		{completion, price.OutputNanoUSDPerToken},
+		{imageOutput, price.ImageOutputNanoUSDPerToken},
 		{max64(0, usage.CacheWrite), price.CacheWriteNanoUSDPerToken},
 		{reasoning, price.ReasoningNanoUSDPerToken},
 	} {
@@ -56,6 +68,13 @@ func saturatingAdd(left, right int64) int64 {
 
 func max64(left, right int64) int64 {
 	if left > right {
+		return left
+	}
+	return right
+}
+
+func min64(left, right int64) int64 {
+	if left < right {
 		return left
 	}
 	return right

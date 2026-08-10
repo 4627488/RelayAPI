@@ -51,8 +51,12 @@ Prices are local accounting metadata, not a model allowlist. Resolution is
 administrator override > synced Models.dev catalog > bundled last-known-good
 catalog. Aliases are resolved before lookup, and CPA dimensions may apply
 validated multipliers for API group, auth index, service tier, reasoning
-effort, endpoint, executor, or model alias. The resolved five-part integer
-price and catalog version are snapshotted with every request:
+effort, endpoint, executor, or model alias. The resolved modality-aware integer
+price and catalog version are snapshotted with every request. Text uses input,
+cached-input, cache-write, output, and reasoning rates. Image generation adds
+image-input, cached-image-input, and image-output rates; provider-reported
+modality token counts are authoritative, so quality and size are reflected by
+actual output tokens instead of a lossy per-image estimate:
 
 - `UNPRICED_MODEL_POLICY=allow` (default): forward an unknown model, record its
   usage, mark pricing incomplete, and charge zero.
@@ -113,6 +117,6 @@ headers are redacted; bodies carry original byte counts and truncation flags.
 Successful requests retain summaries only by default. Error bodies are capped
 at 32 KiB, and identical client/forwarded bodies are stored only once.
 The summary stores tenant/key display snapshots, CPA execution identity, TTFT,
-token breakdown, errors, and the immutable five-part pricing snapshot. Detail
+token and modality breakdown, errors, and the immutable pricing snapshot. Detail
 stores client and translated requests, upstream response, stage timings, and
 structured error context.

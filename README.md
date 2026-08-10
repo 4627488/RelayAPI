@@ -4,7 +4,8 @@ RelayAPI 是内置 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) �
 Go 多租户模型网关。默认 `native` 数据平面在同一进程内完成协议兼容、凭据路由、
 额度、计费和审计，不需要单独运行 CLIProxyAPI 服务。
 
-详细设计见 [docs/architecture.md](docs/architecture.md)，父/子订阅与严格凭据路由见
+详细设计见 [docs/architecture.md](docs/architecture.md)，生图计费与生产费率见
+[docs/image-billing.md](docs/image-billing.md)，父/子订阅与严格凭据路由见
 [docs/subscriptions.md](docs/subscriptions.md)。
 
 ## 启动
@@ -152,7 +153,8 @@ Responses 模型把 `npm` 改为 `@ai-sdk/openai`。这一区分来自
 未知模型默认允许调用且不扣费；
 设置 `UNPRICED_MODEL_POLICY=deny` 可改为严格模式。
 定价按“管理员覆盖 > Models.dev 在线目录 > 内置最后可用目录”解析，支持模型别名、
-CPA 多维倍率规则和五段费率快照。请求日志采用分层留存：成功且定价完整的请求默认
+CPA 多维倍率规则和分模态费率快照（文本五段加图片输入、缓存图片输入、图片输出）。
+请求日志采用分层留存：成功且定价完整的请求默认
 只抽样 1% 保存完整内容并保留 1 天，错误或定价不完整的详情保留 14 天，请求摘要
 保留 30 天。摘要过期前会原子汇总到每日用量表，因此长期用量、模型和费用报表不会
 随原始日志删除。生命周期事件、请求预留、额度观测和失效邀请也会小批量自动清理；
@@ -173,7 +175,7 @@ CPA 多维倍率规则和五段费率快照。请求日志采用分层留存：�
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
 - `GET /api/admin/logs?tenant_id=...&page=1&page_size=50`：可搜索、筛选和分页的请求日志
 - `GET /api/admin/logs/{id}`：脱敏请求、CPA 转发、上游响应、耗时与历史计费详情
-- `/api/admin/prices`：管理员五段价格覆盖
+- `/api/admin/prices`：管理员文本与图片分模态价格覆盖
 - `/api/admin/pricing/aliases`、`/api/admin/pricing/rules`：模型别名与 CPA 多维倍率
 - `GET|POST /api/admin/pricing/sync`：预览或应用 Models.dev 价格目录
 - `POST /api/admin/subscriptions/sync`：同步原生凭据与父订阅身份

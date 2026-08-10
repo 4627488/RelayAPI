@@ -95,6 +95,9 @@ export interface RequestLog {
   cached_tokens: number
   cache_write_tokens: number
   reasoning_tokens: number
+  image_input_tokens: number
+  cached_image_input_tokens: number
+  image_output_tokens: number
   total_tokens: number
   cost_nano_usd: number | null
   price_model?: string
@@ -105,6 +108,9 @@ export interface RequestLog {
   cached_input_price_nano_usd_per_token?: number
   cache_write_price_nano_usd_per_token?: number
   reasoning_price_nano_usd_per_token?: number
+  image_input_price_nano_usd_per_token?: number
+  cached_image_input_price_nano_usd_per_token?: number
+  image_output_price_nano_usd_per_token?: number
   price_multiplier?: number
   pricing_complete: boolean
   settled: boolean
@@ -164,6 +170,9 @@ export interface ModelPrice {
   cached_input_nano_usd_per_token: number
   cache_write_nano_usd_per_token: number
   reasoning_nano_usd_per_token: number
+  image_input_nano_usd_per_token: number
+  cached_image_input_nano_usd_per_token: number
+  image_output_nano_usd_per_token: number
   source: string
   version: string
   price_multiplier: number

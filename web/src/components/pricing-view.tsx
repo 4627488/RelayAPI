@@ -102,6 +102,9 @@ export function PricingView() {
           cached_input_nano_usd_per_token: perMillion("cached"),
           cache_write_nano_usd_per_token: perMillion("cacheWrite"),
           reasoning_nano_usd_per_token: perMillion("reasoning"),
+          image_input_nano_usd_per_token: perMillion("imageInput"),
+          cached_image_input_nano_usd_per_token: perMillion("cachedImageInput"),
+          image_output_nano_usd_per_token: perMillion("imageOutput"),
           price_multiplier: Number(data.get("multiplier") || 1),
         }),
       })
@@ -198,7 +201,7 @@ export function PricingView() {
       <Card>
         <CardHeader>
           <CardTitle>已接入模型价目表</CardTitle>
-          <CardDescription>模型来自 native 运行时目录。价格单位为 USD / 1M tokens。</CardDescription>
+          <CardDescription>模型来自 native 运行时目录。文本与图片 token 分模态计价，单位为 USD / 1M tokens。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="relative max-w-sm">
@@ -211,13 +214,13 @@ export function PricingView() {
             </Empty>
           ) : filteredModels.length ? (
             <Table>
-              <TableHeader><TableRow><TableHead>模型</TableHead><TableHead>来源</TableHead><TableHead className="text-right">输入</TableHead><TableHead className="text-right">缓存读</TableHead><TableHead className="text-right">缓存写</TableHead><TableHead className="text-right">输出</TableHead><TableHead className="text-right">推理</TableHead><TableHead className="text-right">倍率</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>模型</TableHead><TableHead>来源</TableHead><TableHead className="text-right">文本输入</TableHead><TableHead className="text-right">文本缓存</TableHead><TableHead className="text-right">缓存写入</TableHead><TableHead className="text-right">图片输入</TableHead><TableHead className="text-right">图片缓存</TableHead><TableHead className="text-right">图片输出</TableHead><TableHead className="text-right">文本输出</TableHead><TableHead className="text-right">推理</TableHead><TableHead className="text-right">倍率</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
               <TableBody>
                 {filteredModels.map((price) => (
                   <TableRow key={price.model}>
                     <TableCell className="font-mono text-xs">{price.model}{price.priced && price.priced_model !== price.model ? <p className="text-[10px] text-muted-foreground">按 {price.priced_model} 计价</p> : null}</TableCell>
                     <TableCell>{price.priced ? <Badge variant="outline">{priceSourceLabel(price.source)}</Badge> : <Badge variant="secondary">未定价</Badge>}</TableCell>
-                    {[price.input_nano_usd_per_token, price.cached_input_nano_usd_per_token, price.cache_write_nano_usd_per_token, price.output_nano_usd_per_token, price.reasoning_nano_usd_per_token].map((value, index) => <TableCell key={index} className="text-right tabular-nums">{price.priced ? pricePerMillion(value) : "—"}</TableCell>)}
+                    {[price.input_nano_usd_per_token, price.cached_input_nano_usd_per_token, price.cache_write_nano_usd_per_token, price.image_input_nano_usd_per_token, price.cached_image_input_nano_usd_per_token, price.image_output_nano_usd_per_token, price.output_nano_usd_per_token, price.reasoning_nano_usd_per_token].map((value, index) => <TableCell key={index} className="text-right tabular-nums">{price.priced ? pricePerMillion(value) : "—"}</TableCell>)}
                     <TableCell className="text-right tabular-nums">{price.priced ? `×${price.price_multiplier}` : "—"}</TableCell>
                     <TableCell className="text-right"><span className="inline-flex gap-1"><Button variant="ghost" size="icon-sm" aria-label={`配置 ${price.model} 的价格`} onClick={() => setEditingPrice(price)}><PencilIcon /></Button>{price.source === "admin" ? <Button variant="ghost" size="icon-sm" aria-label={`删除 ${price.model} 的管理员价格`} onClick={() => void remove(price.model)}><Trash2Icon /></Button> : null}</span></TableCell>
                   </TableRow>
@@ -249,7 +252,7 @@ export function PricingView() {
       </div>
       <Dialog open={Boolean(editingPrice)} onOpenChange={(open) => { if (!open) setEditingPrice(null) }}>
         <DialogContent className="sm:max-w-2xl">
-          <DialogHeader><DialogTitle>配置模型价格</DialogTitle><DialogDescription>保存后将创建本站管理员价格覆盖。单位为 USD / 1M tokens。</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>配置模型价格</DialogTitle><DialogDescription>保存后将创建本站管理员价格覆盖。文本和图片 token 独立计价，单位为 USD / 1M tokens。</DialogDescription></DialogHeader>
           <form id="price-form" key={editingPrice?.model} onSubmit={savePrice}>
             <FieldGroup>
               <Field><FieldLabel>模型</FieldLabel><Input name="model" value={editingPrice?.model ?? ""} readOnly /></Field>
@@ -257,6 +260,7 @@ export function PricingView() {
                 {[
                   ["input", "普通输入", editingPrice?.input_nano_usd_per_token], ["cached", "缓存读取", editingPrice?.cached_input_nano_usd_per_token], ["cacheWrite", "缓存写入", editingPrice?.cache_write_nano_usd_per_token],
                   ["output", "输出", editingPrice?.output_nano_usd_per_token], ["reasoning", "推理", editingPrice?.reasoning_nano_usd_per_token], ["multiplier", "整体倍率", editingPrice?.price_multiplier ?? 1],
+                  ["imageInput", "图片输入", editingPrice?.image_input_nano_usd_per_token], ["cachedImageInput", "图片缓存读取", editingPrice?.cached_image_input_nano_usd_per_token], ["imageOutput", "图片输出", editingPrice?.image_output_nano_usd_per_token],
                 ].map(([name, label, value]) => (
                   <Field key={String(name)}><FieldLabel>{label}</FieldLabel><Input name={String(name)} type="number" min="0" step="any" defaultValue={name === "multiplier" ? Number(value) : pricePerMillion(Number(value ?? 0))} required /></Field>
                 ))}

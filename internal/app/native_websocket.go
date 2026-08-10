@@ -76,7 +76,7 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			_ = a.store.UpdateReservationPriceSnapshot(context.Background(), requestID, store.EncodePriceSnapshot(resolved))
 		}
 	}
-	pricingComplete := billable && accounting.result.Found && accounting.price != nil
+	pricingComplete := billable && accounting.result.Found && accounting.price != nil && billing.UsageComplete(*accounting.price, accounting.result.Usage)
 	actual := max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
 	settled := !billable
 	if billable {

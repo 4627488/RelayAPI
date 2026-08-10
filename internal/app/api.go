@@ -588,12 +588,15 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		InputNanoUSDPerToken       int64    `json:"input_nano_usd_per_token"`
-		OutputNanoUSDPerToken      int64    `json:"output_nano_usd_per_token"`
-		CachedInputNanoUSDPerToken int64    `json:"cached_input_nano_usd_per_token"`
-		CacheWriteNanoUSDPerToken  int64    `json:"cache_write_nano_usd_per_token"`
-		ReasoningNanoUSDPerToken   int64    `json:"reasoning_nano_usd_per_token"`
-		PriceMultiplier            *float64 `json:"price_multiplier"`
+		InputNanoUSDPerToken            int64    `json:"input_nano_usd_per_token"`
+		OutputNanoUSDPerToken           int64    `json:"output_nano_usd_per_token"`
+		CachedInputNanoUSDPerToken      int64    `json:"cached_input_nano_usd_per_token"`
+		CacheWriteNanoUSDPerToken       int64    `json:"cache_write_nano_usd_per_token"`
+		ReasoningNanoUSDPerToken        int64    `json:"reasoning_nano_usd_per_token"`
+		ImageInputNanoUSDPerToken       int64    `json:"image_input_nano_usd_per_token"`
+		CachedImageInputNanoUSDPerToken int64    `json:"cached_image_input_nano_usd_per_token"`
+		ImageOutputNanoUSDPerToken      int64    `json:"image_output_nano_usd_per_token"`
+		PriceMultiplier                 *float64 `json:"price_multiplier"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -613,9 +616,13 @@ func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
 		CachedInputNanoUSDPerToken: input.CachedInputNanoUSDPerToken,
 		CacheWriteNanoUSDPerToken:  input.CacheWriteNanoUSDPerToken,
 		ReasoningNanoUSDPerToken:   input.ReasoningNanoUSDPerToken, PriceMultiplier: multiplier,
+		ImageInputNanoUSDPerToken:       input.ImageInputNanoUSDPerToken,
+		CachedImageInputNanoUSDPerToken: input.CachedImageInputNanoUSDPerToken,
+		ImageOutputNanoUSDPerToken:      input.ImageOutputNanoUSDPerToken,
 	}
 	if min(price.InputNanoUSDPerToken, price.OutputNanoUSDPerToken, price.CachedInputNanoUSDPerToken,
-		price.CacheWriteNanoUSDPerToken, price.ReasoningNanoUSDPerToken) < 0 || multiplier < 0 {
+		price.CacheWriteNanoUSDPerToken, price.ReasoningNanoUSDPerToken, price.ImageInputNanoUSDPerToken,
+		price.CachedImageInputNanoUSDPerToken, price.ImageOutputNanoUSDPerToken) < 0 || multiplier < 0 {
 		writeError(w, 400, "validation_error", "价格和倍率不能为负数")
 		return
 	}

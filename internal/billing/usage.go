@@ -86,6 +86,9 @@ func readUsageMetadata(raw any, result *Result) {
 	result.Usage.Total = maxInt(result.Usage.Total, number(usage["totalTokenCount"]))
 	result.Usage.Cached = maxInt(result.Usage.Cached, number(usage["cachedContentTokenCount"]))
 	result.Usage.Reasoning = maxInt(result.Usage.Reasoning, number(usage["thoughtsTokenCount"]))
+	result.Usage.ImageInput = maxInt(result.Usage.ImageInput, modalityTokens(usage["promptTokensDetails"], "IMAGE"))
+	result.Usage.CachedImageInput = maxInt(result.Usage.CachedImageInput, modalityTokens(usage["cacheTokensDetails"], "IMAGE"), modalityTokens(usage["cachedContentTokenDetails"], "IMAGE"))
+	result.Usage.ImageOutput = maxInt(result.Usage.ImageOutput, modalityTokens(usage["candidatesTokensDetails"], "IMAGE"))
 }
 
 func readUsage(raw any, result *Result) {
@@ -111,6 +114,28 @@ func readUsage(raw any, result *Result) {
 	result.Usage.Reasoning = maxInt(result.Usage.Reasoning,
 		number(usage["reasoning_tokens"]), nestedNumber(usage, "output_tokens_details", "reasoning_tokens"),
 	)
+	result.Usage.ImageInput = maxInt(result.Usage.ImageInput,
+		number(usage["input_image_tokens"]), nestedNumber(usage, "input_tokens_details", "image_tokens"),
+	)
+	result.Usage.CachedImageInput = maxInt(result.Usage.CachedImageInput,
+		number(usage["cached_image_tokens"]), nestedNumber(usage, "input_tokens_details", "cached_image_tokens"),
+		nestedNestedNumber(usage, "input_tokens_details", "cached_tokens_details", "image_tokens"),
+	)
+	imageOutput := maxInt(number(usage["output_image_tokens"]), nestedNumber(usage, "output_tokens_details", "image_tokens"))
+	if imageOutput == 0 && imageGenerationUsage(usage) {
+		imageOutput = number(usage["output_tokens"])
+	}
+	result.Usage.ImageOutput = maxInt(result.Usage.ImageOutput, imageOutput)
+}
+
+func imageGenerationUsage(usage map[string]any) bool {
+	details, ok := usage["input_tokens_details"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, hasImages := details["image_tokens"]
+	_, hasText := details["text_tokens"]
+	return hasImages || hasText
 }
 
 func stringValue(value any) string {
@@ -135,6 +160,22 @@ func nestedNumber(value map[string]any, key, child string) int64 {
 	nested, _ := value[key].(map[string]any)
 	return number(nested[child])
 }
+func nestedNestedNumber(value map[string]any, key, child, grandchild string) int64 {
+	nested, _ := value[key].(map[string]any)
+	return nestedNumber(nested, child, grandchild)
+}
+func modalityTokens(raw any, modality string) int64 {
+	items, _ := raw.([]any)
+	var total int64
+	for _, rawItem := range items {
+		item, _ := rawItem.(map[string]any)
+		itemModality := strings.ToUpper(stringValue(item["modality"]))
+		if itemModality == strings.ToUpper(modality) {
+			total += number(item["tokenCount"])
+		}
+	}
+	return total
+}
 func maxInt(values ...int64) int64 {
 	var result int64
 	for _, value := range values {
@@ -149,5 +190,12 @@ func Cost(price pricing.SnapshotPrice, usage store.Usage) int64 {
 	return pricing.CostNanoUSD(price, pricing.Usage{
 		Prompt: usage.Prompt, Completion: usage.Completion, Cached: usage.Cached,
 		CacheWrite: usage.CacheWrite, Reasoning: usage.Reasoning, Total: usage.Total,
+		ImageInput: usage.ImageInput, CachedImageInput: usage.CachedImageInput, ImageOutput: usage.ImageOutput,
 	})
+}
+
+// UsageComplete prevents a successful image response with stripped modality
+// details from being settled as a text-only (and therefore nearly free) call.
+func UsageComplete(price pricing.SnapshotPrice, usage store.Usage) bool {
+	return price.ImageOutputNanoUSDPerToken == 0 || usage.ImageOutput > 0
 }

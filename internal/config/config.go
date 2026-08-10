@@ -18,6 +18,7 @@ type Config struct {
 	PublicURL                  string
 	SecureCookies              bool
 	ReservationNanoUSD         int64
+	ImageReservationNanoUSD    int64
 	RequestTimeout             time.Duration
 	CPAMaxInFlight             int
 	CPAMaxQueue                int
@@ -56,6 +57,7 @@ func Load() (Config, error) {
 		PublicURL:                  strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
 		SecureCookies:              envBool("RELAY_SECURE_COOKIES", false),
 		ReservationNanoUSD:         envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
+		ImageReservationNanoUSD:    envInt64("BILLING_IMAGE_RESERVE_NANO_USD", 500_000_000),
 		RequestTimeout:             time.Duration(envInt64("CPA_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
 		CPAMaxInFlight:             int(envInt64("CPA_MAX_IN_FLIGHT", 8)),
 		CPAMaxQueue:                int(envInt64("CPA_MAX_QUEUE", 16)),
@@ -98,6 +100,9 @@ func Load() (Config, error) {
 	}
 	if cfg.ReservationNanoUSD < 0 {
 		return Config{}, errors.New("BILLING_RESERVE_NANO_USD cannot be negative")
+	}
+	if cfg.ImageReservationNanoUSD < 0 {
+		return Config{}, errors.New("BILLING_IMAGE_RESERVE_NANO_USD cannot be negative")
 	}
 	if cfg.RequestTimeout < time.Second || cfg.RequestTimeout > time.Hour {
 		return Config{}, errors.New("CPA_REQUEST_TIMEOUT_SECONDS must be between 1 and 3600")

@@ -1,7 +1,7 @@
 // Package pricing resolves immutable, integer-valued model price snapshots.
 //
 // Its snapshot/resolver shape is adapted from CPA Usage Keeper's MIT-licensed
-// pricing domain, with Relay-specific five-part pricing and source precedence.
+// pricing domain, with Relay-specific modality-aware pricing and source precedence.
 package pricing
 
 import (
@@ -23,15 +23,18 @@ const (
 )
 
 type Price struct {
-	Model                      string  `json:"model"`
-	InputNanoUSDPerToken       int64   `json:"input_nano_usd_per_token"`
-	OutputNanoUSDPerToken      int64   `json:"output_nano_usd_per_token"`
-	CachedInputNanoUSDPerToken int64   `json:"cached_input_nano_usd_per_token"`
-	CacheWriteNanoUSDPerToken  int64   `json:"cache_write_nano_usd_per_token"`
-	ReasoningNanoUSDPerToken   int64   `json:"reasoning_nano_usd_per_token"`
-	Source                     string  `json:"source"`
-	Version                    string  `json:"version"`
-	PriceMultiplier            float64 `json:"price_multiplier"`
+	Model                           string  `json:"model"`
+	InputNanoUSDPerToken            int64   `json:"input_nano_usd_per_token"`
+	OutputNanoUSDPerToken           int64   `json:"output_nano_usd_per_token"`
+	CachedInputNanoUSDPerToken      int64   `json:"cached_input_nano_usd_per_token"`
+	CacheWriteNanoUSDPerToken       int64   `json:"cache_write_nano_usd_per_token"`
+	ReasoningNanoUSDPerToken        int64   `json:"reasoning_nano_usd_per_token"`
+	ImageInputNanoUSDPerToken       int64   `json:"image_input_nano_usd_per_token"`
+	CachedImageInputNanoUSDPerToken int64   `json:"cached_image_input_nano_usd_per_token"`
+	ImageOutputNanoUSDPerToken      int64   `json:"image_output_nano_usd_per_token"`
+	Source                          string  `json:"source"`
+	Version                         string  `json:"version"`
+	PriceMultiplier                 float64 `json:"price_multiplier"`
 }
 
 type Rule struct {
@@ -107,7 +110,8 @@ func Compile(admin, catalog, bundled []Price, aliases map[string]string, rules [
 			for _, value := range []int64{
 				price.InputNanoUSDPerToken, price.OutputNanoUSDPerToken,
 				price.CachedInputNanoUSDPerToken, price.CacheWriteNanoUSDPerToken,
-				price.ReasoningNanoUSDPerToken,
+				price.ReasoningNanoUSDPerToken, price.ImageInputNanoUSDPerToken,
+				price.CachedImageInputNanoUSDPerToken, price.ImageOutputNanoUSDPerToken,
 			} {
 				if value < 0 {
 					return fmt.Errorf("negative price for %q", price.Model)
@@ -158,11 +162,20 @@ func (s *Snapshot) Resolve(dimensions Dimensions) (SnapshotPrice, bool) {
 		}
 	}
 	candidates := modelCandidates(priced)
-	for _, source := range []map[string]compiledModel{s.admin, s.catalog, s.bundled} {
+	for sourceIndex, source := range []map[string]compiledModel{s.admin, s.catalog, s.bundled} {
 		for _, candidate := range candidates {
 			model, ok := source[strings.ToLower(candidate)]
 			if !ok {
 				continue
+			}
+			// Legacy administrator rows and token catalogs that only expose one
+			// input/output rate cannot safely price multimodal image models. Prefer
+			// the modality-aware bundled entry. An all-zero administrator row is
+			// still an intentional free-model override.
+			if sourceIndex < 2 && !hasImagePricing(model.price) && hasImagePriceCandidate(s.bundled, candidates) {
+				if sourceIndex != 0 || (hasAnyPrice(model.price) && model.price.PriceMultiplier != 0) {
+					continue
+				}
 			}
 			ruleMultiplier := matchingRuleMultiplier(model.rules, dimensions)
 			price := scaled(model.price, ruleMultiplier)
@@ -216,8 +229,31 @@ func scaled(price Price, ruleMultiplier float64) Price {
 	price.CachedInputNanoUSDPerToken = scaleInt(price.CachedInputNanoUSDPerToken, total)
 	price.CacheWriteNanoUSDPerToken = scaleInt(price.CacheWriteNanoUSDPerToken, total)
 	price.ReasoningNanoUSDPerToken = scaleInt(price.ReasoningNanoUSDPerToken, total)
+	price.ImageInputNanoUSDPerToken = scaleInt(price.ImageInputNanoUSDPerToken, total)
+	price.CachedImageInputNanoUSDPerToken = scaleInt(price.CachedImageInputNanoUSDPerToken, total)
+	price.ImageOutputNanoUSDPerToken = scaleInt(price.ImageOutputNanoUSDPerToken, total)
 	price.PriceMultiplier = total
 	return price
+}
+
+func hasImagePricing(price Price) bool {
+	return price.ImageInputNanoUSDPerToken != 0 || price.CachedImageInputNanoUSDPerToken != 0 ||
+		price.ImageOutputNanoUSDPerToken != 0
+}
+
+func hasImagePriceCandidate(models map[string]compiledModel, candidates []string) bool {
+	for _, candidate := range candidates {
+		if model, ok := models[strings.ToLower(candidate)]; ok && hasImagePricing(model.price) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyPrice(price Price) bool {
+	return price.InputNanoUSDPerToken != 0 || price.OutputNanoUSDPerToken != 0 ||
+		price.CachedInputNanoUSDPerToken != 0 || price.CacheWriteNanoUSDPerToken != 0 ||
+		price.ReasoningNanoUSDPerToken != 0 || hasImagePricing(price)
 }
 
 func scaleInt(value int64, multiplier float64) int64 {

@@ -128,6 +128,9 @@ func TestRequestMetadataReadsMultipartImageModel(t *testing.T) {
 	if err := writer.WriteField("model", "gpt-image-1"); err != nil {
 		t.Fatal(err)
 	}
+	if err := writer.WriteField("n", "3"); err != nil {
+		t.Fatal(err)
+	}
 	file, err := writer.CreateFormFile("image", "input.png")
 	if err != nil {
 		t.Fatal(err)
@@ -139,8 +142,8 @@ func TestRequestMetadataReadsMultipartImageModel(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	meta := requestMetadata(body.Bytes(), request)
-	if meta.Model != "gpt-image-1" {
-		t.Fatalf("model = %q", meta.Model)
+	if meta.Model != "gpt-image-1" || meta.ImageCount != 3 {
+		t.Fatalf("metadata = %+v", meta)
 	}
 }
 

@@ -56,6 +56,49 @@ func TestResolveProviderCandidateAndBundledFallback(t *testing.T) {
 	}
 }
 
+func TestResolvePrefersModalityAwareBundledImagePrice(t *testing.T) {
+	catalog := []Price{{
+		Model: "openai/gpt-image-2", InputNanoUSDPerToken: 5000,
+		OutputNanoUSDPerToken: 30000, Source: SourceCatalog, PriceMultiplier: 1,
+	}}
+	bundled := []Price{{
+		Model: "gpt-image-2", InputNanoUSDPerToken: 5000,
+		ImageInputNanoUSDPerToken: 8000, ImageOutputNanoUSDPerToken: 30000,
+		Source: SourceBundled, PriceMultiplier: 1,
+	}}
+	snapshot, err := Compile(nil, catalog, bundled, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := snapshot.Resolve(Dimensions{Model: "gpt-image-2"})
+	if !ok || got.Source != SourceBundled || got.ImageOutputNanoUSDPerToken != 30000 {
+		t.Fatalf("unexpected image fallback: %+v, ok=%v", got, ok)
+	}
+}
+
+func TestResolveReplacesLegacyAdminImagePriceButPreservesFreeOverride(t *testing.T) {
+	bundled := []Price{{Model: "gpt-image-2", ImageOutputNanoUSDPerToken: 30000, Source: SourceBundled, PriceMultiplier: 1}}
+	legacy := []Price{{Model: "gpt-image-2", OutputNanoUSDPerToken: 10000, Source: SourceAdmin, PriceMultiplier: 1}}
+	snapshot, err := Compile(legacy, nil, bundled, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := snapshot.Resolve(Dimensions{Model: "gpt-image-2"})
+	if !ok || got.Source != SourceBundled {
+		t.Fatalf("legacy image price did not fall back: %+v, ok=%v", got, ok)
+	}
+
+	free := []Price{{Model: "gpt-image-2", Source: SourceAdmin, PriceMultiplier: 1}}
+	snapshot, err = Compile(free, nil, bundled, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok = snapshot.Resolve(Dimensions{Model: "gpt-image-2"})
+	if !ok || got.Source != SourceAdmin || got.ImageOutputNanoUSDPerToken != 0 {
+		t.Fatalf("free image override was not preserved: %+v, ok=%v", got, ok)
+	}
+}
+
 func TestRejectInvalidRule(t *testing.T) {
 	if _, err := Compile(nil, nil, nil, nil, []Rule{{Model: "x", Field: "arbitrary", Value: "x", Multiplier: 1}}); err == nil {
 		t.Fatal("expected invalid rule error")
