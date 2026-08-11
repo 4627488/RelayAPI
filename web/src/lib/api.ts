@@ -281,6 +281,9 @@ export interface ProviderAccount {
   can_toggle?: boolean
   can_delete?: boolean
   proxy_configured?: boolean
+  websockets?: boolean
+  custom_header_names?: string[]
+  can_replace_document?: boolean
   revision?: number
 }
 

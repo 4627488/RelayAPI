@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -58,12 +60,25 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if baseURL != "" {
+				if !validNativeBaseURL(baseURL) {
+					writeError(w, http.StatusBadRequest, "validation_error", "接口地址必须是有效的 HTTP(S) URL")
+					return
+				}
 				document["base_url"] = baseURL
 			}
 			if value := strings.TrimSpace(input.ProxyURL); value != "" {
+				if !validNativeProxyURL(value) {
+					writeError(w, http.StatusBadRequest, "validation_error", "代理地址格式无效")
+					return
+				}
 				document["proxy_url"] = value
 			}
 			if value := strings.TrimSpace(input.Prefix); value != "" {
+				value, prefixErr := normalizeNativePrefix(value)
+				if prefixErr != nil {
+					writeError(w, http.StatusBadRequest, "validation_error", prefixErr.Error())
+					return
+				}
 				document["prefix"] = value
 			}
 			input.Document, _ = json.Marshal(document)
@@ -178,6 +193,7 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	email, _ := document["email"].(string)
 	baseURL, _ := document["base_url"].(string)
 	prefix, _ := document["prefix"].(string)
+	websockets, _ := document["websockets"].(bool)
 	proxyURL, _ := document["proxy_url"].(string)
 	if proxyURL == "" {
 		proxyURL, _ = document["_relay_proxy_url"].(string)
@@ -185,21 +201,10 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	expired := row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now())
 	result := map[string]any{"id": row.ID, "auth_index": row.ID, "name": row.ID, "label": row.Name, "provider": row.Provider, "type": row.Provider,
 		"disabled": !row.Enabled, "unavailable": expired, "status": "native", "source": row.Source, "models": row.Models,
-		"proxy_configured": strings.TrimSpace(proxyURL) != "", "revision": row.Revision, "can_inspect": true, "can_toggle": true, "can_delete": true}
-	authKind, _ := document["auth_kind"].(string)
-	if authKind == "" {
-		if apiKey, _ := document["api_key"].(string); strings.TrimSpace(apiKey) != "" {
-			authKind = "api_key"
-		} else if accessToken, _ := document["access_token"].(string); strings.TrimSpace(accessToken) != "" {
-			authKind = "oauth"
-		}
-	}
-	if authKind == "" && row.Source == "oauth" {
-		authKind = "oauth"
-	}
-	if authKind == "" && row.Source == "api_key" {
-		authKind = "api_key"
-	}
+		"proxy_configured": strings.TrimSpace(proxyURL) != "", "websockets": websockets,
+		"revision": row.Revision, "can_inspect": true, "can_toggle": true, "can_delete": true,
+		"can_replace_document": row.Source == "import" || row.Source == "config" || row.Source == "native"}
+	authKind := nativeCredentialAuthKind(document, row.Source)
 	if authKind != "" {
 		result["auth_kind"] = authKind
 	}
@@ -212,10 +217,36 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	if strings.TrimSpace(prefix) != "" {
 		result["prefix"] = prefix
 	}
+	if rawHeaders, ok := document["headers"].(map[string]any); ok && len(rawHeaders) > 0 {
+		names := make([]string, 0, len(rawHeaders))
+		for name := range rawHeaders {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		result["custom_header_names"] = names
+	}
 	if row.ExpiresAt != nil {
 		result["expires_at"] = row.ExpiresAt
 	}
 	return result
+}
+
+func nativeCredentialAuthKind(document map[string]any, source string) string {
+	authKind, _ := document["auth_kind"].(string)
+	if authKind == "" {
+		if apiKey, _ := document["api_key"].(string); strings.TrimSpace(apiKey) != "" {
+			authKind = "api_key"
+		} else if accessToken, _ := document["access_token"].(string); strings.TrimSpace(accessToken) != "" {
+			authKind = "oauth"
+		}
+	}
+	if authKind == "" && source == "oauth" {
+		return "oauth"
+	}
+	if authKind == "" && source == "api_key" {
+		return "api_key"
+	}
+	return authKind
 }
 
 func nativeCredentialID(provider string) string {
@@ -239,6 +270,40 @@ func uniqueStrings(values []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+func equalFoldedStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, value := range left {
+		counts[strings.ToLower(strings.TrimSpace(value))]++
+	}
+	for _, value := range right {
+		key := strings.ToLower(strings.TrimSpace(value))
+		if counts[key] == 0 {
+			return false
+		}
+		counts[key]--
+	}
+	return true
+}
+
+func validateNativeCredentialModels(models, candidates []string) error {
+	if len(candidates) == 0 {
+		return errors.New("CPA 凭据目录为空")
+	}
+	allowedModels := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		allowedModels[strings.ToLower(strings.TrimSpace(candidate))] = struct{}{}
+	}
+	for _, model := range models {
+		if _, ok := allowedModels[strings.ToLower(strings.TrimSpace(model))]; !ok {
+			return errors.New("模型 " + model + " 不在 CPA 凭据目录中")
+		}
+	}
+	return nil
 }
 
 func (a *App) nativeProviderModels(w http.ResponseWriter, r *http.Request) {
@@ -307,16 +372,121 @@ func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCr
 	return updated, source, nil
 }
 
-func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Disabled *bool     `json:"disabled"`
-		Name     *string   `json:"name"`
-		Models   *[]string `json:"models"`
+type nativeProviderUpdateInput struct {
+	Disabled   *bool              `json:"disabled"`
+	Name       *string            `json:"name"`
+	Models     *[]string          `json:"models"`
+	BaseURL    *string            `json:"base_url"`
+	ProxyURL   *string            `json:"proxy_url"`
+	Prefix     *string            `json:"prefix"`
+	APIKey     *string            `json:"api_key"`
+	WebSockets *bool              `json:"websockets"`
+	Headers    *map[string]string `json:"headers"`
+	Document   json.RawMessage    `json:"document"`
+}
+
+func (input nativeProviderUpdateInput) empty() bool {
+	return input.Disabled == nil && input.Name == nil && input.Models == nil && input.BaseURL == nil &&
+		input.ProxyURL == nil && input.Prefix == nil && input.APIKey == nil && input.WebSockets == nil &&
+		input.Headers == nil && input.Document == nil
+}
+
+func updateNativeCredentialDocument(current json.RawMessage, source string, input nativeProviderUpdateInput) (json.RawMessage, error) {
+	documentBytes := current
+	if input.Document != nil {
+		documentBytes = input.Document
 	}
+	var document map[string]any
+	if !json.Valid(documentBytes) || json.Unmarshal(documentBytes, &document) != nil || document == nil {
+		return nil, errors.New("凭据 JSON 必须是有效对象")
+	}
+	setString := func(key string, value *string) {
+		if value == nil {
+			return
+		}
+		trimmed := strings.TrimSpace(*value)
+		if trimmed == "" {
+			delete(document, key)
+		} else {
+			document[key] = trimmed
+		}
+	}
+	if input.BaseURL != nil {
+		if nativeCredentialAuthKind(document, source) == "oauth" {
+			return nil, errors.New("OAuth 账户的接口地址由提供商管理")
+		}
+		value := strings.TrimSpace(*input.BaseURL)
+		if value != "" && !validNativeBaseURL(value) {
+			return nil, errors.New("接口地址必须是有效的 HTTP(S) URL")
+		}
+		setString("base_url", input.BaseURL)
+	}
+	if input.ProxyURL != nil {
+		if !validNativeProxyURL(*input.ProxyURL) {
+			return nil, errors.New("代理地址格式无效")
+		}
+		setString("proxy_url", input.ProxyURL)
+		delete(document, "_relay_proxy_url")
+	}
+	if input.Prefix != nil {
+		value, err := normalizeNativePrefix(*input.Prefix)
+		if err != nil {
+			return nil, err
+		}
+		input.Prefix = &value
+		setString("prefix", input.Prefix)
+	}
+	if input.APIKey != nil {
+		if nativeCredentialAuthKind(document, source) != "api_key" {
+			return nil, errors.New("只有 API Key 账户可以轮换 API Key")
+		}
+		value := strings.TrimSpace(*input.APIKey)
+		if value == "" {
+			return nil, errors.New("新 API Key 不能为空")
+		}
+		document["api_key"] = value
+	}
+	if input.WebSockets != nil {
+		document["websockets"] = *input.WebSockets
+	}
+	if input.Headers != nil {
+		headers := make(map[string]string, len(*input.Headers))
+		for name, value := range *input.Headers {
+			name = strings.TrimSpace(name)
+			if name == "" || strings.ContainsAny(name, "\r\n:") || strings.ContainsAny(value, "\r\n") {
+				return nil, errors.New("自定义请求头名称或值无效")
+			}
+			headers[name] = value
+		}
+		if len(headers) == 0 {
+			delete(document, "headers")
+		} else {
+			document["headers"] = headers
+		}
+	}
+	updated, err := json.Marshal(document)
+	return json.RawMessage(updated), err
+}
+
+func validNativeBaseURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
+}
+
+func normalizeNativePrefix(value string) (string, error) {
+	value = strings.Trim(strings.TrimSpace(value), "/")
+	if strings.Contains(value, "/") {
+		return "", errors.New("模型前缀只能是单个路径段")
+	}
+	return value, nil
+}
+
+func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request) {
+	var input nativeProviderUpdateInput
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if input.Disabled == nil && input.Name == nil && input.Models == nil {
+	if input.empty() {
 		writeError(w, http.StatusBadRequest, "validation_error", "至少提供一个可更新字段")
 		return
 	}
@@ -331,6 +501,11 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	previous := row
+	document, documentErr := updateNativeCredentialDocument(row.Document, row.Source, input)
+	if documentErr != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", documentErr.Error())
+		return
+	}
 	name, models, enabled := row.Name, row.Models, row.Enabled
 	if input.Disabled != nil {
 		enabled = !*input.Disabled
@@ -343,49 +518,47 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if input.Models != nil {
-		if !row.Enabled {
-			writeError(w, http.StatusConflict, "credential_disabled", "请先启用账户，再从 CPA 选择模型")
-			return
-		}
-		if a.nativeCPARuntime == nil {
-			writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", "embedded CPA runtime is unavailable")
-			return
-		}
 		models = uniqueStrings(*input.Models)
 		if len(models) == 0 {
 			writeError(w, http.StatusBadRequest, "validation_error", "至少选择一个 CPA 模型")
 			return
 		}
-		candidates, _, discoverErr := a.nativeCPARuntime.DiscoverCredentialModels(r.Context(), row.ID)
-		if discoverErr != nil && len(candidates) == 0 {
-			writeError(w, http.StatusBadGateway, "model_catalog_unavailable", discoverErr.Error())
-			return
-		}
-		allowedModels := make(map[string]struct{}, len(candidates))
-		for _, candidate := range candidates {
-			allowedModels[strings.ToLower(strings.TrimSpace(candidate))] = struct{}{}
-		}
-		for _, model := range models {
-			if _, ok := allowedModels[strings.ToLower(model)]; !ok {
-				writeError(w, http.StatusBadRequest, "model_not_in_cpa_catalog", "模型 "+model+" 不在 CPA 凭据目录中")
-				return
-			}
-		}
-		if len(candidates) == 0 {
-			writeError(w, http.StatusBadGateway, "model_catalog_empty", "CPA 凭据目录为空")
+		if !enabled && !equalFoldedStrings(models, row.Models) {
+			writeError(w, http.StatusConflict, "credential_disabled", "请先启用账户，再从 CPA 选择模型")
 			return
 		}
 	}
-	row, err = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: row.ID, Name: name, Provider: row.Provider, Enabled: enabled, Models: models, Document: row.Document, Source: row.Source, ExpiresAt: row.ExpiresAt})
+	rollback := func() {
+		_, _ = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: previous.ID, Name: previous.Name, Provider: previous.Provider, Enabled: previous.Enabled, Models: previous.Models, Document: previous.Document, Source: previous.Source, ExpiresAt: previous.ExpiresAt})
+		_ = a.reloadNativeCredentials(r.Context())
+	}
+	row, err = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: row.ID, Name: name, Provider: row.Provider, Enabled: enabled, Models: models, Document: document, Source: row.Source, ExpiresAt: row.ExpiresAt})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential_update_failed", "更新 native 凭据失败")
 		return
 	}
 	if err = a.reloadNativeCredentials(r.Context()); err != nil {
-		_, _ = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: previous.ID, Name: previous.Name, Provider: previous.Provider, Enabled: previous.Enabled, Models: previous.Models, Document: previous.Document, Source: previous.Source, ExpiresAt: previous.ExpiresAt})
-		_ = a.reloadNativeCredentials(r.Context())
+		rollback()
 		writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())
 		return
+	}
+	if input.Models != nil && enabled {
+		if a.nativeCPARuntime == nil {
+			rollback()
+			writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", "embedded CPA runtime is unavailable")
+			return
+		}
+		candidates, _, discoverErr := a.nativeCPARuntime.DiscoverCredentialModels(r.Context(), row.ID)
+		if discoverErr != nil && len(candidates) == 0 {
+			rollback()
+			writeError(w, http.StatusBadGateway, "model_catalog_unavailable", discoverErr.Error())
+			return
+		}
+		if err = validateNativeCredentialModels(models, candidates); err != nil {
+			rollback()
+			writeError(w, http.StatusBadRequest, "model_not_in_cpa_catalog", err.Error())
+			return
+		}
 	}
 	if _, err = a.syncNativeParentSubscriptionRows(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "subscription_sync_failed", "账户已更新，但父订阅同步失败")

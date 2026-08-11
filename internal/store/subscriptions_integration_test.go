@@ -418,7 +418,8 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := LogInput{
-		ID: requestID, TenantID: tenantID, APIKeyID: keyID, Model: "model", ActualModel: "model",
+		ID: requestID, TenantID: tenantID, APIKeyID: keyID, ReservationRequestID: requestID,
+		Model: "model", ActualModel: "model",
 		Method: "GET", Path: "/v1/responses", RequestType: "responses.websocket", StatusCode: 101,
 		Stream: true, PricingComplete: true, Settled: true, Usage: Usage{Prompt: 20, Completion: 10, Total: 30},
 		CostNanoUSD: int64Pointer(25), ReservedNanoUSD: 10, StartedAt: time.Now(), CompletedAt: time.Now(),
@@ -435,27 +436,45 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 	if err != nil || inserted {
 		t.Fatalf("duplicate accrual inserted=%v, err=%v", inserted, err)
 	}
+	secondLog := log
+	secondLog.ID = identity.NewID()
+	secondLog.Model, secondLog.ActualModel = "model-2", "model-2"
+	secondLog.Usage = Usage{Prompt: 4, Completion: 3, Total: 7}
+	secondLog.CostNanoUSD = int64Pointer(7)
+	secondInput := input
+	secondInput.TurnID = "resp_2"
+	secondInput.Usage = secondLog.Usage
+	secondInput.CostNanoUSD = 7
+	secondInput.Log = secondLog
+	inserted, err = store.AccrueWebSocketTurn(ctx, secondInput)
+	if err != nil || !inserted {
+		t.Fatalf("second accrual inserted=%v, err=%v", inserted, err)
+	}
 
 	var tenant db.Tenant
 	if err := database.First(&tenant, "id = ?", tenantID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if tenant.BalanceNanoUSD != 65 {
-		t.Fatalf("balance while reserve is held = %d, want 65", tenant.BalanceNanoUSD)
+	if tenant.BalanceNanoUSD != 58 {
+		t.Fatalf("balance while reserve is held = %d, want 58", tenant.BalanceNanoUSD)
 	}
 	var reservation RequestReservation
 	if err := database.First(&reservation, "request_id = ?", requestID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if reservation.ActualNanoUSD == nil || *reservation.ActualNanoUSD != 25 || reservation.Status != db.ReservationActive {
+	if reservation.ActualNanoUSD == nil || *reservation.ActualNanoUSD != 32 || reservation.Status != db.ReservationActive {
 		t.Fatalf("active reservation = %+v", reservation)
 	}
-	var requestLog db.RequestLog
-	if err := database.First(&requestLog, "id = ?", requestID).Error; err != nil {
+	var requestLogs []db.RequestLog
+	if err := database.Where("id IN ?", []string{requestID, secondLog.ID}).Order("model").Find(&requestLogs).Error; err != nil {
 		t.Fatal(err)
 	}
-	if requestLog.TotalTokens != 30 || requestLog.CostNanoUSD == nil || *requestLog.CostNanoUSD != 25 {
-		t.Fatalf("durable websocket log = %+v", requestLog)
+	if len(requestLogs) != 2 || requestLogs[0].Model != "model" || requestLogs[0].TotalTokens != 30 ||
+		requestLogs[0].CostNanoUSD == nil || *requestLogs[0].CostNanoUSD != 25 ||
+		requestLogs[1].Model != "model-2" || requestLogs[1].TotalTokens != 7 ||
+		requestLogs[1].CostNanoUSD == nil || *requestLogs[1].CostNanoUSD != 7 ||
+		requestLogs[1].ReservationRequestID == nil || *requestLogs[1].ReservationRequestID != requestID {
+		t.Fatalf("per-entry websocket logs = %+v", requestLogs)
 	}
 
 	reclaimed, err := store.ReclaimExpiredReservations(ctx, time.Now().Add(2*time.Minute))
@@ -465,21 +484,21 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 	if err := database.First(&tenant, "id = ?", tenantID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if tenant.BalanceNanoUSD != 75 {
-		t.Fatalf("balance after expiry = %d, want 75", tenant.BalanceNanoUSD)
+	if tenant.BalanceNanoUSD != 68 {
+		t.Fatalf("balance after expiry = %d, want 68", tenant.BalanceNanoUSD)
 	}
 	if err := database.First(&reservation, "request_id = ?", requestID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if reservation.Status != db.ReservationExpired || reservation.ActualNanoUSD == nil || *reservation.ActualNanoUSD != 25 {
+	if reservation.Status != db.ReservationExpired || reservation.ActualNanoUSD == nil || *reservation.ActualNanoUSD != 32 {
 		t.Fatalf("expired reservation lost accrued usage: %+v", reservation)
 	}
 	var turns int64
 	if err := database.Model(&db.WebSocketTurn{}).Where("request_id = ?", requestID).Count(&turns).Error; err != nil {
 		t.Fatal(err)
 	}
-	if turns != 1 {
-		t.Fatalf("turn rows = %d, want 1", turns)
+	if turns != 2 {
+		t.Fatalf("turn rows = %d, want 2", turns)
 	}
 
 	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
@@ -513,6 +532,7 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 	}
 	quotaLog := log
 	quotaLog.ID = quotaRequestID
+	quotaLog.ReservationRequestID = quotaRequestID
 	quotaInput := input
 	quotaInput.RequestID = quotaRequestID
 	quotaInput.TurnID = "resp_quota"

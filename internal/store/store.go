@@ -65,20 +65,20 @@ type Usage struct {
 }
 
 type LogInput struct {
-	ID, TenantID, APIKeyID, CPARequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
-	CPATraceID, CPAExecutionID, RequestedModel, ActualModel, ModelAlias, ExecutorType, AuthType                               string
-	ServiceTier, ResponseServiceTier, ReasoningEffort, TenantName, APIKeyName, APIKeyPrefix, RequestType                      string
-	ClientName, ClientVersion, UserAgent                                                                                      string
-	StatusCode                                                                                                                int
-	Stream, PricingComplete, Settled                                                                                          bool
-	Usage                                                                                                                     Usage
-	CostNanoUSD                                                                                                               *int64
-	Price                                                                                                                     *ResolvedPrice
-	ReservedNanoUSD, LatencyMS, RequestBodyBytes, ForwardedBodyBytes, ResponseBodyBytes                                       int64
-	TTFTMS                                                                                                                    *int64
-	ErrorCode, ErrorMessage                                                                                                   string
-	StartedAt, CompletedAt                                                                                                    time.Time
-	Detail                                                                                                                    *LogDetailInput
+	ID, TenantID, APIKeyID, ReservationRequestID, CPARequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
+	CPATraceID, CPAExecutionID, RequestedModel, ActualModel, ModelAlias, ExecutorType, AuthType                                                     string
+	ServiceTier, ResponseServiceTier, ReasoningEffort, TenantName, APIKeyName, APIKeyPrefix, RequestType                                            string
+	ClientName, ClientVersion, UserAgent                                                                                                            string
+	StatusCode                                                                                                                                      int
+	Stream, PricingComplete, Settled                                                                                                                bool
+	Usage                                                                                                                                           Usage
+	CostNanoUSD                                                                                                                                     *int64
+	Price                                                                                                                                           *ResolvedPrice
+	ReservedNanoUSD, LatencyMS, RequestBodyBytes, ForwardedBodyBytes, ResponseBodyBytes                                                             int64
+	TTFTMS                                                                                                                                          *int64
+	ErrorCode, ErrorMessage                                                                                                                         string
+	StartedAt, CompletedAt                                                                                                                          time.Time
+	Detail                                                                                                                                          *LogDetailInput
 }
 
 type LogDetailInput struct {
@@ -749,7 +749,7 @@ func nullableIdentifier(value string) *string {
 
 func requestLogItem(l LogInput) db.RequestLog {
 	item := db.RequestLog{
-		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, CPARequestID: l.CPARequestID,
+		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, ReservationRequestID: nullableIdentifier(l.ReservationRequestID), CPARequestID: l.CPARequestID,
 		CPATraceID: l.CPATraceID, CPAExecutionID: l.CPAExecutionID,
 		Model: l.Model, RequestedModel: l.RequestedModel, ActualModel: l.ActualModel, ModelAlias: l.ModelAlias,
 		Provider: l.Provider, ExecutorType: l.ExecutorType, AuthType: l.AuthType, AuthIndex: l.AuthIndex,
@@ -788,8 +788,8 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 	return s.writeLog(ctx, l, false)
 }
 
-// UpsertLog is used by durable WebSocket accounting: every terminal turn
-// refreshes the same session aggregate, then session teardown finalizes it.
+// UpsertLog supports durable WebSocket accounting and session-level failures.
+// Each billed turn has its own log ID; replaying the same entry stays idempotent.
 func (s Store) UpsertLog(ctx context.Context, l LogInput) error {
 	return s.writeLog(ctx, l, true)
 }

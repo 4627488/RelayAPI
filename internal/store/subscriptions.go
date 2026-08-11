@@ -975,8 +975,8 @@ func (s Store) SettleRequestReservation(ctx context.Context, requestID string, a
 }
 
 // AccrueWebSocketTurn durably charges one terminal WebSocket response and
-// refreshes the session log in the same transaction. Replayed terminal frames
-// are ignored by the request_id + turn_id primary key.
+// writes its billing-entry log in the same transaction. Replayed terminal
+// frames are ignored by the request_id + turn_id primary key.
 func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccrual) (bool, error) {
 	inserted := false
 	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {

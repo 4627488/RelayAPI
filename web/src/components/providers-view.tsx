@@ -60,9 +60,11 @@ import {
 } from "@/components/ui/empty"
 import {
   Field,
+  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
+  FieldTitle,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -74,6 +76,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
@@ -129,6 +132,17 @@ type OAuthStatus = {
   error?: string
 }
 type ConnectMode = "oauth" | "api_key" | "import"
+type ProviderAccountUpdate = {
+  name: string
+  models: string[]
+  base_url?: string
+  prefix: string
+  websockets: boolean
+  proxy_url?: string
+  api_key?: string
+  headers?: Record<string, string>
+  document?: Record<string, unknown>
+}
 
 function displayName(account: ProviderAccount) {
   return account.label || account.email || account.name
@@ -248,10 +262,9 @@ export function ProvidersView() {
 
   async function saveAccount(
     account: ProviderAccount,
-    name: string,
-    models: string[]
+    value: ProviderAccountUpdate
   ) {
-    if (!name.trim() || !models.length) {
+    if (!value.name.trim() || !value.models.length) {
       toast.error("账户名称和至少一个 CPA 模型为必填项")
       return
     }
@@ -261,7 +274,7 @@ export function ProvidersView() {
         `/api/admin/providers/accounts/${encodeURIComponent(account.id || account.name)}`,
         {
           method: "PATCH",
-          body: JSON.stringify({ name: name.trim(), models }),
+          body: JSON.stringify({ ...value, name: value.name.trim() }),
         }
       )
       toast.success("账户设置已保存")
@@ -729,6 +742,8 @@ function ConnectAccountDialog({
         provider,
         api_key: String(form.get("api_key") ?? ""),
         base_url: String(form.get("base_url") ?? ""),
+        proxy_url: String(form.get("proxy_url") ?? ""),
+        prefix: String(form.get("prefix") ?? ""),
       }
     } else {
       let parsed: unknown
@@ -1072,6 +1087,32 @@ function CredentialFields({
                 : "OpenAI 可留空；兼容服务填写其 Base URL。"}
             </FieldDescription>
           </Field>
+          <Field>
+            <FieldLabel htmlFor="account-proxy-url">
+              独立代理（可选）
+            </FieldLabel>
+            <Input
+              id="account-proxy-url"
+              name="proxy_url"
+              className="font-mono"
+              placeholder="socks5h://user:password@127.0.0.1:1080"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <FieldDescription>
+              仅供这个账户使用；留空继承运行设置中的全局代理。
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="account-prefix">模型前缀（可选）</FieldLabel>
+            <Input
+              id="account-prefix"
+              name="prefix"
+              className="font-mono"
+              placeholder="team-a"
+              spellCheck={false}
+            />
+          </Field>
         </>
       ) : (
         <Field>
@@ -1108,13 +1149,21 @@ function ManageAccountDialog({
   onOpenChange: (open: boolean) => void
   onSave: (
     account: ProviderAccount,
-    name: string,
-    models: string[]
+    value: ProviderAccountUpdate
   ) => Promise<void>
   onToggle: (account: ProviderAccount, disabled: boolean) => Promise<void>
   onDelete: (account: ProviderAccount) => void
 }) {
   const [name, setName] = useState("")
+  const [baseURL, setBaseURL] = useState("")
+  const [prefix, setPrefix] = useState("")
+  const [websockets, setWebsockets] = useState(false)
+  const [proxyURL, setProxyURL] = useState("")
+  const [proxyDirty, setProxyDirty] = useState(false)
+  const [apiKey, setAPIKey] = useState("")
+  const [headersText, setHeadersText] = useState("{}")
+  const [headersDirty, setHeadersDirty] = useState(false)
+  const [documentText, setDocumentText] = useState("")
   const [candidates, setCandidates] = useState<string[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [modelSearch, setModelSearch] = useState("")
@@ -1162,9 +1211,18 @@ function ManageAccountDialog({
   useEffect(() => {
     if (!account) return
     setName(displayName(account))
+    setBaseURL(account.base_url ?? "")
+    setPrefix(account.prefix ?? "")
+    setWebsockets(account.websockets ?? false)
+    setProxyURL("")
+    setProxyDirty(false)
+    setAPIKey("")
+    setHeadersText("{}")
+    setHeadersDirty(false)
+    setDocumentText("")
     setModelSearch("")
-    setCandidates([])
-    setSelectedModels([])
+    setCandidates(account.models ?? [])
+    setSelectedModels(account.models ?? [])
     if (!account.disabled) void loadModels(account, false)
   }, [account, loadModels])
 
@@ -1180,9 +1238,51 @@ function ManageAccountDialog({
       checked ? [...current, model] : current.filter((item) => item !== model)
     )
   }
+
+  function save() {
+    if (!account) return
+    let headers: Record<string, string> | undefined
+    let document: Record<string, unknown> | undefined
+    if (headersDirty) {
+      try {
+        const parsed = JSON.parse(headersText) as unknown
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object")
+          throw new Error()
+        const entries = Object.entries(parsed)
+        if (entries.some(([, value]) => typeof value !== "string"))
+          throw new Error()
+        headers = Object.fromEntries(entries) as Record<string, string>
+      } catch {
+        toast.error("自定义请求头必须是 JSON 对象")
+        return
+      }
+    }
+    if (documentText.trim()) {
+      try {
+        const parsed = JSON.parse(documentText) as unknown
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object")
+          throw new Error()
+        document = parsed as Record<string, unknown>
+      } catch {
+        toast.error("替换凭据必须是有效的 JSON 对象")
+        return
+      }
+    }
+    void onSave(account, {
+      name,
+      models: selectedModels,
+      prefix: prefix.trim(),
+      websockets,
+      ...(account.auth_kind !== "oauth" ? { base_url: baseURL.trim() } : {}),
+      ...(proxyDirty ? { proxy_url: proxyURL.trim() } : {}),
+      ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+      ...(headersDirty ? { headers } : {}),
+      ...(document ? { document } : {}),
+    })
+  }
   return (
     <Dialog open={Boolean(account)} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         {account ? (
           <>
             <DialogHeader>
@@ -1191,138 +1291,337 @@ function ManageAccountDialog({
                 {providerLabel(account.provider)} · {sourceLabel(account)}
               </DialogDescription>
             </DialogHeader>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="manage-account-name">账户名称</FieldLabel>
-                <Input
-                  id="manage-account-name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <div className="flex items-center justify-between gap-3">
-                  <FieldLabel htmlFor="manage-model-search">
-                    CPA 模型目录
-                  </FieldLabel>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    disabled={modelLoading || account.disabled}
-                    onClick={() => void loadModels(account, true)}
-                  >
-                    {modelLoading ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <RefreshCwIcon data-icon="inline-start" />
-                    )}
-                    刷新
-                  </Button>
-                </div>
-                <Input
-                  id="manage-model-search"
-                  value={modelSearch}
-                  onChange={(event) => setModelSearch(event.target.value)}
-                  placeholder="筛选 CPA 模型"
-                  disabled={modelLoading || account.disabled}
-                />
-                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                  <span>
-                    已选择 {selectedModels.length} / {candidates.length}
-                  </span>
-                  <div className="flex gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      disabled={!candidates.length}
-                      onClick={() => setSelectedModels(candidates)}
-                    >
-                      全选
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      disabled={!selectedModels.length}
-                      onClick={() => setSelectedModels([])}
-                    >
-                      清空
-                    </Button>
-                  </div>
-                </div>
-                <FieldGroup className="max-h-64 overflow-y-auto rounded-lg border p-3">
-                  {modelLoading ? (
-                    <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-                      <Spinner />
-                      读取 CPA 模型目录…
+            <Tabs defaultValue="general">
+              <TabsList className="w-full">
+                <TabsTrigger value="general">
+                  <ShieldCheckIcon />
+                  常规
+                </TabsTrigger>
+                <TabsTrigger value="connection">
+                  <NetworkIcon />
+                  连接
+                </TabsTrigger>
+                <TabsTrigger value="advanced">
+                  <FileJson2Icon />
+                  高级
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="general">
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="manage-account-name">
+                      账户名称
+                    </FieldLabel>
+                    <Input
+                      id="manage-account-name"
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                    />
+                    {account.email ? (
+                      <FieldDescription>
+                        授权账户：{account.email}
+                      </FieldDescription>
+                    ) : null}
+                  </Field>
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel htmlFor="manage-model-search">
+                        CPA 模型目录
+                      </FieldLabel>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        disabled={modelLoading || account.disabled}
+                        onClick={() => void loadModels(account, true)}
+                      >
+                        {modelLoading ? (
+                          <Spinner data-icon="inline-start" />
+                        ) : (
+                          <RefreshCwIcon data-icon="inline-start" />
+                        )}
+                        刷新
+                      </Button>
                     </div>
-                  ) : visibleModels.length ? (
-                    visibleModels.map((model, index) => {
-                      const id = `cpa-model-${index}`
-                      return (
-                        <Field key={model} orientation="horizontal">
-                          <Checkbox
-                            id={id}
-                            checked={selectedModels.includes(model)}
-                            onCheckedChange={(checked) =>
-                              toggleModel(model, checked)
-                            }
-                          />
-                          <FieldLabel
-                            htmlFor={id}
-                            className="font-mono text-xs font-normal"
+                    <Input
+                      id="manage-model-search"
+                      value={modelSearch}
+                      onChange={(event) => setModelSearch(event.target.value)}
+                      placeholder="筛选 CPA 模型"
+                      disabled={modelLoading || account.disabled}
+                    />
+                    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                      <span>
+                        已选择 {selectedModels.length} / {candidates.length}
+                      </span>
+                      <div className="flex gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          disabled={!candidates.length || account.disabled}
+                          onClick={() => setSelectedModels(candidates)}
+                        >
+                          全选
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          disabled={!selectedModels.length || account.disabled}
+                          onClick={() => setSelectedModels([])}
+                        >
+                          清空
+                        </Button>
+                      </div>
+                    </div>
+                    <FieldGroup className="max-h-64 overflow-y-auto rounded-lg border p-3">
+                      {modelLoading ? (
+                        <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                          <Spinner />
+                          读取 CPA 模型目录…
+                        </div>
+                      ) : visibleModels.length ? (
+                        visibleModels.map((model, index) => {
+                          const id = `cpa-model-${index}`
+                          return (
+                            <Field key={model} orientation="horizontal">
+                              <Checkbox
+                                id={id}
+                                checked={selectedModels.includes(model)}
+                                disabled={account.disabled}
+                                onCheckedChange={(checked) =>
+                                  toggleModel(model, checked)
+                                }
+                              />
+                              <FieldLabel
+                                htmlFor={id}
+                                className="font-mono text-xs font-normal"
+                              >
+                                {model}
+                              </FieldLabel>
+                            </Field>
+                          )
+                        })
+                      ) : (
+                        <p className="py-8 text-center text-sm text-muted-foreground">
+                          {account.disabled
+                            ? "账户已停用；启用后才能刷新模型目录"
+                            : "CPA 没有返回匹配模型"}
+                        </p>
+                      )}
+                    </FieldGroup>
+                    <FieldDescription>
+                      公开范围独立于凭据本身；保存后立即重建模型路由。
+                    </FieldDescription>
+                  </Field>
+                </FieldGroup>
+              </TabsContent>
+              <TabsContent value="connection">
+                <FieldGroup>
+                  <Field
+                    data-disabled={account.auth_kind === "oauth" || undefined}
+                  >
+                    <FieldLabel htmlFor="manage-base-url">
+                      上游接口地址
+                    </FieldLabel>
+                    <Input
+                      id="manage-base-url"
+                      type="url"
+                      className="font-mono"
+                      value={baseURL}
+                      onChange={(event) => setBaseURL(event.target.value)}
+                      placeholder="https://api.example.com/v1"
+                      disabled={account.auth_kind === "oauth"}
+                      spellCheck={false}
+                    />
+                    <FieldDescription>
+                      {account.auth_kind === "oauth"
+                        ? "OAuth 端点由提供商固定，避免令牌被发送到非预期地址。"
+                        : "留空使用提供商默认端点；修改后会重新加载该账户。"}
+                    </FieldDescription>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="manage-proxy-url">
+                      账户独立代理
+                    </FieldLabel>
+                    <Input
+                      id="manage-proxy-url"
+                      className="font-mono"
+                      value={proxyURL}
+                      onChange={(event) => {
+                        setProxyURL(event.target.value)
+                        setProxyDirty(true)
+                      }}
+                      placeholder={
+                        account.proxy_configured && !proxyDirty
+                          ? "已配置；输入新地址以替换"
+                          : "socks5h://user:password@127.0.0.1:1080"
+                      }
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <FieldDescription>
+                      支持 HTTP、HTTPS、SOCKS5/SOCKS5H；代理凭据不会回显。填写
+                      direct 可强制直连。
+                    </FieldDescription>
+                    {account.proxy_configured || proxyDirty ? (
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setProxyURL("")
+                            setProxyDirty(true)
+                          }}
+                        >
+                          清除独立代理
+                        </Button>
+                        {proxyDirty ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setProxyURL("")
+                              setProxyDirty(false)
+                            }}
                           >
-                            {model}
-                          </FieldLabel>
-                        </Field>
-                      )
-                    })
+                            保留原配置
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="manage-prefix">模型前缀</FieldLabel>
+                    <Input
+                      id="manage-prefix"
+                      className="font-mono"
+                      value={prefix}
+                      onChange={(event) => setPrefix(event.target.value)}
+                      placeholder="team-a"
+                      spellCheck={false}
+                    />
+                    <FieldDescription>
+                      可选的单段前缀，用于区分多个提供相同模型名的账户。
+                    </FieldDescription>
+                  </Field>
+                  <Field orientation="horizontal">
+                    <FieldContent>
+                      <FieldTitle>上游 WebSocket</FieldTitle>
+                      <FieldDescription>
+                        允许 CPA 对此账户使用原生 WebSocket 连接。
+                      </FieldDescription>
+                    </FieldContent>
+                    <Switch
+                      id="manage-websockets"
+                      checked={websockets}
+                      onCheckedChange={setWebsockets}
+                      aria-label="上游 WebSocket"
+                    />
+                  </Field>
+                  {account.auth_kind === "api_key" ? (
+                    <Field>
+                      <FieldLabel htmlFor="manage-api-key">
+                        轮换 API Key
+                      </FieldLabel>
+                      <Input
+                        id="manage-api-key"
+                        type="password"
+                        value={apiKey}
+                        onChange={(event) => setAPIKey(event.target.value)}
+                        placeholder="留空保持现有 Key"
+                        autoComplete="new-password"
+                      />
+                      <FieldDescription>
+                        仅在填写时替换；现有 Key 永远不会返回浏览器。
+                      </FieldDescription>
+                    </Field>
+                  ) : null}
+                </FieldGroup>
+              </TabsContent>
+              <TabsContent value="advanced">
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="manage-headers">
+                      替换自定义请求头
+                    </FieldLabel>
+                    <Textarea
+                      id="manage-headers"
+                      value={headersText}
+                      onChange={(event) => {
+                        setHeadersText(event.target.value)
+                        setHeadersDirty(true)
+                      }}
+                      rows={6}
+                      className="font-mono text-xs"
+                      spellCheck={false}
+                    />
+                    <FieldDescription>
+                      {account.custom_header_names?.length
+                        ? `当前已配置：${account.custom_header_names.join("、")}。值不会回显；编辑后将整体替换。`
+                        : 'JSON 对象，例如 {"X-Tenant":"tenant-a"}；不编辑则保持现状。'}
+                    </FieldDescription>
+                    {headersDirty ? (
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setHeadersText("{}")}
+                        >
+                          清除全部请求头
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setHeadersText("{}")
+                            setHeadersDirty(false)
+                          }}
+                        >
+                          保留原配置
+                        </Button>
+                      </div>
+                    ) : null}
+                  </Field>
+                  {account.can_replace_document ? (
+                    <Field>
+                      <FieldLabel htmlFor="manage-document">
+                        替换完整凭据 JSON
+                      </FieldLabel>
+                      <Textarea
+                        id="manage-document"
+                        value={documentText}
+                        onChange={(event) =>
+                          setDocumentText(event.target.value)
+                        }
+                        rows={9}
+                        className="font-mono text-xs"
+                        spellCheck={false}
+                        placeholder="留空保持现有加密凭据"
+                      />
+                      <FieldDescription>
+                        用于更新导入凭据、服务账户或其他高级字段。上方连接设置会覆盖同名
+                        JSON 字段。
+                      </FieldDescription>
+                    </Field>
                   ) : (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      {account.disabled
-                        ? "启用账户后可读取 CPA 模型目录"
-                        : "CPA 没有返回匹配模型"}
-                    </p>
+                    <Alert>
+                      <ShieldCheckIcon />
+                      <AlertTitle>OAuth 凭据由 Relay 管理</AlertTitle>
+                      <AlertDescription>
+                        OAuth
+                        令牌会自动刷新；如需更换授权身份，请连接新账户后删除旧账户。
+                      </AlertDescription>
+                    </Alert>
                   )}
                 </FieldGroup>
-                <FieldDescription>
-                  这里只能勾选 CPA 为该凭据返回的模型；保存后重建公开路由。
-                </FieldDescription>
-              </Field>
-              {account.email ||
-              account.base_url ||
-              account.prefix ||
-              account.proxy_configured ? (
-                <div className="grid gap-3 rounded-lg border p-4 text-sm sm:grid-cols-2">
-                  {account.email ? (
-                    <div>
-                      <p className="text-xs text-muted-foreground">授权账户</p>
-                      <p className="mt-1 break-all">{account.email}</p>
-                    </div>
-                  ) : null}
-                  {account.base_url ? (
-                    <div>
-                      <p className="text-xs text-muted-foreground">接口地址</p>
-                      <p className="mt-1 break-all">{account.base_url}</p>
-                    </div>
-                  ) : null}
-                  {account.prefix ? (
-                    <div>
-                      <p className="text-xs text-muted-foreground">模型前缀</p>
-                      <p className="mt-1 font-mono">{account.prefix}</p>
-                    </div>
-                  ) : null}
-                  {account.proxy_configured ? (
-                    <div>
-                      <p className="text-xs text-muted-foreground">网络</p>
-                      <p className="mt-1">使用账户独立代理</p>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </FieldGroup>
+              </TabsContent>
+            </Tabs>
             <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
               <div className="flex gap-2">
                 <Button
@@ -1343,7 +1642,7 @@ function ManageAccountDialog({
               </div>
               <Button
                 disabled={pending || modelLoading || !selectedModels.length}
-                onClick={() => void onSave(account, name, selectedModels)}
+                onClick={save}
               >
                 {pending ? <Spinner /> : <CheckIcon />}保存更改
               </Button>

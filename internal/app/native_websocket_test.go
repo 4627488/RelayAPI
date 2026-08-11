@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/config"
 	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
@@ -385,7 +387,8 @@ func TestNativeResponsesWebSocketPersistsTerminalBeforeForwarding(t *testing.T) 
 	})
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}}
-		accounting.persistTurn = func(_ requestMeta, turn, cumulative billing.Result, _ []byte) (bool, error) {
+		accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
+			turn := entry.Result
 			if turn.RequestID != "resp_durable" || cumulative.Usage.Total != 10 {
 				return false, fmt.Errorf("unexpected terminal accounting: turn=%+v cumulative=%+v", turn, cumulative)
 			}
@@ -573,6 +576,34 @@ func TestMergeNativeWebSocketResultSumsTurns(t *testing.T) {
 		result.Usage.Prompt != 16 || result.Usage.Completion != 7 || result.Usage.Cached != 2 ||
 		result.Usage.Reasoning != 1 || result.Usage.Total != 23 {
 		t.Fatalf("merged result = %#v", result)
+	}
+}
+
+func TestPrepareNativeWebSocketRequestTracksChangedModel(t *testing.T) {
+	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-first", "gpt-second"},
+		Document: mustJSON(t, map[string]any{
+			"type": "codex", "access_token": "token", "base_url": "https://example.invalid", "websockets": true,
+			"model_routes": []map[string]any{{"public": "gpt-second", "upstream": "gpt-second-upstream"}},
+		}),
+	})
+	accounting := &nativeWebSocketAccounting{
+		admission:   store.Admission{CPAAuthID: "codex"},
+		currentMeta: requestMeta{Model: "gpt-first", RequestedModel: "gpt-first", Stream: true},
+	}
+	payload := []byte(`{"type":"response.create","model":"fast","service_tier":"priority"}`)
+	forwarded, meta, startsTurn, err := app.prepareNativeWebSocketRequest(payload, &url.URL{Path: "/v1/responses"}, store.KeyContext{
+		APIKey: db.APIKey{ModelAliases: []db.APIKeyModelAlias{{Alias: "fast", Model: "gpt-second"}}},
+	}, accounting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !startsTurn || meta.Model != "gpt-second" || meta.RequestedModel != "fast" || meta.ModelAlias != "fast" || meta.ServiceTier != "priority" {
+		t.Fatalf("changed turn metadata = %+v, starts=%v", meta, startsTurn)
+	}
+	var body map[string]any
+	if err = json.Unmarshal(forwarded, &body); err != nil || body["model"] != "gpt-second-upstream" {
+		t.Fatalf("forwarded changed-model request = %s, error = %v", forwarded, err)
 	}
 }
 

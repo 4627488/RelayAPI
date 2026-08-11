@@ -82,14 +82,20 @@ func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
 			return "视频结果绑定时长必须是有效的正数 duration，例如 3h"
 		}
 	}
-	proxy := strings.TrimSpace(value.ProxyURL)
-	if proxy != "" && proxy != "direct" && proxy != "none" {
-		parsed, err := url.Parse(proxy)
-		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https" && parsed.Scheme != "socks5" && parsed.Scheme != "socks5h") {
-			return "代理地址格式无效"
-		}
+	if !validNativeProxyURL(value.ProxyURL) {
+		return "代理地址格式无效"
 	}
 	return ""
+}
+
+func validNativeProxyURL(value string) bool {
+	proxy := strings.TrimSpace(value)
+	if proxy == "" || proxy == "direct" || proxy == "none" {
+		return true
+	}
+	parsed, err := url.Parse(proxy)
+	return err == nil && parsed.Host != "" &&
+		(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "socks5" || parsed.Scheme == "socks5h")
 }
 
 func runtimeBridgeSettings(value nativeRuntimeSettings) relaybridge.Settings {

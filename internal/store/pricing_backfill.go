@@ -160,9 +160,6 @@ func (s *Store) backfillPendingPricing(ctx context.Context) (int, error) {
 				CacheWrite: item.CacheWriteTokens, Reasoning: item.ReasoningTokens, Total: item.TotalTokens,
 				ImageInput: item.ImageInputTokens, CachedImageInput: item.CachedImageInputTokens, ImageOutput: imageOutput,
 			})
-			if err := reconcileSettledReservation(tx, item.ID, cost); err != nil {
-				return err
-			}
 			if err := tx.Model(&db.RequestLog{}).Where("id = ? AND pricing_complete = ?", item.ID, false).
 				Updates(map[string]any{
 					"cost_nano_usd": cost, "price_model": price.PricedModel,
@@ -179,6 +176,30 @@ func (s *Store) backfillPendingPricing(ctx context.Context) (int, error) {
 					"price_multiplier":                  price.PriceMultiplier, "pricing_complete": true,
 				}).Error; err != nil {
 				return err
+			}
+			if item.ReservationRequestID == nil {
+				if err := reconcileSettledReservation(tx, item.ID, cost); err != nil {
+					return err
+				}
+			} else {
+				var pending int64
+				if err := tx.Model(&db.RequestLog{}).
+					Where("reservation_request_id = ? AND pricing_complete = ?", *item.ReservationRequestID, false).
+					Count(&pending).Error; err != nil {
+					return err
+				}
+				if pending == 0 {
+					var aggregate int64
+					if err := tx.Model(&db.RequestLog{}).
+						Select("COALESCE(sum(cost_nano_usd), 0)").
+						Where("reservation_request_id = ?", *item.ReservationRequestID).
+						Scan(&aggregate).Error; err != nil {
+						return err
+					}
+					if err := reconcileSettledReservation(tx, *item.ReservationRequestID, aggregate); err != nil {
+						return err
+					}
+				}
 			}
 			updated++
 		}

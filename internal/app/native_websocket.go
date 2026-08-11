@@ -18,27 +18,43 @@ import (
 	"unicode/utf8"
 
 	"github.com/4627488/RelayAPI/internal/billing"
+	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/gorilla/websocket"
 )
 
 type nativeWebSocketAccounting struct {
-	mu              sync.Mutex
-	admission       store.Admission
-	price           *store.ResolvedPrice
-	billable        bool
-	result          billing.Result
-	errorCode       string
-	errorHTTP       int
-	requestBytes    int64
-	forwardedBytes  int64
-	responseBytes   int64
-	terminalSeen    bool
-	turnsSeen       int64
-	accruedNanoUSD  int64
-	pricingComplete bool
-	persistTurn     func(requestMeta, billing.Result, billing.Result, []byte) (bool, error)
+	mu               sync.Mutex
+	admission        store.Admission
+	price            *store.ResolvedPrice
+	billable         bool
+	result           billing.Result
+	errorCode        string
+	errorHTTP        int
+	requestBytes     int64
+	forwardedBytes   int64
+	responseBytes    int64
+	terminalSeen     bool
+	turnsSeen        int64
+	accruedNanoUSD   int64
+	pricingComplete  bool
+	currentMeta      requestMeta
+	currentStarted   time.Time
+	currentRequest   int64
+	currentForwarded int64
+	currentResponse  int64
+	persistTurn      func(nativeWebSocketBillingEntry, billing.Result) (bool, error)
+}
+
+type nativeWebSocketBillingEntry struct {
+	Meta           requestMeta
+	Result         billing.Result
+	Payload        []byte
+	StartedAt      time.Time
+	RequestBytes   int64
+	ForwardedBytes int64
+	ResponseBytes  int64
 }
 
 type nativeWebSocketSessionState struct {
@@ -51,9 +67,9 @@ const nativeWebSocketHeartbeatInterval = 30 * time.Second
 func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
 	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
-	accounting.persistTurn = func(turnMeta requestMeta, turn, cumulative billing.Result, payload []byte) (bool, error) {
-		return a.persistNativeWebSocketTurn(context.WithoutCancel(r.Context()), r, key, requestID, turnMeta,
-			started, logContext, &accounting, turn, cumulative, payload)
+	accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
+		return a.persistNativeWebSocketTurn(context.WithoutCancel(r.Context()), r, key, requestID,
+			logContext, &accounting, entry, cumulative)
 	}
 	session, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
 	if resolvedMeta.Model != "" {
@@ -76,7 +92,7 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		statusCode = http.StatusBadGateway
 		logContext.errorCode = "websocket_proxy_error"
 	}
-	if accounting.price != nil && accounting.result.ResponseServiceTier != "" {
+	if accounting.turnsSeen == 0 && accounting.price != nil && accounting.result.ResponseServiceTier != "" {
 		if resolved, resolveErr := a.store.ResolvePrice(context.Background(), pricing.Dimensions{
 			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
 			ServiceTier: meta.ServiceTier, ResponseServiceTier: accounting.result.ResponseServiceTier,
@@ -120,29 +136,32 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	logContext.forwardedBytes = accounting.forwardedBytes
 	logContext.responseBytes = accounting.responseBytes
 	logContext.detail.StageTimings = timingJSON(map[string]int64{"websocket_duration_ms": duration, "total_ms": duration})
-	input := requestLogInput(key, requestID, admission, meta, r, statusCode, started, &accounting.result,
-		pricingComplete, settled, actual, errorString(err), logContext)
-	if !shouldRetainRequestDetail(requestID, statusCode, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
-		input.Detail = nil
-	}
-	if logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input); logErr != nil {
-		slog.Error("upsert native websocket request log", "request_id", requestID, "error", logErr)
+	// Successful terminal responses already produced one durable log per billing
+	// entry. Only sessions without a billing entry need a session-level log.
+	if accounting.turnsSeen == 0 {
+		input := requestLogInput(key, requestID, admission, meta, r, statusCode, started, &accounting.result,
+			pricingComplete, settled, actual, errorString(err), logContext)
+		if !shouldRetainRequestDetail(requestID, statusCode, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
+			input.Detail = nil
+		}
+		if logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input); logErr != nil {
+			slog.Error("upsert native websocket request log", "request_id", requestID, "error", logErr)
+		}
 	}
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
 func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, key store.KeyContext, requestID string,
-	meta requestMeta, started time.Time, logContext requestLogContext, accounting *nativeWebSocketAccounting,
-	turn, cumulative billing.Result, payload []byte) (bool, error) {
-	turnPrice := accounting.price
-	if turnPrice != nil && turn.ResponseServiceTier != "" {
-		if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: accounting.admission.CPAAuthIndex,
-			ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
-			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-		}); err == nil {
-			turnPrice = &resolved
-		}
+	logContext requestLogContext, accounting *nativeWebSocketAccounting,
+	entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
+	turn, meta := entry.Result, entry.Meta
+	var turnPrice *store.ResolvedPrice
+	if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
+		APIGroupKey: key.ID, Model: meta.Model, AuthIndex: accounting.admission.CPAAuthIndex,
+		ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
+		ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+	}); err == nil {
+		turnPrice = &resolved
 	}
 	turnComplete := accounting.billable && turn.Found && turnPrice != nil && billing.UsageComplete(*turnPrice, turn.Usage)
 	turnCost := int64(0)
@@ -159,16 +178,27 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	aggregateCost := saturatingAdd(accounting.accruedNanoUSD, turnCost)
 	turnID := strings.TrimSpace(turn.RequestID)
 	if turnID == "" {
-		turnID = fmt.Sprintf("sha256:%x", sha256.Sum256(payload))
+		turnID = fmt.Sprintf("sha256:%x", sha256.Sum256(entry.Payload))
 	}
 	logContext.price = turnPrice
-	logContext.requestBytes = accounting.requestBytes
-	logContext.forwardedBytes = accounting.forwardedBytes
-	logContext.responseBytes = accounting.responseBytes
-	logContext.detail = nil
-	duration := time.Since(started).Milliseconds()
-	input := requestLogInput(key, requestID, accounting.admission, meta, r, http.StatusSwitchingProtocols,
-		started, &cumulative, aggregateComplete, true, aggregateCost, "", logContext)
+	logContext.requestBytes = entry.RequestBytes
+	logContext.forwardedBytes = entry.ForwardedBytes
+	logContext.responseBytes = entry.ResponseBytes
+	duration := time.Since(entry.StartedAt).Milliseconds()
+	logID := requestID
+	if accounting.turnsSeen > 0 {
+		logID = identity.NewID()
+		logContext.detail = nil
+	} else if !shouldRetainRequestDetail(logID, http.StatusSwitchingProtocols, "", a.cfg.RequestSuccessSamplePPM) {
+		logContext.detail = nil
+	} else if logContext.detail != nil {
+		detail := *logContext.detail
+		detail.StageTimings = timingJSON(map[string]int64{"websocket_turn_ms": duration, "total_ms": duration})
+		logContext.detail = &detail
+	}
+	input := requestLogInput(key, logID, accounting.admission, meta, r, http.StatusSwitchingProtocols,
+		entry.StartedAt, &turn, turnComplete, true, turnCost, "", logContext)
+	input.ReservationRequestID = requestID
 	input.LatencyMS = duration
 	input.CompletedAt = time.Now()
 	inserted, err := a.store.AccrueWebSocketTurn(ctx, store.WebSocketTurnAccrual{
@@ -222,6 +252,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	captureWebSocketRequest(logDetail, firstFrame)
 	accounting.requestBytes = int64(len(firstFrame))
+	firstRequestBytes := int64(len(firstFrame))
 	frameMeta := readRequestMeta(firstFrame, r.URL.Path)
 	if meta.Model == "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
@@ -264,6 +295,11 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			}
 		}
 	}
+	accounting.currentMeta = meta
+	accounting.currentStarted = time.Now()
+	accounting.currentRequest = firstRequestBytes
+	accounting.currentForwarded = int64(len(firstFrame))
+	accounting.currentResponse = 0
 
 	upstream, response, err := a.dialEmbeddedCPAWebSocket(r.Context(), r, accounting.admission, requestID)
 	if response != nil && response.Body != nil {
@@ -300,33 +336,53 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	results := make(chan pumpResult, 2)
 	go func() {
-		results <- pumpResult{source: "downstream", err: pumpWebSocketMessages(downstream, upstream, func(payload []byte) error {
+		results <- pumpResult{source: "downstream", err: pumpWebSocketMessages(downstream, upstream, func(payload []byte) ([]byte, error) {
 			accounting.mu.Lock()
 			defer accounting.mu.Unlock()
 			accounting.requestBytes += int64(len(payload))
-			accounting.forwardedBytes += int64(len(payload))
-			return nil
+			forwarded, nextMeta, startsTurn, prepareErr := a.prepareNativeWebSocketRequest(payload, r.URL, key, accounting)
+			if prepareErr != nil {
+				return nil, prepareErr
+			}
+			accounting.forwardedBytes += int64(len(forwarded))
+			if startsTurn {
+				accounting.currentMeta = nextMeta
+				accounting.currentStarted = time.Now()
+				accounting.currentRequest = int64(len(payload))
+				accounting.currentForwarded = int64(len(forwarded))
+				accounting.currentResponse = 0
+			} else {
+				accounting.currentRequest += int64(len(payload))
+				accounting.currentForwarded += int64(len(forwarded))
+			}
+			return forwarded, nil
 		})}
 	}()
 	go func() {
-		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) error {
+		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) ([]byte, error) {
 			accounting.mu.Lock()
 			defer accounting.mu.Unlock()
 			accounting.responseBytes += int64(len(payload))
+			accounting.currentResponse += int64(len(payload))
 			accounting.terminalSeen = accounting.terminalSeen || isNativeWebSocketTerminalEvent(payload)
 			if !isNativeWebSocketUsageTerminalEvent(payload) {
-				return nil
+				return payload, nil
 			}
 			turn := parseNativeWebSocketUsage(payload)
 			cumulative := accounting.result
 			mergeNativeWebSocketResult(&cumulative, turn)
 			if accounting.persistTurn != nil {
-				inserted, persistErr := accounting.persistTurn(meta, turn, cumulative, payload)
+				entry := nativeWebSocketBillingEntry{
+					Meta: accounting.currentMeta, Result: turn, Payload: append([]byte(nil), payload...),
+					StartedAt: accounting.currentStarted, RequestBytes: accounting.currentRequest,
+					ForwardedBytes: accounting.currentForwarded, ResponseBytes: accounting.currentResponse,
+				}
+				inserted, persistErr := accounting.persistTurn(entry, cumulative)
 				if persistErr != nil {
-					return fmt.Errorf("persist websocket terminal usage: %w", persistErr)
+					return nil, fmt.Errorf("persist websocket terminal usage: %w", persistErr)
 				}
 				if !inserted {
-					return nil
+					return payload, nil
 				}
 			} else {
 				if accounting.turnsSeen == 0 {
@@ -337,7 +393,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 				accounting.turnsSeen++
 			}
 			accounting.result = cumulative
-			return nil
+			return payload, nil
 		})}
 	}()
 
@@ -356,6 +412,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	_ = downstream.Close()
 	_ = upstream.Close()
+	accounting.mu.Lock()
+	meta = accounting.currentMeta
+	accounting.mu.Unlock()
 	if first.source == "downstream" && clientWebSocketDisconnect(first.err) {
 		return session, meta, nil
 	}
@@ -460,14 +519,58 @@ func embeddedCPAWebSocketHeaders(source http.Header) http.Header {
 	return header
 }
 
-func pumpWebSocketMessages(source, destination *websocket.Conn, observe func([]byte) error) error {
+func (a *App) prepareNativeWebSocketRequest(payload []byte, requestURL *url.URL, key store.KeyContext,
+	accounting *nativeWebSocketAccounting) ([]byte, requestMeta, bool, error) {
+	var event struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &event) != nil || event.Type != "response.create" {
+		return payload, accounting.currentMeta, false, nil
+	}
+	frameMeta := readRequestMeta(payload, "")
+	nextMeta := accounting.currentMeta
+	if frameMeta.Model != "" {
+		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
+		if !allowed(resolved.Model, key.ModelAllowlist, key.TenantModels) {
+			return nil, nextMeta, true, fmt.Errorf("API key is not allowed to use model %q", resolved.Model)
+		}
+		nextMeta.Model = resolved.Model
+		nextMeta.RequestedModel = resolved.RequestedModel
+		nextMeta.ModelAlias = resolved.ModelAlias
+	}
+	if frameMeta.ServiceTier != "" {
+		nextMeta.ServiceTier = frameMeta.ServiceTier
+	}
+	if frameMeta.ReasoningEffort != "" {
+		nextMeta.ReasoningEffort = frameMeta.ReasoningEffort
+	}
+	nextMeta.Stream = true
+	forwarded := payload
+	if frameMeta.Model != "" && a.nativeCPARuntime != nil {
+		upstreamModel := a.nativeCPARuntime.ResolveCredentialModel(accounting.admission.CPAAuthID, nextMeta.Model)
+		if upstreamModel != "" && upstreamModel != frameMeta.Model {
+			requestCopy := url.URL{}
+			if requestURL != nil {
+				requestCopy = *requestURL
+			}
+			var err error
+			forwarded, err = rewriteRequestModel(payload, &requestCopy, frameMeta.Model, upstreamModel)
+			if err != nil {
+				return nil, nextMeta, true, err
+			}
+		}
+	}
+	return forwarded, nextMeta, true, nil
+}
+
+func pumpWebSocketMessages(source, destination *websocket.Conn, transform func([]byte) ([]byte, error)) error {
 	for {
 		messageType, payload, err := source.ReadMessage()
 		if err != nil {
 			return err
 		}
-		if observe != nil {
-			if err = observe(payload); err != nil {
+		if transform != nil {
+			if payload, err = transform(payload); err != nil {
 				return err
 			}
 		}

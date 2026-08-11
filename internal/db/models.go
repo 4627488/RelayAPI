@@ -143,6 +143,7 @@ type RequestLog struct {
 	ID                           string    `gorm:"type:uuid;primaryKey" json:"id"`
 	TenantID                     string    `gorm:"type:uuid;not null;index:request_logs_tenant_started_idx,priority:1" json:"tenant_id"`
 	APIKeyID                     string    `gorm:"type:uuid;not null;index" json:"api_key_id"`
+	ReservationRequestID         *string   `gorm:"type:uuid;index" json:"reservation_request_id,omitempty"`
 	CPARequestID                 string    `gorm:"index" json:"cpa_request_id,omitempty"`
 	CPATraceID                   string    `gorm:"index" json:"cpa_trace_id,omitempty"`
 	CPAExecutionID               string    `gorm:"index" json:"cpa_execution_id,omitempty"`

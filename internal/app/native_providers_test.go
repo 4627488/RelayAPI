@@ -1,6 +1,8 @@
 package app
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/4627488/RelayAPI/internal/store"
@@ -16,6 +18,88 @@ func TestNativeProviderAccountOmitsEmptyDetails(t *testing.T) {
 			t.Errorf("empty detail %q should be omitted", key)
 		}
 	}
+}
+
+func TestNativeProviderAccountExposesEditableMetadataWithoutSecrets(t *testing.T) {
+	result := nativeProviderAccount(store.UpstreamCredentialSnapshot{
+		ID: "openai-test", Name: "Test", Provider: "openai", Enabled: true, Source: "api_key",
+		Document: []byte(`{"type":"openai","api_key":"secret","proxy_url":"http://user:pass@proxy.test","websockets":true,"headers":{"X-Tenant":"secret","X-Trace":"trace"}}`),
+	})
+	if result["proxy_configured"] != true || result["websockets"] != true {
+		t.Fatalf("editable metadata = %+v", result)
+	}
+	names, ok := result["custom_header_names"].([]string)
+	if !ok || len(names) != 2 || names[0] != "X-Tenant" || names[1] != "X-Trace" {
+		t.Fatalf("custom header names = %#v", result["custom_header_names"])
+	}
+	encoded, _ := json.Marshal(result)
+	if string(encoded) == "" || containsAny(string(encoded), "secret", "user:pass") {
+		t.Fatalf("account response leaked credential material: %s", encoded)
+	}
+}
+
+func TestUpdateNativeCredentialDocumentEditsConnectionSettings(t *testing.T) {
+	baseURL, proxyURL, prefix, apiKey := "https://new.example/v1", "socks5h://proxy.test:1080", "team", "new-secret"
+	websockets := true
+	headers := map[string]string{"X-Tenant": "tenant-a"}
+	updated, err := updateNativeCredentialDocument(json.RawMessage(`{"type":"openai","api_key":"old-secret","proxy_url":"http://old.test"}`), "api_key", nativeProviderUpdateInput{
+		BaseURL: &baseURL, ProxyURL: &proxyURL, Prefix: &prefix, APIKey: &apiKey,
+		WebSockets: &websockets, Headers: &headers,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err = json.Unmarshal(updated, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["base_url"] != baseURL || document["proxy_url"] != proxyURL || document["prefix"] != prefix ||
+		document["api_key"] != apiKey || document["websockets"] != true {
+		t.Fatalf("updated document = %#v", document)
+	}
+	if got := document["headers"].(map[string]any)["X-Tenant"]; got != "tenant-a" {
+		t.Fatalf("headers = %#v", document["headers"])
+	}
+
+	clear := ""
+	updated, err = updateNativeCredentialDocument(updated, "api_key", nativeProviderUpdateInput{ProxyURL: &clear, Prefix: &clear})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document = nil
+	_ = json.Unmarshal(updated, &document)
+	if _, ok := document["proxy_url"]; ok {
+		t.Fatalf("proxy_url was not cleared: %#v", document)
+	}
+	if _, ok := document["prefix"]; ok {
+		t.Fatalf("prefix was not cleared: %#v", document)
+	}
+}
+
+func TestUpdateNativeCredentialDocumentRejectsUnsafeSettings(t *testing.T) {
+	badProxy, badPrefix, changedOAuthBase := "file:///tmp/proxy", "team/child", "https://unexpected.example/v1"
+	for _, test := range []struct {
+		document json.RawMessage
+		source   string
+		input    nativeProviderUpdateInput
+	}{
+		{document: json.RawMessage(`{"type":"openai","api_key":"secret"}`), source: "api_key", input: nativeProviderUpdateInput{ProxyURL: &badProxy}},
+		{document: json.RawMessage(`{"type":"openai","api_key":"secret"}`), source: "api_key", input: nativeProviderUpdateInput{Prefix: &badPrefix}},
+		{document: json.RawMessage(`{"type":"codex","access_token":"secret"}`), source: "oauth", input: nativeProviderUpdateInput{BaseURL: &changedOAuthBase}},
+	} {
+		if _, err := updateNativeCredentialDocument(test.document, test.source, test.input); err == nil {
+			t.Fatalf("unsafe update was accepted: %+v", test.input)
+		}
+	}
+}
+
+func containsAny(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNativeProviderAccountInfersAPIKeyKind(t *testing.T) {
