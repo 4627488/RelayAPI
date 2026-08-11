@@ -22,7 +22,7 @@ func TestParseResponseProtocols(t *testing.T) {
 		{
 			name:    "anthropic messages SSE",
 			payload: "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":13,\"output_tokens\":1,\"cache_read_input_tokens\":5,\"cache_creation_input_tokens\":2}}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n",
-			want:    store.Usage{Prompt: 13, Completion: 7, Cached: 5, CacheWrite: 2, Total: 20},
+			want:    store.Usage{Prompt: 18, Completion: 7, Cached: 5, CacheWrite: 2, Total: 27},
 		},
 		{
 			name:    "gemini native",
@@ -50,6 +50,21 @@ func TestParseResponseProtocols(t *testing.T) {
 				t.Fatalf("usage = %+v, want %+v", got.Usage, test.want)
 			}
 		})
+	}
+}
+
+func TestKimiMessagesCacheUsageIsBilledAsSeparateInput(t *testing.T) {
+	result := ParseResponse([]byte(`{"type":"message_start","message":{"id":"msg_kimi","usage":{"input_tokens":475,"output_tokens":690,"cache_read_input_tokens":218880,"cache_creation_input_tokens":0,"total_tokens":1165}}}`))
+	wantUsage := store.Usage{Prompt: 219355, Completion: 690, Cached: 218880, Total: 220045}
+	if !result.Found || result.Usage != wantUsage {
+		t.Fatalf("usage = %+v, want %+v", result.Usage, wantUsage)
+	}
+	price := pricing.SnapshotPrice{Price: pricing.Price{
+		InputNanoUSDPerToken: 3000, CachedInputNanoUSDPerToken: 300,
+		OutputNanoUSDPerToken: 15000,
+	}}
+	if got, want := Cost(price, result.Usage), int64(77_439_000); got != want {
+		t.Fatalf("cost = %d, want %d", got, want)
 	}
 }
 

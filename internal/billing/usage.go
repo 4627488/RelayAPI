@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 
 	"github.com/4627488/RelayAPI/internal/pricing"
@@ -69,9 +70,12 @@ func ParseResponse(payload []byte) Result {
 			}
 		}
 	}
-	if result.Usage.Total == 0 {
-		result.Usage.Total = result.Usage.Prompt + result.Usage.Completion
-	}
+	// Cache writes are represented separately from Prompt throughout billing.
+	// Recompute this lower bound after all streaming events have been consumed so
+	// a later output-only delta cannot leave Total at the message_start value.
+	result.Usage.Total = maxInt(result.Usage.Total, saturatingSum(
+		result.Usage.Prompt, result.Usage.CacheWrite, result.Usage.Completion,
+	))
 	return result
 }
 
@@ -97,20 +101,31 @@ func readUsage(raw any, result *Result) {
 		return
 	}
 	result.Found = true
-	result.Usage.Prompt = maxInt(result.Usage.Prompt,
+	inputTokens := maxInt(
 		number(usage["input_tokens"]), number(usage["prompt_tokens"]),
 	)
+	cacheReadTokens := maxInt(
+		number(usage["cached_tokens"]), number(usage["cache_read_input_tokens"]),
+		nestedNumber(usage, "input_tokens_details", "cached_tokens"),
+	)
+	cacheWriteTokens := maxInt(
+		number(usage["cache_creation_input_tokens"]), number(usage["cache_write_tokens"]),
+	)
+	// Anthropic Messages reports uncached input, cache reads, and cache writes as
+	// disjoint counters. Internally Prompt includes cache reads (CostNanoUSD
+	// subtracts Cached from Prompt) while cache writes remain a separate counter.
+	// OpenAI-style input_tokens already includes cached tokens, so only normalize
+	// when the Anthropic cache fields are present.
+	if hasAnyKey(usage, "cache_read_input_tokens", "cache_creation_input_tokens") {
+		inputTokens = saturatingSum(inputTokens, cacheReadTokens)
+	}
+	result.Usage.Prompt = maxInt(result.Usage.Prompt, inputTokens)
 	result.Usage.Completion = maxInt(result.Usage.Completion,
 		number(usage["output_tokens"]), number(usage["completion_tokens"]),
 	)
 	result.Usage.Total = maxInt(result.Usage.Total, number(usage["total_tokens"]))
-	result.Usage.Cached = maxInt(result.Usage.Cached,
-		number(usage["cached_tokens"]), number(usage["cache_read_input_tokens"]),
-		nestedNumber(usage, "input_tokens_details", "cached_tokens"),
-	)
-	result.Usage.CacheWrite = maxInt(result.Usage.CacheWrite,
-		number(usage["cache_creation_input_tokens"]), number(usage["cache_write_tokens"]),
-	)
+	result.Usage.Cached = maxInt(result.Usage.Cached, cacheReadTokens)
+	result.Usage.CacheWrite = maxInt(result.Usage.CacheWrite, cacheWriteTokens)
 	result.Usage.Reasoning = maxInt(result.Usage.Reasoning,
 		number(usage["reasoning_tokens"]), nestedNumber(usage, "output_tokens_details", "reasoning_tokens"),
 	)
@@ -163,6 +178,27 @@ func nestedNumber(value map[string]any, key, child string) int64 {
 func nestedNestedNumber(value map[string]any, key, child, grandchild string) int64 {
 	nested, _ := value[key].(map[string]any)
 	return nestedNumber(nested, child, grandchild)
+}
+func hasAnyKey(value map[string]any, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := value[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+func saturatingSum(values ...int64) int64 {
+	result := int64(0)
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if result > math.MaxInt64-value {
+			return math.MaxInt64
+		}
+		result += value
+	}
+	return result
 }
 func modalityTokens(raw any, modality string) int64 {
 	items, _ := raw.([]any)
