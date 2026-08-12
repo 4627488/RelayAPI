@@ -129,10 +129,10 @@ func TestProbeXAIQuotaExposesCurrentBalancesAndMonthlyPeriod(t *testing.T) {
 				"subscriptionTier": "SuperGrok Heavy",
 				"config": map[string]any{
 					"creditUsagePercent": 42.5,
-					"currentPeriod": map[string]any{"type": "USAGE_PERIOD_TYPE_MONTHLY", "end": reset.Format(time.RFC3339)},
-					"prepaidBalance": map[string]any{"val": -2500},
-					"onDemandCap": map[string]any{"val": 5000},
-					"onDemandUsed": map[string]any{"val": 1250},
+					"currentPeriod":      map[string]any{"type": "USAGE_PERIOD_TYPE_MONTHLY", "end": reset.Format(time.RFC3339)},
+					"prepaidBalance":     map[string]any{"val": -2500},
+					"onDemandCap":        map[string]any{"val": 5000},
+					"onDemandUsed":       map[string]any{"val": 1250},
 				},
 			})
 		case "/billing":
