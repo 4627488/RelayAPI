@@ -136,12 +136,9 @@ export function ConnectionGuide({
 
   const selectedKey = usableKeys.find((key) => key.id === keyID)
   const models = useMemo(() => {
-    const inherited = subscriptionModels.length
-      ? subscriptionModels
-      : tenantModels
     const concrete = selectedKey?.model_allowlist?.length
       ? selectedKey.model_allowlist
-      : inherited
+      : [...tenantModels, ...subscriptionModels]
     const aliases = selectedKey?.model_aliases?.map((item) => item.alias) ?? []
     return Array.from(
       new Set(

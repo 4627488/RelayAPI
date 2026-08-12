@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -48,11 +49,15 @@ func projectTenantEntitlements(parent []store.ParentQuotaWindow, child store.Chi
 }
 
 func effectiveSubscriptionModels(parent store.ParentSubscription, child store.ChildSubscription) ([]string, string) {
+	childModels := child.ModelAllowlist
+	if parent.CapacityMode == db.ParentCapacityUnmetered {
+		childModels = nil
+	}
 	source := "cpa"
 	if len(parent.ModelAllowlist) > 0 {
 		source = "parent"
 	}
-	if len(child.ModelAllowlist) > 0 {
+	if len(childModels) > 0 {
 		source = "child"
 	}
 	if len(parent.CPAModelAllowlist) == 0 {
@@ -60,12 +65,12 @@ func effectiveSubscriptionModels(parent store.ParentSubscription, child store.Ch
 		switch {
 		case allConcreteModels(parent.ModelAllowlist):
 			candidates = parent.ModelAllowlist
-		case allConcreteModels(child.ModelAllowlist):
-			candidates = child.ModelAllowlist
+		case allConcreteModels(childModels):
+			candidates = childModels
 		}
 		result := make([]string, 0, len(candidates))
 		for _, model := range candidates {
-			if matchesModelList(model, parent.ModelAllowlist) && matchesModelList(model, child.ModelAllowlist) {
+			if matchesModelList(model, parent.ModelAllowlist) && matchesModelList(model, childModels) {
 				result = append(result, model)
 			}
 		}
@@ -73,7 +78,7 @@ func effectiveSubscriptionModels(parent store.ParentSubscription, child store.Ch
 	}
 	result := make([]string, 0, len(parent.CPAModelAllowlist))
 	for _, model := range parent.CPAModelAllowlist {
-		if matchesModelList(model, parent.ModelAllowlist) && matchesModelList(model, child.ModelAllowlist) {
+		if matchesModelList(model, parent.ModelAllowlist) && matchesModelList(model, childModels) {
 			result = append(result, model)
 		}
 	}

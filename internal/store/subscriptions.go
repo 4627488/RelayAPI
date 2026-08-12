@@ -14,6 +14,7 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -319,11 +320,20 @@ func (s Store) UpdateParentSubscription(ctx context.Context, item ParentSubscrip
 				return ErrAllocationExceeded
 			}
 		}
-		return tx.Model(&current).Updates(map[string]any{
+		if err := tx.Model(&current).Updates(map[string]any{
 			"name": strings.TrimSpace(item.Name), "plan_type": strings.TrimSpace(item.PlanType),
 			"capacity_mode": item.CapacityMode, "allocation_limit_ppm": item.AllocationLimitPPM,
 			"enabled": item.Enabled, "model_allowlist": item.ModelAllowlist, "updated_at": time.Now(),
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		if item.CapacityMode == db.ParentCapacityUnmetered {
+			return tx.Model(&ChildSubscription{}).Where("parent_subscription_id = ?", item.ID).Updates(map[string]any{
+				"name": strings.TrimSpace(item.Name), "allocation_ppm": 1_000_000, "priority": 100,
+				"model_allowlist": pq.StringArray{}, "starts_at": time.Now(), "expires_at": nil, "updated_at": time.Now(),
+			}).Error
+		}
+		return nil
 	})
 	if err != nil {
 		return ParentSubscription{}, err
@@ -695,6 +705,9 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 		if parent.Status == "missing" {
 			return ErrNotFound
 		}
+		if parent.CapacityMode == db.ParentCapacityUnmetered {
+			item = canonicalBalanceGrant(parent, item)
+		}
 		if item.Enabled && (!parent.Enabled || parent.CPAUnavailable) {
 			return errors.New("enabled child subscription requires an available parent")
 		}
@@ -738,6 +751,10 @@ func (s Store) UpdateChildSubscription(ctx context.Context, item ChildSubscripti
 		}
 		if parent.Status == "missing" {
 			return ErrNotFound
+		}
+		if parent.CapacityMode == db.ParentCapacityUnmetered {
+			item = canonicalBalanceGrant(parent, item)
+			item.StartsAt = current.StartsAt
 		}
 		if item.Enabled && (!parent.Enabled || parent.CPAUnavailable) {
 			return errors.New("enabled child subscription requires an available parent")
@@ -786,12 +803,162 @@ func (s Store) DeleteChildSubscription(ctx context.Context, id string) error {
 	})
 }
 
+// GrantBalanceSubscriptionAccess gives each tenant access to every model
+// exposed by an unmetered parent. These rows are access grants rather than
+// quota slices: they intentionally carry no child model restriction, expiry,
+// or individually configurable allocation.
+func (s Store) GrantBalanceSubscriptionAccess(ctx context.Context, parentID string, tenantIDs []string) ([]ChildSubscription, error) {
+	parentID = strings.TrimSpace(parentID)
+	normalizedTenantIDs := make([]string, 0, len(tenantIDs))
+	seen := make(map[string]struct{}, len(tenantIDs))
+	for _, tenantID := range tenantIDs {
+		tenantID = strings.TrimSpace(tenantID)
+		if tenantID == "" {
+			continue
+		}
+		if _, exists := seen[tenantID]; exists {
+			continue
+		}
+		seen[tenantID] = struct{}{}
+		normalizedTenantIDs = append(normalizedTenantIDs, tenantID)
+	}
+	if parentID == "" || len(normalizedTenantIDs) == 0 {
+		return nil, errors.New("parent and at least one tenant are required")
+	}
+
+	items := make([]ChildSubscription, 0, len(normalizedTenantIDs))
+	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		var parent ParentSubscription
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&parent, "id = ?", parentID).Error; err != nil {
+			return notFound(err)
+		}
+		if parent.Status == "missing" {
+			return ErrNotFound
+		}
+		if parent.CapacityMode != db.ParentCapacityUnmetered {
+			return errors.New("bulk access grants require a balance-settled parent")
+		}
+		if !parent.Enabled || parent.CPAUnavailable {
+			return errors.New("balance-settled parent is unavailable")
+		}
+
+		var tenants []Tenant
+		if err := tx.Where("id IN ? AND enabled = ?", normalizedTenantIDs, true).Find(&tenants).Error; err != nil {
+			return err
+		}
+		enabled := make(map[string]struct{}, len(tenants))
+		for _, tenant := range tenants {
+			enabled[tenant.ID] = struct{}{}
+		}
+		for _, tenantID := range normalizedTenantIDs {
+			if _, ok := enabled[tenantID]; !ok {
+				return fmt.Errorf("tenant %s is missing or disabled", tenantID)
+			}
+		}
+
+		now := time.Now()
+		for _, tenantID := range normalizedTenantIDs {
+			var item ChildSubscription
+			err := tx.Where("tenant_id = ? AND parent_subscription_id = ?", tenantID, parent.ID).
+				Order("created_at").First(&item).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				item = canonicalBalanceGrant(parent, ChildSubscription{
+					ID: identity.NewID(), TenantID: tenantID, ParentSubscriptionID: parent.ID,
+					Enabled: true, StartsAt: now,
+				})
+				if err := tx.Create(&item).Error; err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			} else {
+				item = canonicalBalanceGrant(parent, item)
+				item.Enabled = true
+				item.StartsAt = now
+				if err := tx.Model(&ChildSubscription{}).Where("id = ?", item.ID).Updates(map[string]any{
+					"name": item.Name, "allocation_ppm": item.AllocationPPM, "priority": item.Priority,
+					"enabled": true, "model_allowlist": item.ModelAllowlist, "starts_at": item.StartsAt,
+					"expires_at": nil, "updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+			}
+			items = append(items, item)
+		}
+		return nil
+	})
+	return items, err
+}
+
+func canonicalBalanceGrant(parent ParentSubscription, item ChildSubscription) ChildSubscription {
+	item.ParentSubscriptionID = parent.ID
+	item.Name = parent.Name
+	item.AllocationPPM = 1_000_000
+	item.Priority = 100
+	item.ModelAllowlist = nil
+	item.ExpiresAt = nil
+	return item
+}
+
 // Unmetered parents represent credentials such as pay-as-you-go upstream API
 // keys. Their children are access grants, not slices of a finite upstream
 // quota, so any number of tenants may share them while each tenant continues
 // to settle usage against its own account balance.
 func enforcesAllocationLimit(capacityMode string) bool {
 	return capacityMode != db.ParentCapacityUnmetered
+}
+
+func (s Store) ActiveSubscriptionModelGrants(ctx context.Context, tenantID string, now time.Time) ([]SubscriptionModelGrant, error) {
+	type grantRow struct {
+		ChildModels  pq.StringArray `gorm:"column:child_models;type:text[]"`
+		ParentModels pq.StringArray `gorm:"column:parent_models;type:text[]"`
+		CPAModels    pq.StringArray `gorm:"column:cpa_models;type:text[]"`
+		CapacityMode string         `gorm:"column:capacity_mode"`
+	}
+	var rows []grantRow
+	err := scoped(ctx, s.DB).Table("child_subscriptions").
+		Select("child_subscriptions.model_allowlist AS child_models, parent_subscriptions.model_allowlist AS parent_models, parent_subscriptions.cpa_model_allowlist AS cpa_models, parent_subscriptions.capacity_mode AS capacity_mode").
+		Joins("JOIN parent_subscriptions ON parent_subscriptions.id = child_subscriptions.parent_subscription_id").
+		Where("child_subscriptions.tenant_id = ?", tenantID).
+		Where("child_subscriptions.enabled = ? AND child_subscriptions.starts_at <= ? AND (child_subscriptions.expires_at IS NULL OR child_subscriptions.expires_at > ?)", true, now, now).
+		Where("parent_subscriptions.enabled = ? AND parent_subscriptions.cpa_unavailable = ? AND parent_subscriptions.status <> ?", true, false, "missing").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	grants := make([]SubscriptionModelGrant, 0, len(rows))
+	for _, row := range rows {
+		childModels := row.ChildModels
+		if row.CapacityMode == db.ParentCapacityUnmetered {
+			childModels = nil
+		}
+		grants = append(grants, SubscriptionModelGrant{
+			ChildModels: childModels, ParentModels: row.ParentModels, CPAModels: row.CPAModels,
+		})
+	}
+	return grants, nil
+}
+
+func (grant SubscriptionModelGrant) AllowsModel(model string) bool {
+	return modelAllowed(model, grant.ChildModels, grant.ParentModels, grant.CPAModels)
+}
+
+// AllowsModel treats active subscription assignments as additions to the
+// tenant's available model pool. A non-empty API-key allowlist remains the
+// final per-key switch, including for subscription models.
+func (key KeyContext) AllowsModel(model string) bool {
+	if modelAllowed(model, key.ModelAllowlist, key.TenantModels) {
+		return true
+	}
+	if !modelAllowed(model, key.ModelAllowlist) {
+		return false
+	}
+	for _, grant := range key.SubscriptionModelGrants {
+		if grant.AllowsModel(model) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model string, now time.Time) ([]SubscriptionCandidate, bool, error) {
@@ -828,7 +995,11 @@ func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model strin
 		if !exists {
 			continue
 		}
-		if !modelAllowed(model, child.ModelAllowlist, parent.ModelAllowlist, parent.CPAModelAllowlist) {
+		childModels := child.ModelAllowlist
+		if parent.CapacityMode == db.ParentCapacityUnmetered {
+			childModels = nil
+		}
+		if !modelAllowed(model, childModels, parent.ModelAllowlist, parent.CPAModelAllowlist) {
 			continue
 		}
 		hasModelAssignment = true

@@ -53,7 +53,7 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 		}
 		allowedModels := make([]string, 0, len(models))
 		for _, model := range models {
-			if allowed(model, key.ModelAllowlist, key.TenantModels) {
+			if key.AllowsModel(model) {
 				allowedModels = append(allowedModels, model)
 			}
 		}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -10,6 +11,82 @@ import (
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/identity"
 )
+
+func TestBalanceSubscriptionBulkGrantAuthorizesMultipleTenants(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err = database.Exec(`TRUNCATE web_socket_turns, request_reservations, child_quota_windows, child_subscriptions,
+		parent_quota_observations, parent_quota_windows, parent_subscriptions, billing_ledgers,
+		request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tenantIDs := []string{identity.NewID(), identity.NewID()}
+	for index, tenantID := range tenantIDs {
+		if err = database.Create(&db.Tenant{
+			ID: tenantID, Name: "balance tenant", OwnerEmail: fmt.Sprintf("balance-%d@example.test", index),
+			PasswordHash: "test", Enabled: true,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	dataStore := Store{DB: database}
+	parent, err := dataStore.SyncNativeParentSubscription(ctx, ParentSubscription{
+		CPAAuthID: "balance-credential", Name: "Grok balance account", Provider: "xai", Status: "available",
+		CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
+		Enabled: true, CPAModelAllowlist: []string{"grok-4.6"}, Metadata: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := dataStore.GrantBalanceSubscriptionAccess(ctx, parent.ID, tenantIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("grants = %+v", items)
+	}
+	for _, item := range items {
+		if item.AllocationPPM != 1_000_000 || item.Priority != 100 || item.Name != parent.Name || len(item.ModelAllowlist) != 0 || item.ExpiresAt != nil {
+			t.Fatalf("grant retained quota allocation fields: %+v", item)
+		}
+	}
+	if _, err = dataStore.GrantBalanceSubscriptionAccess(ctx, parent.ID, tenantIDs[:1]); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err = database.Model(&db.ChildSubscription{}).Where("parent_subscription_id = ?", parent.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("re-grant created duplicates: %d", count)
+	}
+	// Old balance children could retain a quota-era model restriction. Runtime
+	// authorization must still treat them as full-account access grants.
+	if err = database.Exec("UPDATE child_subscriptions SET model_allowlist = ARRAY['grok-4.5'] WHERE id = ?", items[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	grants, err := dataStore.ActiveSubscriptionModelGrants(ctx, tenantIDs[0], time.Now())
+	if err != nil || len(grants) != 1 || !grants[0].AllowsModel("grok-4.6") {
+		t.Fatalf("model grants = %+v, err = %v", grants, err)
+	}
+	candidates, assigned, err := dataStore.SubscriptionCandidates(ctx, tenantIDs[0], "grok-4.6", time.Now())
+	if err != nil || !assigned || len(candidates) != 1 {
+		t.Fatalf("balance routing retained legacy child restriction: candidates=%+v assigned=%v err=%v", candidates, assigned, err)
+	}
+}
 
 func TestMissingParentCleanupReleasesReservationsAndDeletesCurrentState(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")

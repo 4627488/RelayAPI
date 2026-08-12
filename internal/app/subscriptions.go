@@ -23,6 +23,7 @@ type parentSubscriptionInput struct {
 
 type childSubscriptionInput struct {
 	TenantID             string   `json:"tenant_id"`
+	TenantIDs            []string `json:"tenant_ids"`
 	ParentSubscriptionID string   `json:"parent_subscription_id"`
 	Name                 string   `json:"name"`
 	AllocationPPM        int64    `json:"allocation_ppm"`
@@ -65,9 +66,11 @@ func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			allocated := int64(0)
-			for _, child := range children {
-				if child.ParentSubscriptionID == item.ID && child.Enabled {
-					allocated += child.AllocationPPM
+			if item.CapacityMode != db.ParentCapacityUnmetered {
+				for _, child := range children {
+					if child.ParentSubscriptionID == item.ID && child.Enabled {
+						allocated += child.AllocationPPM
+					}
 				}
 			}
 			result = append(result, map[string]any{"item": item, "windows": windows, "allocated_ppm": allocated})
@@ -346,6 +349,15 @@ func (a *App) adminChildSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 	var input childSubscriptionInput
 	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if len(input.TenantIDs) > 0 {
+		items, err := a.store.GrantBalanceSubscriptionAccess(r.Context(), input.ParentSubscriptionID, input.TenantIDs)
+		if err != nil {
+			writeSubscriptionError(w, err)
+			return
+		}
+		writeJSON(w, 201, map[string]any{"items": items})
 		return
 	}
 	item, err := a.store.CreateChildSubscription(r.Context(), childFromInput("", input))

@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Card,
   CardAction,
@@ -151,6 +152,7 @@ export function AdminSubscriptionsView() {
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignParentID, setAssignParentID] = useState("")
   const [assignTenantID, setAssignTenantID] = useState("")
+  const [assignTenantIDs, setAssignTenantIDs] = useState<string[]>([])
   const [assignName, setAssignName] = useState("")
   const [assignPercent, setAssignPercent] = useState("10")
   const [assignPriority, setAssignPriority] = useState("100")
@@ -262,6 +264,7 @@ export function AdminSubscriptionsView() {
   function openAssignment(view: ParentSubscriptionView) {
     setAssignParentID(view.item.id)
     setAssignTenantID("")
+    setAssignTenantIDs([])
     setAssignName(defaultChildName(view.item))
     setAssignPercent("10")
     setAssignPriority("100")
@@ -275,13 +278,19 @@ export function AdminSubscriptionsView() {
     setAssignName(defaultChildName(view?.item))
     setAssignPercent("10")
     setAssignModels([])
+    setAssignTenantID("")
+    setAssignTenantIDs([])
   }
 
   async function createAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const view = currentParents.find((item) => item.item.id === assignParentID)
-    if (!view || !assignTenantID) {
-      toast.error("请选择模型账户和租户")
+    const balanceMode = view?.item.capacity_mode === "unmetered"
+    if (
+      !view ||
+      (balanceMode ? assignTenantIDs.length === 0 : !assignTenantID)
+    ) {
+      toast.error(balanceMode ? "请至少选择一位用户" : "请选择模型账户和租户")
       return
     }
     if (!isAllocatable(view)) {
@@ -302,19 +311,29 @@ export function AdminSubscriptionsView() {
     }
     setPending(true)
     try {
-      await postJSON("/api/admin/subscriptions/children", {
-        tenant_id: assignTenantID,
-        parent_subscription_id: view.item.id,
-        name: assignName.trim(),
-        allocation_ppm: allocationPPM,
-        priority: Number(assignPriority || 100),
-        enabled: true,
-        model_allowlist: assignModels,
-        starts_at: new Date().toISOString(),
-        expires_at: "",
-      })
+      await postJSON(
+        "/api/admin/subscriptions/children",
+        balanceMode
+          ? {
+              tenant_ids: assignTenantIDs,
+              parent_subscription_id: view.item.id,
+            }
+          : {
+              tenant_id: assignTenantID,
+              parent_subscription_id: view.item.id,
+              name: assignName.trim(),
+              allocation_ppm: allocationPPM,
+              priority: Number(assignPriority || 100),
+              enabled: true,
+              model_allowlist: assignModels,
+              starts_at: new Date().toISOString(),
+              expires_at: "",
+            }
+      )
       setAssignOpen(false)
-      toast.success("已分配给租户")
+      toast.success(
+        balanceMode ? `已授权 ${assignTenantIDs.length} 位用户` : "已分配给租户"
+      )
       await load()
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "分配失败")
@@ -375,6 +394,14 @@ export function AdminSubscriptionsView() {
       assignParent.allocated_ppm -
       assignPPM
     : 0
+  const alreadyAssignedTenantIDs = new Set(
+    children
+      .filter((child) => child.parent_subscription_id === assignParentID)
+      .map((child) => child.tenant_id)
+  )
+  const balanceGrantTenants = tenants.filter(
+    (tenant) => tenant.enabled && !alreadyAssignedTenantIDs.has(tenant.id)
+  )
 
   return (
     <div className="flex flex-col gap-5">
@@ -394,7 +421,9 @@ export function AdminSubscriptionsView() {
           onClick={() => selected && openAssignment(selected)}
         >
           <UserPlusIcon data-icon="inline-start" />
-          分配给租户
+          {selected?.item.capacity_mode === "unmetered"
+            ? "添加用户"
+            : "分配给租户"}
         </Button>
       </div>
 
@@ -495,9 +524,15 @@ export function AdminSubscriptionsView() {
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>分配给租户</DialogTitle>
+            <DialogTitle>
+              {assignParent?.item.capacity_mode === "unmetered"
+                ? "授权用户"
+                : "分配共享额度"}
+            </DialogTitle>
             <DialogDescription>
-              创建一条租户授权；账户凭据始终由 Relay 保管。
+              {assignParent?.item.capacity_mode === "unmetered"
+                ? "所选用户将获得该账户的全部模型权限，调用费用从各自余额扣除。"
+                : "为一个租户创建带独立份额的额度授权。"}
             </DialogDescription>
           </DialogHeader>
           <form id="assign-subscription-form" onSubmit={createAssignment}>
@@ -535,40 +570,88 @@ export function AdminSubscriptionsView() {
                 ) : null}
               </Field>
 
-              <Field>
-                <FieldLabel>租户</FieldLabel>
-                <Select
-                  value={assignTenantID}
-                  onValueChange={(value) => setAssignTenantID(value ?? "")}
-                  required
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择租户" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {tenants
-                        .filter((tenant) => tenant.enabled)
-                        .map((tenant) => (
-                          <SelectItem key={tenant.id} value={tenant.id}>
-                            {tenant.name} · {tenant.owner_email}
-                          </SelectItem>
-                        ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
+              {assignParent?.item.capacity_mode === "unmetered" ? (
+                <Field>
+                  <FieldLabel>用户</FieldLabel>
+                  {balanceGrantTenants.length ? (
+                    <div className="flex max-h-64 flex-col gap-1 overflow-y-auto rounded-lg border p-2">
+                      {balanceGrantTenants.map((tenant) => {
+                        const checked = assignTenantIDs.includes(tenant.id)
+                        return (
+                          <label
+                            key={tenant.id}
+                            className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 hover:bg-muted/60"
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(value) =>
+                                setAssignTenantIDs((current) =>
+                                  value
+                                    ? [...current, tenant.id]
+                                    : current.filter((id) => id !== tenant.id)
+                                )
+                              }
+                            />
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium">
+                                {tenant.name}
+                              </span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {tenant.owner_email}
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                      所有可用用户都已获得该账户权限。
+                    </div>
+                  )}
+                  <FieldDescription>
+                    已选择 {assignTenantIDs.length}{" "}
+                    位；以后仍可继续添加其他用户。
+                  </FieldDescription>
+                </Field>
+              ) : (
+                <Field>
+                  <FieldLabel>租户</FieldLabel>
+                  <Select
+                    value={assignTenantID}
+                    onValueChange={(value) => setAssignTenantID(value ?? "")}
+                    required
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="选择租户" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        {tenants
+                          .filter((tenant) => tenant.enabled)
+                          .map((tenant) => (
+                            <SelectItem key={tenant.id} value={tenant.id}>
+                              {tenant.name} · {tenant.owner_email}
+                            </SelectItem>
+                          ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
 
-              <Field>
-                <FieldLabel htmlFor="assign-name">授权名称</FieldLabel>
-                <Input
-                  id="assign-name"
-                  value={assignName}
-                  onChange={(event) => setAssignName(event.target.value)}
-                  placeholder="例如：研发团队"
-                  required
-                />
-              </Field>
+              {assignParent?.item.capacity_mode !== "unmetered" ? (
+                <Field>
+                  <FieldLabel htmlFor="assign-name">授权名称</FieldLabel>
+                  <Input
+                    id="assign-name"
+                    value={assignName}
+                    onChange={(event) => setAssignName(event.target.value)}
+                    placeholder="例如：研发团队"
+                    required
+                  />
+                </Field>
+              ) : null}
 
               {assignParent?.item.capacity_mode === "observed" ? (
                 <Field data-invalid={assignRemainingPPM < 0 || undefined}>
@@ -589,30 +672,34 @@ export function AdminSubscriptionsView() {
                 </Field>
               ) : null}
 
-              <Field>
-                <FieldLabel htmlFor="assign-priority">路由优先级</FieldLabel>
-                <Input
-                  id="assign-priority"
-                  type="number"
-                  value={assignPriority}
-                  onChange={(event) => setAssignPriority(event.target.value)}
-                  required
-                />
-                <FieldDescription>
-                  同一租户有多个可用账户时，数值越大越优先。
-                </FieldDescription>
-              </Field>
+              {assignParent?.item.capacity_mode !== "unmetered" ? (
+                <Field>
+                  <FieldLabel htmlFor="assign-priority">路由优先级</FieldLabel>
+                  <Input
+                    id="assign-priority"
+                    type="number"
+                    value={assignPriority}
+                    onChange={(event) => setAssignPriority(event.target.value)}
+                    required
+                  />
+                  <FieldDescription>
+                    同一租户有多个可用账户时，数值越大越优先。
+                  </FieldDescription>
+                </Field>
+              ) : null}
 
-              <Field>
-                <FieldLabel htmlFor="assign-models">可用模型</FieldLabel>
-                <ModelSelector
-                  id="assign-models"
-                  options={parentModelOptions(assignParent)}
-                  value={assignModels}
-                  onChange={setAssignModels}
-                  allLabel="继承账户全部模型"
-                />
-              </Field>
+              {assignParent?.item.capacity_mode !== "unmetered" ? (
+                <Field>
+                  <FieldLabel htmlFor="assign-models">可用模型</FieldLabel>
+                  <ModelSelector
+                    id="assign-models"
+                    options={parentModelOptions(assignParent)}
+                    value={assignModels}
+                    onChange={setAssignModels}
+                    allLabel="继承账户全部模型"
+                  />
+                </Field>
+              ) : null}
             </FieldGroup>
           </form>
           <DialogFooter>
@@ -626,10 +713,18 @@ export function AdminSubscriptionsView() {
             <Button
               type="submit"
               form="assign-subscription-form"
-              disabled={pending || assignRemainingPPM < 0}
+              disabled={
+                pending ||
+                (assignParent?.item.capacity_mode === "observed" &&
+                  assignRemainingPPM < 0) ||
+                (assignParent?.item.capacity_mode === "unmetered" &&
+                  assignTenantIDs.length === 0)
+              }
             >
               {pending ? <Spinner /> : <PlusIcon data-icon="inline-start" />}
-              确认分配
+              {assignParent?.item.capacity_mode === "unmetered"
+                ? "确认授权"
+                : "确认分配"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -772,8 +867,10 @@ function AccountAllocationCard({
         <div className="grid gap-4 sm:grid-cols-3">
           <AccountFact
             icon={<UsersIcon />}
-            label="租户授权"
-            value={`${children.length} 条`}
+            label={
+              view.item.capacity_mode === "unmetered" ? "授权用户" : "租户授权"
+            }
+            value={`${children.length} ${view.item.capacity_mode === "unmetered" ? "人" : "条"}`}
           />
           <AccountFact
             icon={<PackageOpenIcon />}
@@ -839,7 +936,9 @@ function AccountAllocationCard({
             <div>
               <h3 className="font-medium">租户授权</h3>
               <p className="text-xs text-muted-foreground">
-                每条授权决定租户可以使用的模型、份额与路由优先级。
+                {view.item.capacity_mode === "unmetered"
+                  ? "授权用户继承账户全部模型，调用费用从各自余额扣除。"
+                  : "每条授权决定租户可以使用的模型、份额与路由优先级。"}
               </p>
             </div>
             <Button
@@ -848,7 +947,9 @@ function AccountAllocationCard({
               onClick={onAssign}
             >
               <PlusIcon data-icon="inline-start" />
-              新增授权
+              {view.item.capacity_mode === "unmetered"
+                ? "添加用户"
+                : "新增授权"}
             </Button>
           </div>
 
@@ -857,9 +958,19 @@ function AccountAllocationCard({
               <TableHeader>
                 <TableRow>
                   <TableHead>租户</TableHead>
-                  <TableHead>授权范围</TableHead>
-                  <TableHead>剩余额度</TableHead>
-                  <TableHead>优先级</TableHead>
+                  <TableHead>
+                    {view.item.capacity_mode === "unmetered"
+                      ? "可用模型"
+                      : "授权范围"}
+                  </TableHead>
+                  <TableHead>
+                    {view.item.capacity_mode === "unmetered"
+                      ? "结算"
+                      : "剩余额度"}
+                  </TableHead>
+                  {view.item.capacity_mode === "observed" ? (
+                    <TableHead>优先级</TableHead>
+                  ) : null}
                   <TableHead>状态</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
@@ -878,12 +989,22 @@ function AccountAllocationCard({
                         </p>
                       </TableCell>
                       <TableCell>
-                        <p>{child.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {child.model_allowlist?.length
-                            ? `限定 ${child.model_allowlist.length} 个模型`
-                            : "继承账户全部模型"}
-                        </p>
+                        {view.item.capacity_mode === "unmetered" ? (
+                          <p>
+                            {parentModelOptions(view).length
+                              ? `账户全部 ${parentModelOptions(view).length} 个模型`
+                              : "账户全部模型"}
+                          </p>
+                        ) : (
+                          <>
+                            <p>{child.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {child.model_allowlist?.length
+                                ? `限定 ${child.model_allowlist.length} 个模型`
+                                : "继承账户全部模型"}
+                            </p>
+                          </>
+                        )}
                       </TableCell>
                       <TableCell>
                         <ChildQuotaProgress
@@ -891,9 +1012,11 @@ function AccountAllocationCard({
                           capacityMode={view.item.capacity_mode}
                         />
                       </TableCell>
-                      <TableCell className="tabular-nums">
-                        {child.priority}
-                      </TableCell>
+                      {view.item.capacity_mode === "observed" ? (
+                        <TableCell className="tabular-nums">
+                          {child.priority}
+                        </TableCell>
+                      ) : null}
                       <TableCell>
                         <ChildStatusBadge child={child} />
                       </TableCell>
@@ -912,9 +1035,11 @@ function AccountAllocationCard({
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuGroup>
-                              <DropdownMenuItem onClick={() => onEdit(child)}>
-                                编辑授权
-                              </DropdownMenuItem>
+                              {view.item.capacity_mode === "observed" ? (
+                                <DropdownMenuItem onClick={() => onEdit(child)}>
+                                  编辑授权
+                                </DropdownMenuItem>
+                              ) : null}
                               <DropdownMenuItem
                                 disabled={pending}
                                 onClick={() => onToggle(child)}
@@ -947,12 +1072,16 @@ function AccountAllocationCard({
                 </EmptyMedia>
                 <EmptyTitle>尚未分配给任何租户</EmptyTitle>
                 <EmptyDescription>
-                  新增授权后，租户请求会严格路由到这个模型账户。
+                  {view.item.capacity_mode === "unmetered"
+                    ? "添加用户后，他们会获得这个账户的全部模型权限。"
+                    : "新增授权后，租户请求会严格路由到这个模型账户。"}
                 </EmptyDescription>
               </EmptyHeader>
               <Button disabled={!isAllocatable(view)} onClick={onAssign}>
                 <UserPlusIcon data-icon="inline-start" />
-                分配给租户
+                {view.item.capacity_mode === "unmetered"
+                  ? "添加用户"
+                  : "分配给租户"}
               </Button>
             </Empty>
           )}

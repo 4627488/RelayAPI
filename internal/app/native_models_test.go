@@ -107,14 +107,15 @@ func TestAddCodexModelAliasesReplacesCollidingCatalogEntry(t *testing.T) {
 func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) {
 	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
 		ID: "codex-catalog", Provider: "codex", Enabled: true,
-		Models:   []string{"grok-4.5", "private-model"},
+		Models:   []string{"grok-4.5", "subscription-model", "private-model"},
 		Document: []byte(`{"type":"codex","access_token":"test-token"}`),
 	})
 	request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.147.0", nil)
 	request.Header.Set("User-Agent", "codex-tui/0.147.0")
 	recorder := httptest.NewRecorder()
 	key := store.KeyContext{TenantModels: []string{"grok-4.5"}}
-	key.ModelAllowlist = []string{"grok-4.5"}
+	key.ModelAllowlist = []string{"grok-4.5", "subscription-model"}
+	key.SubscriptionModelGrants = []store.SubscriptionModelGrant{{CPAModels: []string{"subscription-model"}}}
 	key.ModelAliases = []store.APIKeyModelAlias{{Alias: "gpt-5.6-sol", Model: "grok-4.5"}}
 
 	app.proxyNativeModels(recorder, request, key)
@@ -127,7 +128,7 @@ func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 		t.Fatal(err)
 	}
 	items, _ := document["models"].([]any)
-	if len(items) != 2 {
+	if len(items) != 3 {
 		t.Fatalf("items = %#v", items)
 	}
 	got := make(map[string]map[string]any, len(items))
@@ -135,7 +136,7 @@ func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 		item, _ := raw.(map[string]any)
 		got[catalogModelID(item)] = item
 	}
-	if got["grok-4.5"] == nil || got["gpt-5.6-sol"] == nil {
+	if got["grok-4.5"] == nil || got["gpt-5.6-sol"] == nil || got["subscription-model"] == nil {
 		t.Fatalf("catalog slugs = %#v", got)
 	}
 	if got["private-model"] != nil {

@@ -268,7 +268,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		writeNativeWebSocketError(downstream, "model_required", err.Error())
 		return session, meta, err
 	}
-	if !allowed(meta.Model, key.ModelAllowlist, key.TenantModels) {
+	if !key.AllowsModel(meta.Model) {
 		err = fmt.Errorf("API key is not allowed to use model %q", meta.Model)
 		accounting.errorHTTP, accounting.errorCode = http.StatusForbidden, "model_not_allowed"
 		writeNativeWebSocketError(downstream, "model_not_allowed", err.Error())
@@ -531,7 +531,7 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, requestURL *url.URL,
 	nextMeta := accounting.currentMeta
 	if frameMeta.Model != "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
-		if !allowed(resolved.Model, key.ModelAllowlist, key.TenantModels) {
+		if !key.AllowsModel(resolved.Model) {
 			return nil, nextMeta, true, fmt.Errorf("API key is not allowed to use model %q", resolved.Model)
 		}
 		nextMeta.Model = resolved.Model

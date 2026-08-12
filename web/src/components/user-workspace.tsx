@@ -263,9 +263,7 @@ function KeysView({
             (item) =>
               item.effective_model_allowlist ?? item.model_allowlist ?? []
           )
-        const source = subscriptionModels.length
-          ? subscriptionModels
-          : tenantModels
+        const source = [...tenantModels, ...subscriptionModels]
         setModelOptions(
           Array.from(
             new Set(source.map((model) => model.trim()).filter(Boolean))

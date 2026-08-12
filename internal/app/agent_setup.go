@@ -263,17 +263,23 @@ func (a *App) agentSetupModels(ctx context.Context, tenantID, plain string) ([]s
 		models, _ := effectiveSubscriptionModels(parent, child)
 		inherited = append(inherited, models...)
 	}
-	if inherited = normalizedModels(inherited); len(inherited) == 0 {
-		inherited = key.TenantModels
-	}
-	models := append([]string(nil), inherited...)
+	models := append(append([]string(nil), key.TenantModels...), inherited...)
 	if len(key.ModelAllowlist) > 0 {
-		models = append([]string(nil), key.ModelAllowlist...)
+		models = append(models, key.ModelAllowlist...)
+	}
+	models = normalizedModels(models)
+	allowedModels := make([]string, 0, len(models)+len(key.ModelAliases))
+	for _, model := range models {
+		if key.AllowsModel(model) {
+			allowedModels = append(allowedModels, model)
+		}
 	}
 	for _, alias := range key.ModelAliases {
-		models = append(models, alias.Alias)
+		if key.AllowsModel(alias.Model) {
+			allowedModels = append(allowedModels, alias.Alias)
+		}
 	}
-	return normalizedModels(models), nil
+	return normalizedModels(allowedModels), nil
 }
 
 func buildAgentSetupTemplateData(endpoint, apiKey string, input agentSetupInput, platform string) (agentSetupTemplateData, error) {

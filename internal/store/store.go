@@ -50,13 +50,23 @@ func New(database *gorm.DB, encryptionKey string) (Store, error) {
 
 type KeyContext struct {
 	APIKey
-	TenantName       string
-	TenantEnabled    bool
-	TenantBalance    int64
-	TenantRateLimit  *int
-	TenantTokenLimit *int64
-	TenantModels     []string
-	TenantExpiresAt  *time.Time
+	TenantName              string
+	TenantEnabled           bool
+	TenantBalance           int64
+	TenantRateLimit         *int
+	TenantTokenLimit        *int64
+	TenantModels            []string
+	SubscriptionModelGrants []SubscriptionModelGrant
+	TenantExpiresAt         *time.Time
+}
+
+// SubscriptionModelGrant is an additive model entitlement inherited from an
+// active subscription assignment. Each list is still intersected within the
+// grant so parent and credential restrictions remain authoritative.
+type SubscriptionModelGrant struct {
+	ChildModels  []string
+	ParentModels []string
+	CPAModels    []string
 }
 
 type Usage struct {
@@ -403,11 +413,16 @@ func (s Store) ResolveKey(ctx context.Context, plain string) (KeyContext, error)
 	if err := scoped(ctx, s.DB).First(&tenant, "id = ?", key.TenantID).Error; err != nil {
 		return KeyContext{}, notFound(err)
 	}
+	grants, err := s.ActiveSubscriptionModelGrants(ctx, key.TenantID, time.Now())
+	if err != nil {
+		return KeyContext{}, err
+	}
 	return KeyContext{
 		APIKey: key, TenantName: tenant.Name, TenantEnabled: tenant.Enabled,
 		TenantBalance: tenant.BalanceNanoUSD, TenantRateLimit: tenant.RateLimitPerMinute,
 		TenantTokenLimit: tenant.TokenLimitDaily, TenantModels: tenant.ModelAllowlist,
-		TenantExpiresAt: tenant.ExpiresAt,
+		SubscriptionModelGrants: grants,
+		TenantExpiresAt:         tenant.ExpiresAt,
 	}, nil
 }
 

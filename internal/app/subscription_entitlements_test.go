@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -48,6 +49,17 @@ func TestEffectiveSubscriptionModels(t *testing.T) {
 	)
 	if len(models) != 0 {
 		t.Fatalf("wildcard policy must not be presented as concrete models: %v", models)
+	}
+
+	models, source = effectiveSubscriptionModels(
+		store.ParentSubscription{
+			CapacityMode:      db.ParentCapacityUnmetered,
+			CPAModelAllowlist: []string{"grok-4.6", "grok-4.5"},
+		},
+		store.ChildSubscription{ModelAllowlist: []string{"grok-4.5"}},
+	)
+	if source != "cpa" || len(models) != 2 {
+		t.Fatalf("balance access grant retained legacy child restriction: %v (%s)", models, source)
 	}
 }
 

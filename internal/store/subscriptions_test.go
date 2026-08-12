@@ -48,6 +48,46 @@ func TestUnmeteredParentDoesNotEnforceAllocationLimit(t *testing.T) {
 	}
 }
 
+func TestSubscriptionModelGrantExpandsTenantPoolButRespectsKeyPolicy(t *testing.T) {
+	key := KeyContext{
+		APIKey:       APIKey{ModelAllowlist: []string{"gpt-*", "grok-4.6"}},
+		TenantModels: []string{"gpt-5.6"},
+		SubscriptionModelGrants: []SubscriptionModelGrant{{
+			ParentModels: []string{"grok-*"},
+			CPAModels:    []string{"grok-4.6", "grok-4.5"},
+		}},
+	}
+	if !key.AllowsModel("gpt-5.6") {
+		t.Fatal("ordinary key and tenant permission should remain available")
+	}
+	if !key.AllowsModel("grok-4.6") {
+		t.Fatal("selected subscription model should pass the key allowlist")
+	}
+	if key.AllowsModel("grok-4.5") {
+		t.Fatal("subscription model omitted from the key allowlist was allowed")
+	}
+	if key.AllowsModel("claude-sonnet-4-6") {
+		t.Fatal("model outside ordinary and subscription permissions was allowed")
+	}
+
+	key.ModelAllowlist = nil
+	if !key.AllowsModel("grok-4.5") {
+		t.Fatal("an empty key allowlist should inherit all tenant and subscription models")
+	}
+}
+
+func TestCanonicalBalanceGrantHasNoQuotaSliceConfiguration(t *testing.T) {
+	now := time.Now()
+	expires := now.Add(time.Hour)
+	got := canonicalBalanceGrant(ParentSubscription{ID: "parent", Name: "Grok account"}, ChildSubscription{
+		Name: "custom", AllocationPPM: 10_000, Priority: 999,
+		ModelAllowlist: []string{"grok-4.6"}, ExpiresAt: &expires,
+	})
+	if got.ParentSubscriptionID != "parent" || got.Name != "Grok account" || got.AllocationPPM != 1_000_000 || got.Priority != 100 || len(got.ModelAllowlist) != 0 || got.ExpiresAt != nil {
+		t.Fatalf("balance grant retained quota-slice configuration: %+v", got)
+	}
+}
+
 func TestPercentageCapacity(t *testing.T) {
 	// $2 priced cost across a 4% upstream movement estimates a $50 window.
 	if got := percentageCapacity(2_000_000_000, 4_000_000); got != 50_000_000_000 {

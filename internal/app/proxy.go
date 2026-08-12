@@ -347,7 +347,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	websocket := isWebSocketUpgrade(r)
 	billable := meta.Model != "" && (websocket || (r.Method != http.MethodGet && r.Method != http.MethodHead))
-	if meta.Model != "" && !allowed(meta.Model, key.ModelAllowlist, key.TenantModels) {
+	if meta.Model != "" && !key.AllowsModel(meta.Model) {
 		const message = "该 API Key 无权使用此模型"
 		writeError(w, http.StatusForbidden, "model_not_allowed", message)
 		detail := rejectedRequestDetail(r, body, true, "model_not_allowed", message, started)
