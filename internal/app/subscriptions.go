@@ -38,6 +38,13 @@ type quotaWindowInput struct {
 	LimitNanoUSD int64  `json:"limit_nano_usd"`
 }
 
+type adminChildSubscriptionView struct {
+	store.ChildSubscription
+	CapacityMode       string                    `json:"capacity_mode"`
+	ParentName         string                    `json:"parent_name"`
+	EntitlementWindows []tenantEntitlementWindow `json:"entitlement_windows"`
+}
+
 func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		items, err := a.store.ListParentSubscriptions(r.Context())
@@ -293,7 +300,48 @@ func (a *App) adminChildSubscriptions(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "database_error", err.Error())
 			return
 		}
-		writeJSON(w, 200, map[string]any{"items": items})
+		parents, err := a.store.ListParentSubscriptions(r.Context())
+		if err != nil {
+			writeError(w, 500, "database_error", err.Error())
+			return
+		}
+		parentsByID := make(map[string]store.ParentSubscription, len(parents))
+		for _, parent := range parents {
+			parentsByID[parent.ID] = parent
+		}
+		parentWindowsByID := make(map[string][]store.ParentQuotaWindow)
+		result := make([]adminChildSubscriptionView, 0, len(items))
+		for _, item := range items {
+			parent, ok := parentsByID[item.ParentSubscriptionID]
+			if !ok {
+				continue
+			}
+			view := adminChildSubscriptionView{
+				ChildSubscription:  item,
+				CapacityMode:       parent.CapacityMode,
+				ParentName:         parent.Name,
+				EntitlementWindows: []tenantEntitlementWindow{},
+			}
+			if parent.CapacityMode != db.ParentCapacityUnmetered {
+				parentWindows, cached := parentWindowsByID[parent.ID]
+				if !cached {
+					parentWindows, err = a.store.ListParentQuotaWindows(r.Context(), parent.ID)
+					if err != nil {
+						writeError(w, 500, "database_error", err.Error())
+						return
+					}
+					parentWindowsByID[parent.ID] = parentWindows
+				}
+				childWindows, stateErr := a.store.ProjectedChildQuotaState(r.Context(), item)
+				if stateErr != nil {
+					writeError(w, 500, "database_error", stateErr.Error())
+					return
+				}
+				view.EntitlementWindows = projectTenantEntitlements(parentWindows, item, childWindows)
+			}
+			result = append(result, view)
+		}
+		writeJSON(w, 200, map[string]any{"items": result})
 		return
 	}
 	var input childSubscriptionInput

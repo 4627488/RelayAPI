@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,6 +71,61 @@ func TestProbeXAIQuotaFromNativeCredential(t *testing.T) {
 	}
 	if report.Windows[0].Kind != "7d" || report.Windows[1].Kind != "monthly" || report.Windows[1].UsedPercent == nil || *report.Windows[1].UsedPercent != 10 {
 		t.Fatalf("unexpected windows: %#v", report.Windows)
+	}
+}
+
+func TestProbeXAIQuotaSupportsSnakeCaseAndScalarBillingValues(t *testing.T) {
+	now := time.Date(2026, 8, 12, 3, 0, 0, 0, time.UTC)
+	weeklyReset := now.Add(6 * 24 * time.Hour)
+	monthlyReset := now.Add(18 * 24 * time.Hour)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-userid") != "xai-user" {
+			t.Fatalf("missing x-userid header: %v", r.Header)
+		}
+		switch r.URL.Path {
+		case "/credits":
+			_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{
+				"credit_usage_percent": 23.5,
+				"current_period":       map[string]any{"type": "weekly", "end": weeklyReset.Format(time.RFC3339)},
+				"product_usage":        []any{map[string]any{"product": "Grok", "usage_percent": 31}},
+			}})
+		case "/billing":
+			_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{
+				"used": 175000, "monthly_limit": "150000", "billing_period_end": monthlyReset.Format(time.RFC3339),
+			}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	report, err := probeQuotaWithClient(context.Background(), server.Client(), quotaEndpoints{xaiCredits: server.URL + "/credits", xaiBilling: server.URL + "/billing"}, "xai.json", "xai", map[string]any{"access_token": "xai-token", "user_id": "xai-user"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.PlanType != "supergrok-heavy" || len(report.Windows) != 3 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+	weekly := quotaWindowByKind(t, report.Windows, "7d")
+	if weekly.UsedPercent == nil || *weekly.UsedPercent != 23.5 || weekly.ResetsAt == nil || !weekly.ResetsAt.Equal(weeklyReset) || !weekly.Enforceable {
+		t.Fatalf("unexpected weekly window: %#v", weekly)
+	}
+	monthly := quotaWindowByKind(t, report.Windows, "monthly")
+	if monthly.UsedPercent == nil || *monthly.UsedPercent != 100 || monthly.Enforceable {
+		t.Fatalf("monthly billing must be visible but not enforceable: %#v", monthly)
+	}
+}
+
+func TestProbeXAIQuotaEmptyPayloadReportsOnlyShape(t *testing.T) {
+	now := time.Date(2026, 8, 12, 3, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{"new_secret_value": "must-not-leak", "new_field": true}})
+	}))
+	defer server.Close()
+
+	_, err := probeQuotaWithClient(context.Background(), server.Client(), quotaEndpoints{xaiCredits: server.URL, xaiBilling: server.URL}, "xai.json", "xai", map[string]any{"access_token": "xai-token"}, now)
+	if err == nil || !strings.Contains(err.Error(), "config keys [new_field,new_secret_value]") || strings.Contains(err.Error(), "must-not-leak") {
+		t.Fatalf("unexpected diagnostic: %v", err)
 	}
 }
 

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,15 +16,16 @@ import (
 const providerOAuthSessionTTL = 30 * time.Minute
 
 type providerOAuthSession struct {
-	ID        string
-	State     string
-	Provider  string
-	Label     string
-	Email     string
-	Document  []byte
-	CreatedAt time.Time
-	ExpiresAt time.Time
-	Error     string
+	ID                 string
+	State              string
+	Provider           string
+	TargetCredentialID string
+	Label              string
+	Email              string
+	Document           []byte
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
+	Error              string
 }
 
 type providerOAuthSessions struct {
@@ -46,9 +48,13 @@ func (s *providerOAuthSessions) purgeLocked(now time.Time) {
 	}
 }
 
-func (s *providerOAuthSessions) create(provider string) *providerOAuthSession {
+func (s *providerOAuthSessions) create(provider, targetCredentialID string) *providerOAuthSession {
 	now := time.Now()
-	session := &providerOAuthSession{ID: nativeCredentialID("oauth"), Provider: provider, CreatedAt: now, ExpiresAt: now.Add(providerOAuthSessionTTL)}
+	session := &providerOAuthSession{
+		ID: nativeCredentialID("oauth"), Provider: provider,
+		TargetCredentialID: strings.TrimSpace(targetCredentialID),
+		CreatedAt:          now, ExpiresAt: now.Add(providerOAuthSessionTTL),
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.purgeLocked(now)
@@ -165,7 +171,8 @@ func (a *App) captureProviderOAuthCredential(_ context.Context, sessionID, provi
 
 func (a *App) adminProviderOAuthStart(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Provider string `json:"provider"`
+		Provider     string `json:"provider"`
+		CredentialID string `json:"credential_id"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -179,7 +186,29 @@ func (a *App) adminProviderOAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "oauth_unavailable", "OAuth 连接服务暂不可用")
 		return
 	}
-	session := a.providerOAuth.create(provider)
+	credentialID := strings.TrimSpace(input.CredentialID)
+	if credentialID != "" {
+		row, err := a.store.GetUpstreamCredential(r.Context(), credentialID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "credential_not_found", "要重新认证的账户不存在")
+			} else {
+				writeError(w, http.StatusInternalServerError, "credential_unavailable", "无法读取要重新认证的账户")
+			}
+			return
+		}
+		var document map[string]any
+		_ = json.Unmarshal(row.Document, &document)
+		if nativeCredentialAuthKind(document, row.Source) != "oauth" {
+			writeError(w, http.StatusBadRequest, "reauth_unsupported", "只有 OAuth 账户可以重新认证")
+			return
+		}
+		if normalizedOAuthProvider(row.Provider) != provider {
+			writeError(w, http.StatusBadRequest, "provider_mismatch", "重新认证的提供商与原账户不一致")
+			return
+		}
+	}
+	session := a.providerOAuth.create(provider, credentialID)
 	result, err := a.nativeCPARuntime.StartOAuth(r.Context(), provider, session.ID)
 	if err != nil {
 		a.providerOAuth.removeByID(session.ID)
@@ -273,7 +302,27 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	var previous *store.UpstreamCredentialSnapshot
+	if session.TargetCredentialID != "" {
+		row, err := a.store.GetUpstreamCredential(r.Context(), session.TargetCredentialID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "credential_not_found", "原 OAuth 账户已不存在")
+			} else {
+				writeError(w, http.StatusInternalServerError, "credential_unavailable", "无法读取原 OAuth 账户")
+			}
+			return
+		}
+		if normalizedOAuthProvider(row.Provider) != session.Provider {
+			writeError(w, http.StatusConflict, "provider_mismatch", "原账户提供商已发生变化")
+			return
+		}
+		previous = &row
+	}
 	name := strings.TrimSpace(input.Name)
+	if name == "" && previous != nil {
+		name = previous.Name
+	}
 	if name == "" {
 		name = strings.TrimSpace(session.Email)
 	}
@@ -285,9 +334,25 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := nativeCredentialID(session.Provider)
+	document := json.RawMessage(session.Document)
+	enabled := true
+	models := []string(nil)
+	var expiresAt *time.Time
+	if previous != nil {
+		id = previous.ID
+		enabled = previous.Enabled
+		models = previous.Models
+		expiresAt = previous.ExpiresAt
+		var mergeErr error
+		document, mergeErr = mergeOAuthCredentialSettings(previous.Document, document)
+		if mergeErr != nil {
+			writeError(w, http.StatusInternalServerError, "credential_merge_failed", "合并 OAuth 账户设置失败")
+			return
+		}
+	}
 	row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{
-		ID: id, Name: name, Provider: session.Provider, Enabled: true, Models: nil,
-		Document: session.Document, Source: "oauth",
+		ID: id, Name: name, Provider: session.Provider, Enabled: enabled, Models: models,
+		Document: document, Source: "oauth", ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存 OAuth 账户失败")
@@ -295,7 +360,15 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 	}
 	row, _, err = a.activateNativeCredential(r.Context(), row)
 	if err != nil {
-		_ = a.store.DeleteUpstreamCredential(r.Context(), id)
+		if previous == nil {
+			_ = a.store.DeleteUpstreamCredential(r.Context(), id)
+		} else {
+			_, _ = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{
+				ID: previous.ID, Name: previous.Name, Provider: previous.Provider,
+				Enabled: previous.Enabled, Models: previous.Models, Document: previous.Document,
+				Source: previous.Source, ExpiresAt: previous.ExpiresAt,
+			})
+		}
 		_ = a.reloadNativeCredentials(r.Context())
 		writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())
 		return
@@ -305,7 +378,27 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	a.providerOAuth.remove(state)
-	writeJSON(w, http.StatusCreated, nativeProviderAccount(row))
+	status := http.StatusCreated
+	if previous != nil {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, nativeProviderAccount(row))
+}
+
+func mergeOAuthCredentialSettings(current, replacement json.RawMessage) (json.RawMessage, error) {
+	var oldDocument, newDocument map[string]any
+	if err := json.Unmarshal(current, &oldDocument); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(replacement, &newDocument); err != nil {
+		return nil, err
+	}
+	for _, key := range []string{"proxy_url", "_relay_proxy_url", "prefix", "websockets", "headers"} {
+		if value, ok := oldDocument[key]; ok {
+			newDocument[key] = value
+		}
+	}
+	return json.Marshal(newDocument)
 }
 
 func (a *App) adminProviderOAuthCancel(w http.ResponseWriter, r *http.Request) {

@@ -182,7 +182,7 @@ func codexQuotaWindow(name string, value map[string]any, now time.Time) (QuotaWi
 }
 
 func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndpoints, authIndex, provider string, document map[string]any, now time.Time) (QuotaReport, error) {
-	token := scalarQuotaText(document["access_token"])
+	token := scalarQuotaText(firstQuotaValue(document["access_token"], document["accessToken"]))
 	if token == "" {
 		return QuotaReport{}, errors.New("xAI quota credential is missing access_token")
 	}
@@ -194,6 +194,9 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 		"X-Grok-Client-Version": {"0.2.93"},
 		"User-Agent":            {"grok-pager/0.2.93 grok-shell/0.2.93"},
 	}
+	if userID := xaiQuotaUserID(document); userID != "" {
+		headers.Set("x-userid", userID)
+	}
 	credits, creditsErr := requestQuotaJSON(ctx, client, endpoints.xaiCredits, headers)
 	billing, billingErr := requestQuotaJSON(ctx, client, endpoints.xaiBilling, headers)
 	if creditsErr != nil && billingErr != nil {
@@ -201,28 +204,32 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 	}
 	windows := make([]QuotaWindow, 0, 8)
 	if creditsErr == nil {
-		used := percentQuota(lookupQuotaPath(credits, "config.creditUsagePercent"))
+		config := quotaMap(credits["config"])
+		period := quotaMap(firstQuotaValue(config["currentPeriod"], config["current_period"]))
+		used := percentQuota(firstQuotaValue(config["creditUsagePercent"], config["credit_usage_percent"]))
 		if used != nil {
-			windows = append(windows, QuotaWindow{Kind: "7d", Label: "7 天", UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: parseQuotaTime(lookupQuotaPath(credits, "config.currentPeriod.end"), now), Enforceable: true})
+			windows = append(windows, QuotaWindow{Kind: "7d", Label: "7 天", UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: parseQuotaTime(period["end"], now), Enforceable: true})
 		}
-		if rows, _ := lookupQuotaPath(credits, "config.productUsage").([]any); rows != nil {
+		if rows, _ := firstQuotaValue(config["productUsage"], config["product_usage"]).([]any); rows != nil {
 			for _, raw := range rows {
 				row, _ := raw.(map[string]any)
-				used := percentQuota(row["usagePercent"])
+				used := percentQuota(firstQuotaValue(row["usagePercent"], row["usage_percent"]))
 				kind := quotaSlug(scalarQuotaText(row["product"]) + "-usage")
 				if kind != "" && used != nil {
-					windows = append(windows, QuotaWindow{Kind: kind, Label: scalarQuotaText(row["product"]), UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: parseQuotaTime(lookupQuotaPath(credits, "config.currentPeriod.end"), now), Enforceable: false})
+					windows = append(windows, QuotaWindow{Kind: kind, Label: scalarQuotaText(row["product"]), UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: parseQuotaTime(period["end"], now), Enforceable: false})
 				}
 			}
 		}
 	}
 	plan := ""
 	if billingErr == nil {
-		usedValue := numericQuota(lookupQuotaPath(billing, "config.used.val"))
-		limitValue := numericQuota(lookupQuotaPath(billing, "config.monthlyLimit.val"))
+		config := quotaMap(billing["config"])
+		usedValue := xaiQuotaCentValue(config["used"])
+		limitValue := xaiQuotaCentValue(firstQuotaValue(config["monthlyLimit"], config["monthly_limit"]))
 		if usedValue != nil && limitValue != nil && *limitValue > 0 {
-			used := clampQuota(*usedValue / *limitValue * 100)
-			windows = append(windows, QuotaWindow{Kind: "monthly", Label: "月度", UsedPercent: &used, RemainingPercent: quotaComplement(&used), ResetsAt: parseQuotaTime(lookupQuotaPath(billing, "config.billingPeriodEnd"), now), Enforceable: true})
+			includedUsed := math.Min(*usedValue, *limitValue)
+			used := clampQuota(includedUsed / *limitValue * 100)
+			windows = append(windows, QuotaWindow{Kind: "monthly", Label: "月度账单", UsedPercent: &used, RemainingPercent: quotaComplement(&used), ResetsAt: parseQuotaTime(firstQuotaValue(config["billingPeriodEnd"], config["billing_period_end"]), now), Enforceable: false})
 		}
 		if limitValue != nil {
 			plan = map[int64]string{0: "free", 15_000: "supergrok", 150_000: "supergrok-heavy"}[int64(*limitValue)]
@@ -233,9 +240,56 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 	}
 	windows = validQuotaWindows(windows, now)
 	if len(windows) == 0 {
-		return QuotaReport{}, errors.New("xAI quota responses contain no usable windows")
+		return QuotaReport{}, fmt.Errorf("xAI quota responses contain no usable windows (%s)", xaiQuotaDiagnostic(credits, creditsErr, billing, billingErr))
 	}
 	return QuotaReport{AuthIndex: authIndex, Provider: provider, PlanType: plan, Supported: true, Source: "xai-billing", Observed: now, Windows: windows}, nil
+}
+
+func xaiQuotaUserID(document map[string]any) string {
+	paths := []string{
+		"sub", "subject", "user_id", "userId",
+		"metadata.sub", "metadata.subject", "metadata.user_id", "metadata.userId",
+		"attributes.sub", "attributes.subject", "attributes.user_id", "attributes.userId",
+		"oauth.sub", "oauth.subject", "metadata.oauth.sub", "metadata.oauth.subject", "attributes.oauth.sub", "attributes.oauth.subject",
+		"user.sub", "user.id", "metadata.user.sub", "metadata.user.id", "attributes.user.sub", "attributes.user.id",
+	}
+	for _, path := range paths {
+		if value := scalarQuotaText(lookupQuotaPath(document, path)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func xaiQuotaCentValue(value any) *float64 {
+	if object := quotaMap(value); object != nil {
+		return numericQuota(object["val"])
+	}
+	return numericQuota(value)
+}
+
+func xaiQuotaDiagnostic(credits map[string]any, creditsErr error, billing map[string]any, billingErr error) string {
+	return "credits=" + quotaResponseShape(credits, creditsErr) + "; billing=" + quotaResponseShape(billing, billingErr)
+}
+
+func quotaResponseShape(payload map[string]any, requestErr error) string {
+	if requestErr != nil {
+		return requestErr.Error()
+	}
+	config := quotaMap(payload["config"])
+	if config == nil {
+		return "config missing; top-level keys [" + strings.Join(sortedQuotaKeys(payload), ",") + "]"
+	}
+	return "config keys [" + strings.Join(sortedQuotaKeys(config), ",") + "]"
+}
+
+func sortedQuotaKeys(value map[string]any) []string {
+	keys := make([]string, 0, len(value))
+	for key := range value {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func requestQuotaJSON(ctx context.Context, client *http.Client, endpoint string, headers http.Header) (map[string]any, error) {

@@ -166,6 +166,14 @@ function isOAuthAccount(account: ProviderAccount) {
   return account.auth_kind === "oauth" || account.source === "oauth"
 }
 
+function normalizedOAuthProvider(provider: string) {
+  const value = provider.trim().toLowerCase()
+  if (value === "anthropic") return "claude"
+  if (value === "openai") return "codex"
+  if (value === "grok" || value === "x.ai") return "xai"
+  return value
+}
+
 export function ProvidersView() {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([])
   const [loading, setLoading] = useState(true)
@@ -174,6 +182,8 @@ export function ProvidersView() {
   const [search, setSearch] = useState("")
   const [provider, setProvider] = useState("all")
   const [connectOpen, setConnectOpen] = useState(false)
+  const [reauthenticating, setReauthenticating] =
+    useState<ProviderAccount | null>(null)
   const [selected, setSelected] = useState<ProviderAccount | null>(null)
   const [deleting, setDeleting] = useState<ProviderAccount | null>(null)
 
@@ -334,7 +344,12 @@ export function ProvidersView() {
             )}
             刷新额度
           </Button>
-          <Button onClick={() => setConnectOpen(true)}>
+          <Button
+            onClick={() => {
+              setReauthenticating(null)
+              setConnectOpen(true)
+            }}
+          >
             <PlusIcon data-icon="inline-start" />
             连接账户
           </Button>
@@ -534,7 +549,12 @@ export function ProvidersView() {
                 </EmptyDescription>
               </EmptyHeader>
               {!accounts.length ? (
-                <Button onClick={() => setConnectOpen(true)}>
+                <Button
+                  onClick={() => {
+                    setReauthenticating(null)
+                    setConnectOpen(true)
+                  }}
+                >
                   <PlusIcon />
                   连接账户
                 </Button>
@@ -545,8 +565,12 @@ export function ProvidersView() {
       )}
 
       <ConnectAccountDialog
-        open={connectOpen}
-        onOpenChange={setConnectOpen}
+        open={connectOpen || Boolean(reauthenticating)}
+        reauthAccount={reauthenticating}
+        onOpenChange={(open) => {
+          setConnectOpen(open)
+          if (!open) setReauthenticating(null)
+        }}
         onSaved={load}
       />
       <ManageAccountDialog
@@ -558,6 +582,10 @@ export function ProvidersView() {
         onSave={saveAccount}
         onToggle={toggle}
         onDelete={setDeleting}
+        onReauthenticate={(account) => {
+          setSelected(null)
+          setReauthenticating(account)
+        }}
       />
 
       <AlertDialog
@@ -593,10 +621,12 @@ export function ProvidersView() {
 
 function ConnectAccountDialog({
   open,
+  reauthAccount,
   onOpenChange,
   onSaved,
 }: {
   open: boolean
+  reauthAccount: ProviderAccount | null
   onOpenChange: (open: boolean) => void
   onSaved: () => Promise<void>
 }) {
@@ -636,6 +666,13 @@ function ConnectAccountDialog({
   }
 
   useEffect(() => {
+    if (!open || !reauthAccount) return
+    setMode("oauth")
+    setProvider(normalizedOAuthProvider(reauthAccount.provider))
+    setName(displayName(reauthAccount))
+  }, [open, reauthAccount])
+
+  useEffect(() => {
     if (
       !open ||
       !oauth?.state ||
@@ -651,7 +688,7 @@ function ConnectAccountDialog({
         )
         if (!active) return
         setOAuthStatus(result)
-        if (result.status === "authorized")
+        if (result.status === "authorized" && !reauthAccount)
           setName(
             result.suggested_name || result.email || providerLabel(provider)
           )
@@ -669,14 +706,22 @@ function ConnectAccountDialog({
       active = false
       window.clearInterval(timer)
     }
-  }, [oauth?.state, oauthStatus?.status, open, provider])
+  }, [oauth?.state, oauthStatus?.status, open, provider, reauthAccount])
 
   async function startOAuth() {
     setPending(true)
     try {
       const result = await api<OAuthStart>(
         "/api/admin/providers/oauth/sessions",
-        { method: "POST", body: JSON.stringify({ provider }) }
+        {
+          method: "POST",
+          body: JSON.stringify({
+            provider,
+            ...(reauthAccount
+              ? { credential_id: reauthAccount.id || reauthAccount.name }
+              : {}),
+          }),
+        }
       )
       setOAuth(result)
       setOAuthStatus({ status: "waiting" })
@@ -720,7 +765,7 @@ function ConnectAccountDialog({
         { method: "POST", body: JSON.stringify({ name: name.trim() }) }
       )
       setOAuth(null)
-      toast.success("OAuth 账户已连接")
+      toast.success(reauthAccount ? "OAuth 账户已重新认证" : "OAuth 账户已连接")
       onOpenChange(false)
       reset()
       await onSaved()
@@ -783,9 +828,13 @@ function ConnectAccountDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>连接模型账户</DialogTitle>
+          <DialogTitle>
+            {reauthAccount ? "重新认证 OAuth 账户" : "连接模型账户"}
+          </DialogTitle>
           <DialogDescription>
-            选择最适合该账户的连接方式。OAuth 不需要手动复制令牌。
+            {reauthAccount
+              ? `为 ${displayName(reauthAccount)} 更新 OAuth 登录，不改变已有订阅分配。`
+              : "选择最适合该账户的连接方式。OAuth 不需要手动复制令牌。"}
           </DialogDescription>
         </DialogHeader>
 
@@ -882,6 +931,14 @@ function ConnectAccountDialog({
               </div>
             )}
           </div>
+        ) : reauthAccount ? (
+          <Alert>
+            <RefreshCwIcon />
+            <AlertTitle>原位更新授权</AlertTitle>
+            <AlertDescription>
+              完成登录后会替换过期令牌，并保留账户设置、模型范围和所有子订阅。
+            </AlertDescription>
+          </Alert>
         ) : (
           <Tabs
             value={mode}
@@ -977,7 +1034,8 @@ function ConnectAccountDialog({
             </Button>
           ) : oauth ? null : mode === "oauth" ? (
             <Button disabled={pending} onClick={() => void startOAuth()}>
-              {pending ? <Spinner /> : <Link2Icon />}生成授权链接
+              {pending ? <Spinner /> : <Link2Icon />}
+              {reauthAccount ? "开始重新认证" : "生成授权链接"}
             </Button>
           ) : (
             <Button
@@ -1143,6 +1201,7 @@ function ManageAccountDialog({
   onSave,
   onToggle,
   onDelete,
+  onReauthenticate,
 }: {
   account: ProviderAccount | null
   pending: boolean
@@ -1153,6 +1212,7 @@ function ManageAccountDialog({
   ) => Promise<void>
   onToggle: (account: ProviderAccount, disabled: boolean) => Promise<void>
   onDelete: (account: ProviderAccount) => void
+  onReauthenticate: (account: ProviderAccount) => void
 }) {
   const [name, setName] = useState("")
   const [baseURL, setBaseURL] = useState("")
@@ -1615,7 +1675,7 @@ function ManageAccountDialog({
                       <AlertTitle>OAuth 凭据由 Relay 管理</AlertTitle>
                       <AlertDescription>
                         OAuth
-                        令牌会自动刷新；如需更换授权身份，请连接新账户后删除旧账户。
+                        令牌会自动刷新；掉登录或需要更换授权身份时，可使用下方“重新认证”。
                       </AlertDescription>
                     </Alert>
                   )}
@@ -1639,6 +1699,16 @@ function ManageAccountDialog({
                 >
                   {account.disabled ? "启用" : "停用"}
                 </Button>
+                {isOAuthAccount(account) ? (
+                  <Button
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => onReauthenticate(account)}
+                  >
+                    <RefreshCwIcon data-icon="inline-start" />
+                    重新认证
+                  </Button>
+                ) : null}
               </div>
               <Button
                 disabled={pending || modelLoading || !selectedModels.length}

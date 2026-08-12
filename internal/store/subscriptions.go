@@ -88,19 +88,19 @@ type quotaWindowReservation struct {
 
 func (s Store) ListParentSubscriptions(ctx context.Context) ([]ParentSubscription, error) {
 	var items []ParentSubscription
-	err := scoped(ctx, s.DB).Order("created_at DESC").Find(&items).Error
+	err := scoped(ctx, s.DB).Where("status <> ?", "missing").Order("created_at DESC").Find(&items).Error
 	return items, err
 }
 
 func (s Store) GetParentSubscription(ctx context.Context, id string) (ParentSubscription, error) {
 	var item ParentSubscription
-	err := scoped(ctx, s.DB).First(&item, "id = ?", id).Error
+	err := scoped(ctx, s.DB).Where("status <> ?", "missing").First(&item, "id = ?", id).Error
 	return item, notFound(err)
 }
 
 func (s Store) GetParentSubscriptionByCPAAuthIndex(ctx context.Context, authIndex string) (ParentSubscription, error) {
 	var item ParentSubscription
-	err := scoped(ctx, s.DB).First(&item, "cpa_auth_index = ?", strings.TrimSpace(authIndex)).Error
+	err := scoped(ctx, s.DB).Where("status <> ?", "missing").First(&item, "cpa_auth_index = ?", strings.TrimSpace(authIndex)).Error
 	return item, notFound(err)
 }
 
@@ -222,16 +222,55 @@ func (s Store) SyncNativeParentSubscription(ctx context.Context, item ParentSubs
 }
 
 func (s Store) MarkMissingParentSubscriptions(ctx context.Context, seen []string, syncStartedAt time.Time) error {
-	query := scoped(ctx, s.DB).Model(&ParentSubscription{}).
-		Where("last_synced_at IS NOT NULL AND last_synced_at < ?", syncStartedAt)
-	if len(seen) > 0 {
-		query = query.Where("cpa_auth_index NOT IN ?", seen)
-	}
-	return query.Updates(map[string]any{
-		"cpa_unavailable": true,
-		"status":          "missing",
-		"updated_at":      time.Now(),
-	}).Error
+	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		query := tx.Model(&ParentSubscription{}).
+			Where("last_synced_at IS NOT NULL AND last_synced_at < ?", syncStartedAt)
+		if len(seen) > 0 {
+			query = query.Where("cpa_auth_index NOT IN ?", seen)
+		}
+		var missingIDs []string
+		if err := query.Pluck("id", &missingIDs).Error; err != nil || len(missingIDs) == 0 {
+			return err
+		}
+		now := time.Now()
+		if err := tx.Model(&ParentSubscription{}).Where("id IN ?", missingIDs).Updates(map[string]any{
+			"cpa_unavailable": true,
+			"enabled":         false,
+			"status":          "missing",
+			"updated_at":      now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&ChildSubscription{}).Where("parent_subscription_id IN ?", missingIDs).
+			Updates(map[string]any{"enabled": false, "updated_at": now}).Error; err != nil {
+			return err
+		}
+
+		// A deleted credential is authoritative: release any in-flight holds at
+		// zero cost, then remove all current subscription state. Late terminal
+		// events are idempotent because released reservations cannot settle again.
+		for _, parentID := range missingIDs {
+			childIDs := tx.Model(&ChildSubscription{}).Select("id").Where("parent_subscription_id = ?", parentID)
+			var active []RequestReservation
+			if err := tx.Model(&RequestReservation{}).
+				Where("status = ? AND (parent_subscription_id = ? OR child_subscription_id IN (?))", db.ReservationActive, parentID, childIDs).
+				Find(&active).Error; err != nil {
+				return err
+			}
+			for _, reservation := range active {
+				if err := finishReservationTx(tx, reservation.RequestID, 0, false, db.ReservationReleased); err != nil {
+					return err
+				}
+			}
+			if err := tx.Where("parent_subscription_id = ?", parentID).Delete(&ChildSubscription{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("id = ?", parentID).Delete(&ParentSubscription{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s Store) UpdateParentQuotaProbe(ctx context.Context, parentID string, supported bool, status, message, planType string, observedAt *time.Time, snapshot json.RawMessage) error {
@@ -620,9 +659,13 @@ func (s Store) ListParentQuotaObservations(ctx context.Context, parentID string,
 
 func (s Store) ListChildSubscriptions(ctx context.Context, tenantID string) ([]ChildSubscription, error) {
 	var items []ChildSubscription
-	query := scoped(ctx, s.DB).Order("priority DESC, created_at DESC")
+	query := scoped(ctx, s.DB).
+		Select("child_subscriptions.*").
+		Joins("JOIN parent_subscriptions ON parent_subscriptions.id = child_subscriptions.parent_subscription_id").
+		Where("parent_subscriptions.status <> ?", "missing").
+		Order("child_subscriptions.priority DESC, child_subscriptions.created_at DESC")
 	if tenantID != "" {
-		query = query.Where("tenant_id = ?", tenantID)
+		query = query.Where("child_subscriptions.tenant_id = ?", tenantID)
 	}
 	err := query.Find(&items).Error
 	return items, err
@@ -648,6 +691,9 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 		var parent ParentSubscription
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&parent, "id = ?", item.ParentSubscriptionID).Error; err != nil {
 			return notFound(err)
+		}
+		if parent.Status == "missing" {
+			return ErrNotFound
 		}
 		if item.Enabled && (!parent.Enabled || parent.CPAUnavailable) {
 			return errors.New("enabled child subscription requires an available parent")
@@ -689,6 +735,9 @@ func (s Store) UpdateChildSubscription(ctx context.Context, item ChildSubscripti
 		var parent ParentSubscription
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&parent, "id = ?", item.ParentSubscriptionID).Error; err != nil {
 			return notFound(err)
+		}
+		if parent.Status == "missing" {
+			return ErrNotFound
 		}
 		if item.Enabled && (!parent.Enabled || parent.CPAUnavailable) {
 			return errors.New("enabled child subscription requires an available parent")
@@ -764,7 +813,7 @@ func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model strin
 	}
 	var parents []ParentSubscription
 	if len(parentIDs) > 0 {
-		if err := scoped(ctx, s.DB).Where("id IN ?", parentIDs).Find(&parents).Error; err != nil {
+		if err := scoped(ctx, s.DB).Where("id IN ? AND status <> ?", parentIDs, "missing").Find(&parents).Error; err != nil {
 			return nil, false, err
 		}
 	}
@@ -1114,95 +1163,99 @@ func reservationUsesBalance(tx *gorm.DB, reservation RequestReservation) (bool, 
 
 func (s Store) finishReservation(ctx context.Context, requestID string, actual int64, pricingComplete bool, status string) error {
 	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		var reservation RequestReservation
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&reservation, "request_id = ?", requestID).Error; err != nil {
-			return notFound(err)
-		}
-		if reservation.Status != db.ReservationActive {
-			return nil
-		}
-		var tenant Tenant
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", reservation.TenantID).Error; err != nil {
-			return err
-		}
-		usesBalance, err := reservationUsesBalance(tx, reservation)
-		if err != nil {
-			return err
-		}
-		accrued := int64(0)
-		if reservation.ActualNanoUSD != nil {
-			accrued = *reservation.ActualNanoUSD
-		}
-		finalActual := int64(0)
-		if status == db.ReservationSettled || status == db.ReservationExpired {
-			finalActual = actual
-		}
-		balanceDelta := int64(0)
-		if usesBalance {
-			// The initial reserve and every durable WebSocket turn have already
-			// been debited. Finalization only reconciles that held/accrued amount
-			// to the final cumulative cost.
-			balanceDelta = reservation.BalanceReservedNanoUSD + accrued - finalActual
-		}
-		if balanceDelta != 0 {
-			tenant.BalanceNanoUSD += balanceDelta
-			if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
-				return err
-			}
-			if err := tx.Create(&db.BillingLedger{
-				ID: identity.NewID(), TenantID: tenant.ID, RequestID: &requestID,
-				Kind:          map[bool]string{true: "settlement", false: "refund"}[status == db.ReservationSettled],
-				AmountNanoUSD: balanceDelta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
-				Note: "request reservation finalized",
-			}).Error; err != nil {
-				return err
-			}
-		}
-		if reservation.ChildSubscriptionID != nil && reservation.QuotaReservedNanoUSD > 0 {
-			var reservedWindows []quotaWindowReservation
-			if err := json.Unmarshal(reservation.QuotaWindows, &reservedWindows); err != nil {
-				return err
-			}
-			quotaDelta := finalActual - accrued
-			for _, reservedWindow := range reservedWindows {
-				var window ChildQuotaWindow
-				err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&window,
-					"child_subscription_id = ? AND kind = ? AND resets_at = ?",
-					*reservation.ChildSubscriptionID, reservedWindow.Kind, reservedWindow.ResetsAt).Error
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					// A later admission has advanced this kind to a new upstream
-					// generation. Never charge the old request to that new window.
-					continue
-				}
-				if err != nil {
-					return err
-				}
-				reserved := window.ReservedNanoUSD - reservation.QuotaReservedNanoUSD
-				if reserved < 0 {
-					reserved = 0
-				}
-				settled := window.SettledNanoUSD + quotaDelta
-				if settled < 0 {
-					settled = 0
-				}
-				if err := tx.Model(&ChildQuotaWindow{}).
-					Where("child_subscription_id = ? AND kind = ?", window.ChildSubscriptionID, window.Kind).
-					Updates(map[string]any{
-						"reserved_nano_usd": reserved,
-						"settled_nano_usd":  settled,
-						"updated_at":        time.Now(),
-					}).Error; err != nil {
-					return err
-				}
-			}
-		}
-		now := time.Now()
-		actualValue := finalActual
-		return tx.Model(&reservation).Updates(map[string]any{
-			"actual_nano_usd": &actualValue, "pricing_complete": pricingComplete,
-			"status": status, "settled_at": &now,
-		}).Error
+		return finishReservationTx(tx, requestID, actual, pricingComplete, status)
 	})
+}
+
+func finishReservationTx(tx *gorm.DB, requestID string, actual int64, pricingComplete bool, status string) error {
+	var reservation RequestReservation
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&reservation, "request_id = ?", requestID).Error; err != nil {
+		return notFound(err)
+	}
+	if reservation.Status != db.ReservationActive {
+		return nil
+	}
+	var tenant Tenant
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", reservation.TenantID).Error; err != nil {
+		return err
+	}
+	usesBalance, err := reservationUsesBalance(tx, reservation)
+	if err != nil {
+		return err
+	}
+	accrued := int64(0)
+	if reservation.ActualNanoUSD != nil {
+		accrued = *reservation.ActualNanoUSD
+	}
+	finalActual := int64(0)
+	if status == db.ReservationSettled || status == db.ReservationExpired {
+		finalActual = actual
+	}
+	balanceDelta := int64(0)
+	if usesBalance {
+		// The initial reserve and every durable WebSocket turn have already
+		// been debited. Finalization only reconciles that held/accrued amount
+		// to the final cumulative cost.
+		balanceDelta = reservation.BalanceReservedNanoUSD + accrued - finalActual
+	}
+	if balanceDelta != 0 {
+		tenant.BalanceNanoUSD += balanceDelta
+		if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&db.BillingLedger{
+			ID: identity.NewID(), TenantID: tenant.ID, RequestID: &requestID,
+			Kind:          map[bool]string{true: "settlement", false: "refund"}[status == db.ReservationSettled],
+			AmountNanoUSD: balanceDelta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
+			Note: "request reservation finalized",
+		}).Error; err != nil {
+			return err
+		}
+	}
+	if reservation.ChildSubscriptionID != nil && reservation.QuotaReservedNanoUSD > 0 {
+		var reservedWindows []quotaWindowReservation
+		if err := json.Unmarshal(reservation.QuotaWindows, &reservedWindows); err != nil {
+			return err
+		}
+		quotaDelta := finalActual - accrued
+		for _, reservedWindow := range reservedWindows {
+			var window ChildQuotaWindow
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&window,
+				"child_subscription_id = ? AND kind = ? AND resets_at = ?",
+				*reservation.ChildSubscriptionID, reservedWindow.Kind, reservedWindow.ResetsAt).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// A later admission has advanced this kind to a new upstream
+				// generation. Never charge the old request to that new window.
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			reserved := window.ReservedNanoUSD - reservation.QuotaReservedNanoUSD
+			if reserved < 0 {
+				reserved = 0
+			}
+			settled := window.SettledNanoUSD + quotaDelta
+			if settled < 0 {
+				settled = 0
+			}
+			if err := tx.Model(&ChildQuotaWindow{}).
+				Where("child_subscription_id = ? AND kind = ?", window.ChildSubscriptionID, window.Kind).
+				Updates(map[string]any{
+					"reserved_nano_usd": reserved,
+					"settled_nano_usd":  settled,
+					"updated_at":        time.Now(),
+				}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	now := time.Now()
+	actualValue := finalActual
+	return tx.Model(&reservation).Updates(map[string]any{
+		"actual_nano_usd": &actualValue, "pricing_complete": pricingComplete,
+		"status": status, "settled_at": &now,
+	}).Error
 }
 
 func reconcileSettledReservation(tx *gorm.DB, requestID string, actual int64) error {
@@ -1315,7 +1368,9 @@ func (s Store) ProjectedChildQuotaState(ctx context.Context, child ChildSubscrip
 func (s Store) HasActiveChildSubscriptions(ctx context.Context, now time.Time) (bool, error) {
 	var count int64
 	err := scoped(ctx, s.DB).Model(&ChildSubscription{}).
-		Where("enabled = ? AND starts_at <= ? AND (expires_at IS NULL OR expires_at > ?)", true, now, now).
+		Joins("JOIN parent_subscriptions ON parent_subscriptions.id = child_subscriptions.parent_subscription_id").
+		Where("child_subscriptions.enabled = ? AND child_subscriptions.starts_at <= ? AND (child_subscriptions.expires_at IS NULL OR child_subscriptions.expires_at > ?)", true, now, now).
+		Where("parent_subscriptions.enabled = ? AND parent_subscriptions.cpa_unavailable = ? AND parent_subscriptions.status <> ?", true, false, "missing").
 		Count(&count).Error
 	return count > 0, err
 }

@@ -7,7 +7,7 @@ import (
 
 func TestProviderOAuthSessionsCaptureAndRemove(t *testing.T) {
 	sessions := newProviderOAuthSessions()
-	session := sessions.create("codex")
+	session := sessions.create("codex", "credential-existing")
 	if !sessions.bindState(session.ID, "state-123") {
 		t.Fatal("bindState returned false")
 	}
@@ -22,6 +22,9 @@ func TestProviderOAuthSessionsCaptureAndRemove(t *testing.T) {
 	if snapshot.Email != "user@example.com" || snapshot.Label != "Codex User" {
 		t.Fatalf("unexpected account metadata: %#v", snapshot)
 	}
+	if snapshot.TargetCredentialID != "credential-existing" {
+		t.Fatalf("reauthentication target was not retained: %#v", snapshot)
+	}
 	if !json.Valid(snapshot.Document) {
 		t.Fatal("captured document is not valid JSON")
 	}
@@ -33,9 +36,26 @@ func TestProviderOAuthSessionsCaptureAndRemove(t *testing.T) {
 
 func TestProviderOAuthSessionsRejectProviderMismatch(t *testing.T) {
 	sessions := newProviderOAuthSessions()
-	session := sessions.create("claude")
+	session := sessions.create("claude", "")
 	if err := sessions.capture(session.ID, "codex", "", []byte(`{"type":"codex"}`)); err == nil {
 		t.Fatal("expected provider mismatch error")
+	}
+}
+
+func TestMergeOAuthCredentialSettingsPreservesRelayOptions(t *testing.T) {
+	merged, err := mergeOAuthCredentialSettings(
+		json.RawMessage(`{"type":"codex","access_token":"old","proxy_url":"socks5://proxy","prefix":"team","websockets":true,"headers":{"X-Team":"one"}}`),
+		json.RawMessage(`{"type":"codex","access_token":"new","email":"new@example.com"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err = json.Unmarshal(merged, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["access_token"] != "new" || document["proxy_url"] != "socks5://proxy" || document["prefix"] != "team" || document["websockets"] != true {
+		t.Fatalf("unexpected merged OAuth document: %#v", document)
 	}
 }
 

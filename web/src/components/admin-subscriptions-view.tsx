@@ -110,9 +110,10 @@ import {
   type ChildSubscription,
   type ParentSubscription,
   type ParentSubscriptionView,
+  type SubscriptionEntitlementWindow,
   type User,
 } from "@/lib/api"
-import { dateTime } from "@/lib/format"
+import { dateTime, money } from "@/lib/format"
 
 const capacityModes: Array<{
   value: CapacityMode
@@ -857,7 +858,7 @@ function AccountAllocationCard({
                 <TableRow>
                   <TableHead>租户</TableHead>
                   <TableHead>授权范围</TableHead>
-                  <TableHead>结算</TableHead>
+                  <TableHead>剩余额度</TableHead>
                   <TableHead>优先级</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead className="w-12" />
@@ -885,9 +886,10 @@ function AccountAllocationCard({
                         </p>
                       </TableCell>
                       <TableCell>
-                        {view.item.capacity_mode === "unmetered"
-                          ? "租户余额"
-                          : percent(child.allocation_ppm)}
+                        <ChildQuotaProgress
+                          child={child}
+                          capacityMode={view.item.capacity_mode}
+                        />
                       </TableCell>
                       <TableCell className="tabular-nums">
                         {child.priority}
@@ -964,6 +966,69 @@ function AccountAllocationCard({
         <Badge variant="outline">无需同步</Badge>
       </CardFooter>
     </Card>
+  )
+}
+
+function ChildQuotaProgress({
+  child,
+  capacityMode,
+}: {
+  child: ChildSubscription
+  capacityMode: CapacityMode
+}) {
+  if (capacityMode === "unmetered") {
+    return (
+      <div className="min-w-40">
+        <p className="text-sm">租户余额结算</p>
+        <p className="text-xs text-muted-foreground">不占共享额度</p>
+      </div>
+    )
+  }
+  const windows = child.entitlement_windows ?? []
+  if (!windows.length) {
+    return (
+      <div className="min-w-40">
+        <p className="text-sm">{percent(child.allocation_ppm)} 份额</p>
+        <p className="text-xs text-muted-foreground">等待额度同步</p>
+      </div>
+    )
+  }
+  return (
+    <div className="flex min-w-48 flex-col gap-2">
+      {windows.map((window) => (
+        <ChildQuotaWindowProgress
+          key={`${child.id}:${window.kind}`}
+          window={window}
+        />
+      ))}
+    </div>
+  )
+}
+
+function ChildQuotaWindowProgress({
+  window,
+}: {
+  window: SubscriptionEntitlementWindow
+}) {
+  const remainingPercent =
+    window.limit_nano_usd > 0
+      ? Math.min(
+          100,
+          Math.max(0, (window.remaining_nano_usd / window.limit_nano_usd) * 100)
+        )
+      : 0
+  return (
+    <Progress
+      value={remainingPercent}
+      className="gap-1 [&_[data-slot=progress-track]]:h-1.5"
+    >
+      <ProgressLabel className="text-xs font-normal">
+        {quotaWindowLabel(window.kind)} · {money(window.remaining_nano_usd)}
+      </ProgressLabel>
+      <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+        {Math.round(remainingPercent)}%
+      </span>
+    </Progress>
   )
 }
 

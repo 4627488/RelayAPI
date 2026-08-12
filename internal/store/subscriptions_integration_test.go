@@ -11,6 +11,101 @@ import (
 	"github.com/4627488/RelayAPI/internal/identity"
 )
 
+func TestMissingParentCleanupReleasesReservationsAndDeletesCurrentState(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err = database.Exec(`TRUNCATE web_socket_turns, request_reservations, child_quota_windows, child_subscriptions,
+		parent_quota_observations, parent_quota_windows, parent_subscriptions, billing_ledgers,
+		request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tenantID, keyID := identity.NewID(), identity.NewID()
+	if err = database.Create(&db.Tenant{
+		ID: tenantID, Name: "cleanup", OwnerEmail: "cleanup@example.test",
+		PasswordHash: "test", Enabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = database.Create(&db.APIKey{
+		ID: keyID, TenantID: tenantID, Name: "cleanup", KeyHash: []byte("cleanup-hash"), Prefix: "rk_cleanup", Enabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	dataStore := Store{DB: database}
+	lastSync := time.Now().Add(-time.Minute)
+	parent, err := dataStore.SyncNativeParentSubscription(ctx, ParentSubscription{
+		CPAAuthID: "deleted-credential", Name: "deleted", Provider: "codex", Status: "available",
+		CapacityMode: db.ParentCapacityObserved, AllocationLimitPPM: 1_000_000,
+		Enabled: true, Metadata: json.RawMessage(`{}`), LastSyncedAt: &lastSync,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
+	if err = dataStore.SetParentQuotaWindows(ctx, parent.ID, []ParentQuotaWindow{{
+		Kind: "rolling", LimitNanoUSD: 1_000, ResetsAt: reset,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	child, err := dataStore.CreateChildSubscription(ctx, ChildSubscription{
+		TenantID: tenantID, ParentSubscriptionID: parent.ID, Name: "deleted child",
+		AllocationPPM: 1_000_000, Priority: 100, Enabled: true, StartsAt: time.Now().Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID := identity.NewID()
+	if _, err = dataStore.AdmitRequest(ctx, AdmissionInput{
+		RequestID: requestID, Key: KeyContext{APIKey: db.APIKey{ID: keyID, TenantID: tenantID}},
+		Model: "model", QuotaReserve: 10, PriceConfigured: true,
+		PriceSnapshot: json.RawMessage(`{"model":"model"}`), ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = dataStore.MarkMissingParentSubscriptions(ctx, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var parentCount, childCount int64
+	if err = database.Model(&db.ParentSubscription{}).Where("id = ?", parent.ID).Count(&parentCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = database.Model(&db.ChildSubscription{}).Where("id = ?", child.ID).Count(&childCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if parentCount != 0 || childCount != 0 {
+		t.Fatalf("missing subscription state survived cleanup: parents=%d children=%d", parentCount, childCount)
+	}
+	var reservation db.RequestReservation
+	if err = database.First(&reservation, "request_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reservation.Status != db.ReservationReleased || reservation.ActualNanoUSD == nil || *reservation.ActualNanoUSD != 0 || reservation.ParentSubscriptionID != nil || reservation.ChildSubscriptionID != nil {
+		t.Fatalf("reservation was not released at zero cost: %+v", reservation)
+	}
+	if err = dataStore.SettleRequestReservation(ctx, requestID, 999, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = database.First(&reservation, "request_id = ?", requestID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reservation.Status != db.ReservationReleased || reservation.ActualNanoUSD == nil || *reservation.ActualNanoUSD != 0 {
+		t.Fatalf("late settlement changed a released dead subscription: %+v", reservation)
+	}
+}
+
 func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
