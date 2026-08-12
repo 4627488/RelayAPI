@@ -56,6 +56,17 @@ func TestResolveProviderCandidateAndBundledFallback(t *testing.T) {
 	}
 }
 
+func TestResolveGrok46BundledPrice(t *testing.T) {
+	snapshot, err := Compile(nil, nil, BundledPrices, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := snapshot.Resolve(Dimensions{Model: "grok-4.6"})
+	if !ok || got.PricedModel != "xai/grok-4.6" || got.InputNanoUSDPerToken != 2000 || got.CachedInputNanoUSDPerToken != 500 || got.OutputNanoUSDPerToken != 6000 {
+		t.Fatalf("unexpected Grok 4.6 price: %+v, ok=%v", got, ok)
+	}
+}
+
 func TestResolveKimiProviderCandidate(t *testing.T) {
 	catalog := []Price{
 		{Model: "moonshotai/kimi-k2.5", InputNanoUSDPerToken: 600, OutputNanoUSDPerToken: 3000, Source: SourceCatalog, PriceMultiplier: 1},

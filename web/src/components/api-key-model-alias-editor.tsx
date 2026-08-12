@@ -30,18 +30,23 @@ export interface ModelAliasPreset {
   target: string
 }
 
-const grokTargetNames = ["grok-4.5", "xai/grok-4.5"]
+const grokTargetNames = [
+  "grok-4.6",
+  "xai/grok-4.6",
+  "grok-4.5",
+  "xai/grok-4.5",
+]
 
 const clientPresets = [
   {
-    id: "codex-grok-4-5",
-    label: "Codex → Grok 4.5",
-    description: "将 Codex 当前 GPT-5.6 模型入口统一路由到 Grok 4.5。",
+    id: "codex-grok-latest",
+    label: "Codex → Grok",
+    description: "将 Codex 当前 GPT-5.6 模型入口统一路由到最新可用 Grok。",
     aliases: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6"],
   },
   {
-    id: "claude-code-grok-4-5",
-    label: "Claude Code → Grok 4.5",
+    id: "claude-code-grok-latest",
+    label: "Claude Code → Grok",
     description: "覆盖当前及近期 Claude Code 的 Sonnet、Opus、Haiku 模型入口。",
     aliases: [
       "claude-sonnet-5",
@@ -100,7 +105,7 @@ export function ApiKeyModelAliasEditor({
               className="h-auto items-start justify-start py-3 text-left whitespace-normal"
               disabled={!target}
               title={
-                target ? preset.description : "当前账户没有可用的 Grok 4.5 模型"
+                target ? preset.description : "当前账户没有可用的 Grok 模型"
               }
               onClick={() =>
                 target &&
@@ -125,7 +130,7 @@ export function ApiKeyModelAliasEditor({
           应用预设会启用目标模型、移除同名直连模型，并保留其他手工别名。
           {target
             ? ` 当前目标：${target}`
-            : " 当前账户未提供 Grok 4.5，预设不可用。"}
+            : " 当前账户未提供 Grok，预设不可用。"}
         </FieldDescription>
         {aliases.map((item, index) => {
           const options = Array.from(

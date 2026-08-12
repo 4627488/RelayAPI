@@ -47,6 +47,9 @@ func TestProbeXAIQuotaFromNativeCredential(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer xai-token" || r.Header.Get("X-XAI-Token-Auth") != "xai-grok-cli" {
 			t.Fatalf("unexpected headers: %v", r.Header)
 		}
+		if r.Header.Get("X-Grok-Client-Version") != xaiQuotaClientVersion || r.Header.Get("X-Grok-Client-Mode") != "interactive" {
+			t.Fatalf("stale Grok client headers: %v", r.Header)
+		}
 		switch r.URL.Path {
 		case "/credits":
 			_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{
@@ -113,6 +116,51 @@ func TestProbeXAIQuotaSupportsSnakeCaseAndScalarBillingValues(t *testing.T) {
 	monthly := quotaWindowByKind(t, report.Windows, "monthly")
 	if monthly.UsedPercent == nil || *monthly.UsedPercent != 100 || monthly.Enforceable {
 		t.Fatalf("monthly billing must be visible but not enforceable: %#v", monthly)
+	}
+}
+
+func TestProbeXAIQuotaExposesCurrentBalancesAndMonthlyPeriod(t *testing.T) {
+	now := time.Date(2026, 8, 13, 3, 0, 0, 0, time.UTC)
+	reset := now.Add(18 * 24 * time.Hour)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/credits":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"subscriptionTier": "SuperGrok Heavy",
+				"config": map[string]any{
+					"creditUsagePercent": 42.5,
+					"currentPeriod": map[string]any{"type": "USAGE_PERIOD_TYPE_MONTHLY", "end": reset.Format(time.RFC3339)},
+					"prepaidBalance": map[string]any{"val": -2500},
+					"onDemandCap": map[string]any{"val": 5000},
+					"onDemandUsed": map[string]any{"val": 1250},
+				},
+			})
+		case "/billing":
+			_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	report, err := probeQuotaWithClient(context.Background(), server.Client(), quotaEndpoints{xaiCredits: server.URL + "/credits", xaiBilling: server.URL + "/billing"}, "xai.json", "xai", map[string]any{"access_token": "xai-token"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.PlanType != "SuperGrok Heavy" || len(report.Windows) != 3 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+	monthly := quotaWindowByKind(t, report.Windows, "monthly")
+	if monthly.UsedPercent == nil || *monthly.UsedPercent != 42.5 || monthly.ResetsAt == nil || !monthly.ResetsAt.Equal(reset) || !monthly.Enforceable {
+		t.Fatalf("unexpected monthly window: %#v", monthly)
+	}
+	prepaid := quotaWindowByKind(t, report.Windows, "prepaid-credits")
+	if prepaid.Remaining == nil || *prepaid.Remaining != 25 || prepaid.Unit != "USD" || prepaid.Enforceable {
+		t.Fatalf("unexpected prepaid balance: %#v", prepaid)
+	}
+	onDemand := quotaWindowByKind(t, report.Windows, "on-demand")
+	if onDemand.Limit == nil || *onDemand.Limit != 50 || onDemand.Remaining == nil || *onDemand.Remaining != 37.5 || onDemand.UsedPercent == nil || *onDemand.UsedPercent != 25 {
+		t.Fatalf("unexpected on-demand balance: %#v", onDemand)
 	}
 }
 

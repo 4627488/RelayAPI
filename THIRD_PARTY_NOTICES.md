@@ -29,7 +29,7 @@ Upstream license: https://github.com/Willxup/cpa-usage-keeper/blob/main/LICENSE
 ## CLIProxyAPI translator SDK
 
 RelayAPI embeds the built-in protocol translators from
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), version 7.2.122,
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), version 7.2.130,
 under the MIT License:
 
 Copyright (c) 2025-2005.9 Luis Pater
@@ -50,4 +50,4 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Upstream license: https://github.com/router-for-me/CLIProxyAPI/blob/v7.2.122/LICENSE
+Upstream license: https://github.com/router-for-me/CLIProxyAPI/blob/v7.2.130/LICENSE

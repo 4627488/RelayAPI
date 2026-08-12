@@ -21,6 +21,8 @@ import (
 
 const maxQuotaResponseBytes = 2 << 20
 
+const xaiQuotaClientVersion = "0.2.120"
+
 type QuotaProbeCredential struct {
 	AuthIndex string
 	Provider  string
@@ -191,8 +193,9 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 		"Authorization":         {"Bearer " + token},
 		"Content-Type":          {"application/json"},
 		"X-XAI-Token-Auth":      {"xai-grok-cli"},
-		"X-Grok-Client-Version": {"0.2.93"},
-		"User-Agent":            {"grok-pager/0.2.93 grok-shell/0.2.93"},
+		"X-Grok-Client-Version": {xaiQuotaClientVersion},
+		"X-Grok-Client-Mode":    {"interactive"},
+		"User-Agent":            {"grok-pager/" + xaiQuotaClientVersion + " grok-shell/" + xaiQuotaClientVersion},
 	}
 	if userID := xaiQuotaUserID(document); userID != "" {
 		headers.Set("x-userid", userID)
@@ -203,12 +206,16 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 		return QuotaReport{}, fmt.Errorf("xAI quota requests failed: credits: %v; billing: %v", creditsErr, billingErr)
 	}
 	windows := make([]QuotaWindow, 0, 8)
+	plan := ""
 	if creditsErr == nil {
+		credits = quotaPayloadRoot(credits)
+		plan = firstQuotaText(scalarQuotaText(credits["subscriptionTier"]), scalarQuotaText(credits["subscription_tier"]))
 		config := quotaMap(credits["config"])
 		period := quotaMap(firstQuotaValue(config["currentPeriod"], config["current_period"]))
 		used := percentQuota(firstQuotaValue(config["creditUsagePercent"], config["credit_usage_percent"]))
 		if used != nil {
-			windows = append(windows, QuotaWindow{Kind: "7d", Label: "7 天", UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: parseQuotaTime(period["end"], now), Enforceable: true})
+			kind, label := xaiQuotaPeriod(period)
+			windows = append(windows, QuotaWindow{Kind: kind, Label: label, UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: parseQuotaTime(period["end"], now), Enforceable: true})
 		}
 		if rows, _ := firstQuotaValue(config["productUsage"], config["product_usage"]).([]any); rows != nil {
 			for _, raw := range rows {
@@ -220,9 +227,25 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 				}
 			}
 		}
+		if prepaid := xaiQuotaCentValue(firstQuotaValue(config["prepaidBalance"], config["prepaid_balance"])); prepaid != nil {
+			remaining := math.Abs(*prepaid) / 100
+			windows = append(windows, QuotaWindow{Kind: "prepaid-credits", Label: "预付余额", Enforceable: false, Unit: "USD", Remaining: &remaining})
+		}
+		onDemandCap := xaiQuotaCentValue(firstQuotaValue(config["onDemandCap"], config["on_demand_cap"]))
+		onDemandUsed := xaiQuotaCentValue(firstQuotaValue(config["onDemandUsed"], config["on_demand_used"]))
+		if onDemandCap != nil && math.Abs(*onDemandCap) > 0 {
+			limit := math.Abs(*onDemandCap) / 100
+			usedAmount := 0.0
+			if onDemandUsed != nil {
+				usedAmount = math.Abs(*onDemandUsed) / 100
+			}
+			remaining := math.Max(0, limit-usedAmount)
+			usedPercent := clampQuota(usedAmount / limit * 100)
+			windows = append(windows, QuotaWindow{Kind: "on-demand", Label: "按量额度", UsedPercent: &usedPercent, RemainingPercent: quotaComplement(&usedPercent), Enforceable: false, Unit: "USD", Limit: &limit, Remaining: &remaining})
+		}
 	}
-	plan := ""
 	if billingErr == nil {
+		billing = quotaPayloadRoot(billing)
 		config := quotaMap(billing["config"])
 		usedValue := xaiQuotaCentValue(config["used"])
 		limitValue := xaiQuotaCentValue(firstQuotaValue(config["monthlyLimit"], config["monthly_limit"]))
@@ -232,9 +255,11 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 			windows = append(windows, QuotaWindow{Kind: "monthly", Label: "月度账单", UsedPercent: &used, RemainingPercent: quotaComplement(&used), ResetsAt: parseQuotaTime(firstQuotaValue(config["billingPeriodEnd"], config["billing_period_end"]), now), Enforceable: false})
 		}
 		if limitValue != nil {
-			plan = map[int64]string{0: "free", 15_000: "supergrok", 150_000: "supergrok-heavy"}[int64(*limitValue)]
 			if plan == "" {
-				plan = strconv.FormatFloat(*limitValue, 'f', -1, 64)
+				plan = map[int64]string{0: "free", 15_000: "supergrok", 150_000: "supergrok-heavy"}[int64(*limitValue)]
+				if plan == "" {
+					plan = strconv.FormatFloat(*limitValue, 'f', -1, 64)
+				}
 			}
 		}
 	}
@@ -243,6 +268,18 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 		return QuotaReport{}, fmt.Errorf("xAI quota responses contain no usable windows (%s)", xaiQuotaDiagnostic(credits, creditsErr, billing, billingErr))
 	}
 	return QuotaReport{AuthIndex: authIndex, Provider: provider, PlanType: plan, Supported: true, Source: "xai-billing", Observed: now, Windows: windows}, nil
+}
+
+func xaiQuotaPeriod(period map[string]any) (kind, label string) {
+	periodType := strings.ToUpper(firstQuotaText(scalarQuotaText(period["type"]), scalarQuotaText(period["periodType"]), scalarQuotaText(period["period_type"])))
+	switch {
+	case strings.Contains(periodType, "MONTHLY"):
+		return "monthly", "月度额度"
+	case strings.Contains(periodType, "WEEKLY"):
+		return "7d", "7 天"
+	default:
+		return "7d", "7 天"
+	}
 }
 
 func xaiQuotaUserID(document map[string]any) string {

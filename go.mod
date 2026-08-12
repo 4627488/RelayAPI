@@ -17,7 +17,7 @@ require (
 
 replace github.com/router-for-me/CLIProxyAPI/v7/relaybridge => ./third_party/cpaexecutor
 
-replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260810152141-0c3e585af309
+replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260812160649-0cb824797a9b
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
@@ -69,7 +69,7 @@ require (
 	github.com/pion/webrtc/v4 v4.2.17 // indirect
 	github.com/redis/go-redis/v9 v9.19.0 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
-	github.com/router-for-me/CLIProxyAPI/v7 v7.2.123 // indirect
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.130 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
