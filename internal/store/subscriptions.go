@@ -895,7 +895,7 @@ func canonicalBalanceGrant(parent ParentSubscription, item ChildSubscription) Ch
 	item.Name = parent.Name
 	item.AllocationPPM = 1_000_000
 	item.Priority = 100
-	item.ModelAllowlist = nil
+	item.ModelAllowlist = pq.StringArray{}
 	item.ExpiresAt = nil
 	return item
 }
