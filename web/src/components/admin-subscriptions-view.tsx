@@ -37,15 +37,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -442,15 +434,18 @@ export function AdminSubscriptionsView() {
           </EmptyHeader>
         </Empty>
       ) : (
-        <div className="grid items-start gap-4 lg:grid-cols-[17rem_minmax(0,1fr)]">
-          <Card size="sm">
-            <CardHeader>
-              <CardTitle>模型账户</CardTitle>
-              <CardDescription>
-                {currentParents.length} 个账户可用于分配
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
+        <Card className="gap-0 py-0 lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
+          <aside className="border-b bg-muted/20 lg:border-r lg:border-b-0">
+            <div className="flex flex-col gap-3 p-4 lg:sticky lg:top-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-heading font-medium">模型账户</h2>
+                  <p className="text-xs text-muted-foreground">
+                    {currentParents.length} 个账户可用于分配
+                  </p>
+                </div>
+                <Badge variant="outline">{visibleParents.length}</Badge>
+              </div>
               <InputGroup>
                 <InputGroupAddon>
                   <SearchIcon />
@@ -462,8 +457,7 @@ export function AdminSubscriptionsView() {
                   aria-label="搜索模型账户"
                 />
               </InputGroup>
-              <Separator />
-              <div className="flex max-h-[34rem] flex-col gap-1 overflow-y-auto">
+              <div className="flex max-h-56 flex-col gap-1 overflow-y-auto pr-1 lg:max-h-[calc(100vh-14rem)]">
                 {filteredCurrentParents.map((view) => (
                   <ParentListButton
                     key={view.item.id}
@@ -497,11 +491,11 @@ export function AdminSubscriptionsView() {
                   </p>
                 ) : null}
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </aside>
 
           {selected ? (
-            <AccountAllocationCard
+            <AccountAllocationPanel
               view={selected}
               children={selectedChildren}
               tenants={tenants}
@@ -513,7 +507,7 @@ export function AdminSubscriptionsView() {
               onDelete={setDeletingChild}
             />
           ) : null}
-        </div>
+        </Card>
       )}
 
       <Dialog
@@ -809,7 +803,7 @@ function ParentListButton({
   )
 }
 
-function AccountAllocationCard({
+function AccountAllocationPanel({
   view,
   children,
   tenants,
@@ -840,31 +834,35 @@ function AccountAllocationCard({
       : 0
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
-          {view.item.name}
-          <AccountStatusBadge view={view} />
-        </CardTitle>
-        <CardDescription>
-          {view.item.provider || "未知提供商"}
-          {displayPlan(view.item.plan_type)
-            ? ` · ${displayPlan(view.item.plan_type)}`
-            : ""}
-          {` · ${billingLabel(view)}`}
-        </CardDescription>
+    <div className="flex min-w-0 flex-col">
+      <div className="flex flex-col gap-4 border-b px-4 py-4 sm:px-6 sm:py-5 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-heading text-lg leading-tight font-semibold sm:text-xl">
+              {view.item.name}
+            </h2>
+            <AccountStatusBadge view={view} />
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {view.item.provider || "未知提供商"}
+            {displayPlan(view.item.plan_type)
+              ? ` · ${displayPlan(view.item.plan_type)}`
+              : ""}
+            {` · ${billingLabel(view)}`}
+          </p>
+        </div>
         {view.item.status !== "missing" ? (
-          <CardAction>
+          <div className="shrink-0">
             <Button size="sm" variant="outline" onClick={onConfigure}>
               <Settings2Icon data-icon="inline-start" />
               账户规则
             </Button>
-          </CardAction>
+          </div>
         ) : null}
-      </CardHeader>
+      </div>
 
-      <CardContent className="flex flex-col gap-5">
-        <div className="grid gap-4 sm:grid-cols-3">
+      <div className="flex flex-col gap-6 px-4 py-5 sm:px-6">
+        <div className="grid grid-cols-3 overflow-hidden rounded-xl border bg-muted/20">
           <AccountFact
             icon={<UsersIcon />}
             label={
@@ -932,7 +930,7 @@ function AccountAllocationCard({
         <Separator />
 
         <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h3 className="font-medium">租户授权</h3>
               <p className="text-xs text-muted-foreground">
@@ -943,6 +941,7 @@ function AccountAllocationCard({
             </div>
             <Button
               size="sm"
+              className="w-full sm:w-auto"
               disabled={!isAllocatable(view)}
               onClick={onAssign}
             >
@@ -954,116 +953,105 @@ function AccountAllocationCard({
           </div>
 
           {children.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>租户</TableHead>
-                  <TableHead>
-                    {view.item.capacity_mode === "unmetered"
-                      ? "可用模型"
-                      : "授权范围"}
-                  </TableHead>
-                  <TableHead>
-                    {view.item.capacity_mode === "unmetered"
-                      ? "结算"
-                      : "剩余额度"}
-                  </TableHead>
-                  {view.item.capacity_mode === "observed" ? (
-                    <TableHead>优先级</TableHead>
-                  ) : null}
-                  <TableHead>状态</TableHead>
-                  <TableHead className="w-12" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {children.map((child) => {
-                  const tenant = tenantByID.get(child.tenant_id)
-                  return (
-                    <TableRow key={child.id}>
-                      <TableCell>
-                        <p className="font-medium">
-                          {tenant?.name || child.tenant_id}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {tenant?.owner_email}
-                        </p>
-                      </TableCell>
-                      <TableCell>
-                        {view.item.capacity_mode === "unmetered" ? (
-                          <p>
-                            {parentModelOptions(view).length
-                              ? `账户全部 ${parentModelOptions(view).length} 个模型`
-                              : "账户全部模型"}
-                          </p>
-                        ) : (
-                          <>
-                            <p>{child.name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {child.model_allowlist?.length
-                                ? `限定 ${child.model_allowlist.length} 个模型`
-                                : "继承账户全部模型"}
-                            </p>
-                          </>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <ChildQuotaProgress
-                          child={child}
-                          capacityMode={view.item.capacity_mode}
-                        />
-                      </TableCell>
+            <>
+              <div className="flex flex-col gap-2 md:hidden">
+                {children.map((child) => (
+                  <MobileChildGrant
+                    key={child.id}
+                    child={child}
+                    tenant={tenantByID.get(child.tenant_id)}
+                    view={view}
+                    pending={pending}
+                    onEdit={() => onEdit(child)}
+                    onToggle={() => onToggle(child)}
+                    onDelete={() => onDelete(child)}
+                  />
+                ))}
+              </div>
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>租户</TableHead>
+                      <TableHead>
+                        {view.item.capacity_mode === "unmetered"
+                          ? "可用模型"
+                          : "授权范围"}
+                      </TableHead>
+                      <TableHead>
+                        {view.item.capacity_mode === "unmetered"
+                          ? "结算"
+                          : "剩余额度"}
+                      </TableHead>
                       {view.item.capacity_mode === "observed" ? (
-                        <TableCell className="tabular-nums">
-                          {child.priority}
-                        </TableCell>
+                        <TableHead>优先级</TableHead>
                       ) : null}
-                      <TableCell>
-                        <ChildStatusBadge child={child} />
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <Button
-                                size="icon-sm"
-                                variant="ghost"
-                                aria-label={`管理 ${child.name}`}
-                              />
-                            }
-                          >
-                            <EllipsisIcon />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuGroup>
-                              {view.item.capacity_mode === "observed" ? (
-                                <DropdownMenuItem onClick={() => onEdit(child)}>
-                                  编辑授权
-                                </DropdownMenuItem>
-                              ) : null}
-                              <DropdownMenuItem
-                                disabled={pending}
-                                onClick={() => onToggle(child)}
-                              >
-                                {child.enabled ? "停用授权" : "启用授权"}
-                              </DropdownMenuItem>
-                            </DropdownMenuGroup>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuGroup>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => onDelete(child)}
-                              >
-                                删除授权
-                              </DropdownMenuItem>
-                            </DropdownMenuGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
+                      <TableHead>状态</TableHead>
+                      <TableHead className="w-12" />
                     </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {children.map((child) => {
+                      const tenant = tenantByID.get(child.tenant_id)
+                      return (
+                        <TableRow key={child.id}>
+                          <TableCell>
+                            <p className="font-medium">
+                              {tenant?.name || child.tenant_id}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {tenant?.owner_email}
+                            </p>
+                          </TableCell>
+                          <TableCell>
+                            {view.item.capacity_mode === "unmetered" ? (
+                              <p>
+                                {parentModelOptions(view).length
+                                  ? `账户全部 ${parentModelOptions(view).length} 个模型`
+                                  : "账户全部模型"}
+                              </p>
+                            ) : (
+                              <>
+                                <p>{child.name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {child.model_allowlist?.length
+                                    ? `限定 ${child.model_allowlist.length} 个模型`
+                                    : "继承账户全部模型"}
+                                </p>
+                              </>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <ChildQuotaProgress
+                              child={child}
+                              capacityMode={view.item.capacity_mode}
+                            />
+                          </TableCell>
+                          {view.item.capacity_mode === "observed" ? (
+                            <TableCell className="tabular-nums">
+                              {child.priority}
+                            </TableCell>
+                          ) : null}
+                          <TableCell>
+                            <ChildStatusBadge child={child} />
+                          </TableCell>
+                          <TableCell>
+                            <ChildGrantMenu
+                              child={child}
+                              capacityMode={view.item.capacity_mode}
+                              pending={pending}
+                              onEdit={() => onEdit(child)}
+                              onToggle={() => onToggle(child)}
+                              onDelete={() => onDelete(child)}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           ) : (
             <Empty className="border">
               <EmptyHeader>
@@ -1086,15 +1074,142 @@ function AccountAllocationCard({
             </Empty>
           )}
         </section>
-      </CardContent>
+      </div>
 
-      <CardFooter className="justify-between gap-3">
+      <div className="mt-auto flex items-center justify-between gap-3 border-t bg-muted/30 px-4 py-3 sm:px-6">
         <p className="text-xs text-muted-foreground">
           账户与授权数据保存后立即生效。
         </p>
         <Badge variant="outline">无需同步</Badge>
-      </CardFooter>
-    </Card>
+      </div>
+    </div>
+  )
+}
+
+function MobileChildGrant({
+  child,
+  tenant,
+  view,
+  pending,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  child: ChildSubscription
+  tenant?: User
+  view: ParentSubscriptionView
+  pending: boolean
+  onEdit: () => void
+  onToggle: () => void
+  onDelete: () => void
+}) {
+  const balanceMode = view.item.capacity_mode === "unmetered"
+  const modelCount = parentModelOptions(view).length
+  return (
+    <div className="rounded-xl border p-3">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">
+            {tenant?.name || child.tenant_id}
+          </p>
+          <p className="truncate text-xs text-muted-foreground">
+            {tenant?.owner_email || "未找到租户资料"}
+          </p>
+        </div>
+        <ChildStatusBadge child={child} />
+        <ChildGrantMenu
+          child={child}
+          capacityMode={view.item.capacity_mode}
+          pending={pending}
+          onEdit={onEdit}
+          onToggle={onToggle}
+          onDelete={onDelete}
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-muted/50 p-3">
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">
+            {balanceMode ? "可用模型" : "授权范围"}
+          </p>
+          <p className="mt-0.5 truncate text-sm font-medium">
+            {balanceMode
+              ? modelCount
+                ? `全部 ${modelCount} 个模型`
+                : "账户全部模型"
+              : child.model_allowlist?.length
+                ? `限定 ${child.model_allowlist.length} 个模型`
+                : "继承全部模型"}
+          </p>
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground">
+            {balanceMode ? "结算方式" : "路由优先级"}
+          </p>
+          <p className="mt-0.5 truncate text-sm font-medium">
+            {balanceMode ? "租户余额" : child.priority}
+          </p>
+        </div>
+      </div>
+
+      {!balanceMode ? (
+        <div className="mt-3">
+          <p className="mb-2 text-xs text-muted-foreground">剩余额度</p>
+          <ChildQuotaProgress
+            child={child}
+            capacityMode={view.item.capacity_mode}
+          />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ChildGrantMenu({
+  child,
+  capacityMode,
+  pending,
+  onEdit,
+  onToggle,
+  onDelete,
+}: {
+  child: ChildSubscription
+  capacityMode: CapacityMode
+  pending: boolean
+  onEdit: () => void
+  onToggle: () => void
+  onDelete: () => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`管理 ${child.name}`}
+          />
+        }
+      >
+        <EllipsisIcon />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuGroup>
+          {capacityMode === "observed" ? (
+            <DropdownMenuItem onClick={onEdit}>编辑授权</DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem disabled={pending} onClick={onToggle}>
+            {child.enabled ? "停用授权" : "启用授权"}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem variant="destructive" onClick={onDelete}>
+            删除授权
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -1107,7 +1222,7 @@ function ChildQuotaProgress({
 }) {
   if (capacityMode === "unmetered") {
     return (
-      <div className="min-w-40">
+      <div className="min-w-0">
         <p className="text-sm">租户余额结算</p>
         <p className="text-xs text-muted-foreground">不占共享额度</p>
       </div>
@@ -1116,14 +1231,14 @@ function ChildQuotaProgress({
   const windows = child.entitlement_windows ?? []
   if (!windows.length) {
     return (
-      <div className="min-w-40">
+      <div className="min-w-0">
         <p className="text-sm">{percent(child.allocation_ppm)} 份额</p>
         <p className="text-xs text-muted-foreground">等待额度同步</p>
       </div>
     )
   }
   return (
-    <div className="flex min-w-48 flex-col gap-2">
+    <div className="flex min-w-0 flex-col gap-2">
       {windows.map((window) => (
         <ChildQuotaWindowProgress
           key={`${child.id}:${window.kind}`}
@@ -1171,11 +1286,13 @@ function AccountFact({
   value: string
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <div className="text-muted-foreground">{icon}</div>
-      <div>
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="font-medium">{value}</p>
+    <div className="flex min-w-0 flex-col gap-1 border-r px-3 py-3 last:border-r-0 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-4">
+      <div className="hidden shrink-0 text-muted-foreground sm:block [&_svg]:size-5">
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-xs text-muted-foreground">{label}</p>
+        <p className="truncate text-sm font-medium sm:text-base">{value}</p>
       </div>
     </div>
   )
@@ -1784,29 +1901,24 @@ function localDateTime(value?: string) {
 
 function AllocationSkeleton() {
   return (
-    <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)]">
-      <Card size="sm">
-        <CardHeader>
-          <Skeleton className="h-5 w-24" />
-          <Skeleton className="h-4 w-36" />
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          <Skeleton className="h-8 w-full" />
-          {Array.from({ length: 4 }, (_, index) => (
-            <Skeleton key={index} className="h-12 w-full" />
-          ))}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
+    <Card className="gap-0 py-0 lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
+      <div className="flex flex-col gap-3 border-b bg-muted/20 p-4 lg:border-r lg:border-b-0">
+        <Skeleton className="h-5 w-24" />
+        <Skeleton className="h-8 w-full" />
+        {Array.from({ length: 4 }, (_, index) => (
+          <Skeleton key={index} className="h-12 w-full" />
+        ))}
+      </div>
+      <div className="flex flex-col">
+        <div className="flex flex-col gap-2 border-b px-4 py-5 sm:px-6">
           <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-4 w-64" />
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-4 w-64 max-w-full" />
+        </div>
+        <div className="flex flex-col gap-5 px-4 py-5 sm:px-6">
+          <Skeleton className="h-20 w-full" />
           <Skeleton className="h-56 w-full" />
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </div>
+    </Card>
   )
 }
