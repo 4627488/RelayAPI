@@ -20,7 +20,6 @@ import (
 )
 
 var (
-	ErrAllocationExceeded    = errors.New("parent subscription allocation exceeded")
 	ErrSubscriptionRequired  = errors.New("no eligible child subscription")
 	ErrSubscriptionExhausted = errors.New("child subscription quota exhausted")
 	ErrSubscriptionPrice     = errors.New("priced model is required for metered subscription")
@@ -123,9 +122,9 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 	if item.CapacityMode == "" {
 		item.CapacityMode = db.ParentCapacityUnmetered
 	}
-	if item.AllocationLimitPPM <= 0 {
-		item.AllocationLimitPPM = 1_000_000
-	}
+	// Kept at 100% for schema compatibility and as the oversubscription
+	// warning baseline. It is not an enforcement limit.
+	item.AllocationLimitPPM = 1_000_000
 	if len(item.Metadata) == 0 {
 		item.Metadata = json.RawMessage(`{}`)
 	}
@@ -306,23 +305,9 @@ func (s Store) UpdateParentSubscription(ctx context.Context, item ParentSubscrip
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", item.ID).Error; err != nil {
 			return notFound(err)
 		}
-		if item.AllocationLimitPPM <= 0 {
-			return errors.New("allocation_limit_ppm must be positive")
-		}
-		if enforcesAllocationLimit(item.CapacityMode) {
-			var allocated int64
-			if err := tx.Model(&ChildSubscription{}).
-				Where("parent_subscription_id = ? AND enabled = ?", item.ID, true).
-				Select("COALESCE(sum(allocation_ppm), 0)").Scan(&allocated).Error; err != nil {
-				return err
-			}
-			if allocated > item.AllocationLimitPPM {
-				return ErrAllocationExceeded
-			}
-		}
 		if err := tx.Model(&current).Updates(map[string]any{
 			"name": strings.TrimSpace(item.Name), "plan_type": strings.TrimSpace(item.PlanType),
-			"capacity_mode": item.CapacityMode, "allocation_limit_ppm": item.AllocationLimitPPM,
+			"capacity_mode": item.CapacityMode, "allocation_limit_ppm": 1_000_000,
 			"enabled": item.Enabled, "model_allowlist": item.ModelAllowlist, "updated_at": time.Now(),
 		}).Error; err != nil {
 			return err
@@ -715,17 +700,6 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 		if err := tx.First(&tenant, "id = ?", item.TenantID).Error; err != nil {
 			return notFound(err)
 		}
-		if item.Enabled && enforcesAllocationLimit(parent.CapacityMode) {
-			var allocated int64
-			if err := tx.Model(&ChildSubscription{}).
-				Where("parent_subscription_id = ? AND enabled = ?", item.ParentSubscriptionID, true).
-				Select("COALESCE(sum(allocation_ppm), 0)").Scan(&allocated).Error; err != nil {
-				return err
-			}
-			if allocated+item.AllocationPPM > parent.AllocationLimitPPM {
-				return ErrAllocationExceeded
-			}
-		}
 		return tx.Create(&item).Error
 	})
 	return item, err
@@ -758,17 +732,6 @@ func (s Store) UpdateChildSubscription(ctx context.Context, item ChildSubscripti
 		}
 		if item.Enabled && (!parent.Enabled || parent.CPAUnavailable) {
 			return errors.New("enabled child subscription requires an available parent")
-		}
-		if item.Enabled && enforcesAllocationLimit(parent.CapacityMode) {
-			var allocated int64
-			if err := tx.Model(&ChildSubscription{}).
-				Where("parent_subscription_id = ? AND enabled = ? AND id <> ?", item.ParentSubscriptionID, true, item.ID).
-				Select("COALESCE(sum(allocation_ppm), 0)").Scan(&allocated).Error; err != nil {
-				return err
-			}
-			if allocated+item.AllocationPPM > parent.AllocationLimitPPM {
-				return ErrAllocationExceeded
-			}
 		}
 		return tx.Model(&current).Updates(map[string]any{
 			"parent_subscription_id": item.ParentSubscriptionID,
@@ -898,14 +861,6 @@ func canonicalBalanceGrant(parent ParentSubscription, item ChildSubscription) Ch
 	item.ModelAllowlist = pq.StringArray{}
 	item.ExpiresAt = nil
 	return item
-}
-
-// Unmetered parents represent credentials such as pay-as-you-go upstream API
-// keys. Their children are access grants, not slices of a finite upstream
-// quota, so any number of tenants may share them while each tenant continues
-// to settle usage against its own account balance.
-func enforcesAllocationLimit(capacityMode string) bool {
-	return capacityMode != db.ParentCapacityUnmetered
 }
 
 func (s Store) ActiveSubscriptionModelGrants(ctx context.Context, tenantID string, now time.Time) ([]SubscriptionModelGrant, error) {

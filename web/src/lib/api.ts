@@ -337,7 +337,6 @@ export interface ParentSubscription {
   status: string
   cpa_unavailable: boolean
   capacity_mode: CapacityMode
-  allocation_limit_ppm: number
   enabled: boolean
   cpa_model_allowlist: string[]
   model_allowlist: string[]

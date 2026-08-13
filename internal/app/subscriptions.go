@@ -13,12 +13,11 @@ import (
 )
 
 type parentSubscriptionInput struct {
-	Name               string   `json:"name"`
-	PlanType           string   `json:"plan_type"`
-	CapacityMode       string   `json:"capacity_mode"`
-	AllocationLimitPPM int64    `json:"allocation_limit_ppm"`
-	Enabled            bool     `json:"enabled"`
-	ModelAllowlist     []string `json:"model_allowlist"`
+	Name           string   `json:"name"`
+	PlanType       string   `json:"plan_type"`
+	CapacityMode   string   `json:"capacity_mode"`
+	Enabled        bool     `json:"enabled"`
+	ModelAllowlist []string `json:"model_allowlist"`
 }
 
 type childSubscriptionInput struct {
@@ -95,7 +94,7 @@ func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 	item, err := a.store.UpsertParentSubscription(r.Context(), store.ParentSubscription{
 		CPAAuthID: input.CPAAuthID, CPAAuthIndex: input.CPAAuthIndex, CPAAuthName: input.CPAAuthName, Provider: input.Provider,
 		Name: input.Name, PlanType: input.PlanType, CapacityMode: input.CapacityMode,
-		AllocationLimitPPM: input.AllocationLimitPPM, Enabled: input.Enabled, ModelAllowlist: input.ModelAllowlist,
+		AllocationLimitPPM: 1_000_000, Enabled: input.Enabled, ModelAllowlist: input.ModelAllowlist,
 	})
 	if err != nil {
 		writeError(w, 409, "parent_subscription_failed", err.Error())
@@ -109,8 +108,8 @@ func (a *App) adminParentSubscriptionUpdate(w http.ResponseWriter, r *http.Reque
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if !validCapacityMode(input.CapacityMode) || input.AllocationLimitPPM <= 0 {
-		writeError(w, 400, "validation_error", "容量模式或分配上限无效")
+	if !validCapacityMode(input.CapacityMode) {
+		writeError(w, 400, "validation_error", "容量模式无效")
 		return
 	}
 	current, err := a.store.GetParentSubscription(r.Context(), r.PathValue("id"))
@@ -120,7 +119,7 @@ func (a *App) adminParentSubscriptionUpdate(w http.ResponseWriter, r *http.Reque
 	}
 	item, err := a.store.UpdateParentSubscription(r.Context(), store.ParentSubscription{
 		ID: r.PathValue("id"), Name: input.Name, PlanType: current.PlanType,
-		CapacityMode: input.CapacityMode, AllocationLimitPPM: input.AllocationLimitPPM,
+		CapacityMode: input.CapacityMode, AllocationLimitPPM: 1_000_000,
 		Enabled: input.Enabled, ModelAllowlist: input.ModelAllowlist,
 	})
 	if err != nil {
@@ -484,8 +483,6 @@ func writeSubscriptionError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, 404, "not_found", "订阅不存在")
-	case errors.Is(err, store.ErrAllocationExceeded):
-		writeError(w, 409, "allocation_exceeded", "子订阅总分配超过父订阅上限")
 	default:
 		writeError(w, 400, "subscription_error", err.Error())
 	}

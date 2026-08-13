@@ -37,17 +37,6 @@ func TestModelAllowedCombinesParentAndChildPolicies(t *testing.T) {
 	}
 }
 
-func TestUnmeteredParentDoesNotEnforceAllocationLimit(t *testing.T) {
-	if enforcesAllocationLimit("unmetered") {
-		t.Fatal("unmetered API-key parent must allow multiple balance-backed child grants")
-	}
-	for _, mode := range []string{"observed"} {
-		if !enforcesAllocationLimit(mode) {
-			t.Fatalf("%s parent must enforce its allocation limit", mode)
-		}
-	}
-}
-
 func TestSubscriptionModelGrantExpandsTenantPoolButRespectsKeyPolicy(t *testing.T) {
 	key := KeyContext{
 		APIKey:       APIKey{ModelAllowlist: []string{"gpt-*", "grok-4.6"}},

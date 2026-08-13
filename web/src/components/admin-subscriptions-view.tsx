@@ -125,6 +125,8 @@ const capacityModes: Array<{
   },
 ]
 
+const nominalAllocationPPM = 1_000_000
+
 type EditableWindow = {
   key: string
   kind: string
@@ -295,10 +297,9 @@ export function AdminSubscriptionsView() {
         : Math.round(Number(assignPercent) * 10_000)
     if (
       view.item.capacity_mode !== "unmetered" &&
-      (allocationPPM <= 0 ||
-        view.allocated_ppm + allocationPPM > view.item.allocation_limit_ppm)
+      (!Number.isFinite(allocationPPM) || allocationPPM <= 0)
     ) {
-      toast.error("分配比例超过这个账户的剩余可分配额度")
+      toast.error("请输入有效的账户额度占比")
       return
     }
     setPending(true)
@@ -381,11 +382,9 @@ export function AdminSubscriptionsView() {
     (view) => view.item.id === assignParentID
   )
   const assignPPM = Math.round(Number(assignPercent || 0) * 10_000)
-  const assignRemainingPPM = assignParent
-    ? assignParent.item.allocation_limit_ppm -
-      assignParent.allocated_ppm -
-      assignPPM
-    : 0
+  const projectedAllocationPPM = assignParent
+    ? assignParent.allocated_ppm + assignPPM
+    : assignPPM
   const alreadyAssignedTenantIDs = new Set(
     children
       .filter((child) => child.parent_subscription_id === assignParentID)
@@ -648,7 +647,7 @@ export function AdminSubscriptionsView() {
               ) : null}
 
               {assignParent?.item.capacity_mode === "observed" ? (
-                <Field data-invalid={assignRemainingPPM < 0 || undefined}>
+                <Field>
                   <FieldLabel htmlFor="assign-percent">账户额度占比</FieldLabel>
                   <Input
                     id="assign-percent"
@@ -657,12 +656,17 @@ export function AdminSubscriptionsView() {
                     step="0.0001"
                     value={assignPercent}
                     onChange={(event) => setAssignPercent(event.target.value)}
-                    aria-invalid={assignRemainingPPM < 0 || undefined}
                     required
                   />
                   <FieldDescription>
-                    分配后还可分 {percent(Math.max(0, assignRemainingPPM))}
+                    分配后总计 {percent(projectedAllocationPPM)}；允许超过
+                    100%。
                   </FieldDescription>
+                  {projectedAllocationPPM > nominalAllocationPPM ? (
+                    <OversubscriptionWarning
+                      allocatedPPM={projectedAllocationPPM}
+                    />
+                  ) : null}
                 </Field>
               ) : null}
 
@@ -709,8 +713,6 @@ export function AdminSubscriptionsView() {
               form="assign-subscription-form"
               disabled={
                 pending ||
-                (assignParent?.item.capacity_mode === "observed" &&
-                  assignRemainingPPM < 0) ||
                 (assignParent?.item.capacity_mode === "unmetered" &&
                   assignTenantIDs.length === 0)
               }
@@ -825,13 +827,11 @@ function AccountAllocationPanel({
   onDelete: (child: ChildSubscription) => void
 }) {
   const tenantByID = new Map(tenants.map((tenant) => [tenant.id, tenant]))
-  const allocationPercent =
-    view.item.allocation_limit_ppm > 0
-      ? Math.min(
-          100,
-          (view.allocated_ppm / view.item.allocation_limit_ppm) * 100
-        )
-      : 0
+  const allocationPercent = Math.min(
+    100,
+    (view.allocated_ppm / nominalAllocationPPM) * 100
+  )
+  const oversubscribed = view.allocated_ppm > nominalAllocationPPM
 
   return (
     <div className="flex min-w-0 flex-col">
@@ -898,8 +898,7 @@ function AccountAllocationPanel({
                 </p>
               </div>
               <Badge variant="outline">
-                已分 {percent(view.allocated_ppm)} /{" "}
-                {percent(view.item.allocation_limit_ppm)}
+                已分配 {percent(view.allocated_ppm)}
               </Badge>
             </div>
             <Progress value={allocationPercent}>
@@ -908,6 +907,9 @@ function AccountAllocationPanel({
                 {Math.round(allocationPercent)}%
               </span>
             </Progress>
+            {oversubscribed ? (
+              <OversubscriptionWarning allocatedPPM={view.allocated_ppm} />
+            ) : null}
             <QuotaSnapshot
               snapshot={view.item.quota_snapshot}
               status={view.item.quota_probe_status}
@@ -1165,6 +1167,19 @@ function MobileChildGrant({
   )
 }
 
+function OversubscriptionWarning({ allocatedPPM }: { allocatedPPM: number }) {
+  return (
+    <Alert className="border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300">
+      <AlertTriangleIcon />
+      <AlertTitle>共享额度已超卖</AlertTitle>
+      <AlertDescription className="text-amber-700/90 dark:text-amber-300/80">
+        当前总分配为 {percent(allocatedPPM)}
+        。系统不会阻止继续分配，但多个租户同时高负载时可能提前耗尽上游额度。
+      </AlertDescription>
+    </Alert>
+  )
+}
+
 function ChildGrantMenu({
   child,
   capacityMode,
@@ -1360,9 +1375,6 @@ function ParentSettingsDialog({
         body: JSON.stringify({
           name: String(form.get("name") || ""),
           capacity_mode: mode,
-          allocation_limit_ppm: Math.round(
-            Number(form.get("allocation_limit") || 100) * 10_000
-          ),
           enabled,
           model_allowlist: models,
         }),
@@ -1432,22 +1444,6 @@ function ParentSettingsDialog({
 
             {mode === "observed" ? (
               <>
-                <Field>
-                  <FieldLabel htmlFor="allocation-limit">可分配上限</FieldLabel>
-                  <Input
-                    id="allocation-limit"
-                    name="allocation_limit"
-                    type="number"
-                    min="0.0001"
-                    step="0.0001"
-                    defaultValue={current.item.allocation_limit_ppm / 10_000}
-                    required
-                  />
-                  <FieldDescription>
-                    100% 表示不超售；只有明确需要时才设置为更高数值。
-                  </FieldDescription>
-                </Field>
-
                 <Field>
                   <FieldLabel>账户额度</FieldLabel>
                   <QuotaSnapshot
@@ -1567,17 +1563,34 @@ function ChildSettingsDialog({
   const [parentID, setParentID] = useState("")
   const [models, setModels] = useState<string[]>([])
   const [enabled, setEnabled] = useState(true)
+  const [allocationPercent, setAllocationPercent] = useState("")
 
   useEffect(() => {
     if (!value) return
     setParentID(value.parent_subscription_id)
     setModels(value.model_allowlist ?? [])
     setEnabled(value.enabled)
+    setAllocationPercent(String(value.allocation_ppm / 10_000))
   }, [value])
 
   if (!value) return null
   const current = value
   const selectedParent = parents.find((view) => view.item.id === parentID)
+  const editedAllocationPPM = Math.round(
+    Number(allocationPercent || 0) * 10_000
+  )
+  const currentAllocationInSelectedParent =
+    current.parent_subscription_id === selectedParent?.item.id &&
+    current.enabled
+      ? current.allocation_ppm
+      : 0
+  const projectedAllocationPPM = selectedParent
+    ? selectedParent.allocated_ppm -
+      currentAllocationInSelectedParent +
+      (enabled && selectedParent.item.capacity_mode === "observed"
+        ? editedAllocationPPM
+        : 0)
+    : 0
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -1597,7 +1610,7 @@ function ChildSettingsDialog({
           allocation_ppm:
             selectedParent.item.capacity_mode === "unmetered"
               ? 1_000_000
-              : Math.round(Number(form.get("percent") || 0) * 10_000),
+              : editedAllocationPPM,
           priority: Number(form.get("priority") || 100),
           enabled,
           model_allowlist: models,
@@ -1676,9 +1689,19 @@ function ChildSettingsDialog({
                   type="number"
                   min="0.0001"
                   step="0.0001"
-                  defaultValue={current.allocation_ppm / 10_000}
+                  value={allocationPercent}
+                  onChange={(event) => setAllocationPercent(event.target.value)}
                   required
                 />
+                <FieldDescription>
+                  保存后账户总计 {percent(projectedAllocationPPM)}；允许超过
+                  100%。
+                </FieldDescription>
+                {projectedAllocationPPM > nominalAllocationPPM ? (
+                  <OversubscriptionWarning
+                    allocatedPPM={projectedAllocationPPM}
+                  />
+                ) : null}
               </Field>
             ) : null}
 
@@ -1808,9 +1831,10 @@ function accountAllocationHint(view: ParentSubscriptionView) {
     return "请求固定到这个账户，并从租户余额结算。"
   if (!view.windows.length)
     return "额度学习中；请求先从租户余额结算，校准完成后自动切换为共享额度。"
-  return `还可分配 ${percent(
-    Math.max(0, view.item.allocation_limit_ppm - view.allocated_ppm)
-  )}；包含 ${view.windows.length} 个额度窗口。`
+  const allocation = percent(view.allocated_ppm)
+  return view.allocated_ppm > nominalAllocationPPM
+    ? `当前已分配 ${allocation}，处于超卖状态；仍可继续分配。`
+    : `当前已分配 ${allocation}；允许超卖，包含 ${view.windows.length} 个额度窗口。`
 }
 
 function displayPlan(value?: string) {

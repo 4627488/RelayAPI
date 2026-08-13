@@ -20,6 +20,8 @@ const (
 
 // ParentSubscription is a redacted accounting mirror of one stable CPA AuthID.
 // Provider secrets and OAuth material remain exclusively inside CLIProxyAPI.
+// AllocationLimitPPM is retained as a fixed 100% schema-compatibility baseline;
+// child allocations may exceed it and the UI reports that state as a warning.
 type ParentSubscription struct {
 	ID                 string          `gorm:"type:uuid;primaryKey" json:"id"`
 	CPAAuthID          string          `gorm:"not null;uniqueIndex" json:"cpa_auth_id"`

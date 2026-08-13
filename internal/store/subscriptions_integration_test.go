@@ -88,6 +88,63 @@ func TestBalanceSubscriptionBulkGrantAuthorizesMultipleTenants(t *testing.T) {
 	}
 }
 
+func TestObservedSubscriptionAllowsOversubscription(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err = database.Exec(`TRUNCATE web_socket_turns, request_reservations, child_quota_windows, child_subscriptions,
+		parent_quota_observations, parent_quota_windows, parent_subscriptions, billing_ledgers,
+		request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tenantIDs := []string{identity.NewID(), identity.NewID()}
+	for index, tenantID := range tenantIDs {
+		if err = database.Create(&db.Tenant{
+			ID: tenantID, Name: "oversold tenant", OwnerEmail: fmt.Sprintf("oversold-%d@example.test", index),
+			PasswordHash: "test", Enabled: true,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	dataStore := Store{DB: database}
+	parent, err := dataStore.UpsertParentSubscription(ctx, ParentSubscription{
+		CPAAuthID: "oversold-account", Name: "Oversold account", Status: "available",
+		CapacityMode: db.ParentCapacityObserved, Enabled: true, Metadata: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, tenantID := range tenantIDs {
+		if _, err = dataStore.CreateChildSubscription(ctx, ChildSubscription{
+			TenantID: tenantID, ParentSubscriptionID: parent.ID, Name: fmt.Sprintf("grant-%d", index),
+			AllocationPPM: 750_000, Priority: 100, Enabled: true, StartsAt: time.Now().Add(-time.Minute),
+		}); err != nil {
+			t.Fatalf("creating grant %d above the combined 100%% baseline: %v", index, err)
+		}
+	}
+	var allocated int64
+	if err = database.Model(&db.ChildSubscription{}).
+		Where("parent_subscription_id = ? AND enabled = ?", parent.ID, true).
+		Select("COALESCE(sum(allocation_ppm), 0)").Scan(&allocated).Error; err != nil {
+		t.Fatal(err)
+	}
+	if allocated != 1_500_000 {
+		t.Fatalf("allocated = %d, want 150%%", allocated)
+	}
+}
+
 func TestMissingParentCleanupReleasesReservationsAndDeletesCurrentState(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
