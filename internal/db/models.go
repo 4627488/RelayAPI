@@ -208,6 +208,7 @@ type RequestLog struct {
 	ReservedNanoUSD              int64     `gorm:"not null;default:0" json:"reserved_nano_usd"`
 	LatencyMS                    int64     `gorm:"not null;default:0" json:"latency_ms"`
 	TTFTMS                       *int64    `json:"ttft_ms,omitempty"`
+	StageTimings                 string    `gorm:"type:text;not null;default:'{}'" json:"stage_timings"`
 	ErrorCode                    string    `json:"error_code,omitempty"`
 	ErrorMessage                 string    `json:"error_message,omitempty"`
 	StartedAt                    time.Time `gorm:"index:request_logs_tenant_started_idx,priority:2,sort:desc;index" json:"started_at"`

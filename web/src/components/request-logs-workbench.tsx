@@ -86,6 +86,7 @@ import {
   requestLogSucceeded,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
 
 const emptyPage: RequestLogPage = {
   items: [],
@@ -499,6 +500,7 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
     ].filter(([, tokens]) => Number(tokens) > 0) as Array<[string, number, number]>
   }, [log])
   const timings = parseNumberRecord(detail?.stage_timings)
+  const latencyTrace = log.stage_timings && log.stage_timings !== "{}" ? log.stage_timings : detail?.stage_timings
   const errorTitle = log.error_code || detail?.error_name
   const errorMessage = detail?.error_detail || detail?.error_message || log.error_message
   const hasBilling = Boolean(costRows.length || log.cost_nano_usd != null || log.price_source)
@@ -544,6 +546,8 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
           ["总耗时", `${log.latency_ms} ms`],
         ]} />
       </DetailGroup>
+
+      <RequestLatencyTimeline value={latencyTrace} totalMS={log.latency_ms} ttftMS={log.ttft_ms} stream={log.stream} />
 
       {Object.keys(timings).length ? (
         <DetailGroup title="阶段耗时">
@@ -726,6 +730,7 @@ function parseNumberRecord(value?: string) {
   if (!value) return {} as Record<string, number>
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>
+    if (parsed.version === 2 && Array.isArray(parsed.segments)) return {} as Record<string, number>
     return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === "number"))
   } catch {
     return {} as Record<string, number>

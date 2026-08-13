@@ -65,13 +65,15 @@ type nativeWebSocketSessionState struct {
 const nativeWebSocketHeartbeatInterval = 30 * time.Second
 
 func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
-	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext) {
+	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext, timeline *latencyTimeline) {
 	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
 	accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
 		return a.persistNativeWebSocketTurn(context.WithoutCancel(r.Context()), r, key, requestID,
 			logContext, &accounting, entry, cumulative)
 	}
 	session, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
+	sessionObservedAt := time.Now()
+	timeline.Step(sessionObservedAt, "websocket_session", "WebSocket 会话", "downstream", "包含握手、上下行消息与模型响应等待")
 	if resolvedMeta.Model != "" {
 		meta = resolvedMeta
 	}
@@ -131,11 +133,14 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		logContext.detail.ErrorName = logContext.errorCode
 		logContext.detail.ErrorMessage = boundedErrorText(err.Error())
 	}
-	duration := time.Since(started).Milliseconds()
+	completed := time.Now()
+	timeline.Step(completed, "websocket_settlement", "WebSocket 结算", "billing", "结算会话内已完成的计费用量")
+	timeline.Mark(completed, "complete", "会话结束")
 	logContext.requestBytes = accounting.requestBytes
 	logContext.forwardedBytes = accounting.forwardedBytes
 	logContext.responseBytes = accounting.responseBytes
-	logContext.detail.StageTimings = timingJSON(map[string]int64{"websocket_duration_ms": duration, "total_ms": duration})
+	logContext.detail.StageTimings = timeline.JSON(completed)
+	logContext.stageTimings = logContext.detail.StageTimings
 	// Successful terminal responses already produced one durable log per billing
 	// entry. Only sessions without a billing entry need a session-level log.
 	if accounting.turnsSeen == 0 {
@@ -184,7 +189,12 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	logContext.requestBytes = entry.RequestBytes
 	logContext.forwardedBytes = entry.ForwardedBytes
 	logContext.responseBytes = entry.ResponseBytes
-	duration := time.Since(entry.StartedAt).Milliseconds()
+	turnCompleted := time.Now()
+	duration := turnCompleted.Sub(entry.StartedAt).Milliseconds()
+	turnTimeline := newLatencyTimeline(entry.StartedAt)
+	turnTimeline.Step(turnCompleted, "websocket_turn", "WebSocket 请求轮次", "downstream", "从 response.create 到终止事件的完整轮次")
+	turnTimeline.Mark(turnCompleted, "complete", "轮次结束")
+	logContext.stageTimings = turnTimeline.JSON(turnCompleted)
 	logID := requestID
 	if accounting.turnsSeen > 0 {
 		logID = identity.NewID()
@@ -193,7 +203,7 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 		logContext.detail = nil
 	} else if logContext.detail != nil {
 		detail := *logContext.detail
-		detail.StageTimings = timingJSON(map[string]int64{"websocket_turn_ms": duration, "total_ms": duration})
+		detail.StageTimings = logContext.stageTimings
 		logContext.detail = &detail
 	}
 	input := requestLogInput(key, logID, accounting.admission, meta, r, http.StatusSwitchingProtocols,

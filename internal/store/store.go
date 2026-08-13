@@ -86,7 +86,7 @@ type LogInput struct {
 	Price                                                                                                                                           *ResolvedPrice
 	ReservedNanoUSD, LatencyMS, RequestBodyBytes, ForwardedBodyBytes, ResponseBodyBytes                                                             int64
 	TTFTMS                                                                                                                                          *int64
-	ErrorCode, ErrorMessage                                                                                                                         string
+	ErrorCode, ErrorMessage, StageTimings                                                                                                           string
 	StartedAt, CompletedAt                                                                                                                          time.Time
 	Detail                                                                                                                                          *LogDetailInput
 }
@@ -763,6 +763,10 @@ func nullableIdentifier(value string) *string {
 }
 
 func requestLogItem(l LogInput) db.RequestLog {
+	stageTimings := strings.TrimSpace(l.StageTimings)
+	if stageTimings == "" {
+		stageTimings = "{}"
+	}
 	item := db.RequestLog{
 		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, ReservationRequestID: nullableIdentifier(l.ReservationRequestID), CPARequestID: l.CPARequestID,
 		CPATraceID: l.CPATraceID, CPAExecutionID: l.CPAExecutionID,
@@ -780,7 +784,7 @@ func requestLogItem(l LogInput) db.RequestLog {
 		ImageInputTokens: l.Usage.ImageInput, CachedImageInputTokens: l.Usage.CachedImageInput,
 		ImageOutputTokens: l.Usage.ImageOutput, TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,
 		Settled: l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS,
-		ErrorCode: l.ErrorCode, ErrorMessage: l.ErrorMessage, StartedAt: l.StartedAt, CompletedAt: l.CompletedAt,
+		ErrorCode: l.ErrorCode, ErrorMessage: l.ErrorMessage, StageTimings: stageTimings, StartedAt: l.StartedAt, CompletedAt: l.CompletedAt,
 	}
 	if l.Price != nil {
 		item.PriceModel = l.Price.PricedModel
@@ -857,7 +861,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 				"reasoning_price_nano_usd", "image_input_price_nano_usd",
 				"cached_image_input_price_nano_usd", "image_output_price_nano_usd", "price_multiplier",
 				"pricing_complete", "settled", "reserved_nano_usd", "latency_ms", "ttftms",
-				"error_code", "error_message", "completed_at",
+				"error_code", "error_message", "stage_timings", "completed_at",
 			}),
 		})
 	}

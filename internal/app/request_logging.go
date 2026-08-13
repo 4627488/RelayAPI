@@ -142,11 +142,6 @@ func captureForwardedRequest(detail *store.LogDetailInput, original, forwarded [
 	detail.ForwardedBody, detail.ForwardedBodyTruncated, _ = boundedDetail(forwarded)
 }
 
-func timingJSON(values map[string]int64) string {
-	raw, _ := json.Marshal(values)
-	return string(raw)
-}
-
 func upstreamErrorMessage(status int, payload []byte) string {
 	var value map[string]any
 	if json.Unmarshal(payload, &value) == nil {

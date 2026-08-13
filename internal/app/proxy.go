@@ -12,6 +12,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
@@ -258,9 +259,10 @@ type requestLogContext struct {
 	requestBytes   int64
 	forwardedBytes int64
 	responseBytes  int64
+	stageTimings   string
 }
 
-func rejectedRequestDetail(r *http.Request, body []byte, _ bool, code, message string, started time.Time) *store.LogDetailInput {
+func rejectedRequestDetail(r *http.Request, body []byte, _ bool, code, message string, started time.Time, timeline ...*latencyTimeline) *store.LogDetailInput {
 	detail := baseRequestDetail(r, body)
 	if r.ContentLength > detail.RequestBodyBytes {
 		detail.RequestBodyBytes = r.ContentLength
@@ -268,22 +270,33 @@ func rejectedRequestDetail(r *http.Request, body []byte, _ bool, code, message s
 	}
 	detail.ErrorName = code
 	detail.ErrorMessage = boundedErrorText(message)
-	detail.StageTimings = timingJSON(map[string]int64{"total_ms": time.Since(started).Milliseconds()})
+	completed := time.Now()
+	if len(timeline) > 0 && timeline[0] != nil {
+		timeline[0].Step(completed, "relay_rejection", "Relay 返回错误", "relay", "请求在进入上游前被 Relay 拒绝")
+		detail.StageTimings = timeline[0].JSON(completed)
+	} else {
+		fallback := newLatencyTimeline(started)
+		fallback.Step(completed, "relay_rejection", "Relay 返回错误", "relay", "请求在进入上游前被 Relay 拒绝")
+		detail.StageTimings = fallback.JSON(completed)
+	}
 	return detail
 }
 
 func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta,
 	r *http.Request, status int, started time.Time, code, message string, detail *store.LogDetailInput) {
 	requestBytes := int64(0)
+	stageTimings := "{}"
 	if detail != nil {
 		requestBytes = detail.RequestBodyBytes
+		stageTimings = detail.StageTimings
 	}
 	a.writeRequestLog(key, requestID, admission, meta, r, status, started, nil, false, true, 0,
-		boundedErrorText(message), requestLogContext{detail: detail, errorCode: code, requestBytes: requestBytes})
+		boundedErrorText(message), requestLogContext{detail: detail, errorCode: code, requestBytes: requestBytes, stageTimings: stageTimings})
 }
 
 func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
+	timeline := newLatencyTimeline(started)
 	keyValue := bearer(r)
 	key, err := a.store.ResolveKey(r.Context(), keyValue)
 	if err != nil || !key.Enabled || !key.TenantEnabled || expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
@@ -291,6 +304,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keyResolvedAt := time.Now()
+	timeline.Step(keyResolvedAt, "resolve_key", "解析 API Key", "relay", "鉴权并加载租户与 Key 权限")
 	if isNativeModelCatalogRequest(r) {
 		a.proxyNativeModels(w, r, key)
 		return
@@ -307,18 +321,20 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		classified := writeCPAAdmissionError(w, err, targetCPA.AdmissionStatus())
 		meta := requestMetadata(nil, r)
-		detail := rejectedRequestDetail(r, nil, false, classified.Code, classified.Message, started)
+		detail := rejectedRequestDetail(r, nil, false, classified.Code, classified.Message, started, timeline)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
 		return
 	}
 	defer lease.Release()
+	leaseAcquiredAt := time.Now()
+	timeline.Step(leaseAcquiredAt, "cpa_admission_queue", "CPA 准入排队", "queue", "等待并发槽位与请求体内存预算")
 
 	body, err := readBoundedRequestBody(w, r, a.cfg.CPAMaxRequestBytes)
 	if err != nil {
 		message := fmt.Sprintf("请求体超过 %d MiB", a.cfg.CPAMaxRequestBytes>>20)
 		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", message)
 		meta := requestMetadata(body, r)
-		detail := rejectedRequestDetail(r, body, true, "body_too_large", message, started)
+		detail := rejectedRequestDetail(r, body, true, "body_too_large", message, started, timeline)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusRequestEntityTooLarge, started, "body_too_large", message, detail)
 		return
 	}
@@ -327,6 +343,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		defer a.reclaimAfterLargeRequest(bufferedBodyBytes)
 	}
 	bodyReadAt := time.Now()
+	timeline.Step(bodyReadAt, "read_request_body", "读取客户端请求", "downstream", "读取并缓存客户端请求体")
 	originalBody := body
 	logContext := requestLogContext{detail: baseRequestDetail(r, body), requestBytes: int64(len(body))}
 	meta := requestMetadata(body, r)
@@ -342,7 +359,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		const message = "无法改写请求模型"
 		writeError(w, http.StatusBadRequest, "invalid_request", message)
-		detail := rejectedRequestDetail(r, body, true, "invalid_request", message, started)
+		detail := rejectedRequestDetail(r, body, true, "invalid_request", message, started, timeline)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusBadRequest, started, "invalid_request", message, detail)
 		return
 	}
@@ -351,10 +368,12 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if meta.Model != "" && !key.AllowsModel(meta.Model) {
 		const message = "该 API Key 无权使用此模型"
 		writeError(w, http.StatusForbidden, "model_not_allowed", message)
-		detail := rejectedRequestDetail(r, body, true, "model_not_allowed", message, started)
+		detail := rejectedRequestDetail(r, body, true, "model_not_allowed", message, started, timeline)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusForbidden, started, "model_not_allowed", message, detail)
 		return
 	}
+	modelResolvedAt := time.Now()
+	timeline.Step(modelResolvedAt, "model_resolution", "模型解析与权限", "relay", "解析别名、改写模型并检查 Key 模型权限")
 	if err := a.enforceLimits(r.Context(), key); err != nil {
 		classified := userFacingError{Status: http.StatusInternalServerError, Code: "usage_limit_check_failed", Message: "暂时无法检查使用限制，请稍后重试", Retryable: true}
 		var limitErr *requestLimitError
@@ -362,11 +381,12 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			classified = userFacingError{Status: http.StatusTooManyRequests, Code: limitErr.Code, Message: limitErr.Message, Retryable: true}
 		}
 		writeUserFacingError(w, classified)
-		detail := rejectedRequestDetail(r, body, true, classified.Code, classified.Message, started)
+		detail := rejectedRequestDetail(r, body, true, classified.Code, classified.Message, started, timeline)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
 		return
 	}
 	limitsCheckedAt := time.Now()
+	timeline.Step(limitsCheckedAt, "usage_limits", "用量限制检查", "relay", "检查 Key 与租户的请求限制")
 
 	var price store.ResolvedPrice
 	var priceSnapshot []byte
@@ -380,7 +400,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			if a.cfg.UnpricedModelPolicy == "deny" {
 				const message = "该模型尚未配置价格，请联系管理员完善计费配置"
 				writeError(w, http.StatusServiceUnavailable, "pricing_unavailable", message)
-				detail := rejectedRequestDetail(r, body, true, "pricing_unavailable", message, started)
+				detail := rejectedRequestDetail(r, body, true, "pricing_unavailable", message, started, timeline)
 				a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusServiceUnavailable, started, "pricing_unavailable", message, detail)
 				return
 			}
@@ -411,7 +431,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			classified := admissionUserError(err)
 			writeUserFacingError(w, classified)
-			detail := rejectedRequestDetail(r, body, true, classified.Code, classified.Message, started)
+			detail := rejectedRequestDetail(r, body, true, classified.Code, classified.Message, started, timeline)
 			a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
 			return
 		}
@@ -431,19 +451,22 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	admittedAt := time.Now()
+	timeline.Step(admittedAt, "billing_admission", "订阅准入与预留", "billing", "解析价格、选择订阅与凭据并预留余额或额度")
 
 	if websocket {
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		a.proxyNativeWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext)
+		a.proxyNativeWebSocket(w, r, key, requestID, admission, meta, started, billable, logContext, timeline)
 		return
 	}
 
-	upstreamStartedAt := time.Now()
 	var response *http.Response
 	target := targetCPA.URL(r.URL.RequestURI())
 	var upstream *http.Request
+	clientTraceState, clientTrace := newClientHTTPTrace()
+	transportStarted := false
 	upstream, err = http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
 	if err == nil {
+		upstream = upstream.WithContext(httptrace.WithClientTrace(upstream.Context(), clientTrace))
 		copyHeaders(upstream.Header, r.Header)
 		upstream.Header.Set("Authorization", "Bearer "+targetCPA.APIKey)
 		upstream.Header.Del("X-API-Key")
@@ -456,7 +479,15 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
 		captureForwardedRequest(logContext.detail, originalBody, body)
 		logContext.forwardedBytes = int64(len(body))
+		timeline.Step(time.Now(), "prepare_cpa_request", "准备 CPA 请求", "relay", "构造 CPA 请求、改写正文并准备安全转发头")
+		transportStarted = true
 		response, err = targetCPA.HTTP.Do(upstream)
+	} else {
+		timeline.Step(time.Now(), "prepare_cpa_request", "准备 CPA 请求", "relay", "构造 CPA 请求失败")
+	}
+	upstreamResultAt := time.Now()
+	if transportStarted {
+		timeline.AddHTTPTrace(clientTraceState, upstreamResultAt)
 	}
 	// The transport has completely sent the request by the time Do returns.
 	// Break the response -> request -> bytes.Reader retention chain before a
@@ -474,15 +505,15 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		logContext.errorCode = classified.Code
 		logContext.detail.ErrorName = "upstream_error"
 		logContext.detail.ErrorMessage = err.Error()
-		logContext.detail.StageTimings = timingJSON(map[string]int64{
-			"read_body_ms": bodyReadAt.Sub(started).Milliseconds(), "total_ms": time.Since(started).Milliseconds(),
-		})
+		completed := time.Now()
+		timeline.Step(completed, "relay_transport_error", "处理传输错误", "relay", "归类 CPA 连接错误并释放预留")
+		logContext.detail.StageTimings = timeline.JSON(completed)
+		logContext.stageTimings = logContext.detail.StageTimings
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
 		writeCPATransportError(w, r, err, "awaiting_headers", requestID)
 		return
 	}
 	targetCPA.RecordTransportResult(nil)
-	upstreamHeadersAt := time.Now()
 	defer response.Body.Close()
 	clientStatus := response.StatusCode
 	var normalizedError *userFacingError
@@ -504,7 +535,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		// CPA and providers sometimes use 429 for scheduler/auth failures. Read
 		// the small error body before committing headers so Relay can report the
 		// actual user-facing cause. Successful streaming responses remain direct.
-		payload, readErr := io.ReadAll(io.LimitReader(response.Body, int64(capture.max+1)))
+		payload, readErr := io.ReadAll(io.LimitReader(&observedReader{Reader: response.Body, onFirstByte: firstByte}, int64(capture.max+1)))
 		_, _ = capture.Write(payload)
 		classified := a.classifyUpstreamError(response.StatusCode, payload, admission)
 		if readErr != nil {
@@ -531,6 +562,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
 	}
+	responseReadAt := time.Now()
 	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
 		targetCPA.RecordTransportResult(copyErr)
 	}
@@ -587,18 +619,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if !firstByteAt.IsZero() {
 		ttft := firstByteAt.Sub(started).Milliseconds()
 		logContext.ttftMS = &ttft
+		timeline.Step(firstByteAt, "upstream_first_body", "等待首个响应数据", "upstream", "CPA 已返回响应头，继续等待首个响应正文数据")
+		timeline.Mark(firstByteAt, "first_byte", "首字节")
 	}
-	logContext.detail.StageTimings = timingJSON(map[string]int64{
-		"resolve_key_ms":      keyResolvedAt.Sub(started).Milliseconds(),
-		"read_body_ms":        bodyReadAt.Sub(keyResolvedAt).Milliseconds(),
-		"limits_ms":           limitsCheckedAt.Sub(bodyReadAt).Milliseconds(),
-		"admission_ms":        admittedAt.Sub(limitsCheckedAt).Milliseconds(),
-		"upstream_start_ms":   upstreamStartedAt.Sub(started).Milliseconds(),
-		"upstream_wait_ms":    upstreamHeadersAt.Sub(upstreamStartedAt).Milliseconds(),
-		"upstream_headers_ms": upstreamHeadersAt.Sub(started).Milliseconds(),
-		"first_byte_ms":       valueOrZero(logContext.ttftMS),
-		"total_ms":            time.Since(started).Milliseconds(),
-	})
+	timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 CPA 响应并持续写回客户端")
 	if normalizedError != nil {
 		logContext.errorCode = normalizedError.Code
 		logContext.detail.ErrorName = logContext.errorCode
@@ -613,6 +637,11 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		logContext.detail.ErrorName = "stream_copy_error"
 		logContext.detail.ErrorMessage = copyErr.Error()
 	}
+	completed := time.Now()
+	timeline.Step(completed, "usage_and_settlement", "用量解析与结算", "billing", "解析 usage、计算费用并结算请求预留")
+	timeline.Mark(completed, "complete", "请求完成")
+	logContext.detail.StageTimings = timeline.JSON(completed)
+	logContext.stageTimings = logContext.detail.StageTimings
 	a.writeRequestLog(key, requestID, admission, meta, r, clientStatus, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
@@ -694,7 +723,8 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: time.Since(started).Milliseconds(),
 		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
 		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
-		StartedAt: started, CompletedAt: time.Now(), Detail: detail,
+		StageTimings: logContext.stageTimings,
+		StartedAt:    started, CompletedAt: time.Now(), Detail: detail,
 	}
 }
 
@@ -800,13 +830,6 @@ func max64(a, b int64) int64 {
 		return a
 	}
 	return b
-}
-
-func valueOrZero(value *int64) int64 {
-	if value == nil {
-		return 0
-	}
-	return *value
 }
 
 func maxDuration(a, b time.Duration) time.Duration {

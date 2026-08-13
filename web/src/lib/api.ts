@@ -117,6 +117,7 @@ export interface RequestLog {
   reserved_nano_usd: number
   latency_ms: number
   ttft_ms?: number
+  stage_timings?: string
   error_code?: string
   error_message?: string
   started_at: string
