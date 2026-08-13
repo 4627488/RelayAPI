@@ -8,15 +8,11 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	"golang.org/x/net/proxy"
 )
 
 const maxQuotaResponseBytes = 2 << 20
@@ -71,26 +67,11 @@ func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaRepo
 	if report, ok := embeddedQuotaReport(document, provider, credential.AuthIndex, now); ok {
 		return report, nil
 	}
-	proxyURL := nativeQuotaProxyURL(document, credential.ProxyURL)
-	client, err := quotaHTTPClient(proxyURL, 25*time.Second)
+	client, err := OutboundHTTPClient(credential.ProxyURL, 25*time.Second)
 	if err != nil {
 		return QuotaReport{}, err
 	}
 	return probeQuotaWithClient(ctx, client, productionQuotaEndpoints, credential.AuthIndex, provider, document, now)
-}
-
-// Match the embedded runtime's configuration ownership. A credential-specific
-// proxy is most specific, the persisted runtime setting is authoritative for
-// global routing, and the import snapshot is only a backwards-compatible
-// fallback when no current runtime setting exists.
-func nativeQuotaProxyURL(document map[string]any, runtimeProxy string) string {
-	if value := scalarQuotaText(document["proxy_url"]); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(runtimeProxy); value != "" {
-		return value
-	}
-	return scalarQuotaText(document["_relay_proxy_url"])
 }
 
 func probeQuotaWithClient(ctx context.Context, client *http.Client, endpoints quotaEndpoints, authIndex, provider string, document map[string]any, now time.Time) (QuotaReport, error) {
@@ -397,50 +378,6 @@ func embeddedQuotaReport(document map[string]any, provider, authIndex string, no
 		return QuotaReport{}, false
 	}
 	return QuotaReport{AuthIndex: authIndex, Provider: provider, PlanType: scalarQuotaText(root["plan_type"]), Supported: true, Source: "credential-extension", Observed: now, Windows: windows}, true
-}
-
-func quotaHTTPClient(rawProxy string, timeout time.Duration) (*http.Client, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	value := strings.TrimSpace(rawProxy)
-	if value == "" {
-		return &http.Client{Transport: transport, Timeout: timeout}, nil
-	}
-	if strings.EqualFold(value, "direct") || strings.EqualFold(value, "none") {
-		transport.Proxy = nil
-		return &http.Client{Transport: transport, Timeout: timeout}, nil
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Host == "" {
-		return nil, errors.New("invalid native quota proxy URL")
-	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
-		transport.Proxy = http.ProxyURL(parsed)
-	case "socks5", "socks5h":
-		var auth *proxy.Auth
-		if parsed.User != nil {
-			password, _ := parsed.User.Password()
-			auth = &proxy.Auth{User: parsed.User.Username(), Password: password}
-		}
-		dialer, dialErr := proxy.SOCKS5("tcp", parsed.Host, auth, proxy.Direct)
-		if dialErr != nil {
-			return nil, fmt.Errorf("create native quota SOCKS5 dialer: %w", dialErr)
-		}
-		transport.Proxy = nil
-		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-			if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
-				return contextDialer.DialContext(ctx, network, address)
-			}
-			return dialer.Dial(network, address)
-		}
-	default:
-		return nil, fmt.Errorf("unsupported native quota proxy scheme %q", parsed.Scheme)
-	}
-	return &http.Client{Transport: transport, Timeout: timeout}, nil
-}
-
-func NativeOutboundHTTPClient(rawProxy string, timeout time.Duration) (*http.Client, error) {
-	return quotaHTTPClient(rawProxy, timeout)
 }
 
 func validQuotaWindows(items []QuotaWindow, now time.Time) []QuotaWindow {

@@ -117,9 +117,17 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
 		return result
 	}
-	a.nativeSettings.RLock()
-	proxyURL := a.nativeSettings.value.ProxyURL
-	a.nativeSettings.RUnlock()
+	proxyID := ""
+	if credential.ProxyID != nil {
+		proxyID = *credential.ProxyID
+	}
+	proxyURL, err := a.proxyURL(probeCtx, proxyID)
+	if err != nil {
+		result.Status = "error"
+		result.Error = "读取账户代理失败: " + err.Error()
+		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
+		return result
+	}
 	report, err := cpa.ProbeQuota(probeCtx, cpa.QuotaProbeCredential{
 		AuthIndex: firstNonEmptyString(parent.CPAAuthIndex, parent.CPAAuthID), Provider: firstNonEmptyString(parent.Provider, credential.Provider),
 		Document: credential.Document, ProxyURL: proxyURL,

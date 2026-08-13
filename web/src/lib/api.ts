@@ -281,10 +281,39 @@ export interface ProviderAccount {
   can_toggle?: boolean
   can_delete?: boolean
   proxy_configured?: boolean
+  proxy_id?: string | null
   websockets?: boolean
   custom_header_names?: string[]
   can_replace_document?: boolean
   revision?: number
+}
+
+export interface OutboundProxy {
+  id: string
+  name: string
+  endpoint: string
+  scheme: string
+  host: string
+  account_use: number
+  system_use: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ProxyTestResult {
+  ok: boolean
+  latency_ms: number
+  ip?: string
+  ip_type?: string
+  city?: string
+  region?: string
+  country?: string
+  flag?: string
+  asn?: number
+  organization?: string
+  isp?: string
+  domain?: string
+  error?: string
 }
 
 type ApiErrorBody = {

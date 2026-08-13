@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
 
@@ -18,7 +20,7 @@ type nativeRuntimeSettings struct {
 	MaxRetryCredentials        int    `json:"max_retry_credentials"`
 	MaxRetryInterval           int    `json:"max_retry_interval"`
 	RoutingStrategy            string `json:"routing_strategy"`
-	ProxyURL                   string `json:"proxy_url"`
+	SystemProxyID              string `json:"system_proxy_id"`
 	PassthroughHeaders         bool   `json:"passthrough_headers"`
 	ImageGenerationMode        string `json:"image_generation_mode"`
 	GPTImageBaseModel          string `json:"gpt_image_base_model"`
@@ -44,10 +46,21 @@ func defaultNativeRuntimeSettings() nativeRuntimeSettings {
 	}
 }
 
-func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSettings, bool, error) {
+func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSettings, bool, string, error) {
 	settings := defaultNativeRuntimeSettings()
-	found, err := a.store.GetRuntimeSetting(ctx, nativeRuntimeSettingsKey, &settings)
-	return settings, found, err
+	var document json.RawMessage
+	found, err := a.store.GetRuntimeSetting(ctx, nativeRuntimeSettingsKey, &document)
+	if err != nil || !found {
+		return settings, found, "", err
+	}
+	if err = json.Unmarshal(document, &settings); err != nil {
+		return settings, true, "", err
+	}
+	var legacy struct {
+		ProxyURL string `json:"proxy_url"`
+	}
+	_ = json.Unmarshal(document, &legacy)
+	return settings, true, strings.TrimSpace(legacy.ProxyURL), nil
 }
 
 func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
@@ -82,31 +95,21 @@ func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
 			return "视频结果绑定时长必须是有效的正数 duration，例如 3h"
 		}
 	}
-	if !validNativeProxyURL(value.ProxyURL) {
-		return "代理地址格式无效"
-	}
 	return ""
 }
 
-func validNativeProxyURL(value string) bool {
-	proxy := strings.TrimSpace(value)
-	if proxy == "" || proxy == "direct" || proxy == "none" {
-		return true
-	}
-	parsed, err := url.Parse(proxy)
-	return err == nil && parsed.Host != "" &&
-		(parsed.Scheme == "http" || parsed.Scheme == "https" || parsed.Scheme == "socks5" || parsed.Scheme == "socks5h")
-}
-
-func runtimeBridgeSettings(value nativeRuntimeSettings) relaybridge.Settings {
+func runtimeBridgeSettings(value nativeRuntimeSettings, systemProxyURL string) relaybridge.Settings {
 	imageMode := value.ImageGenerationMode
 	if imageMode == "disabled" {
 		imageMode = "all"
 	}
+	if strings.TrimSpace(systemProxyURL) == "" {
+		systemProxyURL = "direct"
+	}
 	return relaybridge.Settings{
 		RequestRetry: value.RequestRetry, MaxRetryCredentials: value.MaxRetryCredentials,
 		MaxRetryInterval: time.Duration(value.MaxRetryInterval) * time.Second,
-		RoutingStrategy:  value.RoutingStrategy, ProxyURL: value.ProxyURL,
+		RoutingStrategy:  value.RoutingStrategy, ProxyURL: systemProxyURL,
 		PassthroughHeaders: value.PassthroughHeaders, DisableImageGeneration: imageMode,
 		GPTImage2BaseModel: value.GPTImageBaseModel, VideoResultAuthCacheTTL: value.VideoResultAuthCacheTTL,
 		ForceModelPrefix: value.ForceModelPrefix, StreamKeepAliveSeconds: value.StreamKeepAliveSeconds,
@@ -134,6 +137,19 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", message)
 		return
 	}
+	systemProxyURL := ""
+	if input.SystemProxyID != "" {
+		var err error
+		systemProxyURL, err = a.proxyURL(r.Context(), input.SystemProxyID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusBadRequest, "proxy_not_found", "选择的系统代理不存在")
+			} else {
+				writeError(w, http.StatusInternalServerError, "proxy_unavailable", "无法读取系统代理")
+			}
+			return
+		}
+	}
 	a.nativeSettings.RLock()
 	previous := a.nativeSettings.value
 	a.nativeSettings.RUnlock()
@@ -141,7 +157,7 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "运行配置持久化失败")
 		return
 	}
-	if err := a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(input)); err != nil {
+	if err := a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(input, systemProxyURL)); err != nil {
 		_ = a.store.PutRuntimeSetting(r.Context(), nativeRuntimeSettingsKey, previous)
 		writeError(w, http.StatusInternalServerError, "runtime_update_failed", err.Error())
 		return

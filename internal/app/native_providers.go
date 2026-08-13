@@ -27,7 +27,7 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			Method   string          `json:"method"`
 			APIKey   string          `json:"api_key"`
 			BaseURL  string          `json:"base_url"`
-			ProxyURL string          `json:"proxy_url"`
+			ProxyID  string          `json:"proxy_id"`
 			Prefix   string          `json:"prefix"`
 		}
 		if !decodeJSON(w, r, &input) {
@@ -66,13 +66,6 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				}
 				document["base_url"] = baseURL
 			}
-			if value := strings.TrimSpace(input.ProxyURL); value != "" {
-				if !validNativeProxyURL(value) {
-					writeError(w, http.StatusBadRequest, "validation_error", "代理地址格式无效")
-					return
-				}
-				document["proxy_url"] = value
-			}
 			if value := strings.TrimSpace(input.Prefix); value != "" {
 				value, prefixErr := normalizeNativePrefix(value)
 				if prefixErr != nil {
@@ -106,7 +99,13 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		if input.Method == "api_key" {
 			source = "api_key"
 		}
-		row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: id, Name: input.Name, Provider: input.Provider, Enabled: enabled, Models: input.Models, Document: input.Document, Source: source})
+		proxyID, proxyErr := a.validProxyID(r.Context(), input.ProxyID)
+		if proxyErr != nil {
+			writeError(w, http.StatusBadRequest, "proxy_not_found", proxyErr.Error())
+			return
+		}
+		input.Document = stripCredentialProxyFields(input.Document)
+		row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: id, Name: input.Name, Provider: input.Provider, Enabled: enabled, Models: input.Models, Document: input.Document, Source: source, ProxyID: proxyID})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存凭据失败")
 			return
@@ -194,14 +193,10 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	baseURL, _ := document["base_url"].(string)
 	prefix, _ := document["prefix"].(string)
 	websockets, _ := document["websockets"].(bool)
-	proxyURL, _ := document["proxy_url"].(string)
-	if proxyURL == "" {
-		proxyURL, _ = document["_relay_proxy_url"].(string)
-	}
 	expired := row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now())
 	result := map[string]any{"id": row.ID, "auth_index": row.ID, "name": row.ID, "label": row.Name, "provider": row.Provider, "type": row.Provider,
 		"disabled": !row.Enabled, "unavailable": expired, "status": "native", "source": row.Source, "models": row.Models,
-		"proxy_configured": strings.TrimSpace(proxyURL) != "", "websockets": websockets,
+		"proxy_configured": row.ProxyID != nil, "proxy_id": row.ProxyID, "websockets": websockets,
 		"revision": row.Revision, "can_inspect": true, "can_toggle": true, "can_delete": true,
 		"can_replace_document": row.Source == "import" || row.Source == "config" || row.Source == "native"}
 	authKind := nativeCredentialAuthKind(document, row.Source)
@@ -361,7 +356,7 @@ func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCr
 	}
 	updated, err := a.store.UpsertUpstreamCredential(ctx, store.UpstreamCredentialInput{
 		ID: row.ID, Name: row.Name, Provider: row.Provider, Enabled: row.Enabled,
-		Models: models, Document: row.Document, Source: row.Source, ExpiresAt: row.ExpiresAt,
+		Models: models, Document: row.Document, Source: row.Source, ProxyID: row.ProxyID, ExpiresAt: row.ExpiresAt,
 	})
 	if err != nil {
 		return row, "", err
@@ -377,7 +372,7 @@ type nativeProviderUpdateInput struct {
 	Name       *string            `json:"name"`
 	Models     *[]string          `json:"models"`
 	BaseURL    *string            `json:"base_url"`
-	ProxyURL   *string            `json:"proxy_url"`
+	ProxyID    *string            `json:"proxy_id"`
 	Prefix     *string            `json:"prefix"`
 	APIKey     *string            `json:"api_key"`
 	WebSockets *bool              `json:"websockets"`
@@ -387,7 +382,7 @@ type nativeProviderUpdateInput struct {
 
 func (input nativeProviderUpdateInput) empty() bool {
 	return input.Disabled == nil && input.Name == nil && input.Models == nil && input.BaseURL == nil &&
-		input.ProxyURL == nil && input.Prefix == nil && input.APIKey == nil && input.WebSockets == nil &&
+		input.ProxyID == nil && input.Prefix == nil && input.APIKey == nil && input.WebSockets == nil &&
 		input.Headers == nil && input.Document == nil
 }
 
@@ -421,13 +416,8 @@ func updateNativeCredentialDocument(current json.RawMessage, source string, inpu
 		}
 		setString("base_url", input.BaseURL)
 	}
-	if input.ProxyURL != nil {
-		if !validNativeProxyURL(*input.ProxyURL) {
-			return nil, errors.New("代理地址格式无效")
-		}
-		setString("proxy_url", input.ProxyURL)
-		delete(document, "_relay_proxy_url")
-	}
+	delete(document, "proxy_url")
+	delete(document, "_relay_proxy_url")
 	if input.Prefix != nil {
 		value, err := normalizeNativePrefix(*input.Prefix)
 		if err != nil {
@@ -507,6 +497,14 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	name, models, enabled := row.Name, row.Models, row.Enabled
+	proxyID := row.ProxyID
+	if input.ProxyID != nil {
+		proxyID, err = a.validProxyID(r.Context(), *input.ProxyID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "proxy_not_found", err.Error())
+			return
+		}
+	}
 	if input.Disabled != nil {
 		enabled = !*input.Disabled
 	}
@@ -529,10 +527,10 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		}
 	}
 	rollback := func() {
-		_, _ = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: previous.ID, Name: previous.Name, Provider: previous.Provider, Enabled: previous.Enabled, Models: previous.Models, Document: previous.Document, Source: previous.Source, ExpiresAt: previous.ExpiresAt})
+		_, _ = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: previous.ID, Name: previous.Name, Provider: previous.Provider, Enabled: previous.Enabled, Models: previous.Models, Document: previous.Document, Source: previous.Source, ProxyID: previous.ProxyID, ExpiresAt: previous.ExpiresAt})
 		_ = a.reloadNativeCredentials(r.Context())
 	}
-	row, err = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: row.ID, Name: name, Provider: row.Provider, Enabled: enabled, Models: models, Document: document, Source: row.Source, ExpiresAt: row.ExpiresAt})
+	row, err = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{ID: row.ID, Name: name, Provider: row.Provider, Enabled: enabled, Models: models, Document: document, Source: row.Source, ProxyID: proxyID, ExpiresAt: row.ExpiresAt})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential_update_failed", "更新 native 凭据失败")
 		return

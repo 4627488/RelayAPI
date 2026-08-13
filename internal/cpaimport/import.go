@@ -17,8 +17,9 @@ import (
 )
 
 type Report struct {
-	Imported int
-	Skipped  int
+	Imported       int
+	Skipped        int
+	GlobalProxyURL string
 }
 
 type Config struct {
@@ -73,7 +74,7 @@ func Import(ctx context.Context, dataStore store.Store, authDir, configPath stri
 	if err != nil {
 		return Report{}, err
 	}
-	var report Report
+	report := Report{GlobalProxyURL: strings.TrimSpace(legacyConfig.ProxyURL)}
 	var entries []os.DirEntry
 	if strings.TrimSpace(authDir) != "" {
 		entries, err = os.ReadDir(authDir)
@@ -97,11 +98,11 @@ func Import(ctx context.Context, dataStore store.Store, authDir, configPath stri
 		if strings.TrimSpace(provider) == "" {
 			return report, fmt.Errorf("CPA credential %q has no type", entry.Name())
 		}
-		var existingDocument []byte
-		if current, ok := existingByID[entry.Name()]; ok {
-			existingDocument = current.Document
+		_, alreadyImported := existingByID[entry.Name()]
+		delete(document, "_relay_proxy_url")
+		if !alreadyImported && credentialProxy(document) == "" && strings.TrimSpace(legacyConfig.ProxyURL) != "" {
+			document["proxy_url"] = strings.TrimSpace(legacyConfig.ProxyURL)
 		}
-		inheritRelayProxy(document, legacyConfig.ProxyURL, existingDocument)
 		payload, _ = json.Marshal(document)
 		enabled := true
 		if disabled, ok := document["disabled"].(bool); ok {
@@ -155,31 +156,9 @@ func Import(ctx context.Context, dataStore store.Store, authDir, configPath stri
 	return report, nil
 }
 
-// inheritRelayProxy keeps routing state stable across incremental imports.
-// CPA auth files normally do not contain the global proxy from config.yaml;
-// importing an auth directory alone must therefore not silently turn an
-// existing proxied credential into a direct connection.
-func inheritRelayProxy(document map[string]any, globalProxy string, existingDocument []byte) {
-	if credentialProxy(document) != "" {
-		return
-	}
-	proxyURL := strings.TrimSpace(globalProxy)
-	if proxyURL == "" && len(existingDocument) > 0 {
-		var existing map[string]any
-		if json.Unmarshal(existingDocument, &existing) == nil {
-			proxyURL = credentialProxy(existing)
-		}
-	}
-	if proxyURL != "" {
-		document["_relay_proxy_url"] = proxyURL
-	}
-}
-
 func credentialProxy(document map[string]any) string {
-	for _, key := range []string{"proxy_url", "_relay_proxy_url"} {
-		if value, ok := document[key].(string); ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
+	if value, ok := document["proxy_url"].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
 	}
 	return ""
 }

@@ -29,6 +29,7 @@ import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
 import { PricingView } from "@/components/pricing-view"
+import { ProxiesView } from "@/components/proxies-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { RuntimeSettingsView } from "@/components/runtime-settings-view"
 import { AdminSubscriptionsView } from "@/components/admin-subscriptions-view"
@@ -168,6 +169,7 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
   if (page === "invitations")
     return <InvitationsView items={invitations} onChanged={load} />
   if (page === "providers") return <ProvidersView />
+  if (page === "proxies") return <ProxiesView />
   if (page === "settings") return <RuntimeSettingsView />
   if (page === "subscriptions") return <AdminSubscriptionsView />
   if (page === "logs") return <RequestLogsWorkbench admin />

@@ -9,6 +9,7 @@ import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  NetworkIcon,
   PackageOpenIcon,
   CircleDollarSignIcon,
   PlugIcon,
@@ -54,7 +55,19 @@ import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
 import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
 
-export type Page = "overview" | "usage" | "keys" | "logs" | "guide" | "users" | "invitations" | "providers" | "settings" | "subscriptions" | "pricing"
+export type Page =
+  | "overview"
+  | "usage"
+  | "keys"
+  | "logs"
+  | "guide"
+  | "users"
+  | "invitations"
+  | "providers"
+  | "proxies"
+  | "settings"
+  | "subscriptions"
+  | "pricing"
 export type Workspace = "user" | "admin"
 
 interface NavigationItem {
@@ -81,19 +94,36 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
     setSource("")
     if (!normalized || !globalThis.crypto?.subtle) {
       setSource("")
-      return () => { active = false }
+      return () => {
+        active = false
+      }
     }
-    void crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalized)).then((buffer) => {
-      if (!active) return
-      const hash = Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, "0")).join("")
-      setSource(`https://www.gravatar.com/avatar/${hash}?d=404&s=128`)
-    }).catch(() => { if (active) setSource("") })
-    return () => { active = false }
+    void crypto.subtle
+      .digest("SHA-256", new TextEncoder().encode(normalized))
+      .then((buffer) => {
+        if (!active) return
+        const hash = Array.from(new Uint8Array(buffer), (byte) =>
+          byte.toString(16).padStart(2, "0")
+        ).join("")
+        setSource(`https://www.gravatar.com/avatar/${hash}?d=404&s=128`)
+      })
+      .catch(() => {
+        if (active) setSource("")
+      })
+    return () => {
+      active = false
+    }
   }, [email])
 
   return (
     <Avatar className="size-8 rounded-lg">
-      {source ? <AvatarImage src={source} alt={`${name} 的头像`} className="rounded-lg" /> : null}
+      {source ? (
+        <AvatarImage
+          src={source}
+          alt={`${name} 的头像`}
+          className="rounded-lg"
+        />
+      ) : null}
       <AvatarFallback className="rounded-lg">{initials(name)}</AvatarFallback>
     </Avatar>
   )
@@ -104,6 +134,7 @@ const adminItems: NavigationItem[] = [
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "invitations", label: "邀请", icon: SendIcon },
   { id: "providers", label: "模型账户", icon: PlugIcon },
+  { id: "proxies", label: "代理", icon: NetworkIcon },
   { id: "settings", label: "系统设置", icon: SlidersHorizontalIcon },
   { id: "subscriptions", label: "订阅分配", icon: PackageOpenIcon },
   { id: "usage", label: "全局用量", icon: BarChart3Icon },
@@ -118,7 +149,8 @@ const themes: Array<{ value: Theme; label: string; icon: ComponentType }> = [
 ]
 
 const buildCommit = (import.meta.env.VITE_GIT_COMMIT || "dev").trim()
-const buildVersion = buildCommit === "dev" ? buildCommit : buildCommit.slice(0, 7)
+const buildVersion =
+  buildCommit === "dev" ? buildCommit : buildCommit.slice(0, 7)
 
 function ThemeChoices({
   value,
@@ -156,7 +188,15 @@ interface AppShellProps {
   children: ReactNode
 }
 
-export function AppShell({ session, workspace, page, onPageChange, onWorkspaceChange, onLogout, children }: AppShellProps) {
+export function AppShell({
+  session,
+  workspace,
+  page,
+  onPageChange,
+  onWorkspaceChange,
+  onLogout,
+  children,
+}: AppShellProps) {
   const { theme, setTheme } = useTheme()
   const admin = workspace === "admin" && session.is_admin
   const name = session.tenant.name || "用户"
@@ -169,13 +209,18 @@ export function AppShell({ session, workspace, page, onPageChange, onWorkspaceCh
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton size="lg" onClick={() => onPageChange("overview")}>
+              <SidebarMenuButton
+                size="lg"
+                onClick={() => onPageChange("overview")}
+              >
                 <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                   <SendIcon className="size-4" />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">RelayAPI</span>
-                  <span className="truncate text-xs text-muted-foreground">Model Gateway</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    Model Gateway
+                  </span>
                 </div>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -206,13 +251,13 @@ export function AppShell({ session, workspace, page, onPageChange, onWorkspaceCh
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={<SidebarMenuButton size="lg" />}
-                >
+                <DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
                   <EmailAvatar email={subtitle} name={name} />
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-medium">{name}</span>
-                    <span className="truncate text-xs text-muted-foreground">{subtitle}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {subtitle}
+                    </span>
                   </div>
                   <ChevronsUpDownIcon />
                 </DropdownMenuTrigger>
@@ -223,7 +268,11 @@ export function AppShell({ session, workspace, page, onPageChange, onWorkspaceCh
                     <>
                       <DropdownMenuLabel>工作区</DropdownMenuLabel>
                       <DropdownMenuGroup>
-                        <DropdownMenuItem onClick={() => onWorkspaceChange(admin ? "user" : "admin")}>
+                        <DropdownMenuItem
+                          onClick={() =>
+                            onWorkspaceChange(admin ? "user" : "admin")
+                          }
+                        >
                           {admin ? <UserRoundIcon /> : <ShieldCheckIcon />}
                           {admin ? "返回个人面板" : "进入管理员面板"}
                         </DropdownMenuItem>
@@ -241,9 +290,14 @@ export function AppShell({ session, workspace, page, onPageChange, onWorkspaceCh
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="flex items-center justify-between gap-4" title={buildCommit}>
+                  <DropdownMenuLabel
+                    className="flex items-center justify-between gap-4"
+                    title={buildCommit}
+                  >
                     <span>版本</span>
-                    <code className="font-mono font-normal text-muted-foreground">{buildVersion}</code>
+                    <code className="font-mono font-normal text-muted-foreground">
+                      {buildVersion}
+                    </code>
                   </DropdownMenuLabel>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -256,15 +310,27 @@ export function AppShell({ session, workspace, page, onPageChange, onWorkspaceCh
         <header className="flex h-14 shrink-0 items-center gap-3 px-4 sm:px-6">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-4" />
-          <p className="text-sm font-medium">{items.find((item) => item.id === page)?.label}</p>
+          <p className="text-sm font-medium">
+            {items.find((item) => item.id === page)?.label}
+          </p>
           <div className="ml-auto">
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <Button variant="ghost" size="icon-sm" aria-label="选择主题" />
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="选择主题"
+                  />
                 }
               >
-                {theme === "light" ? <SunIcon /> : theme === "dark" ? <MoonIcon /> : <MonitorIcon />}
+                {theme === "light" ? (
+                  <SunIcon />
+                ) : theme === "dark" ? (
+                  <MoonIcon />
+                ) : (
+                  <MonitorIcon />
+                )}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel>外观</DropdownMenuLabel>
@@ -274,7 +340,9 @@ export function AppShell({ session, workspace, page, onPageChange, onWorkspaceCh
             </DropdownMenu>
           </div>
         </header>
-        <main className="flex flex-1 flex-col p-4 pt-0 sm:p-6 sm:pt-0">{children}</main>
+        <main className="flex flex-1 flex-col p-4 pt-0 sm:p-6 sm:pt-0">
+          {children}
+        </main>
       </SidebarInset>
     </SidebarProvider>
   )

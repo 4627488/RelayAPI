@@ -151,9 +151,12 @@ The quota runtime executes inside RelayAPI. Built-in provider adapters declare:
 - which windows are safe to enforce and calibrate.
 
 Codex and xAI are probed directly with the encrypted native credential and the
-same proxy configuration used by the embedded runtime. A credential may instead
-expose normalized `relay_quota` metadata directly. Reports exclude credential
-fields and raw upstream payloads.
+reusable proxy explicitly selected for that model account. An account without a
+selected proxy always uses a direct connection and does not inherit the system
+proxy. The same account route is used for inference, model discovery, token
+refresh, and quota probes. A credential may instead expose normalized
+`relay_quota` metadata directly. Reports exclude credential fields and raw
+upstream payloads.
 
 The CPA credential table and parent-subscription table render the same stored
 snapshot: plan, used/remaining percentage, reset time, raw credit units, and

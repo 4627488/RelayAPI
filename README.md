@@ -73,8 +73,10 @@ RelayAPI 默认完整保留 CPA 原生 Codex/xAI WebSocket：一个客户端连�
 Relay 原样提供内置执行器的 OpenAI Responses、OpenAI Chat Completions、Anthropic
 Messages、Gemini native 和 Codex direct 路径。Grok/xAI 与其他 OpenAI-compatible
 模型共用 `/v1/chat/completions` 或 `/v1/responses`，由请求中的 `model` 和 native
-凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在“系统设置”中热更新
-代理、重试、调度、图像/视频和连接行为。
+凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在独立“代理”页面维护和
+测试可复用代理，在“系统设置”中选择系统请求代理并热更新重试、调度、图像/视频和连接行为。
+系统代理仅用于 Models.dev 同步、系统级 OAuth 等 RelayAPI 自身请求；每个模型账户单独
+选择代理，未选择时明确直连。账户代理同时作用于推理、模型发现、令牌刷新和额度查询。
 
 模型账户使用 CPA 的凭据级模型目录：Codex、Claude、
 Gemini、Vertex、AI Studio、Kimi、Antigravity 和 xAI 使用 CPA 静态注册表；OpenAI 及
@@ -174,7 +176,9 @@ CPA 多维倍率规则和分模态费率快照（文本五段加图片输入、�
 - `DELETE /api/admin/invitations/{id}`：撤销邀请
 - `GET /api/admin/tenants`：用户列表
 - `GET|POST /api/admin/providers/accounts`：管理数据库加密保存的原生凭据
-- `GET|PATCH /api/admin/providers/settings`：重试与凭据调度策略
+- `GET|POST /api/admin/proxies`、`PATCH|DELETE /api/admin/proxies/{id}`：管理可复用的加密代理条目
+- `POST /api/admin/proxies/{id}/test`：测试代理并返回落地 IP、归属、ASN/运营商和延迟
+- `GET|PATCH /api/admin/runtime/settings`：系统代理、重试与凭据调度策略
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
 - `GET /api/admin/logs?tenant_id=...&page=1&page_size=50`：可搜索、筛选和分页的请求日志
 - `GET /api/admin/logs/{id}`：脱敏请求、CPA 转发、上游响应、耗时与历史计费详情

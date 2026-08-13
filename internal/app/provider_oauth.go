@@ -297,7 +297,8 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input struct {
-		Name string `json:"name"`
+		Name    string  `json:"name"`
+		ProxyID *string `json:"proxy_id"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -350,9 +351,17 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	proxyID := optionalProxyID(previous)
+	if input.ProxyID != nil {
+		proxyID, err = a.validProxyID(r.Context(), *input.ProxyID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "proxy_not_found", err.Error())
+			return
+		}
+	}
 	row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{
 		ID: id, Name: name, Provider: session.Provider, Enabled: enabled, Models: models,
-		Document: document, Source: "oauth", ExpiresAt: expiresAt,
+		Document: stripCredentialProxyFields(document), Source: "oauth", ProxyID: proxyID, ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存 OAuth 账户失败")
@@ -366,7 +375,7 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 			_, _ = a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{
 				ID: previous.ID, Name: previous.Name, Provider: previous.Provider,
 				Enabled: previous.Enabled, Models: previous.Models, Document: previous.Document,
-				Source: previous.Source, ExpiresAt: previous.ExpiresAt,
+				Source: previous.Source, ProxyID: previous.ProxyID, ExpiresAt: previous.ExpiresAt,
 			})
 		}
 		_ = a.reloadNativeCredentials(r.Context())
@@ -393,12 +402,19 @@ func mergeOAuthCredentialSettings(current, replacement json.RawMessage) (json.Ra
 	if err := json.Unmarshal(replacement, &newDocument); err != nil {
 		return nil, err
 	}
-	for _, key := range []string{"proxy_url", "_relay_proxy_url", "prefix", "websockets", "headers"} {
+	for _, key := range []string{"prefix", "websockets", "headers"} {
 		if value, ok := oldDocument[key]; ok {
 			newDocument[key] = value
 		}
 	}
 	return json.Marshal(newDocument)
+}
+
+func optionalProxyID(value *store.UpstreamCredentialSnapshot) *string {
+	if value == nil {
+		return nil
+	}
+	return value.ProxyID
 }
 
 func (a *App) adminProviderOAuthCancel(w http.ResponseWriter, r *http.Request) {

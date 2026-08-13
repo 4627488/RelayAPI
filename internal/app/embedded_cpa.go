@@ -17,12 +17,42 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
 
-func (a *App) startEmbeddedCPA(ctx context.Context) error {
+func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error {
 	rows, err := a.store.ListUpstreamCredentials(ctx)
 	if err != nil {
 		return err
 	}
-	credentials := bridgeCredentials(rows, a.cfg.UpstreamWebSockets)
+	settings, settingsFound, legacyProxy, err := a.loadNativeRuntimeSettings(ctx)
+	if err != nil {
+		return fmt.Errorf("load native runtime settings: %w", err)
+	}
+	if legacyProxy == "" && !settingsFound {
+		legacyProxy = strings.TrimSpace(importedProxy)
+	}
+	migrated, err := a.migrateLegacyProxies(ctx, rows, &settings, legacyProxy)
+	if err != nil {
+		return fmt.Errorf("migrate proxy configuration: %w", err)
+	}
+	if !settingsFound || migrated || legacyProxy != "" {
+		if err = a.store.PutRuntimeSetting(ctx, nativeRuntimeSettingsKey, settings); err != nil {
+			return fmt.Errorf("initialize native runtime settings: %w", err)
+		}
+	}
+	systemProxyURL := ""
+	if settings.SystemProxyID != "" {
+		if systemProxyURL, err = a.proxyURL(ctx, settings.SystemProxyID); err != nil {
+			return fmt.Errorf("load selected system proxy: %w", err)
+		}
+	}
+	rows, err = a.store.ListUpstreamCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	proxyURLs, err := a.proxyURLs(ctx)
+	if err != nil {
+		return err
+	}
+	credentials := bridgeCredentials(rows, a.cfg.UpstreamWebSockets, proxyURLs)
 	webSocketCredentials := 0
 	for _, credential := range credentials {
 		provider := strings.ToLower(strings.TrimSpace(credential.Provider))
@@ -31,16 +61,6 @@ func (a *App) startEmbeddedCPA(ctx context.Context) error {
 		}
 	}
 	slog.Info("embedded CPA upstream websocket policy", "enabled", a.cfg.UpstreamWebSockets, "eligible_credentials", webSocketCredentials)
-	settings, settingsFound, err := a.loadNativeRuntimeSettings(ctx)
-	if err != nil {
-		return fmt.Errorf("load native runtime settings: %w", err)
-	}
-	if !settingsFound {
-		settings.ProxyURL = importedGlobalProxy(rows)
-		if err = a.store.PutRuntimeSetting(ctx, nativeRuntimeSettingsKey, settings); err != nil {
-			return fmt.Errorf("initialize native runtime settings: %w", err)
-		}
-	}
 	if message := validateNativeRuntimeSettings(settings); message != "" {
 		return fmt.Errorf("stored native runtime settings are invalid: %s", message)
 	}
@@ -53,8 +73,8 @@ func (a *App) startEmbeddedCPA(ctx context.Context) error {
 	runtime, err := relaybridge.NewRuntime(relaybridge.Options{
 		APIKey: secret, RequestRetry: settings.RequestRetry, MaxRetryCredentials: settings.MaxRetryCredentials,
 		MaxRetryInterval: time.Duration(settings.MaxRetryInterval) * time.Second, RoutingStrategy: settings.RoutingStrategy,
-		ProxyURL: settings.ProxyURL, PassthroughHeaders: settings.PassthroughHeaders,
-		DisableImageGeneration: runtimeBridgeSettings(settings).DisableImageGeneration,
+		ProxyURL: firstNonEmptyString(systemProxyURL, "direct"), PassthroughHeaders: settings.PassthroughHeaders,
+		DisableImageGeneration: runtimeBridgeSettings(settings, systemProxyURL).DisableImageGeneration,
 		GPTImage2BaseModel:     settings.GPTImageBaseModel, VideoResultAuthCacheTTL: settings.VideoResultAuthCacheTTL,
 		ForceModelPrefix: settings.ForceModelPrefix, StreamKeepAliveSeconds: settings.StreamKeepAliveSeconds,
 		StreamBootstrapRetries: settings.StreamBootstrapRetries, NonStreamKeepAliveInterval: settings.NonStreamKeepAliveInterval,
@@ -106,27 +126,27 @@ func (a *App) startEmbeddedCPA(ctx context.Context) error {
 	return nil
 }
 
-func importedGlobalProxy(rows []store.UpstreamCredentialSnapshot) string {
-	for _, row := range rows {
-		var document map[string]any
-		if json.Unmarshal(row.Document, &document) == nil {
-			if value, _ := document["_relay_proxy_url"].(string); strings.TrimSpace(value) != "" {
-				return strings.TrimSpace(value)
-			}
-		}
-	}
-	return ""
-}
-
-func bridgeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSockets bool) []relaybridge.Credential {
+func bridgeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSockets bool, proxyURLs map[string]string) []relaybridge.Credential {
 	now := time.Now()
 	credentials := make([]relaybridge.Credential, 0, len(rows))
 	for _, row := range rows {
 		enabled := row.Enabled && (row.ExpiresAt == nil || row.ExpiresAt.After(now))
 		document := append([]byte(nil), row.Document...)
+		var value map[string]any
+		if json.Unmarshal(document, &value) == nil {
+			value["proxy_url"] = "direct"
+			if row.ProxyID != nil {
+				if proxyURL := strings.TrimSpace(proxyURLs[*row.ProxyID]); proxyURL != "" {
+					value["proxy_url"] = proxyURL
+				}
+			}
+			delete(value, "_relay_proxy_url")
+			if encoded, marshalErr := json.Marshal(value); marshalErr == nil {
+				document = encoded
+			}
+		}
 		provider := strings.ToLower(strings.TrimSpace(row.Provider))
 		if provider == "codex" || provider == "xai" {
-			var value map[string]any
 			if json.Unmarshal(document, &value) == nil {
 				// CPA treats this field as a per-credential capability flag. Make the
 				// Relay-level switch authoritative so imported and OAuth credentials
@@ -150,7 +170,11 @@ func (a *App) reloadNativeCredentials(ctx context.Context) error {
 	if a.nativeCPARuntime == nil {
 		return fmt.Errorf("native CPA runtime is not available")
 	}
-	return a.nativeCPARuntime.ReplaceCredentials(ctx, bridgeCredentials(rows, a.cfg.UpstreamWebSockets))
+	proxyURLs, err := a.proxyURLs(ctx)
+	if err != nil {
+		return err
+	}
+	return a.nativeCPARuntime.ReplaceCredentials(ctx, bridgeCredentials(rows, a.cfg.UpstreamWebSockets, proxyURLs))
 }
 
 func (a *App) persistEmbeddedCredential(ctx context.Context, id string, document []byte) error {
@@ -163,11 +187,26 @@ func (a *App) persistEmbeddedCredential(ctx context.Context, id string, document
 	if err != nil {
 		return err
 	}
+	document = stripCredentialProxyFields(document)
 	_, err = a.store.UpsertUpstreamCredential(persistCtx, store.UpstreamCredentialInput{
 		ID: row.ID, Name: row.Name, Provider: row.Provider, Enabled: row.Enabled,
-		Models: row.Models, Document: document, Source: row.Source, ExpiresAt: row.ExpiresAt,
+		Models: row.Models, Document: document, Source: row.Source, ProxyID: row.ProxyID, ExpiresAt: row.ExpiresAt,
 	})
 	return err
+}
+
+func stripCredentialProxyFields(document []byte) []byte {
+	var value map[string]any
+	if json.Unmarshal(document, &value) != nil {
+		return document
+	}
+	delete(value, "proxy_url")
+	delete(value, "_relay_proxy_url")
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return document
+	}
+	return encoded
 }
 
 func (a *App) inferenceCPA() *cpa.Client {

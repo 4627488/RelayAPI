@@ -21,9 +21,10 @@ func TestNativeProviderAccountOmitsEmptyDetails(t *testing.T) {
 }
 
 func TestNativeProviderAccountExposesEditableMetadataWithoutSecrets(t *testing.T) {
+	proxyID := "proxy-id"
 	result := nativeProviderAccount(store.UpstreamCredentialSnapshot{
-		ID: "openai-test", Name: "Test", Provider: "openai", Enabled: true, Source: "api_key",
-		Document: []byte(`{"type":"openai","api_key":"secret","proxy_url":"http://user:pass@proxy.test","websockets":true,"headers":{"X-Tenant":"secret","X-Trace":"trace"}}`),
+		ID: "openai-test", Name: "Test", Provider: "openai", Enabled: true, Source: "api_key", ProxyID: &proxyID,
+		Document: []byte(`{"type":"openai","api_key":"secret","websockets":true,"headers":{"X-Tenant":"secret","X-Trace":"trace"}}`),
 	})
 	if result["proxy_configured"] != true || result["websockets"] != true {
 		t.Fatalf("editable metadata = %+v", result)
@@ -39,11 +40,11 @@ func TestNativeProviderAccountExposesEditableMetadataWithoutSecrets(t *testing.T
 }
 
 func TestUpdateNativeCredentialDocumentEditsConnectionSettings(t *testing.T) {
-	baseURL, proxyURL, prefix, apiKey := "https://new.example/v1", "socks5h://proxy.test:1080", "team", "new-secret"
+	baseURL, prefix, apiKey := "https://new.example/v1", "team", "new-secret"
 	websockets := true
 	headers := map[string]string{"X-Tenant": "tenant-a"}
 	updated, err := updateNativeCredentialDocument(json.RawMessage(`{"type":"openai","api_key":"old-secret","proxy_url":"http://old.test"}`), "api_key", nativeProviderUpdateInput{
-		BaseURL: &baseURL, ProxyURL: &proxyURL, Prefix: &prefix, APIKey: &apiKey,
+		BaseURL: &baseURL, Prefix: &prefix, APIKey: &apiKey,
 		WebSockets: &websockets, Headers: &headers,
 	})
 	if err != nil {
@@ -53,7 +54,7 @@ func TestUpdateNativeCredentialDocumentEditsConnectionSettings(t *testing.T) {
 	if err = json.Unmarshal(updated, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document["base_url"] != baseURL || document["proxy_url"] != proxyURL || document["prefix"] != prefix ||
+	if document["base_url"] != baseURL || document["prefix"] != prefix ||
 		document["api_key"] != apiKey || document["websockets"] != true {
 		t.Fatalf("updated document = %#v", document)
 	}
@@ -62,7 +63,7 @@ func TestUpdateNativeCredentialDocumentEditsConnectionSettings(t *testing.T) {
 	}
 
 	clear := ""
-	updated, err = updateNativeCredentialDocument(updated, "api_key", nativeProviderUpdateInput{ProxyURL: &clear, Prefix: &clear})
+	updated, err = updateNativeCredentialDocument(updated, "api_key", nativeProviderUpdateInput{Prefix: &clear})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,13 +78,12 @@ func TestUpdateNativeCredentialDocumentEditsConnectionSettings(t *testing.T) {
 }
 
 func TestUpdateNativeCredentialDocumentRejectsUnsafeSettings(t *testing.T) {
-	badProxy, badPrefix, changedOAuthBase := "file:///tmp/proxy", "team/child", "https://unexpected.example/v1"
+	badPrefix, changedOAuthBase := "team/child", "https://unexpected.example/v1"
 	for _, test := range []struct {
 		document json.RawMessage
 		source   string
 		input    nativeProviderUpdateInput
 	}{
-		{document: json.RawMessage(`{"type":"openai","api_key":"secret"}`), source: "api_key", input: nativeProviderUpdateInput{ProxyURL: &badProxy}},
 		{document: json.RawMessage(`{"type":"openai","api_key":"secret"}`), source: "api_key", input: nativeProviderUpdateInput{Prefix: &badPrefix}},
 		{document: json.RawMessage(`{"type":"codex","access_token":"secret"}`), source: "oauth", input: nativeProviderUpdateInput{BaseURL: &changedOAuthBase}},
 	} {

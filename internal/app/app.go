@@ -62,11 +62,13 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	importGlobalProxy := ""
 	if cfg.CPAImportAuthDir != "" || cfg.CPAImportConfigPath != "" {
 		report, importErr := cpaimport.Import(ctx, dataStore, cfg.CPAImportAuthDir, cfg.CPAImportConfigPath, false)
 		if importErr != nil {
 			return nil, fmt.Errorf("import CPA credentials: %w", importErr)
 		}
+		importGlobalProxy = report.GlobalProxyURL
 		slog.Info("CPA credentials imported", "imported", report.Imported, "unchanged", report.Skipped)
 	}
 	a := &App{
@@ -76,7 +78,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
 		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
 	}
-	if err := a.startEmbeddedCPA(ctx); err != nil {
+	if err := a.startEmbeddedCPA(ctx, importGlobalProxy); err != nil {
 		return nil, err
 	}
 	a.routes()
@@ -212,10 +214,11 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	a.nativeSettings.RLock()
-	proxyURL := a.nativeSettings.value.ProxyURL
-	a.nativeSettings.RUnlock()
-	client, err := cpa.NativeOutboundHTTPClient(proxyURL, 30*time.Second)
+	proxyURL, err := a.systemProxyURL(ctx)
+	if err != nil {
+		return err
+	}
+	client, err := cpa.OutboundHTTPClient(proxyURL, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -283,8 +286,11 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/admin/providers/oauth/sessions/{state}/callback", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthCallback)))
 	a.mux.Handle("POST /api/admin/providers/oauth/sessions/{state}/finalize", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthFinalize)))
 	a.mux.Handle("DELETE /api/admin/providers/oauth/sessions/{state}", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthCancel)))
-	a.mux.Handle("GET /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
-	a.mux.Handle("PATCH /api/admin/providers/settings", a.withAdmin(http.HandlerFunc(a.adminProviderSettings)))
+	a.mux.Handle("GET /api/admin/proxies", a.withAdmin(http.HandlerFunc(a.adminProxies)))
+	a.mux.Handle("POST /api/admin/proxies", a.withAdmin(http.HandlerFunc(a.adminProxies)))
+	a.mux.Handle("PATCH /api/admin/proxies/{id}", a.withAdmin(http.HandlerFunc(a.adminProxy)))
+	a.mux.Handle("DELETE /api/admin/proxies/{id}", a.withAdmin(http.HandlerFunc(a.adminProxy)))
+	a.mux.Handle("POST /api/admin/proxies/{id}/test", a.withAdmin(http.HandlerFunc(a.adminProxyTest)))
 	a.mux.Handle("GET /api/admin/runtime/settings", a.withAdmin(http.HandlerFunc(a.adminNativeSettings)))
 	a.mux.Handle("PATCH /api/admin/runtime/settings", a.withAdmin(http.HandlerFunc(a.adminNativeSettings)))
 	a.mux.Handle("GET /api/admin/overview", a.withAdmin(http.HandlerFunc(a.adminOverview)))

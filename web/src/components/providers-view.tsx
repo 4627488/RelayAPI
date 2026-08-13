@@ -80,7 +80,13 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
-import { api, deleteRequest, postJSON, type ProviderAccount } from "@/lib/api"
+import {
+  api,
+  deleteRequest,
+  postJSON,
+  type OutboundProxy,
+  type ProviderAccount,
+} from "@/lib/api"
 import { dateTime } from "@/lib/format"
 
 const oauthProviders = [
@@ -138,7 +144,7 @@ type ProviderAccountUpdate = {
   base_url?: string
   prefix: string
   websockets: boolean
-  proxy_url?: string
+  proxy_id: string
   api_key?: string
   headers?: Record<string, string>
   document?: Record<string, unknown>
@@ -176,6 +182,7 @@ function normalizedOAuthProvider(provider: string) {
 
 export function ProvidersView() {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([])
+  const [proxies, setProxies] = useState<OutboundProxy[]>([])
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
   const [syncingQuota, setSyncingQuota] = useState(false)
@@ -190,10 +197,12 @@ export function ProvidersView() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const result = await api<{ files: ProviderAccount[] }>(
-        "/api/admin/providers/accounts"
-      )
+      const [result, proxyResult] = await Promise.all([
+        api<{ files: ProviderAccount[] }>("/api/admin/providers/accounts"),
+        api<{ items: OutboundProxy[] }>("/api/admin/proxies"),
+      ])
       setAccounts(result.files ?? [])
+      setProxies(proxyResult.items ?? [])
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "无法读取模型账户")
     } finally {
@@ -415,7 +424,7 @@ export function ProvidersView() {
           {filtered.map((account) => (
             <Card
               key={account.id || account.name}
-              className="transition-colors hover:border-foreground/20"
+              className="flex h-full flex-col transition-colors hover:border-foreground/20"
             >
               <CardHeader>
                 <div className="min-w-0">
@@ -451,7 +460,7 @@ export function ProvidersView() {
                   </Badge>
                 </CardAction>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
+              <CardContent className="flex flex-1 flex-col gap-4">
                 {isOAuthAccount(account) ? (
                   <section
                     className="flex flex-col gap-2"
@@ -516,9 +525,15 @@ export function ProvidersView() {
                 {account.proxy_configured ? (
                   <span className="flex items-center gap-1">
                     <NetworkIcon className="size-3" />
-                    独立代理
+                    {proxies.find((item) => item.id === account.proxy_id)
+                      ?.name ?? "独立代理"}
                   </span>
-                ) : null}
+                ) : (
+                  <span className="flex items-center gap-1">
+                    <NetworkIcon className="size-3" />
+                    直连
+                  </span>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -572,6 +587,7 @@ export function ProvidersView() {
           if (!open) setReauthenticating(null)
         }}
         onSaved={load}
+        proxies={proxies}
       />
       <ManageAccountDialog
         account={selected}
@@ -586,6 +602,7 @@ export function ProvidersView() {
           setSelected(null)
           setReauthenticating(account)
         }}
+        proxies={proxies}
       />
 
       <AlertDialog
@@ -624,11 +641,13 @@ function ConnectAccountDialog({
   reauthAccount,
   onOpenChange,
   onSaved,
+  proxies,
 }: {
   open: boolean
   reauthAccount: ProviderAccount | null
   onOpenChange: (open: boolean) => void
   onSaved: () => Promise<void>
+  proxies: OutboundProxy[]
 }) {
   const [mode, setMode] = useState<ConnectMode>("oauth")
   const [provider, setProvider] = useState("codex")
@@ -638,6 +657,7 @@ function ConnectAccountDialog({
   const [callbackURL, setCallbackURL] = useState("")
   const [name, setName] = useState("")
   const [document, setDocument] = useState('{\n  "type": "vertex"\n}')
+  const [proxyID, setProxyID] = useState("")
 
   const cancelOAuth = useCallback(async (state: string) => {
     try {
@@ -657,6 +677,7 @@ function ConnectAccountDialog({
     setOAuthStatus(null)
     setCallbackURL("")
     setName("")
+    setProxyID("")
   }
 
   function close(next: boolean) {
@@ -670,6 +691,7 @@ function ConnectAccountDialog({
     setMode("oauth")
     setProvider(normalizedOAuthProvider(reauthAccount.provider))
     setName(displayName(reauthAccount))
+    setProxyID(reauthAccount.proxy_id ?? "")
   }, [open, reauthAccount])
 
   useEffect(() => {
@@ -762,7 +784,10 @@ function ConnectAccountDialog({
     try {
       await api(
         `/api/admin/providers/oauth/sessions/${encodeURIComponent(oauth.state)}/finalize`,
-        { method: "POST", body: JSON.stringify({ name: name.trim() }) }
+        {
+          method: "POST",
+          body: JSON.stringify({ name: name.trim(), proxy_id: proxyID }),
+        }
       )
       setOAuth(null)
       toast.success(reauthAccount ? "OAuth 账户已重新认证" : "OAuth 账户已连接")
@@ -787,7 +812,7 @@ function ConnectAccountDialog({
         provider,
         api_key: String(form.get("api_key") ?? ""),
         base_url: String(form.get("base_url") ?? ""),
-        proxy_url: String(form.get("proxy_url") ?? ""),
+        proxy_id: proxyID,
         prefix: String(form.get("prefix") ?? ""),
       }
     } else {
@@ -803,6 +828,7 @@ function ConnectAccountDialog({
         name: String(form.get("name") ?? ""),
         provider,
         document: parsed,
+        proxy_id: proxyID,
       }
     }
     setPending(true)
@@ -859,6 +885,32 @@ function ConnectAccountDialog({
                   onChange={(event) => setName(event.target.value)}
                   required
                 />
+              </Field>
+              <Field>
+                <FieldLabel>账户代理</FieldLabel>
+                <Select
+                  value={proxyID || "direct"}
+                  onValueChange={(next) =>
+                    setProxyID(next === "direct" || !next ? "" : next)
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="direct">不使用代理（直连）</SelectItem>
+                      {proxies.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name} · {item.endpoint}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  应用于此账户后续的推理、令牌刷新、模型发现和额度查询。
+                </FieldDescription>
               </Field>
             </FieldGroup>
           </form>
@@ -1007,6 +1059,9 @@ function ConnectAccountDialog({
                   provider={provider}
                   setProvider={setProvider}
                   mode="api_key"
+                  proxies={proxies}
+                  proxyID={proxyID}
+                  setProxyID={setProxyID}
                 />
               </form>
             </TabsContent>
@@ -1018,6 +1073,9 @@ function ConnectAccountDialog({
                   mode="import"
                   document={document}
                   setDocument={setDocument}
+                  proxies={proxies}
+                  proxyID={proxyID}
+                  setProxyID={setProxyID}
                 />
               </form>
             </TabsContent>
@@ -1061,12 +1119,18 @@ function CredentialFields({
   mode,
   document,
   setDocument,
+  proxies,
+  proxyID,
+  setProxyID,
 }: {
   provider: string
   setProvider: (value: string) => void
   mode: "api_key" | "import"
   document?: string
   setDocument?: (value: string) => void
+  proxies: OutboundProxy[]
+  proxyID: string
+  setProxyID: (value: string) => void
 }) {
   const options =
     mode === "api_key"
@@ -1146,19 +1210,29 @@ function CredentialFields({
             </FieldDescription>
           </Field>
           <Field>
-            <FieldLabel htmlFor="account-proxy-url">
-              独立代理（可选）
-            </FieldLabel>
-            <Input
-              id="account-proxy-url"
-              name="proxy_url"
-              className="font-mono"
-              placeholder="socks5h://user:password@127.0.0.1:1080"
-              autoComplete="off"
-              spellCheck={false}
-            />
+            <FieldLabel>账户代理</FieldLabel>
+            <Select
+              value={proxyID || "direct"}
+              onValueChange={(next) =>
+                setProxyID(next === "direct" || !next ? "" : next)
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="direct">不使用代理（直连）</SelectItem>
+                  {proxies.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name} · {item.endpoint}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <FieldDescription>
-              仅供这个账户使用；留空继承运行设置中的全局代理。
+              只影响这个模型账户；未选择时始终直连，不会继承系统代理。
             </FieldDescription>
           </Field>
           <Field>
@@ -1173,22 +1247,50 @@ function CredentialFields({
           </Field>
         </>
       ) : (
-        <Field>
-          <FieldLabel htmlFor="credential-document">凭据 JSON</FieldLabel>
-          <Textarea
-            id="credential-document"
-            value={document}
-            onChange={(event) => setDocument?.(event.target.value)}
-            rows={10}
-            required
-            spellCheck={false}
-            className="font-mono text-xs"
-          />
-          <FieldDescription>
-            用于 Vertex 服务账户或迁移现有 CPA 凭据。OAuth 账户请使用 OAuth
-            标签页。
-          </FieldDescription>
-        </Field>
+        <>
+          <Field>
+            <FieldLabel htmlFor="credential-document">凭据 JSON</FieldLabel>
+            <Textarea
+              id="credential-document"
+              value={document}
+              onChange={(event) => setDocument?.(event.target.value)}
+              rows={10}
+              required
+              spellCheck={false}
+              className="font-mono text-xs"
+            />
+            <FieldDescription>
+              用于 Vertex 服务账户或迁移现有 CPA 凭据。OAuth 账户请使用 OAuth
+              标签页。
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel>账户代理</FieldLabel>
+            <Select
+              value={proxyID || "direct"}
+              onValueChange={(next) =>
+                setProxyID(next === "direct" || !next ? "" : next)
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="direct">不使用代理（直连）</SelectItem>
+                  {proxies.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name} · {item.endpoint}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              导入文档中的旧代理字段会被移除，以这里选择的代理条目为准。
+            </FieldDescription>
+          </Field>
+        </>
       )}
     </FieldGroup>
   )
@@ -1202,6 +1304,7 @@ function ManageAccountDialog({
   onToggle,
   onDelete,
   onReauthenticate,
+  proxies,
 }: {
   account: ProviderAccount | null
   pending: boolean
@@ -1213,13 +1316,13 @@ function ManageAccountDialog({
   onToggle: (account: ProviderAccount, disabled: boolean) => Promise<void>
   onDelete: (account: ProviderAccount) => void
   onReauthenticate: (account: ProviderAccount) => void
+  proxies: OutboundProxy[]
 }) {
   const [name, setName] = useState("")
   const [baseURL, setBaseURL] = useState("")
   const [prefix, setPrefix] = useState("")
   const [websockets, setWebsockets] = useState(false)
-  const [proxyURL, setProxyURL] = useState("")
-  const [proxyDirty, setProxyDirty] = useState(false)
+  const [proxyID, setProxyID] = useState("")
   const [apiKey, setAPIKey] = useState("")
   const [headersText, setHeadersText] = useState("{}")
   const [headersDirty, setHeadersDirty] = useState(false)
@@ -1274,8 +1377,7 @@ function ManageAccountDialog({
     setBaseURL(account.base_url ?? "")
     setPrefix(account.prefix ?? "")
     setWebsockets(account.websockets ?? false)
-    setProxyURL("")
-    setProxyDirty(false)
+    setProxyID(account.proxy_id ?? "")
     setAPIKey("")
     setHeadersText("{}")
     setHeadersDirty(false)
@@ -1333,8 +1435,8 @@ function ManageAccountDialog({
       models: selectedModels,
       prefix: prefix.trim(),
       websockets,
+      proxy_id: proxyID,
       ...(account.auth_kind !== "oauth" ? { base_url: baseURL.trim() } : {}),
-      ...(proxyDirty ? { proxy_url: proxyURL.trim() } : {}),
       ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       ...(headersDirty ? { headers } : {}),
       ...(document ? { document } : {}),
@@ -1502,57 +1604,32 @@ function ManageAccountDialog({
                     </FieldDescription>
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="manage-proxy-url">
-                      账户独立代理
-                    </FieldLabel>
-                    <Input
-                      id="manage-proxy-url"
-                      className="font-mono"
-                      value={proxyURL}
-                      onChange={(event) => {
-                        setProxyURL(event.target.value)
-                        setProxyDirty(true)
-                      }}
-                      placeholder={
-                        account.proxy_configured && !proxyDirty
-                          ? "已配置；输入新地址以替换"
-                          : "socks5h://user:password@127.0.0.1:1080"
+                    <FieldLabel>账户代理</FieldLabel>
+                    <Select
+                      value={proxyID || "direct"}
+                      onValueChange={(next) =>
+                        setProxyID(next === "direct" || !next ? "" : next)
                       }
-                      autoComplete="off"
-                      spellCheck={false}
-                    />
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value="direct">
+                            不使用代理（直连）
+                          </SelectItem>
+                          {proxies.map((item) => (
+                            <SelectItem key={item.id} value={item.id}>
+                              {item.name} · {item.endpoint}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
                     <FieldDescription>
-                      支持 HTTP、HTTPS、SOCKS5/SOCKS5H；代理凭据不会回显。填写
-                      direct 可强制直连。
+                      该选择用于此账户的推理、模型发现、令牌刷新与额度查询；未选择时明确直连。
                     </FieldDescription>
-                    {account.proxy_configured || proxyDirty ? (
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setProxyURL("")
-                            setProxyDirty(true)
-                          }}
-                        >
-                          清除独立代理
-                        </Button>
-                        {proxyDirty ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setProxyURL("")
-                              setProxyDirty(false)
-                            }}
-                          >
-                            保留原配置
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : null}
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="manage-prefix">模型前缀</FieldLabel>

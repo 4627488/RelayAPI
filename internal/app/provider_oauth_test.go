@@ -42,7 +42,7 @@ func TestProviderOAuthSessionsRejectProviderMismatch(t *testing.T) {
 	}
 }
 
-func TestMergeOAuthCredentialSettingsPreservesRelayOptions(t *testing.T) {
+func TestMergeOAuthCredentialSettingsPreservesNonNetworkOptions(t *testing.T) {
 	merged, err := mergeOAuthCredentialSettings(
 		json.RawMessage(`{"type":"codex","access_token":"old","proxy_url":"socks5://proxy","prefix":"team","websockets":true,"headers":{"X-Team":"one"}}`),
 		json.RawMessage(`{"type":"codex","access_token":"new","email":"new@example.com"}`),
@@ -54,8 +54,11 @@ func TestMergeOAuthCredentialSettingsPreservesRelayOptions(t *testing.T) {
 	if err = json.Unmarshal(merged, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document["access_token"] != "new" || document["proxy_url"] != "socks5://proxy" || document["prefix"] != "team" || document["websockets"] != true {
+	if document["access_token"] != "new" || document["prefix"] != "team" || document["websockets"] != true {
 		t.Fatalf("unexpected merged OAuth document: %#v", document)
+	}
+	if _, exists := document["proxy_url"]; exists {
+		t.Fatalf("legacy inline proxy survived OAuth merge: %#v", document)
 	}
 }
 

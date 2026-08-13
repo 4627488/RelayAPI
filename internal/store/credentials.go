@@ -19,6 +19,7 @@ type UpstreamCredentialInput struct {
 	Models    []string
 	Document  json.RawMessage
 	Source    string
+	ProxyID   *string
 	ExpiresAt *time.Time
 }
 
@@ -31,6 +32,7 @@ type UpstreamCredentialSnapshot struct {
 	Document  json.RawMessage
 	Source    string
 	Revision  int64
+	ProxyID   *string
 	ExpiresAt *time.Time
 }
 
@@ -51,7 +53,7 @@ func (s Store) UpsertUpstreamCredential(ctx context.Context, input UpstreamCrede
 	item := db.UpstreamCredential{
 		ID: input.ID, Name: strings.TrimSpace(input.Name), Provider: input.Provider,
 		Enabled: input.Enabled, Models: postgresStringArray(input.Models),
-		SealedDocument: sealed, Source: strings.TrimSpace(input.Source), ExpiresAt: input.ExpiresAt,
+		SealedDocument: sealed, Source: strings.TrimSpace(input.Source), ProxyID: input.ProxyID, ExpiresAt: input.ExpiresAt,
 	}
 	if item.Name == "" {
 		item.Name = item.ID
@@ -64,7 +66,7 @@ func (s Store) UpsertUpstreamCredential(ctx context.Context, input UpstreamCrede
 		DoUpdates: clause.Assignments(map[string]any{
 			"name": item.Name, "provider": item.Provider, "enabled": item.Enabled,
 			"models": item.Models, "sealed_document": item.SealedDocument, "source": item.Source,
-			"expires_at": item.ExpiresAt, "revision": gormExpr(`"upstream_credentials"."revision" + 1`), "updated_at": time.Now(),
+			"proxy_id": item.ProxyID, "expires_at": item.ExpiresAt, "revision": gormExpr(`"upstream_credentials"."revision" + 1`), "updated_at": time.Now(),
 		}),
 	}).Create(&item).Error
 	if err != nil {
@@ -116,7 +118,7 @@ func (s Store) openUpstreamCredential(item db.UpstreamCredential) (UpstreamCrede
 	return UpstreamCredentialSnapshot{
 		ID: item.ID, Name: item.Name, Provider: item.Provider, Enabled: item.Enabled,
 		Models: append([]string(nil), item.Models...), Document: json.RawMessage(document),
-		Source: item.Source, Revision: item.Revision, ExpiresAt: item.ExpiresAt,
+		Source: item.Source, Revision: item.Revision, ProxyID: item.ProxyID, ExpiresAt: item.ExpiresAt,
 	}, nil
 }
 

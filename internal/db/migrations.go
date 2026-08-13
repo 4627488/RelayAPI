@@ -93,6 +93,13 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS web_socket_turns_created_idx ON web_socket_turns(created_at, request_id)`,
 		},
 	},
+	{
+		version: 7,
+		name:    "reusable outbound proxies",
+		statements: []string{
+			`ALTER TABLE upstream_credentials ADD CONSTRAINT upstream_credentials_proxy_fk FOREIGN KEY (proxy_id) REFERENCES outbound_proxies(id) ON DELETE RESTRICT`,
+		},
+	},
 }
 
 func runMigrations(ctx context.Context, database *gorm.DB) error {
