@@ -247,7 +247,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	if (messageType != websocket.TextMessage && messageType != websocket.BinaryMessage) || !json.Valid(firstFrame) {
 		err = fmt.Errorf("first websocket message must be a JSON response.create frame")
 		accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "invalid_request"
-		writeNativeWebSocketError(downstream, "invalid_request", err.Error())
+		writeNativeWebSocketError(downstream, http.StatusBadRequest, "invalid_request", err.Error())
 		return session, meta, err
 	}
 	captureWebSocketRequest(logDetail, firstFrame)
@@ -265,20 +265,20 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	if meta.Model == "" {
 		err = fmt.Errorf("response.create requires model")
 		accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "model_required"
-		writeNativeWebSocketError(downstream, "model_required", err.Error())
+		writeNativeWebSocketError(downstream, http.StatusBadRequest, "model_required", err.Error())
 		return session, meta, err
 	}
 	if !key.AllowsModel(meta.Model) {
 		err = fmt.Errorf("API key is not allowed to use model %q", meta.Model)
 		accounting.errorHTTP, accounting.errorCode = http.StatusForbidden, "model_not_allowed"
-		writeNativeWebSocketError(downstream, "model_not_allowed", err.Error())
+		writeNativeWebSocketError(downstream, http.StatusForbidden, "model_not_allowed", err.Error())
 		return session, meta, err
 	}
 	if !accounting.billable {
 		admission, price, code, admitErr := a.admitNativeWebSocket(r.Context(), key, meta, requestID, r.URL.Path)
 		if admitErr != nil {
 			accounting.errorHTTP, accounting.errorCode = nativeWebSocketAdmissionError(code)
-			writeNativeWebSocketError(downstream, code, admitErr.Error())
+			writeNativeWebSocketError(downstream, accounting.errorHTTP, code, admitErr.Error())
 			return session, meta, admitErr
 		}
 		accounting.admission = admission
@@ -290,7 +290,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		if upstreamModel != "" && upstreamModel != frameMeta.Model {
 			firstFrame, err = rewriteRequestModel(firstFrame, r.URL, frameMeta.Model, upstreamModel)
 			if err != nil {
-				writeNativeWebSocketError(downstream, "invalid_request", "unable to resolve websocket model")
+				writeNativeWebSocketError(downstream, http.StatusBadRequest, "invalid_request", "unable to resolve websocket model")
 				return session, meta, err
 			}
 		}
@@ -302,12 +302,22 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	accounting.currentResponse = 0
 
 	upstream, response, err := a.dialEmbeddedCPAWebSocket(r.Context(), r, accounting.admission, requestID)
+	if err != nil {
+		classified := userFacingError{Status: http.StatusServiceUnavailable, Code: "model_account_unavailable", Message: "无法连接当前订阅的模型账户，请稍后重试或联系管理员", Retryable: true}
+		if response != nil {
+			classified.UpstreamStatus = response.StatusCode
+			if response.Body != nil {
+				payload, _ := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+				_ = response.Body.Close()
+				classified = a.classifyUpstreamError(response.StatusCode, payload, accounting.admission)
+			}
+		}
+		accounting.errorHTTP, accounting.errorCode = classified.Status, classified.Code
+		writeNativeWebSocketError(downstream, classified.Status, classified.Code, classified.Message)
+		return session, meta, err
+	}
 	if response != nil && response.Body != nil {
 		_ = response.Body.Close()
-	}
-	if err != nil {
-		writeNativeWebSocketError(downstream, "embedded_cpa_unavailable", err.Error())
-		return session, meta, err
 	}
 	defer upstream.Close()
 	upstream.SetReadLimit(a.cfg.CPAMaxRequestBytes)
@@ -451,14 +461,14 @@ func normalizedUpstreamWebSocketClose(err error, terminalResponseSeen bool) erro
 
 func nativeWebSocketAdmissionError(code string) (int, string) {
 	switch code {
-	case "price_not_configured":
-		return http.StatusBadRequest, code
-	case "subscription_not_available", "model_not_allowed":
+	case "subscription_not_assigned", "model_not_allowed":
 		return http.StatusForbidden, code
-	case "subscription_quota_exceeded":
-		return http.StatusTooManyRequests, code
+	case "insufficient_balance", "subscription_quota_exhausted", "model_account_quota_exhausted":
+		return http.StatusPaymentRequired, code
+	case "pricing_unavailable", "subscription_pricing_unavailable", "subscription_unavailable", "model_account_unavailable", "model_account_auth_failed":
+		return http.StatusServiceUnavailable, code
 	default:
-		return http.StatusPaymentRequired, firstNonEmptyString(code, "admission_failed")
+		return http.StatusInternalServerError, firstNonEmptyString(code, "admission_internal_error")
 	}
 }
 
@@ -663,7 +673,7 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 	price, priceErr := a.store.ResolvePrice(ctx, dimensions)
 	priceConfigured := priceErr == nil
 	if !priceConfigured && a.cfg.UnpricedModelPolicy == "deny" {
-		return store.Admission{}, nil, "price_not_configured", fmt.Errorf("模型尚未配置价格")
+		return store.Admission{}, nil, "pricing_unavailable", fmt.Errorf("该模型尚未配置价格，请联系管理员完善计费配置")
 	}
 	reserve := int64(0)
 	if priceConfigured {
@@ -675,16 +685,8 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 		PriceSnapshot: store.EncodePriceSnapshot(price), ExpiresAt: time.Now().Add(24 * time.Hour),
 	})
 	if err != nil {
-		code, message := "admission_failed", "余额不足或订阅不可用"
-		switch {
-		case errors.Is(err, store.ErrSubscriptionPrice):
-			code, message = "price_not_configured", "计量子订阅要求先配置模型价格"
-		case errors.Is(err, store.ErrSubscriptionRequired):
-			code, message = "subscription_not_available", "没有可用于该模型的子订阅"
-		case errors.Is(err, store.ErrSubscriptionExhausted):
-			code, message = "subscription_quota_exceeded", "所有可用子订阅额度均已耗尽"
-		}
-		return store.Admission{}, nil, code, fmt.Errorf("%s", message)
+		classified := admissionUserError(err)
+		return store.Admission{}, nil, classified.Code, fmt.Errorf("%s", classified.Message)
 	}
 	if !priceConfigured {
 		return admission, nil, "", nil
@@ -723,8 +725,11 @@ func saturatingAdd(left, right int64) int64 {
 	return left + right
 }
 
-func writeNativeWebSocketError(conn *websocket.Conn, code, message string) {
-	payload, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": "invalid_request_error", "code": code, "message": message}})
+func writeNativeWebSocketError(conn *websocket.Conn, status int, code, message string) {
+	payload, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{
+		"type": errorTypeForStatus(status), "code": code, "message": message,
+		"details": map[string]any{"retryable": defaultErrorRetryable(status, code)},
+	}})
 	_ = conn.WriteMessage(websocket.TextMessage, payload)
 }
 

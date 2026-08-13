@@ -296,6 +296,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestID := identity.NewID()
+	w.Header().Set("X-Relay-Request-ID", requestID)
 	admission := store.Admission{RequestID: requestID}
 	expectedBodyBytes := r.ContentLength
 	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.CPAMaxRequestBytes {
@@ -355,10 +356,14 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.enforceLimits(r.Context(), key); err != nil {
-		message := boundedErrorText(err.Error())
-		writeError(w, http.StatusTooManyRequests, "quota_exceeded", message)
-		detail := rejectedRequestDetail(r, body, true, "quota_exceeded", message, started)
-		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusTooManyRequests, started, "quota_exceeded", message, detail)
+		classified := userFacingError{Status: http.StatusInternalServerError, Code: "usage_limit_check_failed", Message: "暂时无法检查使用限制，请稍后重试", Retryable: true}
+		var limitErr *requestLimitError
+		if errors.As(err, &limitErr) {
+			classified = userFacingError{Status: http.StatusTooManyRequests, Code: limitErr.Code, Message: limitErr.Message, Retryable: true}
+		}
+		writeUserFacingError(w, classified)
+		detail := rejectedRequestDetail(r, body, true, classified.Code, classified.Message, started)
+		a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
 		return
 	}
 	limitsCheckedAt := time.Now()
@@ -373,10 +378,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if a.cfg.UnpricedModelPolicy == "deny" {
-				const message = "模型尚未配置价格"
-				writeError(w, http.StatusBadRequest, "price_not_configured", message)
-				detail := rejectedRequestDetail(r, body, true, "price_not_configured", message, started)
-				a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusBadRequest, started, "price_not_configured", message, detail)
+				const message = "该模型尚未配置价格，请联系管理员完善计费配置"
+				writeError(w, http.StatusServiceUnavailable, "pricing_unavailable", message)
+				detail := rejectedRequestDetail(r, body, true, "pricing_unavailable", message, started)
+				a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusServiceUnavailable, started, "pricing_unavailable", message, detail)
 				return
 			}
 		} else {
@@ -404,18 +409,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			PriceSnapshot: priceSnapshot, ExpiresAt: time.Now().Add(reservationTTL),
 		})
 		if err != nil {
-			status, code, message := http.StatusPaymentRequired, "admission_failed", "余额不足或订阅不可用"
-			switch {
-			case errors.Is(err, store.ErrSubscriptionPrice):
-				status, code, message = http.StatusBadRequest, "price_not_configured", "计量子订阅要求先配置模型价格"
-			case errors.Is(err, store.ErrSubscriptionRequired):
-				status, code, message = http.StatusForbidden, "subscription_not_available", "没有可用于该模型的子订阅"
-			case errors.Is(err, store.ErrSubscriptionExhausted):
-				status, code, message = http.StatusTooManyRequests, "subscription_quota_exceeded", "所有可用子订阅额度均已耗尽"
-			}
-			writeError(w, status, code, message)
-			detail := rejectedRequestDetail(r, body, true, code, message, started)
-			a.writeRejectedRequestLog(key, requestID, admission, meta, r, status, started, code, message, detail)
+			classified := admissionUserError(err)
+			writeUserFacingError(w, classified)
+			detail := rejectedRequestDetail(r, body, true, classified.Code, classified.Message, started)
+			a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
 			return
 		}
 		if priceConfigured {
@@ -487,18 +484,8 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	targetCPA.RecordTransportResult(nil)
 	upstreamHeadersAt := time.Now()
 	defer response.Body.Close()
-	copyHeaders(w.Header(), response.Header)
-	setStreamingHeaders(w.Header(), meta.Stream)
-	w.Header().Set("X-Relay-Request-ID", requestID)
-	if admission.ChildSubscriptionID != "" {
-		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)
-	}
-	w.WriteHeader(response.StatusCode)
-	if meta.Stream {
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-	}
+	clientStatus := response.StatusCode
+	var normalizedError *userFacingError
 	capture := &rollingCapture{max: 2 << 20}
 	var firstByteAt time.Time
 	firstByte := func() {
@@ -507,7 +494,43 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var copyErr error
-	copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
+
+	copyHeaders(w.Header(), response.Header)
+	w.Header().Set("X-Relay-Request-ID", requestID)
+	if admission.ChildSubscriptionID != "" {
+		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)
+	}
+	if response.StatusCode >= http.StatusBadRequest {
+		// CPA and providers sometimes use 429 for scheduler/auth failures. Read
+		// the small error body before committing headers so Relay can report the
+		// actual user-facing cause. Successful streaming responses remain direct.
+		payload, readErr := io.ReadAll(io.LimitReader(response.Body, int64(capture.max+1)))
+		_, _ = capture.Write(payload)
+		classified := a.classifyUpstreamError(response.StatusCode, payload, admission)
+		if readErr != nil {
+			copyErr = &streamCopyError{operation: "read_upstream", err: readErr}
+			classified = userFacingError{Status: http.StatusBadGateway, Code: "upstream_connection_lost", Message: "读取模型服务错误响应时连接中断，请稍后重试", Retryable: true, UpstreamStatus: response.StatusCode}
+		}
+		normalizedError = &classified
+		clientStatus = classified.Status
+		for _, header := range []string{"Content-Length", "Content-Encoding", "Content-Range", "ETag"} {
+			w.Header().Del(header)
+		}
+		if !classified.Retryable {
+			w.Header().Del("Retry-After")
+		}
+		firstByte()
+		writeUserFacingError(w, classified)
+	} else {
+		setStreamingHeaders(w.Header(), meta.Stream)
+		w.WriteHeader(response.StatusCode)
+		if meta.Stream {
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}
+		copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
+	}
 	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
 		targetCPA.RecordTransportResult(copyErr)
 	}
@@ -549,7 +572,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		settled = true
 	}
 	errorMessage := ""
-	if copyErr != nil {
+	if copyErr != nil && normalizedError == nil {
 		errorMessage = copyErr.Error()
 		logContext.errorCode = "stream_copy_error"
 	}
@@ -576,16 +599,21 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		"first_byte_ms":       valueOrZero(logContext.ttftMS),
 		"total_ms":            time.Since(started).Milliseconds(),
 	})
-	if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
+	if normalizedError != nil {
+		logContext.errorCode = normalizedError.Code
+		logContext.detail.ErrorName = logContext.errorCode
+		logContext.detail.ErrorMessage = normalizedError.Message
+		errorMessage = normalizedError.Message
+	} else if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
 		logContext.errorCode = "upstream_http_error"
 		logContext.detail.ErrorName = logContext.errorCode
 		errorMessage = upstreamErrorMessage(response.StatusCode, rawResponse)
 	}
-	if copyErr != nil {
+	if copyErr != nil && normalizedError == nil {
 		logContext.detail.ErrorName = "stream_copy_error"
 		logContext.detail.ErrorMessage = copyErr.Error()
 	}
-	a.writeRequestLog(key, requestID, admission, meta, r, response.StatusCode, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
+	a.writeRequestLog(key, requestID, admission, meta, r, clientStatus, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
@@ -788,6 +816,13 @@ func maxDuration(a, b time.Duration) time.Duration {
 	return b
 }
 
+type requestLimitError struct {
+	Code    string
+	Message string
+}
+
+func (e *requestLimitError) Error() string { return e.Message }
+
 func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
 	if key.TenantTokenLimit != nil || key.TokenLimitDaily != nil {
 		tenantTokens, keyTokens, err := a.store.DailyTokens(ctx, key.TenantID, key.ID)
@@ -795,10 +830,10 @@ func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
 			return err
 		}
 		if key.TenantTokenLimit != nil && tenantTokens >= *key.TenantTokenLimit {
-			return errors.New("租户今日 Token 额度已用尽")
+			return &requestLimitError{Code: "tenant_daily_token_limit_exceeded", Message: "租户今日 Token 使用额度已用尽，请等待次日重置"}
 		}
 		if key.TokenLimitDaily != nil && keyTokens >= *key.TokenLimitDaily {
-			return errors.New("API Key 今日 Token 额度已用尽")
+			return &requestLimitError{Code: "api_key_daily_token_limit_exceeded", Message: "该 API Key 今日 Token 使用额度已用尽，请等待次日重置"}
 		}
 	}
 	// Per-minute admission is intentionally process-local; PostgreSQL remains the source of truth for billing.
@@ -807,7 +842,7 @@ func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
 		limit = key.TenantRateLimit
 	}
 	if limit != nil && !a.allowRate(key.ID, *limit) {
-		return errors.New("每分钟请求次数超限")
+		return &requestLimitError{Code: "api_key_rate_limit_exceeded", Message: "该 API Key 每分钟请求次数已达上限，请稍后重试"}
 	}
 	return nil
 }

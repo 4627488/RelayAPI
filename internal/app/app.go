@@ -507,7 +507,10 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
+	writeUserFacingError(w, userFacingError{
+		Status: status, Code: code, Message: message,
+		Retryable: defaultErrorRetryable(status, code),
+	})
 }
 
 func errorText(err error) any {

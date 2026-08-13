@@ -82,9 +82,20 @@ func TestBalanceSubscriptionBulkGrantAuthorizesMultipleTenants(t *testing.T) {
 	if err != nil || len(grants) != 1 || !grants[0].AllowsModel("grok-4.6") {
 		t.Fatalf("model grants = %+v, err = %v", grants, err)
 	}
-	candidates, assigned, err := dataStore.SubscriptionCandidates(ctx, tenantIDs[0], "grok-4.6", time.Now())
-	if err != nil || !assigned || len(candidates) != 1 {
+	candidates, assigned, unavailable, err := dataStore.SubscriptionCandidates(ctx, tenantIDs[0], "grok-4.6", time.Now())
+	if err != nil || !assigned || unavailable || len(candidates) != 1 {
 		t.Fatalf("balance routing retained legacy child restriction: candidates=%+v assigned=%v err=%v", candidates, assigned, err)
+	}
+	if err = database.Model(&db.ParentSubscription{}).Where("id = ?", parent.ID).Update("cpa_unavailable", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	grants, err = dataStore.ActiveSubscriptionModelGrants(ctx, tenantIDs[0], time.Now())
+	if err != nil || len(grants) != 1 || !grants[0].AllowsModel("grok-4.6") {
+		t.Fatalf("broken subscription incorrectly revoked model entitlement: grants=%+v err=%v", grants, err)
+	}
+	candidates, assigned, unavailable, err = dataStore.SubscriptionCandidates(ctx, tenantIDs[0], "grok-4.6", time.Now())
+	if err != nil || !assigned || !unavailable || len(candidates) != 0 {
+		t.Fatalf("broken subscription was not classified unavailable: candidates=%+v assigned=%v unavailable=%v err=%v", candidates, assigned, unavailable, err)
 	}
 }
 
@@ -447,7 +458,7 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	if _, err := store.AdmitRequest(ctx, AdmissionInput{
 		RequestID: identity.NewID(), Key: key, Model: "model", BalanceReserve: 10, QuotaReserve: 10,
 		PriceConfigured: true, PriceSnapshot: json.RawMessage(`{"model":"model"}`), ExpiresAt: time.Now().Add(time.Minute),
-	}); err != ErrSubscriptionExhausted {
+	}); err != ErrSubscriptionUnavailable {
 		t.Fatalf("unsupported observed provider admission error = %v", err)
 	}
 	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "supported", "", "", nil, json.RawMessage(`{"supported":true,"windows":[]}`)); err != nil {

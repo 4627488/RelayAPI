@@ -20,9 +20,11 @@ import (
 )
 
 var (
-	ErrSubscriptionRequired  = errors.New("no eligible child subscription")
-	ErrSubscriptionExhausted = errors.New("child subscription quota exhausted")
-	ErrSubscriptionPrice     = errors.New("priced model is required for metered subscription")
+	ErrSubscriptionRequired    = errors.New("no eligible child subscription")
+	ErrSubscriptionUnavailable = errors.New("assigned subscription is unavailable")
+	ErrSubscriptionExhausted   = errors.New("child subscription quota exhausted")
+	ErrSubscriptionPrice       = errors.New("priced model is required for metered subscription")
+	ErrInsufficientBalance     = errors.New("insufficient balance")
 )
 
 // Upstream rolling-window reset timestamps are often derived from a rounded
@@ -876,7 +878,6 @@ func (s Store) ActiveSubscriptionModelGrants(ctx context.Context, tenantID strin
 		Joins("JOIN parent_subscriptions ON parent_subscriptions.id = child_subscriptions.parent_subscription_id").
 		Where("child_subscriptions.tenant_id = ?", tenantID).
 		Where("child_subscriptions.enabled = ? AND child_subscriptions.starts_at <= ? AND (child_subscriptions.expires_at IS NULL OR child_subscriptions.expires_at > ?)", true, now, now).
-		Where("parent_subscriptions.enabled = ? AND parent_subscriptions.cpa_unavailable = ? AND parent_subscriptions.status <> ?", true, false, "missing").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, err
@@ -916,13 +917,13 @@ func (key KeyContext) AllowsModel(model string) bool {
 	return false
 }
 
-func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model string, now time.Time) ([]SubscriptionCandidate, bool, error) {
+func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model string, now time.Time) ([]SubscriptionCandidate, bool, bool, error) {
 	var children []ChildSubscription
 	err := scoped(ctx, s.DB).
 		Where("tenant_id = ? AND enabled = ? AND starts_at <= ? AND (expires_at IS NULL OR expires_at > ?)", tenantID, true, now, now).
 		Order("priority DESC, created_at").Find(&children).Error
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	parentIDs := make([]string, 0, len(children))
 	seenParents := make(map[string]struct{}, len(children))
@@ -935,8 +936,8 @@ func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model strin
 	}
 	var parents []ParentSubscription
 	if len(parentIDs) > 0 {
-		if err := scoped(ctx, s.DB).Where("id IN ? AND status <> ?", parentIDs, "missing").Find(&parents).Error; err != nil {
-			return nil, false, err
+		if err := scoped(ctx, s.DB).Where("id IN ?", parentIDs).Find(&parents).Error; err != nil {
+			return nil, false, false, err
 		}
 	}
 	parentsByID := make(map[string]ParentSubscription, len(parents))
@@ -944,10 +945,14 @@ func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model strin
 		parentsByID[parent.ID] = parent
 	}
 	hasModelAssignment := false
+	hasUnavailableAssignment := false
 	items := make([]SubscriptionCandidate, 0, len(children))
 	for _, child := range children {
 		parent, exists := parentsByID[child.ParentSubscriptionID]
 		if !exists {
+			// An active grant whose backing account disappeared is broken, not
+			// an invitation to silently fall back to balance billing.
+			hasUnavailableAssignment = true
 			continue
 		}
 		childModels := child.ModelAllowlist
@@ -958,45 +963,61 @@ func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model strin
 			continue
 		}
 		hasModelAssignment = true
-		if !parent.Enabled || parent.CPAUnavailable {
+		if !parent.Enabled || parent.CPAUnavailable || parent.Status == "missing" {
+			hasUnavailableAssignment = true
 			continue
 		}
 		items = append(items, SubscriptionCandidate{Child: child, Parent: parent})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Child.Priority > items[j].Child.Priority })
-	return items, hasModelAssignment, nil
+	return items, hasModelAssignment, hasUnavailableAssignment, nil
 }
 
 func (s Store) AdmitRequest(ctx context.Context, input AdmissionInput) (Admission, error) {
 	now := time.Now()
-	candidates, hasModelAssignment, err := s.SubscriptionCandidates(ctx, input.Key.TenantID, input.Model, now)
+	candidates, hasModelAssignment, hasUnavailableAssignment, err := s.SubscriptionCandidates(ctx, input.Key.TenantID, input.Model, now)
 	if err != nil {
 		return Admission{}, err
 	}
 	if len(candidates) == 0 {
+		if hasUnavailableAssignment {
+			return Admission{}, ErrSubscriptionUnavailable
+		}
 		if hasModelAssignment {
 			return Admission{}, ErrSubscriptionRequired
 		}
 		return s.reserveCandidate(ctx, input, nil)
 	}
-	var capacityErr error
+	hadUnavailable := hasUnavailableAssignment
+	hadPriceError := false
+	hadExhausted := false
 	for _, candidate := range candidates {
 		if candidate.Parent.CapacityMode != db.ParentCapacityUnmetered && !input.PriceConfigured {
-			capacityErr = ErrSubscriptionPrice
+			hadPriceError = true
 			continue
 		}
 		admission, err := s.reserveCandidate(ctx, input, &candidate)
 		if err == nil {
 			return admission, nil
 		}
-		if errors.Is(err, ErrSubscriptionExhausted) {
-			capacityErr = err
+		switch {
+		case errors.Is(err, ErrSubscriptionUnavailable):
+			hadUnavailable = true
+			continue
+		case errors.Is(err, ErrSubscriptionExhausted):
+			hadExhausted = true
 			continue
 		}
 		return Admission{}, err
 	}
-	if capacityErr != nil {
-		return Admission{}, capacityErr
+	if hadUnavailable {
+		return Admission{}, ErrSubscriptionUnavailable
+	}
+	if hadPriceError {
+		return Admission{}, ErrSubscriptionPrice
+	}
+	if hadExhausted {
+		return Admission{}, ErrSubscriptionExhausted
 	}
 	return Admission{}, ErrSubscriptionRequired
 }
@@ -1030,7 +1051,7 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 			return err
 		}
 		if !tenant.Enabled {
-			return errors.New("insufficient balance")
+			return ErrInsufficientBalance
 		}
 
 		reservation := RequestReservation{
@@ -1045,12 +1066,12 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 		if candidate != nil {
 			var child ChildSubscription
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&child, "id = ? AND enabled = ?", candidate.Child.ID, true).Error; err != nil {
-				return ErrSubscriptionRequired
+				return ErrSubscriptionUnavailable
 			}
 			var parent ParentSubscription
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&parent,
 				"id = ? AND enabled = ? AND cpa_unavailable = ?", child.ParentSubscriptionID, true, false).Error; err != nil {
-				return ErrSubscriptionRequired
+				return ErrSubscriptionUnavailable
 			}
 			reservation.ChildSubscriptionID = &child.ID
 			reservation.ParentSubscriptionID = &parent.ID
@@ -1067,7 +1088,7 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 				}
 				if len(parentWindows) == 0 {
 					if parent.CapacityMode != db.ParentCapacityObserved || parent.QuotaProbeStatus == "unsupported" {
-						return ErrSubscriptionExhausted
+						return ErrSubscriptionUnavailable
 					}
 				} else {
 					// Once calibrated windows exist, charge child quota instead of
@@ -1078,8 +1099,11 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 				reservedWindows := make([]quotaWindowReservation, 0, len(parentWindows))
 				for _, parentWindow := range parentWindows {
 					limit := fraction(parentWindow.LimitNanoUSD, child.AllocationPPM)
-					if limit <= 0 || !parentWindow.ResetsAt.After(time.Now()) {
+					if limit <= 0 {
 						return ErrSubscriptionExhausted
+					}
+					if !parentWindow.ResetsAt.After(time.Now()) {
+						return ErrSubscriptionUnavailable
 					}
 					var window ChildQuotaWindow
 					err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&window,
@@ -1087,7 +1111,7 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 					if err == nil && parentWindow.ResetsAt.Before(window.ResetsAt) {
 						// Never let a stale upstream observation roll a child back
 						// into an older generation and erase newer-cycle usage.
-						return ErrSubscriptionExhausted
+						return ErrSubscriptionUnavailable
 					}
 					if errors.Is(err, gorm.ErrRecordNotFound) || !window.ResetsAt.Equal(parentWindow.ResetsAt) {
 						window = ChildQuotaWindow{
@@ -1121,7 +1145,7 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 		}
 
 		if tenant.BalanceNanoUSD < reservation.BalanceReservedNanoUSD {
-			return errors.New("insufficient balance")
+			return ErrInsufficientBalance
 		}
 		if reservation.BalanceReservedNanoUSD > 0 {
 			tenant.BalanceNanoUSD -= reservation.BalanceReservedNanoUSD
