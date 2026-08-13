@@ -193,7 +193,12 @@ def merge(left, right, path=()):
         else:
             left[key] = value
 merge(base, patch)
-if mode == "opencode":
+if mode == "claude":
+    env = base.get("env")
+    if isinstance(env, dict):
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        env.pop("ANTHROPIC_API_KEY", None)
+elif mode == "opencode":
     disabled = base.get("disabled_providers")
     if isinstance(disabled, list):
         base["disabled_providers"] = [item for item in disabled if item != "relayapi"]
@@ -219,7 +224,12 @@ function merge(left, right, path = []) {
   }
 }
 merge(base, patch);
-if (mode === "opencode") {
+if (mode === "claude") {
+  if (base.env && typeof base.env === "object" && !Array.isArray(base.env)) {
+    delete base.env.ANTHROPIC_AUTH_TOKEN;
+    delete base.env.ANTHROPIC_API_KEY;
+  }
+} else if (mode === "opencode") {
   if (Array.isArray(base.disabled_providers)) base.disabled_providers = base.disabled_providers.filter((item) => item !== "relayapi");
   if (Array.isArray(base.enabled_providers) && !base.enabled_providers.includes("relayapi")) base.enabled_providers.push("relayapi");
 }
@@ -284,8 +294,13 @@ configure_codex() {
 }
 
 configure_claude() {
-  merge_json "$CLAUDE_CONFIG" "$CLAUDE_PATCH_B64"
+  merge_json "$CLAUDE_CONFIG" "$CLAUDE_PATCH_B64" claude
   ok "Claude Code configured in $CLAUDE_CONFIG"
+  if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+    warn 'Claude authentication variables are set in this shell and conflict with apiKeyHelper.'
+    info 'Run: unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY'
+    info 'Also remove those exports from your shell profile before starting Claude Code.'
+  fi
 }
 
 configure_opencode() {

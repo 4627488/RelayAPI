@@ -135,7 +135,14 @@ function Merge-SetupJson([string]$Path, [string]$PatchBase64, [string]$Mode = 'd
   $base = if (Test-Path -LiteralPath $Path) { Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json } else { [pscustomobject]@{} }
   $patch = (ConvertFrom-SetupBase64 $PatchBase64) | ConvertFrom-Json
   Merge-SetupObject $base $patch $Mode
-  if ($Mode -eq 'opencode') {
+  if ($Mode -eq 'claude') {
+    $claudeEnv = Get-SetupJsonProperty $base 'env'
+    if ($claudeEnv -is [pscustomobject]) {
+      $claudeEnv.PSObject.Properties.Remove('ANTHROPIC_AUTH_TOKEN')
+      $claudeEnv.PSObject.Properties.Remove('ANTHROPIC_API_KEY')
+    }
+  }
+  elseif ($Mode -eq 'opencode') {
     $disabled = Get-SetupJsonProperty $base 'disabled_providers'
     if ($disabled -is [array]) {
       $base | Add-Member -NotePropertyName 'disabled_providers' -NotePropertyValue @($disabled | Where-Object { $_ -ne 'relayapi' }) -Force
@@ -235,7 +242,15 @@ try {
     }
     Write-SetupOk "Codex configured in $codexConfig"
   }
-  if ($DoClaude) { Merge-SetupJson $claudeConfig $ClaudePatchBase64; Write-SetupOk "Claude Code configured in $claudeConfig" }
+  if ($DoClaude) {
+    Merge-SetupJson $claudeConfig $ClaudePatchBase64 'claude'
+    Write-SetupOk "Claude Code configured in $claudeConfig"
+    if ($env:ANTHROPIC_AUTH_TOKEN -or $env:ANTHROPIC_API_KEY) {
+      Write-SetupWarn 'Claude authentication variables are set in this shell and conflict with apiKeyHelper.'
+      Write-SetupInfo 'Run: Remove-Item Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue'
+      Write-SetupInfo 'Also remove persistent user environment variables before starting Claude Code.'
+    }
+  }
   if ($DoOpenCode) { Merge-SetupJson $openCodeConfig $OpenCodePatchBase64 'opencode'; Write-SetupOk "OpenCode configured in $openCodeConfig" }
 } catch {
   Write-Warning 'Setup failed; restoring every configuration changed in this run.'
