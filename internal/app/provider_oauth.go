@@ -353,11 +353,12 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 	}
 	proxyID := optionalProxyID(previous)
 	if input.ProxyID != nil {
-		proxyID, err = a.validProxyID(r.Context(), *input.ProxyID)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "proxy_not_found", err.Error())
+		validatedProxyID, proxyErr := a.validProxyID(r.Context(), *input.ProxyID)
+		if proxyErr != nil {
+			writeError(w, http.StatusBadRequest, "proxy_not_found", proxyErr.Error())
 			return
 		}
+		proxyID = validatedProxyID
 	}
 	row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{
 		ID: id, Name: name, Provider: session.Provider, Enabled: enabled, Models: models,
