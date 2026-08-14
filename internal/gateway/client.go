@@ -57,6 +57,7 @@ func NewWithOptions(rawURL, apiKey string, options Options) (*Client, error) {
 	transport.MaxConnsPerHost = options.MaxInFlight
 	transport.MaxIdleConnsPerHost = options.MaxInFlight
 	transport.MaxIdleConns = options.MaxInFlight * 2
+	transport.DisableCompression = true
 	transport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
 	return &Client{
 		BaseURL: base, APIKey: apiKey, HTTP: &http.Client{Transport: transport},

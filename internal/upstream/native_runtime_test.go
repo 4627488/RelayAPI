@@ -1,6 +1,7 @@
 package upstream
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -12,6 +13,75 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRuntimeFlushesPassthroughStreamImmediately(t *testing.T) {
+	releaseProvider := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseProvider:
+		default:
+			close(releaseProvider)
+		}
+	}()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "data: first\n\n")
+		w.(http.Flusher).Flush()
+		<-releaseProvider
+		_, _ = io.WriteString(w, "data: second\n\n")
+	}))
+	defer provider.Close()
+
+	runtime := newTestRuntime(t, Credential{
+		ID: "stream", Provider: "openai", Enabled: true, Models: []string{"gpt-stream"},
+		Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL}),
+	})
+	runtimeServer := httptest.NewServer(runtime.Handler())
+	defer runtimeServer.Close()
+	request, err := http.NewRequest(http.MethodPost, runtimeServer.URL+"/v1/responses",
+		strings.NewReader(`{"model":"gpt-stream","stream":true,"input":"hi"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer runtime-test-key")
+	responseResult := make(chan *http.Response, 1)
+	errorResult := make(chan error, 1)
+	go func() {
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			errorResult <- requestErr
+			return
+		}
+		responseResult <- response
+	}()
+
+	var response *http.Response
+	select {
+	case response = <-responseResult:
+	case requestErr := <-errorResult:
+		t.Fatal(requestErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream headers were buffered until the provider completed")
+	}
+	reader := bufio.NewReader(response.Body)
+	firstEvent := make(chan string, 1)
+	go func() {
+		line, _ := reader.ReadString('\n')
+		firstEvent <- line
+	}()
+	select {
+	case line := <-firstEvent:
+		if line != "data: first\n" {
+			t.Fatalf("first event = %q", line)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first SSE event was not flushed immediately")
+	}
+	close(releaseProvider)
+	_, _ = io.Copy(io.Discard, reader)
+	_ = response.Body.Close()
+}
 
 func TestKimiResponsesTranslationPreservesToolsAndUsage(t *testing.T) {
 	observed := make(chan map[string]any, 1)
@@ -180,6 +250,21 @@ func TestResponseHeaderPolicyAllowsDiagnosticsButBlocksProviderSecrets(t *testin
 	}
 	if destination.Get("Set-Cookie") != "" || destination.Get("X-Provider-Internal") != "" {
 		t.Fatalf("unsafe provider headers escaped: %#v", destination)
+	}
+}
+
+func TestProviderRequestUsesIdentityEncoding(t *testing.T) {
+	source := http.Header{
+		"Accept-Encoding": {"gzip"},
+		"OpenAI-Beta":     {"responses=experimental"},
+	}
+	destination := make(http.Header)
+	copyProviderHeaders(destination, source)
+	if destination.Get("Accept-Encoding") != "" {
+		t.Fatalf("compression negotiation escaped to provider: %#v", destination)
+	}
+	if destination.Get("OpenAI-Beta") != "responses=experimental" {
+		t.Fatalf("safe client header was removed: %#v", destination)
 	}
 }
 

@@ -27,4 +27,7 @@ func TestOutboundHTTPClientWithoutProxyIsDirect(t *testing.T) {
 	if !ok || transport.Proxy != nil {
 		t.Fatalf("transport = %#v, want explicit direct transport", client.Transport)
 	}
+	if transport.MaxIdleConnsPerHost < 16 || !transport.DisableCompression {
+		t.Fatalf("transport is not tuned for low-latency reuse: %#v", transport)
+	}
 }

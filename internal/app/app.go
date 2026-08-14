@@ -42,6 +42,7 @@ type App struct {
 	providerOAuth         providerOAuthSessions
 	nativeSettings        settingsState
 	memoryReclaiming      atomic.Bool
+	finalizationSlots     chan struct{}
 }
 
 type contextKey string
@@ -62,9 +63,14 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	finalizationCapacity := cfg.GatewayMaxInFlight
+	if finalizationCapacity < 1 {
+		finalizationCapacity = 16
+	}
 	a := &App{
 		cfg: cfg, store: dataStore, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
-		providerOAuth: newProviderOAuthSessions(),
+		providerOAuth:     newProviderOAuthSessions(),
+		finalizationSlots: make(chan struct{}, finalizationCapacity),
 	}
 	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
 		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)

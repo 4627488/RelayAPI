@@ -68,6 +68,69 @@ func TestCopyStreamingClassifiesOnlyUpstreamReadFailures(t *testing.T) {
 	}
 }
 
+func TestRollingCaptureKeepsDetailPrefixAndBillingTail(t *testing.T) {
+	capture := &rollingCapture{max: 5}
+	for _, chunk := range []string{"abc", "def", "gh"} {
+		if written, err := capture.Write([]byte(chunk)); err != nil || written != len(chunk) {
+			t.Fatalf("write %q = %d, %v", chunk, written, err)
+		}
+	}
+	if tail := string(capture.Bytes()); tail != "defgh" {
+		t.Fatalf("billing tail = %q, want defgh", tail)
+	}
+	detail, truncated, total := capture.Info()
+	if string(detail) != "abcdefgh" || truncated || total != 8 {
+		t.Fatalf("detail = %q, truncated = %v, total = %d", detail, truncated, total)
+	}
+}
+
+func BenchmarkRollingCaptureLongStream(b *testing.B) {
+	chunk := bytes.Repeat([]byte("x"), 32<<10)
+	b.SetBytes(int64(len(chunk) * 256))
+	b.ReportAllocs()
+	for range b.N {
+		capture := &rollingCapture{max: 2 << 20}
+		for range 256 {
+			_, _ = capture.Write(chunk)
+		}
+		_ = capture.Bytes()
+	}
+}
+
+func TestFinalizeResponseIsBoundedAndAsynchronous(t *testing.T) {
+	a := &App{finalizationSlots: make(chan struct{}, 1)}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	a.finalizeResponse(func() {
+		close(started)
+		<-release
+	})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("finalizer did not start")
+	}
+
+	fallbackRan := false
+	a.finalizeResponse(func() { fallbackRan = true })
+	if !fallbackRan {
+		t.Fatal("saturated finalizer did not apply synchronous backpressure")
+	}
+	close(release)
+	a.wg.Wait()
+}
+
+func TestRequestLogUsesResponseBoundaryInsteadOfFinalizerTime(t *testing.T) {
+	started := time.Now().Add(-2 * time.Second).Truncate(time.Millisecond)
+	completed := started.Add(750 * time.Millisecond)
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	input := requestLogInput(store.KeyContext{}, "request", store.Admission{}, requestMeta{}, request,
+		http.StatusOK, started, nil, false, true, 0, "", requestLogContext{completedAt: completed})
+	if input.LatencyMS != 750 || !input.CompletedAt.Equal(completed) {
+		t.Fatalf("logged boundary = %d ms at %s, want 750 ms at %s", input.LatencyMS, input.CompletedAt, completed)
+	}
+}
+
 func TestEnforceLimitsSkipsUsageQueryWhenNoDailyLimitExists(t *testing.T) {
 	a := &App{}
 	if err := a.enforceLimits(context.Background(), store.KeyContext{}); err != nil {
@@ -96,14 +159,28 @@ func TestSetStreamingHeadersDisablesTransformBuffering(t *testing.T) {
 }
 
 func TestReadRequestMeta(t *testing.T) {
-	tests := []struct{ body, path, model string }{
-		{`{"model":"gpt-5.4","stream":true}`, "/v1/responses", "gpt-5.4"},
+	tests := []struct {
+		body, path, model, effort string
+		stream                    bool
+		imageCount                int
+	}{
+		{`{"model":"gpt-5.4","stream":true}`, "/v1/responses", "gpt-5.4", "", true, 0},
+		{`{"model":"gpt-image","n":3,"reasoning":{"effort":"high"}}`, "/v1/responses", "gpt-image", "high", false, 3},
 	}
 	for _, test := range tests {
 		got := readRequestMeta([]byte(test.body), test.path)
-		if got.Model != test.model {
-			t.Errorf("model = %q, want %q", got.Model, test.model)
+		if got.Model != test.model || got.ReasoningEffort != test.effort || got.Stream != test.stream || got.ImageCount != test.imageCount {
+			t.Errorf("metadata = %+v, want model %q, effort %q, stream %t, images %d", got, test.model, test.effort, test.stream, test.imageCount)
 		}
+	}
+}
+
+func BenchmarkReadRequestMetaLongPrompt(b *testing.B) {
+	body := []byte(`{"model":"gpt-5.6","stream":true,"reasoning":{"effort":"high"},"input":"` + strings.Repeat("x", 1<<20) + `"}`)
+	b.SetBytes(int64(len(body)))
+	b.ReportAllocs()
+	for range b.N {
+		_ = readRequestMeta(body, "/v1/responses")
 	}
 }
 

@@ -409,19 +409,29 @@ func (s Store) ResolveKey(ctx context.Context, plain string) (KeyContext, error)
 	}).Where("key_hash = ?", identity.HashKey(plain)).First(&key).Error; err != nil {
 		return KeyContext{}, notFound(err)
 	}
-	var tenant Tenant
-	if err := scoped(ctx, s.DB).First(&tenant, "id = ?", key.TenantID).Error; err != nil {
-		return KeyContext{}, notFound(err)
+	type grantResult struct {
+		items []SubscriptionModelGrant
+		err   error
 	}
-	grants, err := s.ActiveSubscriptionModelGrants(ctx, key.TenantID, time.Now())
-	if err != nil {
-		return KeyContext{}, err
+	grantsResult := make(chan grantResult, 1)
+	go func() {
+		items, grantErr := s.ActiveSubscriptionModelGrants(ctx, key.TenantID, time.Now())
+		grantsResult <- grantResult{items: items, err: grantErr}
+	}()
+	var tenant Tenant
+	tenantErr := scoped(ctx, s.DB).First(&tenant, "id = ?", key.TenantID).Error
+	resolvedGrants := <-grantsResult
+	if tenantErr != nil {
+		return KeyContext{}, notFound(tenantErr)
+	}
+	if resolvedGrants.err != nil {
+		return KeyContext{}, resolvedGrants.err
 	}
 	return KeyContext{
 		APIKey: key, TenantName: tenant.Name, TenantEnabled: tenant.Enabled,
 		TenantBalance: tenant.BalanceNanoUSD, TenantRateLimit: tenant.RateLimitPerMinute,
 		TenantTokenLimit: tenant.TokenLimitDaily, TenantModels: tenant.ModelAllowlist,
-		SubscriptionModelGrants: grants,
+		SubscriptionModelGrants: resolvedGrants.items,
 		TenantExpiresAt:         tenant.ExpiresAt,
 	}, nil
 }

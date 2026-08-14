@@ -33,18 +33,21 @@ type requestMeta struct {
 	ServiceTier     string `json:"service_tier"`
 	ReasoningEffort string `json:"reasoning_effort"`
 	ImageCount      int    `json:"n"`
-	Reasoning       struct {
-		Effort string `json:"effort"`
-	} `json:"reasoning"`
-	RequestedModel string `json:"-"`
-	ModelAlias     string `json:"-"`
+	RequestedModel  string `json:"-"`
+	ModelAlias      string `json:"-"`
 }
 
 func readRequestMeta(body []byte, _ string) requestMeta {
-	var meta requestMeta
-	_ = json.Unmarshal(body, &meta)
+	values := gjson.GetManyBytes(body, "model", "stream", "service_tier", "reasoning_effort", "reasoning.effort", "n")
+	meta := requestMeta{
+		Model:           strings.TrimSpace(values[0].String()),
+		Stream:          values[1].Bool(),
+		ServiceTier:     strings.TrimSpace(values[2].String()),
+		ReasoningEffort: strings.TrimSpace(values[3].String()),
+		ImageCount:      int(values[5].Int()),
+	}
 	if meta.ReasoningEffort == "" {
-		meta.ReasoningEffort = meta.Reasoning.Effort
+		meta.ReasoningEffort = strings.TrimSpace(values[4].String())
 	}
 	return meta
 }
@@ -169,33 +172,17 @@ func releaseBufferedRequest(upstream *http.Request, response *http.Response) {
 }
 
 type rollingCapture struct {
-	mu     sync.Mutex
-	buf    []byte
-	detail []byte
-	max    int
-	total  int64
-}
-
-type flushingCaptureWriter struct {
-	response http.ResponseWriter
-	capture  io.Writer
-}
-
-func (w *flushingCaptureWriter) Write(payload []byte) (int, error) {
-	if len(payload) > 0 && w.capture != nil {
-		_, _ = w.capture.Write(payload)
-	}
-	n, err := w.response.Write(payload)
-	if flusher, ok := w.response.(http.Flusher); ok {
-		flusher.Flush()
-	}
-	return n, err
+	buf      []byte
+	detail   []byte
+	max      int
+	total    int64
+	bufStart int
+	bufFull  bool
 }
 
 func (c *rollingCapture) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.total += int64(len(p))
+	size := len(p)
+	c.total += int64(size)
 	if len(c.detail) < requestLogDetailLimit {
 		remaining := requestLogDetailLimit - len(c.detail)
 		if remaining > len(p) {
@@ -203,25 +190,48 @@ func (c *rollingCapture) Write(p []byte) (int, error) {
 		}
 		c.detail = append(c.detail, p[:remaining]...)
 	}
-	if len(p) >= c.max {
-		c.buf = append(c.buf[:0], p[len(p)-c.max:]...)
-	} else {
-		overflow := len(c.buf) + len(p) - c.max
-		if overflow > 0 {
-			c.buf = append(c.buf[:0], c.buf[overflow:]...)
-		}
-		c.buf = append(c.buf, p...)
+	if c.max <= 0 || len(p) == 0 {
+		return size, nil
 	}
-	return len(p), nil
+	if len(p) >= c.max {
+		if cap(c.buf) < c.max {
+			c.buf = make([]byte, c.max)
+		} else {
+			c.buf = c.buf[:c.max]
+		}
+		copy(c.buf, p[len(p)-c.max:])
+		c.bufStart = 0
+		c.bufFull = true
+		return size, nil
+	}
+	if !c.bufFull {
+		remaining := c.max - len(c.buf)
+		if len(p) <= remaining {
+			c.buf = append(c.buf, p...)
+			c.bufFull = len(c.buf) == c.max
+			return size, nil
+		}
+		c.buf = append(c.buf, p[:remaining]...)
+		p = p[remaining:]
+		c.bufFull = true
+		c.bufStart = 0
+	}
+	first := min(len(p), c.max-c.bufStart)
+	copy(c.buf[c.bufStart:], p[:first])
+	copy(c.buf, p[first:])
+	c.bufStart = (c.bufStart + len(p)) % c.max
+	return size, nil
 }
 func (c *rollingCapture) Bytes() []byte {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]byte(nil), c.buf...)
+	if !c.bufFull || c.bufStart == 0 {
+		return c.buf
+	}
+	result := make([]byte, len(c.buf))
+	at := copy(result, c.buf[c.bufStart:])
+	copy(result[at:], c.buf[:c.bufStart])
+	return result
 }
 func (c *rollingCapture) Info() ([]byte, bool, int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	return append([]byte(nil), c.detail...), c.total > int64(len(c.detail)), c.total
 }
 
@@ -235,6 +245,12 @@ type requestLogContext struct {
 	forwardedBytes  int64
 	responseBytes   int64
 	stageTimings    string
+	completedAt     time.Time
+}
+
+type priceLookupResult struct {
+	price store.ResolvedPrice
+	err   error
 }
 
 func rejectedRequestDetail(r *http.Request, body []byte, _ bool, code, message string, started time.Time, timeline ...*latencyTimeline) *store.LogDetailInput {
@@ -353,6 +369,24 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	modelResolvedAt := time.Now()
 	timeline.Step(modelResolvedAt, "model_resolution", "模型解析与权限", "relay", "解析别名、改写模型并检查 Key 模型权限")
+	var basePriceResult <-chan priceLookupResult
+	if billable {
+		result := make(chan priceLookupResult, 1)
+		basePriceResult = result
+		dimensions := pricing.Dimensions{
+			APIGroupKey: key.ID, Model: meta.Model, ServiceTier: meta.ServiceTier,
+			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+		}
+		// Daily-limit aggregation and price resolution are independent reads.
+		// Starting the price lookup here removes one database round trip from the
+		// critical path whenever a key also has a daily token limit.
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			price, lookupErr := a.store.ResolvePrice(r.Context(), dimensions)
+			result <- priceLookupResult{price: price, err: lookupErr}
+		}()
+	}
 	if err := a.enforceLimits(r.Context(), key); err != nil {
 		classified := userFacingError{Status: http.StatusInternalServerError, Code: "usage_limit_check_failed", Message: "暂时无法检查使用限制，请稍后重试", Retryable: true}
 		var limitErr *requestLimitError
@@ -370,11 +404,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	var price store.ResolvedPrice
 	var priceSnapshot []byte
 	priceConfigured := false
+	var deferredAdmissionPrice <-chan priceLookupResult
 	if billable {
-		price, err = a.store.ResolvePrice(r.Context(), pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, ServiceTier: meta.ServiceTier,
-			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-		})
+		lookup := <-basePriceResult
+		price, err = lookup.price, lookup.err
 		if err != nil {
 			if a.cfg.UnpricedModelPolicy == "deny" {
 				const message = "该模型尚未配置价格，请联系管理员完善计费配置"
@@ -414,20 +447,43 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
 			return
 		}
+		var admissionPriceResult chan priceLookupResult
 		if priceConfigured {
-			if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
+			logContext.price = &price
+			admissionPriceResult = make(chan priceLookupResult, 1)
+			priceContext, cancelPriceLookup := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+			dimensions := pricing.Dimensions{
 				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.UpstreamAuthIndex,
 				ServiceTier: meta.ServiceTier, ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-			}); resolveErr == nil {
-				price = resolved
-				resolvedSnapshot := store.EncodePriceSnapshot(price)
-				if !bytes.Equal(resolvedSnapshot, priceSnapshot) {
-					_ = a.store.UpdateReservationPriceSnapshot(r.Context(), requestID, resolvedSnapshot)
-					priceSnapshot = resolvedSnapshot
-				}
 			}
+			a.wg.Add(1)
+			go func() {
+				defer a.wg.Done()
+				defer cancelPriceLookup()
+				resolvedPrice, resolveErr := a.store.ResolvePrice(priceContext, dimensions)
+				if resolveErr == nil {
+					resolvedSnapshot := store.EncodePriceSnapshot(resolvedPrice)
+					if !bytes.Equal(resolvedSnapshot, priceSnapshot) {
+						_ = a.store.UpdateReservationPriceSnapshot(priceContext, requestID, resolvedSnapshot)
+					}
+				}
+				admissionPriceResult <- priceLookupResult{price: resolvedPrice, err: resolveErr}
+			}()
+		}
+		if admissionPriceResult != nil {
+			deferredAdmissionPrice = admissionPriceResult
+		}
+	}
+	if websocket && deferredAdmissionPrice != nil {
+		// WebSocket settlement spans multiple turns and receives its price at
+		// session construction, so it cannot defer this lookup to HTTP response
+		// finalization. HTTP streaming keeps the lookup off its first-byte path.
+		lookup := <-deferredAdmissionPrice
+		if lookup.err == nil {
+			price = lookup.price
 			logContext.price = &price
 		}
+		deferredAdmissionPrice = nil
 	}
 	admittedAt := time.Now()
 	timeline.Step(admittedAt, "billing_admission", "订阅准入与预留", "billing", "解析价格、选择订阅与凭据并预留余额或额度")
@@ -545,87 +601,100 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
 	}
 	responseReadAt := time.Now()
+	logContext.completedAt = responseReadAt
 	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
 		targetUpstream.RecordTransportResult(copyErr)
 	}
 
-	parsed := billing.ParseResponse(capture.Bytes())
-	if priceConfigured && parsed.ResponseServiceTier != "" {
-		if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.UpstreamAuthIndex,
-			ServiceTier: meta.ServiceTier, ResponseServiceTier: parsed.ResponseServiceTier,
-			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-		}); resolveErr == nil {
-			price = resolved
-			logContext.price = &price
-			_ = a.store.UpdateReservationPriceSnapshot(r.Context(), requestID, store.EncodePriceSnapshot(price))
+	finalizeCtx := context.WithoutCancel(r.Context())
+	upstreamStatus := response.StatusCode
+	upstreamHeaders := response.Header.Clone()
+	a.finalizeResponse(func() {
+		if deferredAdmissionPrice != nil {
+			lookup := <-deferredAdmissionPrice
+			if lookup.err == nil {
+				price = lookup.price
+				logContext.price = &price
+			}
 		}
-	}
-	actual := int64(0)
-	settled := !billable
-	var cost *int64
-	if billable && response.StatusCode < http.StatusBadRequest && parsed.Found && priceConfigured && billing.UsageComplete(price, parsed.Usage) {
-		actual = billing.Cost(price, parsed.Usage)
-		cost = &actual
-		if err := a.store.SettleRequestReservation(context.WithoutCancel(r.Context()), requestID, actual, true); err == nil {
+		parsed := billing.ParseResponse(capture.Bytes())
+		if priceConfigured && parsed.ResponseServiceTier != "" {
+			if resolved, resolveErr := a.store.ResolvePrice(finalizeCtx, pricing.Dimensions{
+				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.UpstreamAuthIndex,
+				ServiceTier: meta.ServiceTier, ResponseServiceTier: parsed.ResponseServiceTier,
+				ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+			}); resolveErr == nil {
+				price = resolved
+				logContext.price = &price
+				_ = a.store.UpdateReservationPriceSnapshot(finalizeCtx, requestID, store.EncodePriceSnapshot(price))
+			}
+		}
+		actual := int64(0)
+		settled := !billable
+		var cost *int64
+		if billable && upstreamStatus < http.StatusBadRequest && parsed.Found && priceConfigured && billing.UsageComplete(price, parsed.Usage) {
+			actual = billing.Cost(price, parsed.Usage)
+			cost = &actual
+			if err := a.store.SettleRequestReservation(finalizeCtx, requestID, actual, true); err == nil {
+				settled = true
+			} else {
+				slog.Error("settle request", "request_id", requestID, "error", err)
+			}
+		} else if billable && upstreamStatus < http.StatusBadRequest {
+			// Missing usage must not become free parent capacity. Conservatively
+			// settle the reservation and keep pricing_complete=false for reconciliation.
+			actual = max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
+			if err := a.store.SettleRequestReservation(finalizeCtx, requestID, actual, false); err == nil {
+				settled = true
+			} else {
+				slog.Error("settle incomplete request", "request_id", requestID, "error", err)
+			}
+		} else if billable {
+			a.releaseReservation(requestID, true)
 			settled = true
-		} else {
-			slog.Error("settle request", "request_id", requestID, "error", err)
 		}
-	} else if billable && response.StatusCode < http.StatusBadRequest {
-		// Missing usage must not become free parent capacity. Conservatively
-		// settle the reservation and keep pricing_complete=false for reconciliation.
-		actual = max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
-		if err := a.store.SettleRequestReservation(context.WithoutCancel(r.Context()), requestID, actual, false); err == nil {
-			settled = true
-		} else {
-			slog.Error("settle incomplete request", "request_id", requestID, "error", err)
+		errorMessage := ""
+		if copyErr != nil && normalizedError == nil {
+			errorMessage = copyErr.Error()
+			logContext.errorCode = "stream_copy_error"
 		}
-	} else if billable {
-		a.releaseReservation(requestID, true)
-		settled = true
-	}
-	errorMessage := ""
-	if copyErr != nil && normalizedError == nil {
-		errorMessage = copyErr.Error()
-		logContext.errorCode = "stream_copy_error"
-	}
-	rawResponse, responseTruncated, responseBytes := capture.Info()
-	logContext.upstreamTraceID = strings.TrimSpace(response.Header.Get("X-Upstream-TRACE-ID"))
-	logContext.detail.UpstreamStatus = response.StatusCode
-	logContext.detail.UpstreamHeaders = sanitizedHeaders(response.Header)
-	logContext.detail.UpstreamBody, _, _ = boundedDetail(rawResponse)
-	logContext.detail.UpstreamBodyTruncated = responseTruncated || responseBytes > requestLogDetailLimit
-	logContext.detail.UpstreamBodyBytes = responseBytes
-	logContext.responseBytes = responseBytes
-	if !firstByteAt.IsZero() {
-		ttft := firstByteAt.Sub(started).Milliseconds()
-		logContext.ttftMS = &ttft
-		timeline.Step(firstByteAt, "upstream_first_body", "等待首个响应数据", "upstream", "Upstream 已返回响应头，继续等待首个响应正文数据")
-		timeline.Mark(firstByteAt, "first_byte", "首字节")
-	}
-	timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 上游响应并持续写回客户端")
-	if normalizedError != nil {
-		logContext.errorCode = normalizedError.Code
-		logContext.detail.ErrorName = logContext.errorCode
-		logContext.detail.ErrorMessage = normalizedError.Message
-		errorMessage = normalizedError.Message
-	} else if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
-		logContext.errorCode = "upstream_http_error"
-		logContext.detail.ErrorName = logContext.errorCode
-		errorMessage = upstreamErrorMessage(response.StatusCode, rawResponse)
-	}
-	if copyErr != nil && normalizedError == nil {
-		logContext.detail.ErrorName = "stream_copy_error"
-		logContext.detail.ErrorMessage = copyErr.Error()
-	}
-	completed := time.Now()
-	timeline.Step(completed, "usage_and_settlement", "用量解析与结算", "billing", "解析 usage、计算费用并结算请求预留")
-	timeline.Mark(completed, "complete", "请求完成")
-	logContext.detail.StageTimings = timeline.JSON(completed)
-	logContext.stageTimings = logContext.detail.StageTimings
-	a.writeRequestLog(key, requestID, admission, meta, r, clientStatus, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
-	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
+		rawResponse, responseTruncated, responseBytes := capture.Info()
+		logContext.upstreamTraceID = strings.TrimSpace(upstreamHeaders.Get("X-Upstream-TRACE-ID"))
+		logContext.detail.UpstreamStatus = upstreamStatus
+		logContext.detail.UpstreamHeaders = sanitizedHeaders(upstreamHeaders)
+		logContext.detail.UpstreamBody, _, _ = boundedDetail(rawResponse)
+		logContext.detail.UpstreamBodyTruncated = responseTruncated || responseBytes > requestLogDetailLimit
+		logContext.detail.UpstreamBodyBytes = responseBytes
+		logContext.responseBytes = responseBytes
+		if !firstByteAt.IsZero() {
+			ttft := firstByteAt.Sub(started).Milliseconds()
+			logContext.ttftMS = &ttft
+			timeline.Step(firstByteAt, "upstream_first_body", "等待首个响应数据", "upstream", "Upstream 已返回响应头，继续等待首个响应正文数据")
+			timeline.Mark(firstByteAt, "first_byte", "首字节")
+		}
+		timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 上游响应并持续写回客户端")
+		if normalizedError != nil {
+			logContext.errorCode = normalizedError.Code
+			logContext.detail.ErrorName = logContext.errorCode
+			logContext.detail.ErrorMessage = normalizedError.Message
+			errorMessage = normalizedError.Message
+		} else if upstreamStatus >= http.StatusBadRequest && logContext.errorCode == "" {
+			logContext.errorCode = "upstream_http_error"
+			logContext.detail.ErrorName = logContext.errorCode
+			errorMessage = upstreamErrorMessage(upstreamStatus, rawResponse)
+		}
+		if copyErr != nil && normalizedError == nil {
+			logContext.detail.ErrorName = "stream_copy_error"
+			logContext.detail.ErrorMessage = copyErr.Error()
+		}
+		// Settlement and durable logging now run after the response boundary and
+		// must not inflate the latency reported to users.
+		timeline.Mark(responseReadAt, "complete", "响应完成")
+		logContext.detail.StageTimings = timeline.JSON(responseReadAt)
+		logContext.stageTimings = logContext.detail.StageTimings
+		a.writeRequestLog(key, requestID, admission, meta, r, clientStatus, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
+		a.store.TouchKey(finalizeCtx, key.ID)
+	})
 }
 
 func isCodexResponsesPath(path string) bool {
@@ -659,6 +728,35 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 	}
 }
 
+func (a *App) finalizeResponse(task func()) {
+	if task == nil {
+		return
+	}
+	if a.finalizationSlots == nil {
+		task()
+		return
+	}
+	select {
+	case a.finalizationSlots <- struct{}{}:
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			defer func() {
+				<-a.finalizationSlots
+				if value := recover(); value != nil {
+					slog.Error("finalize response panic", "value", value)
+				}
+			}()
+			task()
+		}()
+	default:
+		// A saturated finalizer means the database is already behind. Preserve
+		// accounting correctness and apply backpressure instead of creating an
+		// unbounded goroutine queue.
+		task()
+	}
+}
+
 func requestLogInput(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
 	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) store.LogInput {
 	client := identifyClientUserAgent(r.UserAgent())
@@ -684,6 +782,10 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 			logContext.responseBytes = detail.UpstreamBodyBytes
 		}
 	}
+	completedAt := logContext.completedAt
+	if completedAt.IsZero() {
+		completedAt = time.Now()
+	}
 	return store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, UpstreamRequestID: upstreamID, Model: meta.Model,
 		UpstreamTraceID: logContext.upstreamTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
@@ -694,11 +796,11 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		ChildSubscriptionID: admission.ChildSubscriptionID,
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
 		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
-		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: time.Since(started).Milliseconds(),
+		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: completedAt.Sub(started).Milliseconds(),
 		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
 		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
 		StageTimings: logContext.stageTimings,
-		StartedAt:    started, CompletedAt: time.Now(), Detail: detail,
+		StartedAt:    started, CompletedAt: completedAt, Detail: detail,
 	}
 }
 
@@ -709,8 +811,13 @@ func parsedResponseServiceTier(parsed *billing.Result) string {
 	return parsed.ResponseServiceTier
 }
 
+var streamCopyBuffers = sync.Pool{
+	New: func() any { return make([]byte, 32<<10) },
+}
+
 func copyStreaming(w http.ResponseWriter, source io.Reader, onFirstByte func()) error {
-	buffer := make([]byte, 32<<10)
+	buffer := streamCopyBuffers.Get().([]byte)
+	defer streamCopyBuffers.Put(buffer)
 	flusher, _ := w.(http.Flusher)
 	for {
 		n, err := source.Read(buffer)

@@ -23,6 +23,13 @@ func ValidateProxyURL(raw string) error {
 func OutboundHTTPClient(rawProxy string, timeout time.Duration) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	// Each credential owns a transport. Keep enough warm sockets per provider
+	// to avoid putting DNS, TCP and TLS handshakes back on the request hot path
+	// during ordinary bursts. Responses are latency-sensitive SSE, so ask
+	// providers for identity encoding rather than risking compression buffering.
+	transport.MaxIdleConns = 32
+	transport.MaxIdleConnsPerHost = 16
+	transport.DisableCompression = true
 	parsed, err := parseProxyURL(rawProxy)
 	if err != nil {
 		return nil, err

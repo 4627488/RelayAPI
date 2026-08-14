@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/egress"
+	"github.com/tidwall/gjson"
 )
 
 const maxProviderResponseBytes = 256 << 20
@@ -630,18 +631,26 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
-	if response.StatusCode >= 400 || (responseMode == "passthrough" && toolRestorer == nil) {
-		_, _ = io.Copy(w, response.Body)
-		return
-	}
-	if jsonBool(body, "stream") {
+	stream := jsonBool(body, "stream")
+	streamWriter := io.Writer(w)
+	if stream && response.StatusCode < http.StatusBadRequest {
+		// net/http buffers small writes. Provider SSE events are often only a few
+		// hundred bytes, so a plain io.Copy can otherwise hold several events
+		// before the outer relay (and therefore the client) sees anything.
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
+			streamWriter = immediateFlushWriter{Writer: w, Flusher: flusher}
 		}
+	}
+	if response.StatusCode >= 400 || (responseMode == "passthrough" && toolRestorer == nil) {
+		_, _ = io.Copy(streamWriter, response.Body)
+		return
+	}
+	if stream {
 		if toolRestorer != nil && responseMode == "passthrough" {
-			_ = restoreToolStream(w, response.Body, toolRestorer)
+			_ = restoreToolStream(streamWriter, response.Body, toolRestorer)
 		} else {
-			_ = translateStream(w, response.Body, responseMode, model)
+			_ = translateStream(streamWriter, response.Body, responseMode, model)
 		}
 		return
 	}
@@ -657,6 +666,19 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		payload = responsesToChatResponse(payload, model)
 	}
 	_, _ = w.Write(payload)
+}
+
+type immediateFlushWriter struct {
+	io.Writer
+	Flusher http.Flusher
+}
+
+func (w immediateFlushWriter) Write(payload []byte) (int, error) {
+	written, err := w.Writer.Write(payload)
+	if written > 0 {
+		w.Flusher.Flush()
+	}
+	return written, err
 }
 
 func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nativeCredential, target string, body []byte) (*http.Response, error) {
@@ -893,7 +915,7 @@ func copyProviderHeaders(destination, source http.Header) {
 		}
 		switch lower {
 		case "authorization", "x-api-key", "x-goog-api-key", "host", "content-length", "connection", "upgrade",
-			"origin", "x-relay-upstream-credential-id":
+			"origin", "accept-encoding", "x-relay-upstream-credential-id":
 			continue
 		}
 		for _, value := range values {
@@ -931,17 +953,11 @@ func firstNonEmpty(values ...string) string {
 }
 
 func jsonString(payload []byte, key string) string {
-	var root map[string]any
-	_ = json.Unmarshal(payload, &root)
-	value, _ := root[key].(string)
-	return strings.TrimSpace(value)
+	return strings.TrimSpace(gjson.GetBytes(payload, key).String())
 }
 
 func jsonBool(payload []byte, key string) bool {
-	var root map[string]any
-	_ = json.Unmarshal(payload, &root)
-	value, _ := root[key].(bool)
-	return value
+	return gjson.GetBytes(payload, key).Bool()
 }
 
 func rewriteJSONModel(payload []byte, model string) []byte {
