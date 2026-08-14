@@ -153,10 +153,10 @@ func (a *App) classifyUpstreamError(status int, payload []byte, admission store.
 }
 
 func (a *App) runtimeCredentialError(admission store.Admission, upstreamStatus int) *userFacingError {
-	if a == nil || a.nativeCPARuntime == nil || strings.TrimSpace(admission.CPAAuthID) == "" {
+	if a == nil || a.nativeRuntime == nil || strings.TrimSpace(admission.CPAAuthID) == "" {
 		return nil
 	}
-	status, ok := a.nativeCPARuntime.CredentialStatus(admission.CPAAuthID)
+	status, ok := a.nativeRuntime.CredentialStatus(admission.CPAAuthID)
 	if !ok {
 		value := userFacingError{Status: http.StatusServiceUnavailable, Code: "model_account_unavailable", Message: "当前订阅绑定的模型账户已不存在，请联系管理员重新配置", Retryable: true, UpstreamStatus: upstreamStatus}
 		return &value

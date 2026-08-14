@@ -19,7 +19,7 @@ import (
 const agentSetupTTL = 5 * time.Minute
 const agentSetupAssociatedData = "relayapi/agent-setup/v1"
 
-var supportedSetupAgents = []string{"codex", "claude", "opencode"}
+var supportedSetupAgents = []string{"codex", "opencode"}
 var supportedReasoningEfforts = []string{"minimal", "low", "medium", "high", "xhigh"}
 
 //go:embed setup_templates/setup.sh

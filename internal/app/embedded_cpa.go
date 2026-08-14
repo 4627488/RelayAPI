@@ -14,7 +14,7 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/store"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error {
@@ -70,7 +70,7 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 		return fmt.Errorf("generate embedded CPA key: %w", err)
 	}
 	secret := hex.EncodeToString(secretBytes)
-	runtime, err := relaybridge.NewRuntime(relaybridge.Options{
+	runtime, err := upstream.NewCompatibilityRuntime(upstream.Options{
 		APIKey: secret, RequestRetry: settings.RequestRetry, MaxRetryCredentials: settings.MaxRetryCredentials,
 		MaxRetryInterval: time.Duration(settings.MaxRetryInterval) * time.Second, RoutingStrategy: settings.RoutingStrategy,
 		ProxyURL: firstNonEmptyString(systemProxyURL, "direct"), PassthroughHeaders: settings.PassthroughHeaders,
@@ -113,7 +113,7 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 		return err
 	}
 	a.nativeCPA = client
-	a.nativeCPARuntime = runtime
+	a.nativeRuntime = runtime
 	a.nativeCPAServer = server
 	a.wg.Add(1)
 	go func() {
@@ -126,9 +126,9 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 	return nil
 }
 
-func bridgeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSockets bool, proxyURLs map[string]string) []relaybridge.Credential {
+func bridgeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSockets bool, proxyURLs map[string]string) []upstream.Credential {
 	now := time.Now()
-	credentials := make([]relaybridge.Credential, 0, len(rows))
+	credentials := make([]upstream.Credential, 0, len(rows))
 	for _, row := range rows {
 		enabled := row.Enabled && (row.ExpiresAt == nil || row.ExpiresAt.After(now))
 		document := append([]byte(nil), row.Document...)
@@ -157,7 +157,7 @@ func bridgeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSocke
 				}
 			}
 		}
-		credentials = append(credentials, relaybridge.Credential{ID: row.ID, Label: row.Name, Provider: row.Provider, Enabled: enabled, Models: append([]string(nil), row.Models...), Document: document})
+		credentials = append(credentials, upstream.Credential{ID: row.ID, Label: row.Name, Provider: row.Provider, Enabled: enabled, Models: append([]string(nil), row.Models...), Document: document})
 	}
 	return credentials
 }
@@ -167,14 +167,14 @@ func (a *App) reloadNativeCredentials(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if a.nativeCPARuntime == nil {
+	if a.nativeRuntime == nil {
 		return fmt.Errorf("native CPA runtime is not available")
 	}
 	proxyURLs, err := a.proxyURLs(ctx)
 	if err != nil {
 		return err
 	}
-	return a.nativeCPARuntime.ReplaceCredentials(ctx, bridgeCredentials(rows, a.cfg.UpstreamWebSockets, proxyURLs))
+	return a.nativeRuntime.ReplaceCredentials(ctx, bridgeCredentials(rows, a.cfg.UpstreamWebSockets, proxyURLs))
 }
 
 func (a *App) persistEmbeddedCredential(ctx context.Context, id string, document []byte) error {

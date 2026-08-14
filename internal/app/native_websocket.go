@@ -295,8 +295,8 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		accounting.price = price
 		accounting.billable = true
 	}
-	if a.nativeCPARuntime != nil {
-		upstreamModel := a.nativeCPARuntime.ResolveCredentialModel(accounting.admission.CPAAuthID, meta.Model)
+	if a.nativeRuntime != nil {
+		upstreamModel := a.nativeRuntime.ResolveCredentialModel(accounting.admission.CPAAuthID, meta.Model)
 		if upstreamModel != "" && upstreamModel != frameMeta.Model {
 			firstFrame, err = rewriteRequestModel(firstFrame, r.URL, frameMeta.Model, upstreamModel)
 			if err != nil {
@@ -566,8 +566,8 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, requestURL *url.URL,
 	}
 	nextMeta.Stream = true
 	forwarded := payload
-	if frameMeta.Model != "" && a.nativeCPARuntime != nil {
-		upstreamModel := a.nativeCPARuntime.ResolveCredentialModel(accounting.admission.CPAAuthID, nextMeta.Model)
+	if frameMeta.Model != "" && a.nativeRuntime != nil {
+		upstreamModel := a.nativeRuntime.ResolveCredentialModel(accounting.admission.CPAAuthID, nextMeta.Model)
 		if upstreamModel != "" && upstreamModel != frameMeta.Model {
 			requestCopy := url.URL{}
 			if requestURL != nil {

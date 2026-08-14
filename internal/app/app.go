@@ -24,7 +24,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 type App struct {
@@ -36,7 +36,7 @@ type App struct {
 	pricingSyncMu     sync.Mutex
 	setupBox          identity.SecretBox
 	nativeCPA         *cpa.Client
-	nativeCPARuntime  *relaybridge.Runtime
+	nativeRuntime     upstream.Runtime
 	nativeCPAServer   *http.Server
 	nativeCPAServeErr atomic.Value
 	providerOAuth     providerOAuthSessions
@@ -93,8 +93,8 @@ func (a *App) Close() {
 		_ = a.nativeCPAServer.Shutdown(ctx)
 		cancel()
 	}
-	if a.nativeCPARuntime != nil {
-		_ = a.nativeCPARuntime.Close(context.Background())
+	if a.nativeRuntime != nil {
+		_ = a.nativeRuntime.Close(context.Background())
 	}
 	if a.stop != nil {
 		close(a.stop)
@@ -174,7 +174,7 @@ func (a *App) reclaimExecutorMemory(reason string, heapAlloc uint64) {
 		return
 	}
 	defer a.memoryReclaiming.Store(false)
-	relaybridge.ClearReasoningCaches()
+	upstream.ClearCompatibilityCaches()
 	debug.FreeOSMemory()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
@@ -373,7 +373,7 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	var cpaErr error
 	activeSubscriptions, subscriptionErr := a.store.HasActiveChildSubscriptions(ctx, time.Now())
 	var credentialErr error
-	if a.nativeCPARuntime == nil || a.nativeCPARuntime.CredentialCount() == 0 {
+	if a.nativeRuntime == nil || a.nativeRuntime.CredentialCount() == 0 {
 		credentialErr = errors.New("no enabled upstream credentials")
 	}
 	if serveErr := a.nativeCPAServeErr.Load(); serveErr != nil {

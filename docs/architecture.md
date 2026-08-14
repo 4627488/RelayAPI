@@ -2,10 +2,12 @@
 
 ## Goal
 
-RelayAPI is a multi-tenant policy and accounting gateway in front of
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). CLIProxyAPI owns
-provider credentials, protocol translation, model aliases, retries, and
-provider selection. RelayAPI must not contain a provider/model registry.
+RelayAPI is a Codex-first, multi-tenant policy and accounting gateway. Provider
+execution is isolated behind `internal/upstream.Runtime`; policy, billing and
+HTTP code must not import executor registries or provider implementation types.
+The current compatibility implementation adapts selected
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) behavior behind that
+boundary while focused native adapters replace it provider by provider.
 
 The backend also owns the product-facing user lifecycle: first-user setup,
 single-use invitations, invited registration, user sessions, user-created API
@@ -17,25 +19,27 @@ assets.
 ## Request flow
 
 ```text
-OpenAI / Anthropic / Gemini client
+       Codex / OpenAI client
               |
               v
  RelayAPI: tenant key -> policy -> optional balance reservation
               |
               v
- embedded CPA: protocol adapter -> model/alias router -> provider credential
+ upstream runtime: adapter -> model router -> provider credential
               |
               v
  RelayAPI: usage parser -> settlement -> audit log
 ```
 
-RelayAPI forwards the public inference surfaces without translating payloads:
+RelayAPI deliberately exposes a focused inference surface:
 
-- OpenAI-compatible `/v1/*`, including chat, responses, images and models
-- Anthropic Messages API on `/v1/messages`
-- Gemini native API on `/v1beta/*`
-- compatibility paths used by Codex and other CLI clients (`/backend-api/*`,
-  `/openai/v1/*`)
+- Responses, Chat Completions, images, videos and models under `/v1/*`
+- Codex compatibility paths under `/backend-api/codex/*` and `/openai/v1/*`
+- Responses WebSocket transport for Codex and xAI routes
+
+Anthropic Messages and Gemini-native `/v1beta/*` are intentionally rejected.
+This keeps the product contract aligned with its Codex-first provider set:
+Codex, xAI, Kimi and OpenAI-compatible endpoints such as Aliyun Bailian.
 
 The caller's Relay key is replaced with the private CLIProxyAPI API key. Query
 strings, request bodies, status codes, SSE events, and end-to-end headers are

@@ -2,10 +2,12 @@ package app
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/4627488/RelayAPI/internal/store"
@@ -18,11 +20,11 @@ func isNativeModelCatalogRequest(r *http.Request) bool {
 		return false
 	}
 	path := strings.TrimRight(r.URL.Path, "/")
-	return path == "/v1/models" || path == "/v1beta/models"
+	return path == "/v1/models"
 }
 
-// proxyNativeModels preserves CPA's client-specific OpenAI, Anthropic, Codex,
-// Grok and Gemini catalog formats, then applies Relay's tenant allowlist.
+// proxyNativeModels preserves the standard OpenAI and rich Codex catalog
+// formats, then applies Relay's tenant and key policy.
 func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key store.KeyContext) {
 	targetCPA := a.inferenceCPA()
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetCPA.URL(r.URL.RequestURI()), nil)
@@ -46,24 +48,37 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 		writeError(w, http.StatusBadGateway, "model_catalog_error", "无法读取模型列表")
 		return
 	}
+	runtimeModels := []string(nil)
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		models := []string(nil)
-		if a.nativeCPARuntime != nil {
-			models = a.nativeCPARuntime.Models()
+		if a.nativeRuntime != nil {
+			runtimeModels = a.nativeRuntime.Models()
 		}
-		allowedModels := make([]string, 0, len(models))
-		for _, model := range models {
+		allowedModels := make([]string, 0, len(runtimeModels))
+		for _, model := range runtimeModels {
 			if key.AllowsModel(model) {
 				allowedModels = append(allowedModels, model)
 			}
 		}
-		if filtered, filterErr := filterModelCatalog(payload, allowedModels); filterErr == nil {
+		_, codexCatalog := r.URL.Query()["client_version"]
+		if filtered, filterErr := filterModelCatalogForClient(payload, allowedModels, codexCatalog); filterErr == nil {
 			payload = filtered
 		} else {
 			writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("模型列表格式无效: %v", filterErr))
 			return
 		}
-		if _, codexCatalog := r.URL.Query()["client_version"]; codexCatalog {
+		if codexCatalog {
+			if normalized, normalizeErr := normalizeCodexCatalogCapabilities(payload, func(model string) string {
+				if a.nativeRuntime == nil {
+					return ""
+				}
+				provider, _ := a.nativeRuntime.ModelProvider(model)
+				return provider
+			}); normalizeErr == nil {
+				payload = normalized
+			} else {
+				writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型能力无效: %v", normalizeErr))
+				return
+			}
 			if expanded, expandErr := addCodexModelAliases(payload, key.ModelAliases); expandErr == nil {
 				payload = expanded
 			} else {
@@ -75,11 +90,67 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Type", "application/json")
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		etag := modelCatalogRevision(key, runtimeModels, "")
+		w.Header().Set("ETag", etag)
+		if etagMatches(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, bytes.NewReader(payload))
 }
 
+// normalizeCodexCatalogCapabilities removes capabilities that CPA's generic
+// GPT-derived model template cannot prove for translated Chat Completions
+// providers. A false negative only hides an optimization; a false positive can
+// make Codex send a tool dialect the upstream silently drops.
+func normalizeCodexCatalogCapabilities(payload []byte, providerForModel func(string) string) ([]byte, error) {
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		return nil, err
+	}
+	items, ok := document["models"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("missing models array")
+	}
+	for _, raw := range items {
+		item, itemOK := raw.(map[string]any)
+		if !itemOK {
+			continue
+		}
+		provider := ""
+		if providerForModel != nil {
+			provider = strings.ToLower(strings.TrimSpace(providerForModel(catalogModelID(item))))
+		}
+		switch provider {
+		case "kimi", "openai", "openai-compatibility":
+			delete(item, "apply_patch_tool_type")
+			delete(item, "web_search_tool_type")
+			delete(item, "multi_agent_version")
+			delete(item, "experimental_supported_tools")
+			item["supports_parallel_tool_calls"] = false
+			item["supports_search_tool"] = false
+			item["support_verbosity"] = false
+			item["supports_reasoning_summary_parameter"] = false
+			item["prefer_websockets"] = false
+		}
+	}
+	return json.Marshal(document)
+}
+
 func filterModelCatalog(payload []byte, allowedModels []string) ([]byte, error) {
+	return filterModelCatalogForClient(payload, allowedModels, false)
+}
+
+// filterModelCatalogForClient treats Codex catalogs differently from the
+// standard OpenAI catalog. Codex merges a custom provider's catalog with its
+// bundled models by slug. Removing a denied model is therefore insufficient:
+// the bundled copy can reappear in the picker. Keeping the entry as a hidden
+// override makes the remote policy authoritative while inference permission
+// checks remain the security boundary.
+func filterModelCatalogForClient(payload []byte, allowedModels []string, codex bool) ([]byte, error) {
 	var document map[string]any
 	if err := json.Unmarshal(payload, &document); err != nil {
 		return nil, err
@@ -92,9 +163,6 @@ func filterModelCatalog(payload []byte, allowedModels []string) ([]byte, error) 
 		}
 		allowedSet[strings.ToLower(model)] = struct{}{}
 		allowedSet[strings.ToLower("models/"+model)] = struct{}{}
-		if !strings.HasPrefix(strings.ToLower(model), "claude-") {
-			allowedSet[strings.ToLower("claude-fable-5-dd-"+reverseString(model))] = struct{}{}
-		}
 	}
 	for _, key := range []string{"data", "models"} {
 		items, ok := document[key].([]any)
@@ -110,6 +178,10 @@ func filterModelCatalog(payload []byte, allowedModels []string) ([]byte, error) 
 			id := catalogModelID(item)
 			if _, exists := allowedSet[strings.ToLower(id)]; exists {
 				filtered = append(filtered, raw)
+			} else if codex && key == "models" {
+				hidden := cloneCatalogItem(item)
+				hidden["visibility"] = "hide"
+				filtered = append(filtered, hidden)
 			}
 		}
 		document[key] = filtered
@@ -131,6 +203,64 @@ func filterModelCatalog(payload []byte, allowedModels []string) ([]byte, error) 
 		}
 	}
 	return json.Marshal(document)
+}
+
+func cloneCatalogItem(item map[string]any) map[string]any {
+	cloned := make(map[string]any, len(item))
+	for key, value := range item {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func modelCatalogETag(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return fmt.Sprintf("\"relay-models-%x\"", sum[:16])
+}
+
+func etagMatches(header, current string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.TrimPrefix(candidate, "W/")
+		if candidate == "*" || candidate == current {
+			return true
+		}
+	}
+	return false
+}
+
+// modelCatalogRevision identifies the effective catalog visible to one API
+// key without embedding secrets. It is used on Responses calls so Codex can
+// refresh its picker immediately after a permission, alias, or upstream
+// catalog change.
+func modelCatalogRevision(key store.KeyContext, models []string, upstreamETag string) string {
+	type alias struct {
+		Name  string `json:"name"`
+		Model string `json:"model"`
+	}
+	visible := make([]string, 0, len(models))
+	for _, model := range models {
+		if key.AllowsModel(model) {
+			visible = append(visible, strings.ToLower(strings.TrimSpace(model)))
+		}
+	}
+	sort.Strings(visible)
+	aliases := make([]alias, 0, len(key.ModelAliases))
+	for _, item := range key.ModelAliases {
+		aliases = append(aliases, alias{Name: strings.ToLower(strings.TrimSpace(item.Alias)), Model: strings.ToLower(strings.TrimSpace(item.Model))})
+	}
+	sort.Slice(aliases, func(left, right int) bool {
+		if aliases[left].Name == aliases[right].Name {
+			return aliases[left].Model < aliases[right].Model
+		}
+		return aliases[left].Name < aliases[right].Name
+	})
+	payload, _ := json.Marshal(struct {
+		Models       []string `json:"models"`
+		Aliases      []alias  `json:"aliases"`
+		UpstreamETag string   `json:"upstream_etag"`
+	}{Models: visible, Aliases: aliases, UpstreamETag: strings.TrimSpace(upstreamETag)})
+	return modelCatalogETag(payload)
 }
 
 func catalogModelID(item map[string]any) string {
@@ -181,10 +311,7 @@ func addCodexModelAliases(payload []byte, aliases []store.APIKeyModelAlias) ([]b
 		if target == nil {
 			continue
 		}
-		cloned := make(map[string]any, len(target)+1)
-		for key, value := range target {
-			cloned[key] = value
-		}
+		cloned := cloneCatalogItem(target)
 		cloned["slug"] = alias
 		cloned["display_name"] = alias
 		cloned["description"] = fmt.Sprintf("RelayAPI 模型别名，映射到 %s", targetID)
@@ -198,12 +325,4 @@ func addCodexModelAliases(payload []byte, aliases []store.APIKeyModelAlias) ([]b
 	}
 	document["models"] = items
 	return json.Marshal(document)
-}
-
-func reverseString(value string) string {
-	runes := []rune(value)
-	for left, right := 0, len(runes)-1; left < right; left, right = left+1, right-1 {
-		runes[left], runes[right] = runes[right], runes[left]
-	}
-	return string(runes)
 }

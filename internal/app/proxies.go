@@ -119,12 +119,12 @@ func (a *App) adminProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "proxy_update_failed", boundedErrorText(err.Error()))
 		return
 	}
-	if a.nativeCPARuntime != nil {
+	if a.nativeRuntime != nil {
 		a.nativeSettings.RLock()
 		settings := a.nativeSettings.value
 		a.nativeSettings.RUnlock()
 		if settings.SystemProxyID == id {
-			err = a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(settings, item.URL))
+			err = a.nativeRuntime.ApplySettings(r.Context(), runtimeBridgeSettings(settings, item.URL))
 		}
 		if err == nil {
 			err = a.reloadNativeCredentials(r.Context())
@@ -132,7 +132,7 @@ func (a *App) adminProxy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			_, _ = a.store.UpdateOutboundProxy(r.Context(), current.ID, current.Name, current.URL)
 			if settings.SystemProxyID == id {
-				_ = a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(settings, current.URL))
+				_ = a.nativeRuntime.ApplySettings(r.Context(), runtimeBridgeSettings(settings, current.URL))
 			}
 			_ = a.reloadNativeCredentials(r.Context())
 			writeError(w, http.StatusBadGateway, "proxy_reload_failed", err.Error())

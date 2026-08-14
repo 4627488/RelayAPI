@@ -145,8 +145,6 @@ func (s *providerOAuthSessions) removeByID(id string) {
 
 func normalizedOAuthProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "anthropic", "claude":
-		return "claude"
 	case "openai", "codex":
 		return "codex"
 	case "grok", "x.ai", "xai":
@@ -158,7 +156,7 @@ func normalizedOAuthProvider(provider string) string {
 
 func supportsProviderOAuth(provider string) bool {
 	switch normalizedOAuthProvider(provider) {
-	case "codex", "claude", "antigravity", "kimi", "xai":
+	case "codex", "kimi", "xai":
 		return true
 	default:
 		return false
@@ -182,7 +180,7 @@ func (a *App) adminProviderOAuthStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "oauth_unsupported", "该提供商暂不支持 OAuth 连接")
 		return
 	}
-	if a.nativeCPARuntime == nil {
+	if a.nativeRuntime == nil {
 		writeError(w, http.StatusServiceUnavailable, "oauth_unavailable", "OAuth 连接服务暂不可用")
 		return
 	}
@@ -209,7 +207,7 @@ func (a *App) adminProviderOAuthStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	session := a.providerOAuth.create(provider, credentialID)
-	result, err := a.nativeCPARuntime.StartOAuth(r.Context(), provider, session.ID)
+	result, err := a.nativeRuntime.StartOAuth(r.Context(), provider, session.ID)
 	if err != nil {
 		a.providerOAuth.removeByID(session.ID)
 		writeError(w, http.StatusBadGateway, "oauth_start_failed", err.Error())
@@ -245,7 +243,7 @@ func (a *App) adminProviderOAuthStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
-	status, err := a.nativeCPARuntime.OAuthStatus(r.Context(), state)
+	status, err := a.nativeRuntime.OAuthStatus(r.Context(), state)
 	if err != nil {
 		a.providerOAuth.setError(state, err.Error())
 		writeJSON(w, http.StatusOK, map[string]any{"status": "error", "error": err.Error()})
@@ -278,7 +276,7 @@ func (a *App) adminProviderOAuthCallback(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "validation_error", "请粘贴授权完成后的回调地址")
 		return
 	}
-	if err := a.nativeCPARuntime.SubmitOAuthCallback(r.Context(), session.Provider, state, strings.TrimSpace(input.RedirectURL)); err != nil {
+	if err := a.nativeRuntime.SubmitOAuthCallback(r.Context(), session.Provider, state, strings.TrimSpace(input.RedirectURL)); err != nil {
 		writeError(w, http.StatusBadRequest, "oauth_callback_failed", err.Error())
 		return
 	}
@@ -424,8 +422,8 @@ func (a *App) adminProviderOAuthCancel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "oauth_session_not_found", "授权会话不存在或已过期")
 		return
 	}
-	if a.nativeCPARuntime != nil {
-		_ = a.nativeCPARuntime.CancelOAuth(r.Context(), state)
+	if a.nativeRuntime != nil {
+		_ = a.nativeRuntime.CancelOAuth(r.Context(), state)
 	}
 	a.providerOAuth.remove(state)
 	w.WriteHeader(http.StatusNoContent)

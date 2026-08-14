@@ -7,11 +7,10 @@ import (
 	"testing"
 
 	"github.com/4627488/RelayAPI/internal/store"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 func TestFilterModelCatalogPreservesEnvelopeFormats(t *testing.T) {
-	claudeCloaked := "claude-fable-5-dd-" + reverseString("public-model")
 	tests := []struct {
 		name    string
 		payload string
@@ -19,7 +18,6 @@ func TestFilterModelCatalogPreservesEnvelopeFormats(t *testing.T) {
 		wantID  string
 	}{
 		{"openai", `{"object":"list","data":[{"id":"public-model"},{"id":"private-model"}]}`, "data", "public-model"},
-		{"anthropic", `{"data":[{"id":"` + claudeCloaked + `"},{"id":"claude-private"}],"has_more":true}`, "data", claudeCloaked},
 		{"codex", `{"models":[{"slug":"public-model"},{"slug":"private-model"}]}`, "models", "public-model"},
 		{"gemini", `{"models":[{"name":"models/public-model"},{"name":"models/private-model"}]}`, "models", "models/public-model"},
 	}
@@ -81,6 +79,112 @@ func TestAddCodexModelAliases(t *testing.T) {
 	}
 }
 
+func TestFilterCodexCatalogHidesDeniedModelsInsteadOfDroppingThem(t *testing.T) {
+	payload := []byte(`{"models":[
+		{"slug":"public-model","visibility":"list","context_window":1000},
+		{"slug":"private-model","visibility":"list","context_window":2000}
+	]}`)
+	filtered, err := filterModelCatalogForClient(payload, []string{"public-model"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(filtered, &document); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := document["models"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("items = %#v", items)
+	}
+	private, _ := items[1].(map[string]any)
+	if private["visibility"] != "hide" {
+		t.Fatalf("private model visibility = %#v, want hide", private["visibility"])
+	}
+	if private["context_window"] != float64(2000) {
+		t.Fatal("hidden override discarded capability metadata")
+	}
+}
+
+func TestNormalizeCodexCatalogCapabilitiesIsConservativeForTranslatedProviders(t *testing.T) {
+	payload := []byte(`{"models":[
+		{"slug":"qwen-max","apply_patch_tool_type":"freeform","web_search_tool_type":"web_search","multi_agent_version":"v2","supports_parallel_tool_calls":true,"supports_search_tool":true,"support_verbosity":true,"supports_reasoning_summary_parameter":true,"prefer_websockets":true},
+		{"slug":"gpt-native","apply_patch_tool_type":"freeform","supports_parallel_tool_calls":true}
+	]}`)
+	normalized, err := normalizeCodexCatalogCapabilities(payload, func(model string) string {
+		if model == "qwen-max" {
+			return "openai-compatibility"
+		}
+		return "codex"
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(normalized, &document); err != nil {
+		t.Fatal(err)
+	}
+	items := document["models"].([]any)
+	translated := items[0].(map[string]any)
+	for _, key := range []string{"apply_patch_tool_type", "web_search_tool_type", "multi_agent_version"} {
+		if _, exists := translated[key]; exists {
+			t.Fatalf("translated model retained unverified %s: %#v", key, translated)
+		}
+	}
+	for _, key := range []string{"supports_parallel_tool_calls", "supports_search_tool", "support_verbosity", "supports_reasoning_summary_parameter", "prefer_websockets"} {
+		if translated[key] != false {
+			t.Fatalf("translated model %s = %#v, want false", key, translated[key])
+		}
+	}
+	native := items[1].(map[string]any)
+	if native["apply_patch_tool_type"] != "freeform" || native["supports_parallel_tool_calls"] != true {
+		t.Fatalf("native Codex capabilities were downgraded: %#v", native)
+	}
+}
+
+func TestModelCatalogRevisionIsStableAndPermissionScoped(t *testing.T) {
+	first := store.KeyContext{
+		APIKey: store.APIKey{
+			ModelAllowlist: []string{"model-b", "model-a"},
+			ModelAliases:   []store.APIKeyModelAlias{{Alias: "alias-b", Model: "model-b"}, {Alias: "alias-a", Model: "model-a"}},
+		},
+	}
+	second := first
+	second.ModelAliases = []store.APIKeyModelAlias{{Alias: "alias-a", Model: "model-a"}, {Alias: "alias-b", Model: "model-b"}}
+	left := modelCatalogRevision(first, []string{"model-b", "private", "model-a"}, "")
+	right := modelCatalogRevision(second, []string{"model-a", "model-b", "private"}, "")
+	if left != right {
+		t.Fatalf("equivalent catalogs produced different revisions: %q != %q", left, right)
+	}
+	if !etagMatches("W/"+left, left) {
+		t.Fatal("weak If-None-Match value did not match the current revision")
+	}
+	second.ModelAliases = append(second.ModelAliases, store.APIKeyModelAlias{Alias: "new", Model: "model-a"})
+	if changed := modelCatalogRevision(second, []string{"model-a", "model-b", "private"}, ""); changed == left {
+		t.Fatal("alias change did not invalidate the catalog revision")
+	}
+}
+
+func TestRetiredProtocolPathsAreRejectedBeforeAuthentication(t *testing.T) {
+	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens", "/v1beta/models/gemini:generateContent"} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			recorder := httptest.NewRecorder()
+			new(App).proxy(recorder, request)
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			errorObject, _ := payload["error"].(map[string]any)
+			if errorObject["code"] != "unsupported_protocol" {
+				t.Fatalf("error = %#v", payload)
+			}
+		})
+	}
+}
+
 func TestAddCodexModelAliasesReplacesCollidingCatalogEntry(t *testing.T) {
 	payload := []byte(`{"models":[
 		{"slug":"gpt-5.6-sol","display_name":"GPT-5.6 Sol","context_window":1000},
@@ -105,7 +209,7 @@ func TestAddCodexModelAliasesReplacesCollidingCatalogEntry(t *testing.T) {
 }
 
 func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) {
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+	app := newEmbeddedCPATestApp(t, upstream.Credential{
 		ID: "codex-catalog", Provider: "codex", Enabled: true,
 		Models:   []string{"grok-4.5", "subscription-model", "private-model"},
 		Document: []byte(`{"type":"codex","access_token":"test-token"}`),
@@ -128,7 +232,7 @@ func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 		t.Fatal(err)
 	}
 	items, _ := document["models"].([]any)
-	if len(items) != 3 {
+	if len(items) != 4 {
 		t.Fatalf("items = %#v", items)
 	}
 	got := make(map[string]map[string]any, len(items))
@@ -139,20 +243,13 @@ func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 	if got["grok-4.5"] == nil || got["gpt-5.6-sol"] == nil || got["subscription-model"] == nil {
 		t.Fatalf("catalog slugs = %#v", got)
 	}
-	if got["private-model"] != nil {
-		t.Fatal("catalog exposed a model outside the key and tenant allowlists")
+	if got["private-model"] == nil || got["private-model"]["visibility"] != "hide" {
+		t.Fatal("catalog did not hide the model outside the key and tenant allowlists")
 	}
 	if got["gpt-5.6-sol"]["context_window"] != got["grok-4.5"]["context_window"] {
 		t.Fatal("alias did not inherit target model metadata")
 	}
-}
-
-func TestResolveClaudeCatalogModel(t *testing.T) {
-	cloaked := "claude-fable-5-dd-" + reverseString("public-model")
-	if got := resolveClaudeCatalogModel(cloaked); got != "public-model" {
-		t.Fatalf("resolved = %q", got)
-	}
-	if got := resolveClaudeCatalogModel(cloaked + "(high)"); got != "public-model(high)" {
-		t.Fatalf("resolved thinking model = %q", got)
+	if recorder.Header().Get("ETag") == "" {
+		t.Fatal("Codex model catalog did not include an ETag")
 	}
 }

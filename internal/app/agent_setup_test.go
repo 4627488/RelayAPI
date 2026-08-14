@@ -18,7 +18,7 @@ import (
 
 func TestNormalizeAgentSetup(t *testing.T) {
 	input := agentSetupInput{
-		KeyID: " key-1 ", Agents: []string{"Codex", "codex", "claude"}, Model: " gpt-5.6-sol ",
+		KeyID: " key-1 ", Agents: []string{"Codex", "codex", "opencode"}, Model: " gpt-5.6-sol ",
 	}
 	if err := normalizeAgentSetup(&input); err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestNormalizeAgentSetup(t *testing.T) {
 	if strings.Join(input.Models, ",") != "gpt-5.6-sol" {
 		t.Fatalf("models = %v", input.Models)
 	}
-	if strings.Join(input.Agents, ",") != "codex,claude" {
+	if strings.Join(input.Agents, ",") != "codex,opencode" {
 		t.Fatalf("agents = %v", input.Agents)
 	}
 
@@ -37,6 +37,7 @@ func TestNormalizeAgentSetup(t *testing.T) {
 		{KeyID: "", Agents: []string{"codex"}, Model: "gpt"},
 		{KeyID: "key", Agents: nil, Model: "gpt"},
 		{KeyID: "key", Agents: []string{"unknown"}, Model: "gpt"},
+		{KeyID: "key", Agents: []string{"claude"}, Model: "gpt"},
 		{KeyID: "key", Agents: []string{"codex"}, Model: "bad\nmodel"},
 		{KeyID: "key", Agents: []string{"codex"}, Model: "gpt", ReasoningEffort: "maximum"},
 		{KeyID: "key", Agents: []string{"opencode"}, Model: "gpt", OpenCodeProtocol: "legacy"},
@@ -51,8 +52,8 @@ func TestNormalizeAgentSetup(t *testing.T) {
 
 func TestBuildAgentSetupConfiguration(t *testing.T) {
 	input := agentSetupInput{
-		KeyID: "key-1", Agents: []string{"codex", "claude", "opencode"}, Model: "gpt-5.6-sol",
-		Models:          []string{"gpt-5.6-sol", "claude-sonnet-4-6"},
+		KeyID: "key-1", Agents: []string{"codex", "opencode"}, Model: "gpt-5.6-sol",
+		Models:          []string{"gpt-5.6-sol", "qwen-max"},
 		ReasoningEffort: "xhigh", OpenCodeProtocol: "responses", InstallMissing: true,
 		VerifyConnection: true, ClaudeGatewayDiscovery: true,
 	}
@@ -60,18 +61,8 @@ func TestBuildAgentSetupConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !data.Codex || !data.Claude || !data.OpenCode || !data.InstallMissing || !data.VerifyConnection {
+	if !data.Codex || data.Claude || !data.OpenCode || !data.InstallMissing || !data.VerifyConnection {
 		t.Fatalf("template flags = %+v", data)
-	}
-
-	var claude map[string]any
-	decodeSetupJSON(t, data.ClaudePatchBase64, &claude)
-	env := claude["env"].(map[string]any)
-	if env["ANTHROPIC_BASE_URL"] != "https://relay.example" || env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] != "1" {
-		t.Fatalf("claude patch = %#v", claude)
-	}
-	if !strings.Contains(claude["apiKeyHelper"].(string), "api-key") {
-		t.Fatalf("claude helper = %#v", claude["apiKeyHelper"])
 	}
 
 	var opencode map[string]any
@@ -81,7 +72,7 @@ func TestBuildAgentSetupConfiguration(t *testing.T) {
 		t.Fatalf("opencode patch = %#v", opencode)
 	}
 	models := provider["models"].(map[string]any)
-	if len(models) != 2 || models["gpt-5.6-sol"] == nil || models["claude-sonnet-4-6"] == nil {
+	if len(models) != 2 || models["gpt-5.6-sol"] == nil || models["qwen-max"] == nil {
 		t.Fatalf("opencode models = %#v", models)
 	}
 

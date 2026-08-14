@@ -17,8 +17,8 @@ import (
 	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/store"
+	upstreamruntime "github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/gorilla/websocket"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
 
 type nativeWebSocketTestResult struct {
@@ -68,7 +68,7 @@ func TestNativeResponsesWebSocketClientDisconnectIsNotAnError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
@@ -120,7 +120,7 @@ func TestNativeResponsesWebSocketUpstreamDisconnectRemainsAnError(t *testing.T) 
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
@@ -178,7 +178,7 @@ func TestNativeResponsesWebSocketCompletedThenUpstreamEOFReconnectsNextFullTurn(
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{ID: "codex", Provider: "codex", Enabled: true,
+	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{ID: "codex", Provider: "codex", Enabled: true,
 		Models: []string{"gpt-test"}, Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
 		})})
@@ -298,7 +298,7 @@ func TestNativeResponsesWebSocketUsesEmbeddedCPAHandlerAndAccountsUsage(t *testi
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "upstream-token", "base_url": upstream.URL, "websockets": true,
@@ -379,7 +379,7 @@ func TestNativeResponsesWebSocketPersistsTerminalBeforeForwarding(t *testing.T) 
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
@@ -463,7 +463,7 @@ func TestNativeResponsesWebSocketLeavesMultiTurnStateToEmbeddedCPA(t *testing.T)
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
@@ -517,7 +517,7 @@ func TestNativeResponsesWebSocketLeavesMultiTurnStateToEmbeddedCPA(t *testing.T)
 }
 
 func TestNativeResponsesWebSocketPreservesEmbeddedCPAPrewarm(t *testing.T) {
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
 		ID: "compat", Provider: "openai", Enabled: true, Models: []string{"gpt-test"},
 		Document: []byte(`{"type":"openai","api_key":"unused","base_url":"https://example.invalid/v1"}`),
 	})
@@ -580,7 +580,7 @@ func TestMergeNativeWebSocketResultSumsTurns(t *testing.T) {
 }
 
 func TestPrepareNativeWebSocketRequestTracksChangedModel(t *testing.T) {
-	app := newEmbeddedCPATestApp(t, relaybridge.Credential{
+	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-first", "gpt-second"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": "https://example.invalid", "websockets": true,
@@ -607,9 +607,9 @@ func TestPrepareNativeWebSocketRequestTracksChangedModel(t *testing.T) {
 	}
 }
 
-func newEmbeddedCPATestApp(t *testing.T, credential relaybridge.Credential) *App {
+func newEmbeddedCPATestApp(t *testing.T, credential upstreamruntime.Credential) *App {
 	t.Helper()
-	runtime, err := relaybridge.NewRuntime(relaybridge.Options{APIKey: "embedded-test-key"}, []relaybridge.Credential{credential})
+	runtime, err := upstreamruntime.NewCompatibilityRuntime(upstreamruntime.Options{APIKey: "embedded-test-key"}, []upstreamruntime.Credential{credential})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +624,7 @@ func newEmbeddedCPATestApp(t *testing.T, credential relaybridge.Credential) *App
 		server.Close()
 		_ = runtime.Close(context.Background())
 	})
-	return &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}, nativeCPA: client, nativeCPARuntime: runtime}
+	return &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}, nativeCPA: client, nativeRuntime: runtime}
 }
 
 func TestNativeWebSocketAdmissionErrorUsesPaymentRequiredForExhaustedQuota(t *testing.T) {

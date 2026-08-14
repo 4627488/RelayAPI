@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/store"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 const nativeRuntimeSettingsKey = "native-runtime"
@@ -98,7 +98,7 @@ func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
 	return ""
 }
 
-func runtimeBridgeSettings(value nativeRuntimeSettings, systemProxyURL string) relaybridge.Settings {
+func runtimeBridgeSettings(value nativeRuntimeSettings, systemProxyURL string) upstream.Settings {
 	imageMode := value.ImageGenerationMode
 	if imageMode == "disabled" {
 		imageMode = "all"
@@ -106,7 +106,7 @@ func runtimeBridgeSettings(value nativeRuntimeSettings, systemProxyURL string) r
 	if strings.TrimSpace(systemProxyURL) == "" {
 		systemProxyURL = "direct"
 	}
-	return relaybridge.Settings{
+	return upstream.Settings{
 		RequestRetry: value.RequestRetry, MaxRetryCredentials: value.MaxRetryCredentials,
 		MaxRetryInterval: time.Duration(value.MaxRetryInterval) * time.Second,
 		RoutingStrategy:  value.RoutingStrategy, ProxyURL: systemProxyURL,
@@ -118,7 +118,7 @@ func runtimeBridgeSettings(value nativeRuntimeSettings, systemProxyURL string) r
 }
 
 func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
-	if a.nativeCPARuntime == nil {
+	if a.nativeRuntime == nil {
 		writeError(w, http.StatusConflict, "native_mode_required", "此配置仅适用于 native 数据平面")
 		return
 	}
@@ -157,7 +157,7 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "运行配置持久化失败")
 		return
 	}
-	if err := a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(input, systemProxyURL)); err != nil {
+	if err := a.nativeRuntime.ApplySettings(r.Context(), runtimeBridgeSettings(input, systemProxyURL)); err != nil {
 		_ = a.store.PutRuntimeSetting(r.Context(), nativeRuntimeSettingsKey, previous)
 		writeError(w, http.StatusInternalServerError, "runtime_update_failed", err.Error())
 		return
@@ -170,7 +170,7 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) nativeRuntimeInfo() map[string]any {
 	return map[string]any{
-		"ready": a.nativeCPARuntime != nil, "credentials": a.nativeCPARuntime.CredentialCount(), "models": len(a.nativeCPARuntime.Models()),
+		"ready": a.nativeRuntime != nil, "credentials": a.nativeRuntime.CredentialCount(), "models": len(a.nativeRuntime.Models()),
 		"request_timeout_seconds": int(a.cfg.RequestTimeout / time.Second), "max_in_flight": a.cfg.CPAMaxInFlight,
 		"max_queue": a.cfg.CPAMaxQueue, "queue_timeout_seconds": int(a.cfg.CPAQueueTimeout / time.Second),
 		"max_request_bytes": a.cfg.CPAMaxRequestBytes, "request_bytes_in_flight": a.cfg.CPARequestBytesInFlight,

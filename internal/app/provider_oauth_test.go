@@ -63,7 +63,7 @@ func TestMergeOAuthCredentialSettingsPreservesNonNetworkOptions(t *testing.T) {
 }
 
 func TestNormalizedOAuthProvider(t *testing.T) {
-	tests := map[string]string{"anthropic": "claude", "openai": "codex", "grok": "xai", "kimi": "kimi"}
+	tests := map[string]string{"anthropic": "anthropic", "openai": "codex", "grok": "xai", "kimi": "kimi"}
 	for input, want := range tests {
 		if got := normalizedOAuthProvider(input); got != want {
 			t.Errorf("normalizedOAuthProvider(%q) = %q, want %q", input, got, want)

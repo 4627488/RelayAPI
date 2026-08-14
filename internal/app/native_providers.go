@@ -158,8 +158,8 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				item["plan_type"] = plan
 			}
 		}
-		if a.nativeCPARuntime != nil {
-			if status, ok := a.nativeCPARuntime.CredentialStatus(row.ID); ok {
+		if a.nativeRuntime != nil {
+			if status, ok := a.nativeRuntime.CredentialStatus(row.ID); ok {
 				item["status"] = status.Status
 				item["status_message"] = status.StatusMessage
 				item["unavailable"] = item["unavailable"].(bool) || status.Unavailable
@@ -314,8 +314,8 @@ func (a *App) nativeProviderModels(w http.ResponseWriter, r *http.Request) {
 	models := append([]string(nil), row.Models...)
 	source := "configured"
 	var discoveryError string
-	if a.nativeCPARuntime != nil && row.Enabled {
-		discovered, discoveredSource, discoverErr := a.nativeCPARuntime.DiscoverCredentialModels(r.Context(), row.ID)
+	if a.nativeRuntime != nil && row.Enabled {
+		discovered, discoveredSource, discoverErr := a.nativeRuntime.DiscoverCredentialModels(r.Context(), row.ID)
 		if len(discovered) > 0 {
 			models = discovered
 			source = discoveredSource
@@ -343,10 +343,10 @@ func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCr
 	if len(row.Models) > 0 {
 		return row, "configured", nil
 	}
-	if a.nativeCPARuntime == nil {
+	if a.nativeRuntime == nil {
 		return row, "", errors.New("embedded CPA runtime is unavailable")
 	}
-	models, source, err := a.nativeCPARuntime.DiscoverCredentialModels(ctx, row.ID)
+	models, source, err := a.nativeRuntime.DiscoverCredentialModels(ctx, row.ID)
 	if err != nil && len(models) == 0 {
 		return row, "", err
 	}
@@ -541,12 +541,12 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if input.Models != nil && enabled {
-		if a.nativeCPARuntime == nil {
+		if a.nativeRuntime == nil {
 			rollback()
 			writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", "embedded CPA runtime is unavailable")
 			return
 		}
-		candidates, _, discoverErr := a.nativeCPARuntime.DiscoverCredentialModels(r.Context(), row.ID)
+		candidates, _, discoverErr := a.nativeRuntime.DiscoverCredentialModels(r.Context(), row.ID)
 		if discoverErr != nil && len(candidates) == 0 {
 			rollback()
 			writeError(w, http.StatusBadGateway, "model_catalog_unavailable", discoverErr.Error())

@@ -250,12 +250,6 @@ func (r *Runtime) registerBaselineExecutors() {
 	for _, exec := range []coreauth.ProviderExecutor{
 		executor.NewCodexAutoExecutor(r.cfg),
 		executor.NewXAIAutoExecutor(r.cfg),
-		executor.NewClaudeExecutor(r.cfg),
-		executor.NewGeminiExecutor(r.cfg),
-		executor.NewGeminiInteractionsExecutor(r.cfg),
-		executor.NewGeminiVertexExecutor(r.cfg),
-		executor.NewAIStudioExecutor(r.cfg, "aistudio", r.wsGateway),
-		executor.NewAntigravityExecutor(r.cfg),
 		executor.NewKimiExecutor(r.cfg),
 		executor.NewOpenAICompatExecutor("openai", r.cfg),
 		executor.NewOpenAICompatExecutor("openai-compatibility", r.cfg),
@@ -284,6 +278,24 @@ func (r *Runtime) Models() []string {
 	}
 	sort.Strings(models)
 	return models
+}
+
+// ModelProvider returns the executor provider that owns a public model. Relay
+// uses this fact to publish conservative Codex capabilities. Keeping the
+// provider fact in the runtime avoids duplicating CPA's routing registry in
+// the policy layer.
+func (r *Runtime) ModelProvider(model string) (string, bool) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if r == nil || model == "" {
+		return "", false
+	}
+	r.mu.RLock()
+	route, ok := r.modelRoutes[model]
+	r.mu.RUnlock()
+	if !ok || strings.TrimSpace(route.provider) == "" {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(route.provider)), true
 }
 
 // CredentialModels returns the public models CPA registered for one

@@ -564,10 +564,10 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 	}
 	var availableModels []string
 	var availableModelsError error
-	if a.nativeCPARuntime == nil {
+	if a.nativeRuntime == nil {
 		availableModelsError = errors.New("embedded CPA runtime is unavailable")
 	} else {
-		availableModels = a.nativeCPARuntime.Models()
+		availableModels = a.nativeRuntime.Models()
 	}
 	available := make([]store.AvailableModelPrice, 0)
 	if availableModelsError == nil {

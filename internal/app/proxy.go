@@ -297,6 +297,10 @@ func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, ad
 func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	timeline := newLatencyTimeline(started)
+	if retiredProtocolPath(r.URL.Path) {
+		writeError(w, http.StatusNotFound, "unsupported_protocol", "RelayAPI 仅支持 Responses 和 OpenAI 兼容协议")
+		return
+	}
 	keyValue := bearer(r)
 	key, err := a.store.ResolveKey(r.Context(), keyValue)
 	if err != nil || !key.Enabled || !key.TenantEnabled || expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
@@ -348,7 +352,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	logContext := requestLogContext{detail: baseRequestDetail(r, body), requestBytes: int64(len(body))}
 	meta := requestMetadata(body, r)
 	clientRequestedModel := meta.Model
-	resolved := resolveAPIKeyModel(resolveClaudeCatalogModel(meta.Model), key.ModelAliases)
+	resolved := resolveAPIKeyModel(meta.Model, key.ModelAliases)
 	resolved.RequestedModel = clientRequestedModel
 	resolved.Stream = meta.Stream
 	resolved.ServiceTier = meta.ServiceTier
@@ -528,6 +532,9 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Relay-Request-ID", requestID)
+	if isCodexResponsesPath(r.URL.Path) && a.nativeRuntime != nil {
+		w.Header().Set("X-Models-Etag", modelCatalogRevision(key, a.nativeRuntime.Models(), ""))
+	}
 	if admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)
 	}
@@ -646,6 +653,11 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
 
+func isCodexResponsesPath(path string) bool {
+	path = strings.TrimRight(strings.TrimSpace(path), "/")
+	return path == "/v1/responses" || path == "/backend-api/codex/responses" || path == "/openai/v1/responses"
+}
+
 func saturatingMultiply64(left, right int64) int64 {
 	if left <= 0 || right <= 0 {
 		return 0
@@ -656,22 +668,9 @@ func saturatingMultiply64(left, right int64) int64 {
 	return left * right
 }
 
-func resolveClaudeCatalogModel(model string) string {
-	const prefix = "claude-fable-5-dd-"
-	model = strings.TrimSpace(model)
-	base, suffix := model, ""
-	if open := strings.LastIndex(model, "("); open > 0 && strings.HasSuffix(model, ")") {
-		base = model[:open]
-		suffix = model[open:]
-	}
-	if !strings.HasPrefix(strings.ToLower(base), prefix) {
-		return model
-	}
-	encoded := base[len(prefix):]
-	if encoded == "" {
-		return model
-	}
-	return reverseString(encoded) + suffix
+func retiredProtocolPath(path string) bool {
+	path = strings.TrimRight(strings.TrimSpace(path), "/")
+	return path == "/v1/messages" || path == "/v1/messages/count_tokens" || strings.HasPrefix(path, "/v1beta/")
 }
 
 func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
