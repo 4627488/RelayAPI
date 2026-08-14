@@ -7,10 +7,8 @@ import (
 )
 
 // Runtime is Relay's provider boundary. It deliberately exposes provider
-// facts and execution lifecycle operations, not CPA's registries or executor
-// types. A focused native runtime can replace the compatibility adapter one
-// provider at a time without leaking its implementation into the policy,
-// billing, or HTTP layers.
+// facts and lifecycle operations without leaking provider implementation types
+// into policy, billing, or public HTTP layers.
 type Runtime interface {
 	Handler() http.Handler
 	CredentialCount() int
@@ -39,38 +37,24 @@ type Credential struct {
 }
 
 type Options struct {
-	APIKey                     string
-	RequestRetry               int
-	MaxRetryCredentials        int
-	MaxRetryInterval           time.Duration
-	RoutingStrategy            string
-	ProxyURL                   string
-	PassthroughHeaders         bool
-	DisableImageGeneration     string
-	GPTImage2BaseModel         string
-	VideoResultAuthCacheTTL    string
-	ForceModelPrefix           bool
-	StreamKeepAliveSeconds     int
-	StreamBootstrapRetries     int
-	NonStreamKeepAliveInterval int
-	OnCredentialUpdated        func(context.Context, string, []byte)
-	OnOAuthCredential          func(context.Context, string, string, string, []byte) error
+	APIKey              string
+	RequestRetry        int
+	MaxRetryInterval    time.Duration
+	RoutingStrategy     string
+	ProxyURL            string
+	PassthroughHeaders  bool
+	ForceModelPrefix    bool
+	OnCredentialUpdated func(context.Context, string, []byte)
+	OnOAuthCredential   func(context.Context, string, string, string, []byte) error
 }
 
 type Settings struct {
-	RequestRetry               int
-	MaxRetryCredentials        int
-	MaxRetryInterval           time.Duration
-	RoutingStrategy            string
-	ProxyURL                   string
-	PassthroughHeaders         bool
-	DisableImageGeneration     string
-	GPTImage2BaseModel         string
-	VideoResultAuthCacheTTL    string
-	ForceModelPrefix           bool
-	StreamKeepAliveSeconds     int
-	StreamBootstrapRetries     int
-	NonStreamKeepAliveInterval int
+	RequestRetry       int
+	MaxRetryInterval   time.Duration
+	RoutingStrategy    string
+	ProxyURL           string
+	PassthroughHeaders bool
+	ForceModelPrefix   bool
 }
 
 type CredentialStatus struct {

@@ -64,9 +64,9 @@ type KeyContext struct {
 // active subscription assignment. Each list is still intersected within the
 // grant so parent and credential restrictions remain authoritative.
 type SubscriptionModelGrant struct {
-	ChildModels  []string
-	ParentModels []string
-	CPAModels    []string
+	ChildModels    []string
+	ParentModels   []string
+	UpstreamModels []string
 }
 
 type Usage struct {
@@ -75,20 +75,20 @@ type Usage struct {
 }
 
 type LogInput struct {
-	ID, TenantID, APIKeyID, ReservationRequestID, CPARequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
-	CPATraceID, CPAExecutionID, RequestedModel, ActualModel, ModelAlias, ExecutorType, AuthType                                                     string
-	ServiceTier, ResponseServiceTier, ReasoningEffort, TenantName, APIKeyName, APIKeyPrefix, RequestType                                            string
-	ClientName, ClientVersion, UserAgent                                                                                                            string
-	StatusCode                                                                                                                                      int
-	Stream, PricingComplete, Settled                                                                                                                bool
-	Usage                                                                                                                                           Usage
-	CostNanoUSD                                                                                                                                     *int64
-	Price                                                                                                                                           *ResolvedPrice
-	ReservedNanoUSD, LatencyMS, RequestBodyBytes, ForwardedBodyBytes, ResponseBodyBytes                                                             int64
-	TTFTMS                                                                                                                                          *int64
-	ErrorCode, ErrorMessage, StageTimings                                                                                                           string
-	StartedAt, CompletedAt                                                                                                                          time.Time
-	Detail                                                                                                                                          *LogDetailInput
+	ID, TenantID, APIKeyID, ReservationRequestID, UpstreamRequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
+	UpstreamTraceID, UpstreamExecutionID, RequestedModel, ActualModel, ModelAlias, ExecutorType, AuthType                                                string
+	ServiceTier, ResponseServiceTier, ReasoningEffort, TenantName, APIKeyName, APIKeyPrefix, RequestType                                                 string
+	ClientName, ClientVersion, UserAgent                                                                                                                 string
+	StatusCode                                                                                                                                           int
+	Stream, PricingComplete, Settled                                                                                                                     bool
+	Usage                                                                                                                                                Usage
+	CostNanoUSD                                                                                                                                          *int64
+	Price                                                                                                                                                *ResolvedPrice
+	ReservedNanoUSD, LatencyMS, RequestBodyBytes, ForwardedBodyBytes, ResponseBodyBytes                                                                  int64
+	TTFTMS                                                                                                                                               *int64
+	ErrorCode, ErrorMessage, StageTimings                                                                                                                string
+	StartedAt, CompletedAt                                                                                                                               time.Time
+	Detail                                                                                                                                               *LogDetailInput
 }
 
 type LogDetailInput struct {
@@ -170,7 +170,7 @@ func (s Store) DeleteTenant(ctx context.Context, id string) error {
 			value any
 		}{
 			{&db.RequestLogDetail{}, "request_log_id IN (?)", logIDs},
-			{&db.CPALifecycleEvent{}, "request_log_id IN (?)", logIDs},
+			{&db.UpstreamLifecycleEvent{}, "request_log_id IN (?)", logIDs},
 			{&db.RequestReservation{}, "tenant_id = ?", id},
 			{&db.ChildQuotaWindow{}, "child_subscription_id IN (?)", childIDs},
 			{&db.ChildSubscription{}, "tenant_id = ?", id},
@@ -768,8 +768,8 @@ func requestLogItem(l LogInput) db.RequestLog {
 		stageTimings = "{}"
 	}
 	item := db.RequestLog{
-		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, ReservationRequestID: nullableIdentifier(l.ReservationRequestID), CPARequestID: l.CPARequestID,
-		CPATraceID: l.CPATraceID, CPAExecutionID: l.CPAExecutionID,
+		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, ReservationRequestID: nullableIdentifier(l.ReservationRequestID), UpstreamRequestID: l.UpstreamRequestID,
+		UpstreamTraceID: l.UpstreamTraceID, UpstreamExecutionID: l.UpstreamExecutionID,
 		Model: l.Model, RequestedModel: l.RequestedModel, ActualModel: l.ActualModel, ModelAlias: l.ModelAlias,
 		Provider: l.Provider, ExecutorType: l.ExecutorType, AuthType: l.AuthType, AuthIndex: l.AuthIndex,
 		ServiceTier: l.ServiceTier, ResponseServiceTier: l.ResponseServiceTier, ReasoningEffort: l.ReasoningEffort,
@@ -826,7 +826,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 		if err := tx.First(&parent, "id = ?", *item.ParentSubscriptionID).Error; err == nil {
 			item.ParentSubscriptionName = parent.Name
 			item.ChannelID, item.ChannelName = parent.ID, parent.Name
-			item.CredentialID, item.CredentialName = parent.CPAAuthID, parent.CPAAuthName
+			item.CredentialID, item.CredentialName = parent.UpstreamCredentialID, parent.UpstreamCredentialName
 			if item.Provider == "" {
 				item.Provider = parent.Provider
 			}
@@ -852,7 +852,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 		create = create.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
-				"cpa_request_id", "response_service_tier", "status_code", "request_body_bytes",
+				"upstream_request_id", "response_service_tier", "status_code", "request_body_bytes",
 				"forwarded_body_bytes", "response_body_bytes", "prompt_tokens", "completion_tokens",
 				"cached_tokens", "cache_write_tokens", "reasoning_tokens", "image_input_tokens",
 				"cached_image_input_tokens", "image_output_tokens", "total_tokens", "cost_nano_usd",
@@ -888,7 +888,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 			return err
 		}
 	}
-	return applyPendingCPALifecycleEvents(tx, l.ID)
+	return applyPendingUpstreamLifecycleEvents(tx, l.ID)
 }
 
 func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, error) {
@@ -953,7 +953,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if text := strings.TrimSpace(input.Query); text != "" {
 		like := "%" + text + "%"
 		query = query.Where(
-			"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR cpa_trace_id ILIKE ?",
+			"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR upstream_trace_id ILIKE ?",
 			like, like, like, like, like, like, like, like, like, like, like, like, like, like,
 		)
 	}

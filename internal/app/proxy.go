@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/billing"
-	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
@@ -40,24 +40,11 @@ type requestMeta struct {
 	ModelAlias     string `json:"-"`
 }
 
-func readRequestMeta(body []byte, requestPath string) requestMeta {
+func readRequestMeta(body []byte, _ string) requestMeta {
 	var meta requestMeta
 	_ = json.Unmarshal(body, &meta)
 	if meta.ReasoningEffort == "" {
 		meta.ReasoningEffort = meta.Reasoning.Effort
-	}
-	if meta.Model != "" {
-		return meta
-	}
-	// Gemini's native API puts the model in
-	// /v1beta/models/{model}:generateContent instead of the JSON body.
-	const marker = "/models/"
-	if index := strings.Index(requestPath, marker); index >= 0 {
-		value := requestPath[index+len(marker):]
-		if end := strings.IndexAny(value, ":/"); end >= 0 {
-			value = value[:end]
-		}
-		meta.Model, _ = url.PathUnescape(value)
 	}
 	return meta
 }
@@ -147,18 +134,6 @@ func rewriteRequestModel(body []byte, requestURL *url.URL, requested, actual str
 			at += copy(rewritten[at:], replacement)
 			copy(rewritten[at:], body[end:])
 			body = rewritten
-		}
-	}
-	const marker = "/models/"
-	if index := strings.Index(requestURL.Path, marker); index >= 0 {
-		start := index + len(marker)
-		end := len(requestURL.Path)
-		if relative := strings.IndexAny(requestURL.Path[start:], ":/"); relative >= 0 {
-			end = start + relative
-		}
-		if strings.EqualFold(requestURL.Path[start:end], requested) {
-			requestURL.Path = requestURL.Path[:start] + actual + requestURL.Path[end:]
-			requestURL.RawPath = ""
 		}
 	}
 	query := requestURL.Query()
@@ -251,15 +226,15 @@ func (c *rollingCapture) Info() ([]byte, bool, int64) {
 }
 
 type requestLogContext struct {
-	price          *store.ResolvedPrice
-	detail         *store.LogDetailInput
-	ttftMS         *int64
-	cpaTraceID     string
-	errorCode      string
-	requestBytes   int64
-	forwardedBytes int64
-	responseBytes  int64
-	stageTimings   string
+	price           *store.ResolvedPrice
+	detail          *store.LogDetailInput
+	ttftMS          *int64
+	upstreamTraceID string
+	errorCode       string
+	requestBytes    int64
+	forwardedBytes  int64
+	responseBytes   int64
+	stageTimings    string
 }
 
 func rejectedRequestDetail(r *http.Request, body []byte, _ bool, code, message string, started time.Time, timeline ...*latencyTimeline) *store.LogDetailInput {
@@ -317,13 +292,13 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Relay-Request-ID", requestID)
 	admission := store.Admission{RequestID: requestID}
 	expectedBodyBytes := r.ContentLength
-	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.CPAMaxRequestBytes {
-		expectedBodyBytes = a.cfg.CPAMaxRequestBytes
+	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.MaxRequestBytes {
+		expectedBodyBytes = a.cfg.MaxRequestBytes
 	}
-	targetCPA := a.inferenceCPA()
-	lease, err := targetCPA.Acquire(r.Context(), expectedBodyBytes)
+	targetUpstream := a.inferenceGateway()
+	lease, err := targetUpstream.Acquire(r.Context(), expectedBodyBytes)
 	if err != nil {
-		classified := writeCPAAdmissionError(w, err, targetCPA.AdmissionStatus())
+		classified := writeGatewayAdmissionError(w, err, targetUpstream.AdmissionStatus())
 		meta := requestMetadata(nil, r)
 		detail := rejectedRequestDetail(r, nil, false, classified.Code, classified.Message, started, timeline)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
@@ -331,11 +306,11 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer lease.Release()
 	leaseAcquiredAt := time.Now()
-	timeline.Step(leaseAcquiredAt, "cpa_admission_queue", "CPA 准入排队", "queue", "等待并发槽位与请求体内存预算")
+	timeline.Step(leaseAcquiredAt, "upstream_admission_queue", "Upstream 准入排队", "queue", "等待并发槽位与请求体内存预算")
 
-	body, err := readBoundedRequestBody(w, r, a.cfg.CPAMaxRequestBytes)
+	body, err := readBoundedRequestBody(w, r, a.cfg.MaxRequestBytes)
 	if err != nil {
-		message := fmt.Sprintf("请求体超过 %d MiB", a.cfg.CPAMaxRequestBytes>>20)
+		message := fmt.Sprintf("请求体超过 %d MiB", a.cfg.MaxRequestBytes>>20)
 		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", message)
 		meta := requestMetadata(body, r)
 		detail := rejectedRequestDetail(r, body, true, "body_too_large", message, started, timeline)
@@ -441,7 +416,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		if priceConfigured {
 			if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
-				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
+				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.UpstreamAuthIndex,
 				ServiceTier: meta.ServiceTier, ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
 			}); resolveErr == nil {
 				price = resolved
@@ -464,7 +439,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var response *http.Response
-	target := targetCPA.URL(r.URL.RequestURI())
+	target := targetUpstream.URL(r.URL.RequestURI())
 	var upstream *http.Request
 	clientTraceState, clientTrace := newClientHTTPTrace()
 	transportStarted := false
@@ -472,22 +447,22 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		upstream = upstream.WithContext(httptrace.WithClientTrace(upstream.Context(), clientTrace))
 		copyHeaders(upstream.Header, r.Header)
-		upstream.Header.Set("Authorization", "Bearer "+targetCPA.APIKey)
+		upstream.Header.Set("Authorization", "Bearer "+targetUpstream.APIKey)
 		upstream.Header.Del("X-API-Key")
 		upstream.Header.Del("X-Goog-API-Key")
 		upstream.Header.Set("X-Relay-Request-ID", requestID)
-		if admission.CPAAuthID != "" {
-			upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
+		if admission.UpstreamCredentialID != "" {
+			upstream.Header.Set("X-Relay-Upstream-Credential-ID", admission.UpstreamCredentialID)
 		}
-		upstream.Host = targetCPA.BaseURL.Host
+		upstream.Host = targetUpstream.BaseURL.Host
 		logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
 		captureForwardedRequest(logContext.detail, originalBody, body)
 		logContext.forwardedBytes = int64(len(body))
-		timeline.Step(time.Now(), "prepare_cpa_request", "准备 CPA 请求", "relay", "构造 CPA 请求、改写正文并准备安全转发头")
+		timeline.Step(time.Now(), "prepare_upstream_request", "准备 Upstream 请求", "relay", "构造 Upstream 请求、改写正文并准备安全转发头")
 		transportStarted = true
-		response, err = targetCPA.HTTP.Do(upstream)
+		response, err = targetUpstream.HTTP.Do(upstream)
 	} else {
-		timeline.Step(time.Now(), "prepare_cpa_request", "准备 CPA 请求", "relay", "构造 CPA 请求失败")
+		timeline.Step(time.Now(), "prepare_upstream_request", "准备 Upstream 请求", "relay", "构造 Upstream 请求失败")
 	}
 	upstreamResultAt := time.Now()
 	if transportStarted {
@@ -502,22 +477,22 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	upstream = nil
 	if err != nil {
 		if r.Context().Err() == nil {
-			targetCPA.RecordTransportResult(err)
+			targetUpstream.RecordTransportResult(err)
 		}
 		a.releaseReservation(requestID, billable)
-		classified := classifyCPATransportError(err, r.Context().Err(), "awaiting_headers")
+		classified := classifyUpstreamTransportError(err, r.Context().Err(), "awaiting_headers")
 		logContext.errorCode = classified.Code
 		logContext.detail.ErrorName = "upstream_error"
 		logContext.detail.ErrorMessage = err.Error()
 		completed := time.Now()
-		timeline.Step(completed, "relay_transport_error", "处理传输错误", "relay", "归类 CPA 连接错误并释放预留")
+		timeline.Step(completed, "relay_transport_error", "处理传输错误", "relay", "归类 Upstream 连接错误并释放预留")
 		logContext.detail.StageTimings = timeline.JSON(completed)
 		logContext.stageTimings = logContext.detail.StageTimings
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
-		writeCPATransportError(w, r, err, "awaiting_headers", requestID)
+		writeUpstreamTransportError(w, r, err, "awaiting_headers", requestID)
 		return
 	}
-	targetCPA.RecordTransportResult(nil)
+	targetUpstream.RecordTransportResult(nil)
 	defer response.Body.Close()
 	clientStatus := response.StatusCode
 	var normalizedError *userFacingError
@@ -539,7 +514,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)
 	}
 	if response.StatusCode >= http.StatusBadRequest {
-		// CPA and providers sometimes use 429 for scheduler/auth failures. Read
+		// Upstream and providers sometimes use 429 for scheduler/auth failures. Read
 		// the small error body before committing headers so Relay can report the
 		// actual user-facing cause. Successful streaming responses remain direct.
 		payload, readErr := io.ReadAll(io.LimitReader(&observedReader{Reader: response.Body, onFirstByte: firstByte}, int64(capture.max+1)))
@@ -571,13 +546,13 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	responseReadAt := time.Now()
 	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
-		targetCPA.RecordTransportResult(copyErr)
+		targetUpstream.RecordTransportResult(copyErr)
 	}
 
 	parsed := billing.ParseResponse(capture.Bytes())
 	if priceConfigured && parsed.ResponseServiceTier != "" {
 		if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
+			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.UpstreamAuthIndex,
 			ServiceTier: meta.ServiceTier, ResponseServiceTier: parsed.ResponseServiceTier,
 			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
 		}); resolveErr == nil {
@@ -616,7 +591,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		logContext.errorCode = "stream_copy_error"
 	}
 	rawResponse, responseTruncated, responseBytes := capture.Info()
-	logContext.cpaTraceID = strings.TrimSpace(response.Header.Get("X-CPA-TRACE-ID"))
+	logContext.upstreamTraceID = strings.TrimSpace(response.Header.Get("X-Upstream-TRACE-ID"))
 	logContext.detail.UpstreamStatus = response.StatusCode
 	logContext.detail.UpstreamHeaders = sanitizedHeaders(response.Header)
 	logContext.detail.UpstreamBody, _, _ = boundedDetail(rawResponse)
@@ -626,10 +601,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if !firstByteAt.IsZero() {
 		ttft := firstByteAt.Sub(started).Milliseconds()
 		logContext.ttftMS = &ttft
-		timeline.Step(firstByteAt, "upstream_first_body", "等待首个响应数据", "upstream", "CPA 已返回响应头，继续等待首个响应正文数据")
+		timeline.Step(firstByteAt, "upstream_first_body", "等待首个响应数据", "upstream", "Upstream 已返回响应头，继续等待首个响应正文数据")
 		timeline.Mark(firstByteAt, "first_byte", "首字节")
 	}
-	timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 CPA 响应并持续写回客户端")
+	timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 上游响应并持续写回客户端")
 	if normalizedError != nil {
 		logContext.errorCode = normalizedError.Code
 		logContext.detail.ErrorName = logContext.errorCode
@@ -688,10 +663,10 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) store.LogInput {
 	client := identifyClientUserAgent(r.UserAgent())
 	usage := store.Usage{}
-	cpaID := ""
+	upstreamID := ""
 	if parsed != nil {
 		usage = parsed.Usage
-		cpaID = parsed.RequestID
+		upstreamID = parsed.RequestID
 	}
 	var costPointer *int64
 	if pricingComplete {
@@ -710,12 +685,12 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		}
 	}
 	return store.LogInput{
-		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
-		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
+		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, UpstreamRequestID: upstreamID, Model: meta.Model,
+		UpstreamTraceID: logContext.upstreamTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
 		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
 		ClientName: client.Name, ClientVersion: client.Version, UserAgent: client.UserAgent,
-		AuthIndex: admission.CPAAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
+		AuthIndex: admission.UpstreamAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
 		ChildSubscriptionID: admission.ChildSubscriptionID,
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
 		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
@@ -777,12 +752,12 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
 }
 
-func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.AdmissionStatus) cpaTransportError {
+func writeGatewayAdmissionError(w http.ResponseWriter, err error, status gateway.AdmissionStatus) upstreamTransportError {
 	retryAfter := int64(1)
 	httpStatus := http.StatusServiceUnavailable
 	retryable := true
-	code := "cpa_overloaded"
-	message := "CPA 当前并发已达到安全上限，请稍后重试"
+	code := "upstream_overloaded"
+	message := "Upstream 当前并发已达到安全上限，请稍后重试"
 	switch {
 	case errors.Is(err, context.Canceled):
 		httpStatus = 499
@@ -792,10 +767,10 @@ func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.Admissi
 	case errors.Is(err, context.DeadlineExceeded):
 		httpStatus = http.StatusGatewayTimeout
 		code = "request_timeout"
-		message = "请求在等待 CPA 准入时超时"
-	case errors.Is(err, cpa.ErrCircuitOpen):
-		code = "cpa_circuit_open"
-		message = "CPA 正在从连续故障中恢复，请稍后重试"
+		message = "请求在等待 Upstream 准入时超时"
+	case errors.Is(err, gateway.ErrCircuitOpen):
+		code = "upstream_circuit_open"
+		message = "Upstream 正在从连续故障中恢复，请稍后重试"
 		if status.RetryAfterMS > 0 {
 			retryAfter = (status.RetryAfterMS + 999) / 1000
 		}
@@ -812,7 +787,7 @@ func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.Admissi
 		"code": code, "type": "service_unavailable", "message": message,
 		"details": details,
 	}})
-	return cpaTransportError{Status: httpStatus, Code: code, Message: message, Phase: "admission", Retryable: retryable}
+	return upstreamTransportError{Status: httpStatus, Code: code, Message: message, Phase: "admission", Retryable: retryable}
 }
 
 func (a *App) releaseReservation(requestID string, billable bool) {

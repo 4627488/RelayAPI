@@ -19,8 +19,8 @@ func TestCapacityModesExcludeLegacyManualWindows(t *testing.T) {
 
 func TestEffectiveSubscriptionModels(t *testing.T) {
 	parent := store.ParentSubscription{
-		CPAModelAllowlist: []string{"gpt-5.2", "gpt-5.1-codex", "claude-sonnet"},
-		ModelAllowlist:    []string{"gpt-*"},
+		UpstreamModelAllowlist: []string{"gpt-5.2", "gpt-5.1-codex", "claude-sonnet"},
+		ModelAllowlist:         []string{"gpt-*"},
 	}
 	child := store.ChildSubscription{ModelAllowlist: []string{"gpt-5.1-*"}}
 	models, source := effectiveSubscriptionModels(parent, child)
@@ -29,9 +29,9 @@ func TestEffectiveSubscriptionModels(t *testing.T) {
 	}
 
 	models, source = effectiveSubscriptionModels(store.ParentSubscription{
-		CPAModelAllowlist: []string{"model-b", "model-a", "model-a"},
+		UpstreamModelAllowlist: []string{"model-b", "model-a", "model-a"},
 	}, store.ChildSubscription{})
-	if source != "cpa" || len(models) != 2 || models[0] != "model-a" || models[1] != "model-b" {
+	if source != "upstream" || len(models) != 2 || models[0] != "model-a" || models[1] != "model-b" {
 		t.Fatalf("inherited models = %v (%s)", models, source)
 	}
 
@@ -53,12 +53,12 @@ func TestEffectiveSubscriptionModels(t *testing.T) {
 
 	models, source = effectiveSubscriptionModels(
 		store.ParentSubscription{
-			CapacityMode:      db.ParentCapacityUnmetered,
-			CPAModelAllowlist: []string{"grok-4.6", "grok-4.5"},
+			CapacityMode:           db.ParentCapacityUnmetered,
+			UpstreamModelAllowlist: []string{"grok-4.6", "grok-4.5"},
 		},
 		store.ChildSubscription{ModelAllowlist: []string{"grok-4.5"}},
 	)
-	if source != "cpa" || len(models) != 2 {
+	if source != "upstream" || len(models) != 2 {
 		t.Fatalf("balance access grant retained legacy child restriction: %v (%s)", models, source)
 	}
 }
@@ -96,7 +96,7 @@ func TestTenantSubscriptionAvailability(t *testing.T) {
 		"not started":        {parent: activeParent, child: store.ChildSubscription{Enabled: true, StartsAt: now.Add(time.Minute)}},
 		"expired":            {parent: activeParent, child: store.ChildSubscription{Enabled: true, StartsAt: activeChild.StartsAt, ExpiresAt: timePointer(now.Add(-time.Second))}},
 		"parent disabled":    {parent: store.ParentSubscription{}, child: activeChild},
-		"parent unavailable": {parent: store.ParentSubscription{Enabled: true, CPAUnavailable: true}, child: activeChild},
+		"parent unavailable": {parent: store.ParentSubscription{Enabled: true, UpstreamUnavailable: true}, child: activeChild},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if available, message := tenantSubscriptionAvailability(testCase.parent, testCase.child, now); available || message == "" {

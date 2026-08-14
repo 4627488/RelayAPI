@@ -2,8 +2,8 @@
 
 ## 计费口径
 
-业界主要有两种口径：Google Imagen 等模型按成功产出的图片张数计费；GPT Image、
-Gemini 原生生图按实际模态 token 计费。RelayAPI 按模型选择权威计量口径；本次生产
+业界主要有按成功图片张数和按实际模态 token 计费两种口径。RelayAPI 按模型选择
+权威计量口径；本次生产
 接入优先使用上游返回的精确用量：
 
 1. 上游返回文本/图片 token 明细时，分别按文本输入、缓存文本输入、图片输入、缓存
@@ -55,4 +55,3 @@ cost = uncached_text_input × text_input_rate
 - [OpenAI API Pricing](https://developers.openai.com/api/docs/pricing)
 - [OpenAI Image generation：成本和输出 token](https://developers.openai.com/api/docs/guides/image-generation#cost-and-latency)
 - [OpenAI Images API usage 字段](https://developers.openai.com/api/reference/resources/images)
-- [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing)

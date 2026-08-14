@@ -41,7 +41,7 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		input.Name = strings.TrimSpace(input.Name)
-		// New credentials always derive their initial public catalog from CPA.
+		// New credentials always derive their initial public catalog from Upstream.
 		// Ignore legacy client-supplied model text instead of letting it define
 		// provider capability.
 		input.Models = nil
@@ -146,10 +146,10 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	parentsByCredential := make(map[string]store.ParentSubscription, len(parents)*2)
 	for _, parent := range parents {
-		if id := strings.TrimSpace(parent.CPAAuthID); id != "" {
+		if id := strings.TrimSpace(parent.UpstreamCredentialID); id != "" {
 			parentsByCredential[id] = parent
 		}
-		if index := strings.TrimSpace(parent.CPAAuthIndex); index != "" {
+		if index := strings.TrimSpace(parent.UpstreamAuthIndex); index != "" {
 			parentsByCredential[index] = parent
 		}
 	}
@@ -297,7 +297,7 @@ func equalFoldedStrings(left, right []string) bool {
 
 func validateNativeCredentialModels(models, candidates []string) error {
 	if len(candidates) == 0 {
-		return errors.New("CPA 凭据目录为空")
+		return errors.New("Upstream 凭据目录为空")
 	}
 	allowedModels := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
@@ -305,7 +305,7 @@ func validateNativeCredentialModels(models, candidates []string) error {
 	}
 	for _, model := range models {
 		if _, ok := allowedModels[strings.ToLower(strings.TrimSpace(model))]; !ok {
-			return errors.New("模型 " + model + " 不在 CPA 凭据目录中")
+			return errors.New("模型 " + model + " 不在 Upstream 凭据目录中")
 		}
 	}
 	return nil
@@ -341,11 +341,11 @@ func (a *App) nativeProviderModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-// activateNativeCredential installs a newly saved credential into CPA. When
-// no explicit public model list was supplied, CPA becomes the source of truth:
+// activateNativeCredential installs a newly saved credential into Upstream. When
+// no explicit public model list was supplied, Upstream becomes the source of truth:
 // native providers use its static registry and OpenAI-compatible providers
 // (including Alibaba Cloud Model Studio) enumerate the upstream /models API
-// through CPA's credential-aware executor.
+// through Relay's credential-aware provider adapter.
 func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCredentialSnapshot) (store.UpstreamCredentialSnapshot, string, error) {
 	if err := a.reloadNativeCredentials(ctx); err != nil {
 		return row, "", err
@@ -354,7 +354,7 @@ func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCr
 		return row, "configured", nil
 	}
 	if a.nativeRuntime == nil {
-		return row, "", errors.New("embedded CPA runtime is unavailable")
+		return row, "", errors.New("native runtime runtime is unavailable")
 	}
 	models, source, err := a.nativeRuntime.DiscoverCredentialModels(ctx, row.ID)
 	if err != nil && len(models) == 0 {
@@ -362,7 +362,7 @@ func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCr
 	}
 	models = uniqueStrings(models)
 	if len(models) == 0 {
-		return row, "", errors.New("CPA 未能枚举该凭据的模型；当前提供商暂不支持自动接入")
+		return row, "", errors.New("Upstream 未能枚举该凭据的模型；当前提供商暂不支持自动接入")
 	}
 	updated, err := a.store.UpsertUpstreamCredential(ctx, store.UpstreamCredentialInput{
 		ID: row.ID, Name: row.Name, Provider: row.Provider, Enabled: row.Enabled,
@@ -532,11 +532,11 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 	if input.Models != nil {
 		models = uniqueStrings(*input.Models)
 		if len(models) == 0 {
-			writeError(w, http.StatusBadRequest, "validation_error", "至少选择一个 CPA 模型")
+			writeError(w, http.StatusBadRequest, "validation_error", "至少选择一个 Upstream 模型")
 			return
 		}
 		if !enabled && !equalFoldedStrings(models, row.Models) {
-			writeError(w, http.StatusConflict, "credential_disabled", "请先启用账户，再从 CPA 选择模型")
+			writeError(w, http.StatusConflict, "credential_disabled", "请先启用账户，再从 Upstream 选择模型")
 			return
 		}
 	}
@@ -557,7 +557,7 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 	if input.Models != nil && enabled {
 		if a.nativeRuntime == nil {
 			rollback()
-			writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", "embedded CPA runtime is unavailable")
+			writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", "native runtime runtime is unavailable")
 			return
 		}
 		candidates, _, discoverErr := a.nativeRuntime.DiscoverCredentialModels(r.Context(), row.ID)
@@ -568,7 +568,7 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		}
 		if err = validateNativeCredentialModels(models, candidates); err != nil {
 			rollback()
-			writeError(w, http.StatusBadRequest, "model_not_in_cpa_catalog", err.Error())
+			writeError(w, http.StatusBadRequest, "model_not_in_upstream_catalog", err.Error())
 			return
 		}
 	}

@@ -13,7 +13,7 @@ func TestLatencyTimelinePreservesCriticalPathAndNetworkSpans(t *testing.T) {
 	timeline := newLatencyTimeline(started)
 	timeline.Step(started.Add(2*time.Millisecond), "auth", "鉴权", "relay", "")
 	timeline.Step(started.Add(7*time.Millisecond), "queue", "排队", "queue", "")
-	timeline.Span(started.Add(3*time.Millisecond), started.Add(5*time.Millisecond), "tcp", "TCP", "cpa", "")
+	timeline.Span(started.Add(3*time.Millisecond), started.Add(5*time.Millisecond), "tcp", "TCP", "upstream", "")
 	timeline.Mark(started.Add(7*time.Millisecond), "first_byte", "首字节")
 
 	var trace latencyTrace

@@ -45,7 +45,7 @@ type APIKey struct {
 
 // APIKeyModelAlias exposes an additional client-visible model name for one API
 // key. Model always stores the concrete model used for authorization, billing,
-// subscription admission, and CPA routing.
+// subscription admission, and Upstream routing.
 type APIKeyModelAlias struct {
 	ID       string `gorm:"type:uuid;primaryKey" json:"id"`
 	APIKeyID string `gorm:"type:uuid;not null;uniqueIndex:api_key_model_alias_identity,priority:1" json:"-"`
@@ -144,9 +144,9 @@ type RequestLog struct {
 	TenantID                     string    `gorm:"type:uuid;not null;index:request_logs_tenant_started_idx,priority:1" json:"tenant_id"`
 	APIKeyID                     string    `gorm:"type:uuid;not null;index" json:"api_key_id"`
 	ReservationRequestID         *string   `gorm:"type:uuid;index" json:"reservation_request_id,omitempty"`
-	CPARequestID                 string    `gorm:"index" json:"cpa_request_id,omitempty"`
-	CPATraceID                   string    `gorm:"index" json:"cpa_trace_id,omitempty"`
-	CPAExecutionID               string    `gorm:"index" json:"cpa_execution_id,omitempty"`
+	UpstreamRequestID            string    `gorm:"index" json:"upstream_request_id,omitempty"`
+	UpstreamTraceID              string    `gorm:"index" json:"upstream_trace_id,omitempty"`
+	UpstreamExecutionID          string    `gorm:"index" json:"upstream_execution_id,omitempty"`
 	Model                        string    `gorm:"not null;default:''" json:"model"`
 	RequestedModel               string    `gorm:"not null;default:''" json:"requested_model"`
 	ActualModel                  string    `gorm:"not null;default:'';index" json:"actual_model"`
@@ -240,12 +240,12 @@ type RequestLogDetail struct {
 	UpdatedAt              time.Time `json:"updated_at"`
 }
 
-type CPALifecycleEvent struct {
+type UpstreamLifecycleEvent struct {
 	ID                  string     `gorm:"type:uuid;primaryKey" json:"id"`
-	RequestLogID        string     `gorm:"type:uuid;not null;index:cpa_lifecycle_request_idx,priority:1" json:"request_log_id"`
-	Event               string     `gorm:"not null;index:cpa_lifecycle_request_idx,priority:2" json:"event"`
-	CPAExecutionID      string     `gorm:"not null;default:'';index" json:"cpa_execution_id"`
-	CPATraceID          string     `gorm:"not null;default:'';index" json:"cpa_trace_id"`
+	RequestLogID        string     `gorm:"type:uuid;not null;index:upstream_lifecycle_request_idx,priority:1" json:"request_log_id"`
+	Event               string     `gorm:"not null;index:upstream_lifecycle_request_idx,priority:2" json:"event"`
+	UpstreamExecutionID string     `gorm:"not null;default:'';index" json:"upstream_execution_id"`
+	UpstreamTraceID     string     `gorm:"not null;default:'';index" json:"upstream_trace_id"`
 	SourceFormat        string     `gorm:"not null;default:''" json:"source_format"`
 	ToFormat            string     `gorm:"not null;default:''" json:"to_format"`
 	Model               string     `gorm:"not null;default:''" json:"model"`

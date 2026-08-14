@@ -10,18 +10,18 @@ import (
 	"gorm.io/gorm"
 )
 
-type CPALifecycleInput struct {
-	RequestLogID, Event, CPAExecutionID, CPATraceID, SourceFormat, ToFormat, Model, RequestedModel string
-	ModelAlias, Provider, ExecutorType, AuthType, AuthIndex, ServiceTier, ResponseServiceTier      string
-	ReasoningEffort, Outcome, ErrorMessage, Headers, ResponseHeaders                               string
-	Body, OriginalRequest, RequestBody, RawJSON                                                    string
-	StatusCode                                                                                     int
+type UpstreamLifecycleInput struct {
+	RequestLogID, Event, UpstreamExecutionID, UpstreamTraceID, SourceFormat, ToFormat, Model, RequestedModel string
+	ModelAlias, Provider, ExecutorType, AuthType, AuthIndex, ServiceTier, ResponseServiceTier                string
+	ReasoningEffort, Outcome, ErrorMessage, Headers, ResponseHeaders                                         string
+	Body, OriginalRequest, RequestBody, RawJSON                                                              string
+	StatusCode                                                                                               int
 }
 
-func (s Store) RecordCPALifecycleEvent(ctx context.Context, input CPALifecycleInput) error {
-	event := db.CPALifecycleEvent{
+func (s Store) RecordUpstreamLifecycleEvent(ctx context.Context, input UpstreamLifecycleInput) error {
+	event := db.UpstreamLifecycleEvent{
 		ID: identity.NewID(), RequestLogID: strings.TrimSpace(input.RequestLogID), Event: input.Event,
-		CPAExecutionID: input.CPAExecutionID, CPATraceID: input.CPATraceID,
+		UpstreamExecutionID: input.UpstreamExecutionID, UpstreamTraceID: input.UpstreamTraceID,
 		SourceFormat: input.SourceFormat, ToFormat: input.ToFormat, Model: input.Model,
 		RequestedModel: input.RequestedModel, ModelAlias: input.ModelAlias, Provider: input.Provider,
 		ExecutorType: input.ExecutorType, AuthType: input.AuthType, AuthIndex: input.AuthIndex,
@@ -40,7 +40,7 @@ func (s Store) RecordCPALifecycleEvent(ctx context.Context, input CPALifecycleIn
 			return err
 		}
 		if count > 0 {
-			return applyCPALifecycleEvent(tx, &event, false)
+			return applyUpstreamLifecycleEvent(tx, &event, false)
 		}
 		// Only a compact completion may arrive before Relay has written its
 		// request log. Keep it temporarily, then consume it atomically when the
@@ -61,36 +61,36 @@ func (s Store) RecordCPALifecycleEvent(ctx context.Context, input CPALifecycleIn
 			return err
 		}
 		if count > 0 {
-			return applyCPALifecycleEvent(tx, &event, true)
+			return applyUpstreamLifecycleEvent(tx, &event, true)
 		}
 		return nil
 	})
 }
 
-func applyPendingCPALifecycleEvents(tx *gorm.DB, requestLogID string) error {
-	var events []db.CPALifecycleEvent
+func applyPendingUpstreamLifecycleEvents(tx *gorm.DB, requestLogID string) error {
+	var events []db.UpstreamLifecycleEvent
 	if err := tx.Where("request_log_id = ? AND processed = ?", requestLogID, false).
 		Order("created_at").Find(&events).Error; err != nil {
 		return err
 	}
 	for index := range events {
-		if err := applyCPALifecycleEvent(tx, &events[index], true); err != nil {
+		if err := applyUpstreamLifecycleEvent(tx, &events[index], true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent, persisted bool) error {
+func applyUpstreamLifecycleEvent(tx *gorm.DB, event *db.UpstreamLifecycleEvent, persisted bool) error {
 	updates := map[string]any{}
 	put := func(column, value string) {
 		if strings.TrimSpace(value) != "" {
 			updates[column] = strings.TrimSpace(value)
 		}
 	}
-	put("cpa_execution_id", event.CPAExecutionID)
-	put("cpa_trace_id", event.CPATraceID)
-	// RelayAPI may already have recorded a client-specific API-key alias. CPA
+	put("upstream_execution_id", event.UpstreamExecutionID)
+	put("upstream_trace_id", event.UpstreamTraceID)
+	// RelayAPI may already have recorded a client-specific API-key alias. Upstream
 	// only sees the rewritten model, so its lifecycle event must not erase the
 	// original client-visible model in that case.
 	if strings.TrimSpace(event.RequestedModel) != "" {
@@ -114,7 +114,7 @@ func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent, persisted 
 	put("response_service_tier", event.ResponseServiceTier)
 	put("reasoning_effort", event.ReasoningEffort)
 	if event.Outcome != "" && event.Outcome != "succeeded" {
-		errorCode := "cpa_" + event.Outcome
+		errorCode := "upstream_" + event.Outcome
 		if strings.Contains(strings.ToLower(event.ErrorMessage), "auth_unavailable") {
 			errorCode = "auth_unavailable"
 		}
@@ -149,7 +149,7 @@ func applyCPALifecycleEvent(tx *gorm.DB, event *db.CPALifecycleEvent, persisted 
 		}
 	case "request.complete":
 		if event.ErrorMessage != "" {
-			detailUpdates["error_name"] = "cpa_" + event.Outcome
+			detailUpdates["error_name"] = "upstream_" + event.Outcome
 			detailUpdates["error_message"] = event.ErrorMessage
 		}
 	}

@@ -14,8 +14,8 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/config"
-	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/db"
+	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/store"
 	upstreamruntime "github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/gorilla/websocket"
@@ -27,7 +27,7 @@ type nativeWebSocketTestResult struct {
 }
 
 func TestNativeResponsesWebSocketProbeDisconnectIsNotAnError(t *testing.T) {
-	app := &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}}
+	app := &App{cfg: config.Config{MaxRequestBytes: 1 << 20}}
 	resultCh := make(chan nativeWebSocketTestResult, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "probe-test", nil,
@@ -68,7 +68,7 @@ func TestNativeResponsesWebSocketClientDisconnectIsNotAnError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
@@ -77,7 +77,7 @@ func TestNativeResponsesWebSocketClientDisconnectIsNotAnError(t *testing.T) {
 	resultCh := make(chan nativeWebSocketTestResult, 1)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "disconnect-test", nil,
-			&nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}})
+			&nativeWebSocketAccounting{billable: true, admission: store.Admission{UpstreamCredentialID: "codex"}})
 		resultCh <- nativeWebSocketTestResult{session: session, err: err}
 	}))
 	defer downstream.Close()
@@ -120,7 +120,7 @@ func TestNativeResponsesWebSocketUpstreamDisconnectRemainsAnError(t *testing.T) 
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
@@ -129,7 +129,7 @@ func TestNativeResponsesWebSocketUpstreamDisconnectRemainsAnError(t *testing.T) 
 	resultCh := make(chan nativeWebSocketTestResult, 1)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "upstream-error-test", nil,
-			&nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}})
+			&nativeWebSocketAccounting{billable: true, admission: store.Admission{UpstreamCredentialID: "codex"}})
 		resultCh <- nativeWebSocketTestResult{session: session, err: err}
 	}))
 	defer downstream.Close()
@@ -178,13 +178,13 @@ func TestNativeResponsesWebSocketCompletedThenUpstreamEOFReconnectsNextFullTurn(
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{ID: "codex", Provider: "codex", Enabled: true,
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{ID: "codex", Provider: "codex", Enabled: true,
 		Models: []string{"gpt-test"}, Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
 		})})
 	resultCh := make(chan nativeWebSocketTestResult, 1)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}}
+		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{UpstreamCredentialID: "codex"}}
 		session, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "completed-eof-test", nil, accounting)
 		resultCh <- nativeWebSocketTestResult{session: session, err: err}
 	}))
@@ -270,7 +270,7 @@ func TestNativeWebSocketHeartbeatSendsPing(t *testing.T) {
 	}
 }
 
-func TestNativeResponsesWebSocketUsesEmbeddedCPAHandlerAndAccountsUsage(t *testing.T) {
+func TestNativeResponsesWebSocketUsesNativeRuntimeHandlerAndAccountsUsage(t *testing.T) {
 	type observed struct {
 		Authorization string
 		Beta          string
@@ -298,7 +298,7 @@ func TestNativeResponsesWebSocketUsesEmbeddedCPAHandlerAndAccountsUsage(t *testi
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "upstream-token", "base_url": upstream.URL, "websockets": true,
@@ -306,7 +306,7 @@ func TestNativeResponsesWebSocketUsesEmbeddedCPAHandlerAndAccountsUsage(t *testi
 		}),
 	})
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}}
+		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{UpstreamCredentialID: "codex"}}
 		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "request-test", nil, accounting)
 		accountingCh <- accounting.result
 	}))
@@ -344,11 +344,11 @@ func TestNativeResponsesWebSocketUsesEmbeddedCPAHandlerAndAccountsUsage(t *testi
 		if got.Beta != "responses_websockets=2026-02-06" {
 			t.Fatalf("OpenAI-Beta = %q", got.Beta)
 		}
-		if got.Body["type"] != "response.create" || got.Body["model"] != "gpt-upstream" || got.Body["parallel_tool_calls"] != false {
+		if got.Body["type"] != "response.create" || got.Body["model"] != "gpt-upstream" || got.Body["parallel_tool_calls"] != true {
 			t.Fatalf("upstream body = %#v", got.Body)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for embedded CPA upstream request")
+		t.Fatal("timed out waiting for native runtime upstream request")
 	}
 	select {
 	case got := <-accountingCh:
@@ -379,14 +379,14 @@ func TestNativeResponsesWebSocketPersistsTerminalBeforeForwarding(t *testing.T) 
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
 		}),
 	})
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}}
+		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{UpstreamCredentialID: "codex"}}
 		accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
 			turn := entry.Result
 			if turn.RequestID != "resp_durable" || cumulative.Usage.Total != 10 {
@@ -434,7 +434,7 @@ func TestNativeResponsesWebSocketPersistsTerminalBeforeForwarding(t *testing.T) 
 	}
 }
 
-func TestNativeResponsesWebSocketLeavesMultiTurnStateToEmbeddedCPA(t *testing.T) {
+func TestNativeResponsesWebSocketLeavesMultiTurnStateToNativeRuntime(t *testing.T) {
 	var connections atomic.Int32
 	requests := make(chan map[string]any, 2)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -463,7 +463,7 @@ func TestNativeResponsesWebSocketLeavesMultiTurnStateToEmbeddedCPA(t *testing.T)
 	}))
 	defer upstream.Close()
 
-	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
@@ -472,7 +472,7 @@ func TestNativeResponsesWebSocketLeavesMultiTurnStateToEmbeddedCPA(t *testing.T)
 	})
 	accountingCh := make(chan billing.Result, 1)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "codex"}}
+		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{UpstreamCredentialID: "codex"}}
 		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "session-test", nil, accounting)
 		accountingCh <- accounting.result
 	}))
@@ -516,14 +516,14 @@ func TestNativeResponsesWebSocketLeavesMultiTurnStateToEmbeddedCPA(t *testing.T)
 	}
 }
 
-func TestNativeResponsesWebSocketPreservesEmbeddedCPAPrewarm(t *testing.T) {
-	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
+func TestNativeResponsesWebSocketPreservesNativeRuntimePrewarm(t *testing.T) {
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{
 		ID: "compat", Provider: "openai", Enabled: true, Models: []string{"gpt-test"},
 		Document: []byte(`{"type":"openai","api_key":"unused","base_url":"https://example.invalid/v1"}`),
 	})
 	accountingCh := make(chan billing.Result, 1)
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{CPAAuthID: "compat"}}
+		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{UpstreamCredentialID: "compat"}}
 		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "prewarm-test", nil, accounting)
 		accountingCh <- accounting.result
 	}))
@@ -552,7 +552,7 @@ func TestNativeResponsesWebSocketPreservesEmbeddedCPAPrewarm(t *testing.T) {
 		completed = event.Type == "response.completed"
 	}
 	if !completed {
-		t.Fatal("embedded CPA did not synthesize the websocket prewarm completion")
+		t.Fatal("native runtime did not synthesize the websocket prewarm completion")
 	}
 	_ = client.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 	select {
@@ -580,7 +580,7 @@ func TestMergeNativeWebSocketResultSumsTurns(t *testing.T) {
 }
 
 func TestPrepareNativeWebSocketRequestTracksChangedModel(t *testing.T) {
-	app := newEmbeddedCPATestApp(t, upstreamruntime.Credential{
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{
 		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-first", "gpt-second"},
 		Document: mustJSON(t, map[string]any{
 			"type": "codex", "access_token": "token", "base_url": "https://example.invalid", "websockets": true,
@@ -588,7 +588,7 @@ func TestPrepareNativeWebSocketRequestTracksChangedModel(t *testing.T) {
 		}),
 	})
 	accounting := &nativeWebSocketAccounting{
-		admission:   store.Admission{CPAAuthID: "codex"},
+		admission:   store.Admission{UpstreamCredentialID: "codex"},
 		currentMeta: requestMeta{Model: "gpt-first", RequestedModel: "gpt-first", Stream: true},
 	}
 	payload := []byte(`{"type":"response.create","model":"fast","service_tier":"priority"}`)
@@ -607,14 +607,14 @@ func TestPrepareNativeWebSocketRequestTracksChangedModel(t *testing.T) {
 	}
 }
 
-func newEmbeddedCPATestApp(t *testing.T, credential upstreamruntime.Credential) *App {
+func newNativeRuntimeTestApp(t *testing.T, credential upstreamruntime.Credential) *App {
 	t.Helper()
-	runtime, err := upstreamruntime.NewCompatibilityRuntime(upstreamruntime.Options{APIKey: "embedded-test-key"}, []upstreamruntime.Credential{credential})
+	runtime, err := upstreamruntime.NewRuntime(upstreamruntime.Options{APIKey: "runtime-test-key"}, []upstreamruntime.Credential{credential})
 	if err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(runtime.Handler())
-	client, err := cpa.New(server.URL, "embedded-test-key", "", time.Minute)
+	client, err := gateway.NewWithOptions(server.URL, "runtime-test-key", gateway.Options{ResponseHeaderTimeout: time.Minute})
 	if err != nil {
 		server.Close()
 		_ = runtime.Close(context.Background())
@@ -624,7 +624,7 @@ func newEmbeddedCPATestApp(t *testing.T, credential upstreamruntime.Credential) 
 		server.Close()
 		_ = runtime.Close(context.Background())
 	})
-	return &App{cfg: config.Config{CPAMaxRequestBytes: 1 << 20}, nativeCPA: client, nativeRuntime: runtime}
+	return &App{cfg: config.Config{MaxRequestBytes: 1 << 20}, nativeGateway: client, nativeRuntime: runtime}
 }
 
 func TestNativeWebSocketAdmissionErrorUsesPaymentRequiredForExhaustedQuota(t *testing.T) {

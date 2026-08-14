@@ -44,9 +44,9 @@ func TestBalanceSubscriptionBulkGrantAuthorizesMultipleTenants(t *testing.T) {
 	}
 	dataStore := Store{DB: database}
 	parent, err := dataStore.SyncNativeParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "balance-credential", Name: "Grok balance account", Provider: "xai", Status: "available",
+		UpstreamCredentialID: "balance-credential", Name: "Grok balance account", Provider: "xai", Status: "available",
 		CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
-		Enabled: true, CPAModelAllowlist: []string{"grok-4.6"}, Metadata: json.RawMessage(`{}`),
+		Enabled: true, UpstreamModelAllowlist: []string{"grok-4.6"}, Metadata: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestBalanceSubscriptionBulkGrantAuthorizesMultipleTenants(t *testing.T) {
 	if err != nil || !assigned || unavailable || len(candidates) != 1 {
 		t.Fatalf("balance routing retained legacy child restriction: candidates=%+v assigned=%v err=%v", candidates, assigned, err)
 	}
-	if err = database.Model(&db.ParentSubscription{}).Where("id = ?", parent.ID).Update("cpa_unavailable", true).Error; err != nil {
+	if err = database.Model(&db.ParentSubscription{}).Where("id = ?", parent.ID).Update("upstream_unavailable", true).Error; err != nil {
 		t.Fatal(err)
 	}
 	grants, err = dataStore.ActiveSubscriptionModelGrants(ctx, tenantIDs[0], time.Now())
@@ -131,7 +131,7 @@ func TestObservedSubscriptionAllowsOversubscription(t *testing.T) {
 	}
 	dataStore := Store{DB: database}
 	parent, err := dataStore.UpsertParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "oversold-account", Name: "Oversold account", Status: "available",
+		UpstreamCredentialID: "oversold-account", Name: "Oversold account", Status: "available",
 		CapacityMode: db.ParentCapacityObserved, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})
 	if err != nil {
@@ -192,7 +192,7 @@ func TestMissingParentCleanupReleasesReservationsAndDeletesCurrentState(t *testi
 	dataStore := Store{DB: database}
 	lastSync := time.Now().Add(-time.Minute)
 	parent, err := dataStore.SyncNativeParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "deleted-credential", Name: "deleted", Provider: "codex", Status: "available",
+		UpstreamCredentialID: "deleted-credential", Name: "deleted", Provider: "codex", Status: "available",
 		CapacityMode: db.ParentCapacityObserved, AllocationLimitPPM: 1_000_000,
 		Enabled: true, Metadata: json.RawMessage(`{}`), LastSyncedAt: &lastSync,
 	})
@@ -287,21 +287,21 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 
 	store := Store{DB: database}
 	parent, err := store.UpsertParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "auth-integration", Name: "parent", CapacityMode: db.ParentCapacityObserved,
+		UpstreamCredentialID: "auth-integration", Name: "parent", CapacityMode: db.ParentCapacityObserved,
 		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	syncedParent, err := store.SyncParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "scheduler-auth-id", CPAAuthIndex: "auth-integration", CPAAuthName: "auth.json",
+		UpstreamCredentialID: "scheduler-auth-id", UpstreamAuthIndex: "auth-integration", UpstreamCredentialName: "auth.json",
 		Name: "parent", Provider: "test", CapacityMode: db.ParentCapacityUnmetered,
 		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if syncedParent.ID != parent.ID || syncedParent.CPAAuthID != "scheduler-auth-id" || syncedParent.CPAAuthIndex != "auth-integration" {
+	if syncedParent.ID != parent.ID || syncedParent.UpstreamCredentialID != "scheduler-auth-id" || syncedParent.UpstreamAuthIndex != "auth-integration" {
 		t.Fatalf("parent identity mapping was not updated in place: %+v", syncedParent)
 	}
 	parent = syncedParent
@@ -406,7 +406,7 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 
 	store := Store{DB: database}
 	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "observed-auth-id", CPAAuthIndex: "observed-auth-index", CPAAuthName: "observed.json",
+		UpstreamCredentialID: "observed-auth-id", UpstreamAuthIndex: "observed-auth-index", UpstreamCredentialName: "observed.json",
 		Name: "observed parent", Provider: "extension-provider", CapacityMode: db.ParentCapacityObserved,
 		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})
@@ -429,7 +429,7 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.QuotaReservedNanoUSD != 0 || first.CPAAuthID != "observed-auth-id" {
+	if first.QuotaReservedNanoUSD != 0 || first.UpstreamCredentialID != "observed-auth-id" {
 		t.Fatalf("learning admission = %+v", first)
 	}
 	var firstReservation RequestReservation
@@ -561,9 +561,9 @@ func TestModelWithoutChildAssignmentFallsBackToTenantBalance(t *testing.T) {
 
 	store := Store{DB: database}
 	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "subscription-auth", CPAAuthIndex: "subscription-index", CPAAuthName: "subscription.json",
+		UpstreamCredentialID: "subscription-auth", UpstreamAuthIndex: "subscription-index", UpstreamCredentialName: "subscription.json",
 		Name: "subscription parent", Provider: "test", CapacityMode: db.ParentCapacityUnmetered,
-		AllocationLimitPPM: 1_000_000, Enabled: true, CPAModelAllowlist: []string{"subscription-model"},
+		AllocationLimitPPM: 1_000_000, Enabled: true, UpstreamModelAllowlist: []string{"subscription-model"},
 		Metadata: json.RawMessage(`{}`),
 	})
 	if err != nil {
@@ -587,7 +587,7 @@ func TestModelWithoutChildAssignmentFallsBackToTenantBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if admission.CPAAuthID != "" || admission.ChildSubscriptionID != "" || admission.BalanceReservedNanoUSD != 10 {
+	if admission.UpstreamCredentialID != "" || admission.ChildSubscriptionID != "" || admission.BalanceReservedNanoUSD != 10 {
 		t.Fatalf("balance fallback admission = %+v", admission)
 	}
 	if err := store.SettleRequestReservation(ctx, requestID, 7, true); err != nil {
@@ -609,7 +609,7 @@ func TestModelWithoutChildAssignmentFallsBackToTenantBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assigned.CPAAuthID != "subscription-auth" || assigned.ChildSubscriptionID == "" || assigned.BalanceReservedNanoUSD != 10 {
+	if assigned.UpstreamCredentialID != "subscription-auth" || assigned.ChildSubscriptionID == "" || assigned.BalanceReservedNanoUSD != 10 {
 		t.Fatalf("assigned admission = %+v", assigned)
 	}
 }
@@ -742,7 +742,7 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 	}
 
 	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
-		CPAAuthID: "ws-auth-id", CPAAuthIndex: "ws-auth-index", CPAAuthName: "ws.json",
+		UpstreamCredentialID: "ws-auth-id", UpstreamAuthIndex: "ws-auth-index", UpstreamCredentialName: "ws.json",
 		Name: "ws parent", Provider: "test", CapacityMode: db.ParentCapacityObserved,
 		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})

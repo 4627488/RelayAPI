@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 
@@ -26,22 +27,24 @@ func isNativeModelCatalogRequest(r *http.Request) bool {
 // proxyNativeModels preserves the standard OpenAI and rich Codex catalog
 // formats, then applies Relay's tenant and key policy.
 func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key store.KeyContext) {
-	targetCPA := a.inferenceCPA()
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetCPA.URL(r.URL.RequestURI()), nil)
+	if a.nativeRuntime == nil {
+		writeError(w, http.StatusServiceUnavailable, "model_catalog_error", "模型运行时不可用")
+		return
+	}
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, r.URL.RequestURI(), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "model_catalog_error", err.Error())
 		return
 	}
 	copyHeaders(request.Header, r.Header)
-	request.Header.Set("Authorization", "Bearer "+targetCPA.APIKey)
+	if gateway := a.inferenceGateway(); gateway != nil && gateway.APIKey != "" {
+		request.Header.Set("Authorization", "Bearer "+gateway.APIKey)
+	}
 	request.Header.Del("X-API-Key")
 	request.Header.Del("X-Goog-API-Key")
-	request.Host = targetCPA.BaseURL.Host
-	response, err := targetCPA.ControlHTTP.Do(request)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "model_catalog_error", "无法读取模型列表")
-		return
-	}
+	recorder := httptest.NewRecorder()
+	a.nativeRuntime.Handler().ServeHTTP(recorder, request)
+	response := recorder.Result()
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maxModelCatalogBytes))
 	if err != nil {
@@ -114,8 +117,7 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 // promoteCodexCatalogCapabilities implements Relay's default product policy:
 // expose the richest Codex agent surface and let the provider adapter lower
 // unsupported wire details. This is intentionally explicit rather than
-// inheriting whichever conservative defaults happen to exist in CPA's model
-// template.
+// inheriting conservative defaults from a provider-specific model template.
 func promoteCodexCatalogCapabilities(payload []byte) ([]byte, error) {
 	var document map[string]any
 	if err := json.Unmarshal(payload, &document); err != nil {
@@ -160,7 +162,7 @@ func (a *App) codexCapabilityPolicy() string {
 	return "optimistic"
 }
 
-// normalizeCodexCatalogCapabilities removes capabilities that CPA's generic
+// normalizeCodexCatalogCapabilities removes capabilities that a generic
 // GPT-derived model template cannot prove for translated Chat Completions
 // providers. A false negative only hides an optimization; a false positive can
 // make Codex send a tool dialect the upstream silently drops.

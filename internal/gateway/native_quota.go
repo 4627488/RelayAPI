@@ -1,4 +1,4 @@
-package cpa
+package gateway
 
 import (
 	"bytes"
@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/4627488/RelayAPI/internal/egress"
 )
 
 const maxQuotaResponseBytes = 2 << 20
@@ -26,11 +28,30 @@ type QuotaProbeCredential struct {
 	ProxyURL  string
 }
 
+type QuotaReport struct {
+	AuthIndex string        `json:"auth_index"`
+	Provider  string        `json:"provider"`
+	PlanType  string        `json:"plan_type"`
+	Supported bool          `json:"supported"`
+	Source    string        `json:"source"`
+	Observed  time.Time     `json:"observed_at"`
+	Windows   []QuotaWindow `json:"windows"`
+}
+
+type QuotaWindow struct {
+	Kind             string     `json:"kind"`
+	Label            string     `json:"label"`
+	UsedPercent      *float64   `json:"used_percent"`
+	RemainingPercent *float64   `json:"remaining_percent"`
+	ResetsAt         *time.Time `json:"resets_at"`
+	Enforceable      bool       `json:"enforceable"`
+	Unit             string     `json:"unit"`
+	Limit            *float64   `json:"limit"`
+	Remaining        *float64   `json:"remaining"`
+}
+
 type quotaEndpoints struct {
 	codexUsage        string
-	claudeUsage       string
-	antigravityLoad   string
-	antigravityModels []string
 	kimiUsage         string
 	kimiUsageFallback string
 	xaiCredits        string
@@ -38,14 +59,7 @@ type quotaEndpoints struct {
 }
 
 var productionQuotaEndpoints = quotaEndpoints{
-	codexUsage:      "https://chatgpt.com/backend-api/wham/usage",
-	claudeUsage:     "https://api.anthropic.com/api/oauth/usage",
-	antigravityLoad: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-	antigravityModels: []string{
-		"https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-		"https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-		"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
-	},
+	codexUsage:        "https://chatgpt.com/backend-api/wham/usage",
 	kimiUsage:         "https://api.kimi.com/coding/v1/usages",
 	kimiUsageFallback: "https://api.moonshot.ai/v1/usages",
 	xaiCredits:        "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
@@ -64,10 +78,10 @@ func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaRepo
 	}
 	now := time.Now().UTC()
 	provider := normalizeQuotaProvider(firstQuotaText(credential.Provider, scalarQuotaText(document["provider"]), scalarQuotaText(document["type"])))
-	if report, ok := embeddedQuotaReport(document, provider, credential.AuthIndex, now); ok {
+	if report, ok := documentQuotaReport(document, provider, credential.AuthIndex, now); ok {
 		return report, nil
 	}
-	client, err := OutboundHTTPClient(credential.ProxyURL, 25*time.Second)
+	client, err := egress.OutboundHTTPClient(credential.ProxyURL, 25*time.Second)
 	if err != nil {
 		return QuotaReport{}, err
 	}
@@ -78,10 +92,6 @@ func probeQuotaWithClient(ctx context.Context, client *http.Client, endpoints qu
 	switch provider {
 	case "codex", "codex-oauth", "chatgpt":
 		return probeCodexQuota(ctx, client, endpoints.codexUsage, authIndex, provider, document, now)
-	case "anthropic", "claude", "claude-code", "claude-oauth":
-		return probeClaudeQuota(ctx, client, endpoints.claudeUsage, authIndex, provider, document, now)
-	case "antigravity", "google-antigravity":
-		return probeAntigravityQuota(ctx, client, endpoints, authIndex, provider, document, now)
 	case "kimi", "kimi-code", "moonshot":
 		return probeKimiQuota(ctx, client, endpoints, authIndex, provider, document, now)
 	case "xai", "x-ai", "grok":
@@ -349,7 +359,7 @@ func requestQuotaJSONBody(ctx context.Context, client *http.Client, method, endp
 	return payload, nil
 }
 
-func embeddedQuotaReport(document map[string]any, provider, authIndex string, now time.Time) (QuotaReport, bool) {
+func documentQuotaReport(document map[string]any, provider, authIndex string, now time.Time) (QuotaReport, bool) {
 	root, _ := firstQuotaValue(document["relay_quota"], document["relayQuota"]).(map[string]any)
 	if root == nil {
 		return QuotaReport{}, false

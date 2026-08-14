@@ -31,7 +31,7 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 	}
 	// Keep enough warm local connections for the inference admission path.
 	// database/sql otherwise retains only two idle connections, which causes
-	// needless reconnect churn under the same concurrency accepted by CPA.
+	// needless reconnect churn under the same concurrency accepted by Upstream.
 	sqlDB.SetMaxOpenConns(32)
 	sqlDB.SetMaxIdleConns(16)
 	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
@@ -39,9 +39,12 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 	if err := sqlDB.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
+	if err := prepareNativeSchema(ctx, database); err != nil {
+		return nil, fmt.Errorf("prepare native schema: %w", err)
+	}
 	if err := database.WithContext(ctx).AutoMigrate(
 		&Tenant{}, &APIKey{}, &APIKeyModelAlias{}, &ModelPrice{}, &ModelCatalogPrice{}, &ModelAlias{}, &ModelPriceRule{},
-		&BillingLedger{}, &UsageDailyRollup{}, &RequestLog{}, &RequestLogDetail{}, &CPALifecycleEvent{}, &Invitation{}, &AgentSetup{},
+		&BillingLedger{}, &UsageDailyRollup{}, &RequestLog{}, &RequestLogDetail{}, &UpstreamLifecycleEvent{}, &Invitation{}, &AgentSetup{},
 		&ParentSubscription{}, &ParentQuotaWindow{}, &ParentQuotaObservation{},
 		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{}, &WebSocketTurn{},
 		&OutboundProxy{}, &UpstreamCredential{}, &RuntimeSetting{},

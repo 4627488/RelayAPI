@@ -7,8 +7,8 @@ import (
 )
 
 // normalizeSupportedProvider is the product boundary, not merely a UI list.
-// Keeping it centralized prevents imported credential JSON from re-enabling a
-// CPA executor that Relay intentionally does not expose.
+// Keeping it centralized prevents credential JSON from re-enabling a provider
+// adapter that Relay intentionally does not expose.
 func normalizeSupportedProvider(value string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "codex":

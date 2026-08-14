@@ -78,11 +78,11 @@ func TestEnforceLimitsSkipsUsageQueryWhenNoDailyLimitExists(t *testing.T) {
 func TestRejectedRequestDetailMarksUnreadBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("request body"))
 	request.Header.Set("X-Goog-Api-Key", "relay_gemini_secret")
-	detail := rejectedRequestDetail(request, nil, false, "cpa_overloaded", "CPA overloaded", time.Now())
+	detail := rejectedRequestDetail(request, nil, false, "upstream_overloaded", "Upstream overloaded", time.Now())
 	if detail.RequestBodyBytes != request.ContentLength || !detail.RequestBodyTruncated {
 		t.Fatalf("unread body metadata = bytes %d, truncated %v", detail.RequestBodyBytes, detail.RequestBodyTruncated)
 	}
-	if strings.Contains(detail.RequestHeaders, "relay_gemini_secret") || detail.ErrorName != "cpa_overloaded" {
+	if strings.Contains(detail.RequestHeaders, "relay_gemini_secret") || detail.ErrorName != "upstream_overloaded" {
 		t.Fatalf("rejected detail = %+v", detail)
 	}
 }
@@ -98,8 +98,6 @@ func TestSetStreamingHeadersDisablesTransformBuffering(t *testing.T) {
 func TestReadRequestMeta(t *testing.T) {
 	tests := []struct{ body, path, model string }{
 		{`{"model":"gpt-5.4","stream":true}`, "/v1/responses", "gpt-5.4"},
-		{`{"contents":[]}`, "/v1beta/models/gemini-3.5-pro:generateContent", "gemini-3.5-pro"},
-		{`{"contents":[]}`, "/v1beta/models/prefix%2Fmodel:streamGenerateContent", "prefix/model"},
 	}
 	for _, test := range tests {
 		got := readRequestMeta([]byte(test.body), test.path)
@@ -186,15 +184,6 @@ func TestRewriteRequestModelCoversBodyPathAndQuery(t *testing.T) {
 		}
 		if string(object["model"]) != `"gpt-5.6"` || string(object["large"]) != "9007199254740993" {
 			t.Fatalf("rewritten body = %s", body)
-		}
-	})
-	t.Run("gemini path", func(t *testing.T) {
-		request, _ := http.NewRequest(http.MethodPost, "http://relay.test/v1beta/models/fast:generateContent", nil)
-		if _, err := rewriteRequestModel(nil, request.URL, "fast", "gemini-2.5-flash"); err != nil {
-			t.Fatal(err)
-		}
-		if request.URL.Path != "/v1beta/models/gemini-2.5-flash:generateContent" {
-			t.Fatalf("rewritten path = %q", request.URL.Path)
 		}
 	})
 	t.Run("query", func(t *testing.T) {

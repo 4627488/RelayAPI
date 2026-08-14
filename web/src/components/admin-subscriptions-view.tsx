@@ -1507,7 +1507,7 @@ function ParentSettingsDialog({
               <FieldLabel htmlFor="parent-models">账户模型范围</FieldLabel>
               <ModelSelector
                 id="parent-models"
-                options={current.item.cpa_model_allowlist ?? []}
+                options={current.item.upstream_model_allowlist ?? []}
                 value={models}
                 onChange={setModels}
               />
@@ -1783,7 +1783,7 @@ function AccountStatusBadge({ view }: { view: ParentSubscriptionView }) {
   if (view.item.status === "missing")
     return <Badge variant="outline">账户已删除</Badge>
   if (!view.item.enabled) return <Badge variant="secondary">已停用</Badge>
-  if (view.item.cpa_unavailable)
+  if (view.item.upstream_unavailable)
     return <Badge variant="destructive">账户不可用</Badge>
   if (view.item.capacity_mode === "observed" && !view.windows.length)
     return <Badge variant="outline">额度学习中</Badge>
@@ -1802,7 +1802,7 @@ function ChildStatusBadge({ child }: { child: ChildSubscription }) {
 }
 
 function isAllocatable(view: ParentSubscriptionView) {
-  if (!view.item.enabled || view.item.cpa_unavailable) return false
+  if (!view.item.enabled || view.item.upstream_unavailable) return false
   return (
     view.item.capacity_mode === "unmetered" ||
     view.windows.length > 0 ||
@@ -1814,7 +1814,7 @@ function accountBlockReason(view: ParentSubscriptionView) {
   if (view.item.status === "missing")
     return "模型账户已删除；历史授权仅可迁移到其他账户或删除。"
   if (!view.item.enabled) return "账户分配规则已停用。"
-  if (view.item.cpa_unavailable) return "模型账户当前不可用，请先检查账户状态。"
+  if (view.item.upstream_unavailable) return "模型账户当前不可用，请先检查账户状态。"
   if (view.item.capacity_mode === "observed" && !view.windows.length)
     return view.item.quota_probe_status === "unsupported"
       ? "上游不支持额度观测，请改为余额结算。"
@@ -1845,7 +1845,7 @@ function displayPlan(value?: string) {
 function parentModelOptions(parent?: ParentSubscriptionView) {
   return parent?.item.model_allowlist?.length
     ? parent.item.model_allowlist
-    : (parent?.item.cpa_model_allowlist ?? [])
+    : (parent?.item.upstream_model_allowlist ?? [])
 }
 
 function observedEditableWindows(value: ParentSubscriptionView) {
@@ -1894,11 +1894,7 @@ function defaultChildName(parent?: ParentSubscription) {
     provider.includes("codex") ||
     provider.includes("chatgpt")
       ? "ChatGPT"
-      : provider.includes("anthropic") || provider.includes("claude")
-        ? "Claude"
-        : provider.includes("google") || provider.includes("gemini")
-          ? "Gemini"
-          : parent.name.trim()
+      : parent.name.trim()
   const plan = displayPlan(parent.plan_type)
   return plan ? `${product} ${plan}` : product || "租户授权"
 }

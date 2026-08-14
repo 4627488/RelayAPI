@@ -19,7 +19,6 @@ func TestFilterModelCatalogPreservesEnvelopeFormats(t *testing.T) {
 	}{
 		{"openai", `{"object":"list","data":[{"id":"public-model"},{"id":"private-model"}]}`, "data", "public-model"},
 		{"codex", `{"models":[{"slug":"public-model"},{"slug":"private-model"}]}`, "models", "public-model"},
-		{"gemini", `{"models":[{"name":"models/public-model"},{"name":"models/private-model"}]}`, "models", "models/public-model"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -46,7 +45,7 @@ func TestFilterModelCatalogPreservesEnvelopeFormats(t *testing.T) {
 func TestAddCodexModelAliases(t *testing.T) {
 	payload := []byte(`{"models":[
 		{"slug":"grok-4.5","display_name":"Grok 4.5","context_window":131072,"visibility":"list"},
-		{"slug":"claude-sonnet","display_name":"Claude Sonnet","visibility":"list"}
+		{"slug":"qwen-max","display_name":"Qwen Max","visibility":"list"}
 	]}`)
 	filtered, err := filterModelCatalog(payload, []string{"grok-4.5"})
 	if err != nil {
@@ -54,7 +53,7 @@ func TestAddCodexModelAliases(t *testing.T) {
 	}
 	expanded, err := addCodexModelAliases(filtered, []store.APIKeyModelAlias{
 		{Alias: "gpt-5.6-sol", Model: "grok-4.5"},
-		{Alias: "missing", Model: "claude-sonnet"},
+		{Alias: "missing", Model: "qwen-max"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +254,7 @@ func TestAddCodexModelAliasesReplacesCollidingCatalogEntry(t *testing.T) {
 }
 
 func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) {
-	app := newEmbeddedCPATestApp(t, upstream.Credential{
+	app := newNativeRuntimeTestApp(t, upstream.Credential{
 		ID: "codex-catalog", Provider: "codex", Enabled: true,
 		Models:   []string{"grok-4.5", "subscription-model", "private-model"},
 		Document: []byte(`{"type":"codex","access_token":"test-token"}`),
@@ -265,7 +264,7 @@ func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 	recorder := httptest.NewRecorder()
 	key := store.KeyContext{TenantModels: []string{"grok-4.5"}}
 	key.ModelAllowlist = []string{"grok-4.5", "subscription-model"}
-	key.SubscriptionModelGrants = []store.SubscriptionModelGrant{{CPAModels: []string{"subscription-model"}}}
+	key.SubscriptionModelGrants = []store.SubscriptionModelGrant{{UpstreamModels: []string{"subscription-model"}}}
 	key.ModelAliases = []store.APIKeyModelAlias{{Alias: "gpt-5.6-sol", Model: "grok-4.5"}}
 
 	app.proxyNativeModels(recorder, request, key)

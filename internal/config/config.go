@@ -11,80 +11,76 @@ import (
 )
 
 type Config struct {
-	ListenAddr                 string
-	DatabaseURL                string
-	SessionSecret              string
-	APIKeyEncryptionKey        string
-	PublicURL                  string
-	SecureCookies              bool
-	ReservationNanoUSD         int64
-	ImageReservationNanoUSD    int64
-	RequestTimeout             time.Duration
-	CPAMaxInFlight             int
-	CPAMaxQueue                int
-	CPAQueueTimeout            time.Duration
-	CPAMaxRequestBytes         int64
-	CPARequestBytesInFlight    int64
-	ExecutorCachePressureBytes uint64
-	CPACircuitFailureThreshold int
-	CPACircuitOpenDuration     time.Duration
-	QuotaSyncInterval          time.Duration
-	UpstreamWebSockets         bool
-	UnpricedModelPolicy        string
-	CPAImportAuthDir           string
-	CPAImportConfigPath        string
-	WebDistDir                 string
-	RequestLogRetentionDays    int
-	RequestDetailRetentionDays int
-	RequestSuccessDetailDays   int
-	RequestSuccessSamplePPM    int
-	LifecycleSuccessHours      int
-	LifecycleErrorDays         int
-	ReservationRetentionDays   int
-	IncompleteReservationDays  int
-	QuotaObservationDays       int
-	InvitationRetentionDays    int
-	RetentionBatchSize         int
-	RetentionMaxRuntime        time.Duration
+	ListenAddr                     string
+	DatabaseURL                    string
+	SessionSecret                  string
+	APIKeyEncryptionKey            string
+	PublicURL                      string
+	SecureCookies                  bool
+	ReservationNanoUSD             int64
+	ImageReservationNanoUSD        int64
+	RequestTimeout                 time.Duration
+	GatewayMaxInFlight             int
+	GatewayMaxQueue                int
+	GatewayQueueTimeout            time.Duration
+	MaxRequestBytes                int64
+	RequestBytesInFlight           int64
+	ExecutorCachePressureBytes     uint64
+	GatewayCircuitFailureThreshold int
+	GatewayCircuitOpenDuration     time.Duration
+	QuotaSyncInterval              time.Duration
+	UpstreamWebSockets             bool
+	UnpricedModelPolicy            string
+	WebDistDir                     string
+	RequestLogRetentionDays        int
+	RequestDetailRetentionDays     int
+	RequestSuccessDetailDays       int
+	RequestSuccessSamplePPM        int
+	LifecycleSuccessHours          int
+	LifecycleErrorDays             int
+	ReservationRetentionDays       int
+	IncompleteReservationDays      int
+	QuotaObservationDays           int
+	InvitationRetentionDays        int
+	RetentionBatchSize             int
+	RetentionMaxRuntime            time.Duration
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		ListenAddr:                 env("LISTEN_ADDR", ":3000"),
-		DatabaseURL:                strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		SessionSecret:              strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),
-		APIKeyEncryptionKey:        strings.TrimSpace(os.Getenv("RELAY_API_KEY_ENCRYPTION_KEY")),
-		PublicURL:                  strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
-		SecureCookies:              envBool("RELAY_SECURE_COOKIES", false),
-		ReservationNanoUSD:         envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
-		ImageReservationNanoUSD:    envInt64("BILLING_IMAGE_RESERVE_NANO_USD", 500_000_000),
-		RequestTimeout:             time.Duration(envInt64("CPA_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
-		CPAMaxInFlight:             int(envInt64("CPA_MAX_IN_FLIGHT", 8)),
-		CPAMaxQueue:                int(envInt64("CPA_MAX_QUEUE", 16)),
-		CPAQueueTimeout:            time.Duration(envInt64("CPA_QUEUE_TIMEOUT_MILLISECONDS", 2_000)) * time.Millisecond,
-		CPAMaxRequestBytes:         envInt64("CPA_MAX_REQUEST_MIB", 32) << 20,
-		CPARequestBytesInFlight:    envInt64("CPA_REQUEST_BYTES_IN_FLIGHT_MIB", 32) << 20,
-		ExecutorCachePressureBytes: uint64(envInt64("RELAY_EXECUTOR_CACHE_PRESSURE_MIB", 256)) << 20,
-		CPACircuitFailureThreshold: int(envInt64("CPA_CIRCUIT_FAILURE_THRESHOLD", 3)),
-		CPACircuitOpenDuration:     time.Duration(envInt64("CPA_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
-		QuotaSyncInterval:          time.Duration(envInt64("CPA_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
-		UpstreamWebSockets:         envBool("RELAY_UPSTREAM_WEBSOCKETS", true),
-		UnpricedModelPolicy:        strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
-		CPAImportAuthDir:           strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_AUTH_DIR")),
-		CPAImportConfigPath:        strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_CONFIG")),
-		WebDistDir:                 strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
-		RequestLogRetentionDays:    int(envInt64("REQUEST_LOG_RETENTION_DAYS", 30)),
-		RequestDetailRetentionDays: int(envInt64("REQUEST_LOG_DETAIL_RETENTION_DAYS", 14)),
-		RequestSuccessDetailDays:   int(envInt64("REQUEST_LOG_SUCCESS_DETAIL_DAYS", 1)),
-		RequestSuccessSamplePPM:    int(envInt64("REQUEST_LOG_SUCCESS_SAMPLE_PPM", 0)),
-		LifecycleSuccessHours:      int(envInt64("CPA_LIFECYCLE_SUCCESS_HOURS", 24)),
-		LifecycleErrorDays:         int(envInt64("CPA_LIFECYCLE_ERROR_DAYS", 7)),
-		ReservationRetentionDays:   int(envInt64("REQUEST_RESERVATION_RETENTION_DAYS", 14)),
-		IncompleteReservationDays:  int(envInt64("INCOMPLETE_RESERVATION_RETENTION_DAYS", 90)),
-		QuotaObservationDays:       int(envInt64("QUOTA_OBSERVATION_RETENTION_DAYS", 180)),
-		InvitationRetentionDays:    int(envInt64("INVITATION_RETENTION_DAYS", 30)),
-		RetentionBatchSize:         int(envInt64("RETENTION_BATCH_SIZE", 5_000)),
-		RetentionMaxRuntime:        time.Duration(envInt64("RETENTION_MAX_RUNTIME_SECONDS", 30)) * time.Second,
+		ListenAddr:                     env("LISTEN_ADDR", ":3000"),
+		DatabaseURL:                    strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		SessionSecret:                  strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),
+		APIKeyEncryptionKey:            strings.TrimSpace(os.Getenv("RELAY_API_KEY_ENCRYPTION_KEY")),
+		PublicURL:                      strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
+		SecureCookies:                  envBool("RELAY_SECURE_COOKIES", false),
+		ReservationNanoUSD:             envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
+		ImageReservationNanoUSD:        envInt64("BILLING_IMAGE_RESERVE_NANO_USD", 500_000_000),
+		RequestTimeout:                 time.Duration(envInt64("RELAY_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
+		GatewayMaxInFlight:             int(envInt64("RELAY_MAX_IN_FLIGHT", 8)),
+		GatewayMaxQueue:                int(envInt64("RELAY_MAX_QUEUE", 16)),
+		GatewayQueueTimeout:            time.Duration(envInt64("RELAY_QUEUE_TIMEOUT_MILLISECONDS", 2_000)) * time.Millisecond,
+		MaxRequestBytes:                envInt64("RELAY_MAX_REQUEST_MIB", 32) << 20,
+		RequestBytesInFlight:           envInt64("RELAY_REQUEST_BYTES_IN_FLIGHT_MIB", 32) << 20,
+		ExecutorCachePressureBytes:     uint64(envInt64("RELAY_EXECUTOR_CACHE_PRESSURE_MIB", 256)) << 20,
+		GatewayCircuitFailureThreshold: int(envInt64("RELAY_CIRCUIT_FAILURE_THRESHOLD", 3)),
+		GatewayCircuitOpenDuration:     time.Duration(envInt64("RELAY_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
+		QuotaSyncInterval:              time.Duration(envInt64("RELAY_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
+		UpstreamWebSockets:             envBool("RELAY_UPSTREAM_WEBSOCKETS", true),
+		UnpricedModelPolicy:            strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
+		WebDistDir:                     strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
+		RequestLogRetentionDays:        int(envInt64("REQUEST_LOG_RETENTION_DAYS", 30)),
+		RequestDetailRetentionDays:     int(envInt64("REQUEST_LOG_DETAIL_RETENTION_DAYS", 14)),
+		RequestSuccessDetailDays:       int(envInt64("REQUEST_LOG_SUCCESS_DETAIL_DAYS", 1)),
+		RequestSuccessSamplePPM:        int(envInt64("REQUEST_LOG_SUCCESS_SAMPLE_PPM", 0)),
+		LifecycleSuccessHours:          int(envInt64("RELAY_LIFECYCLE_SUCCESS_HOURS", 24)),
+		LifecycleErrorDays:             int(envInt64("RELAY_LIFECYCLE_ERROR_DAYS", 7)),
+		ReservationRetentionDays:       int(envInt64("REQUEST_RESERVATION_RETENTION_DAYS", 14)),
+		IncompleteReservationDays:      int(envInt64("INCOMPLETE_RESERVATION_RETENTION_DAYS", 90)),
+		QuotaObservationDays:           int(envInt64("QUOTA_OBSERVATION_RETENTION_DAYS", 180)),
+		InvitationRetentionDays:        int(envInt64("INVITATION_RETENTION_DAYS", 30)),
+		RetentionBatchSize:             int(envInt64("RETENTION_BATCH_SIZE", 5_000)),
+		RetentionMaxRuntime:            time.Duration(envInt64("RETENTION_MAX_RUNTIME_SECONDS", 30)) * time.Second,
 	}
 	if cfg.APIKeyEncryptionKey == "" {
 		cfg.APIKeyEncryptionKey = cfg.SessionSecret
@@ -105,34 +101,34 @@ func Load() (Config, error) {
 		return Config{}, errors.New("BILLING_IMAGE_RESERVE_NANO_USD cannot be negative")
 	}
 	if cfg.RequestTimeout < time.Second || cfg.RequestTimeout > time.Hour {
-		return Config{}, errors.New("CPA_REQUEST_TIMEOUT_SECONDS must be between 1 and 3600")
+		return Config{}, errors.New("RELAY_REQUEST_TIMEOUT_SECONDS must be between 1 and 3600")
 	}
-	if cfg.CPAMaxInFlight < 1 || cfg.CPAMaxInFlight > 1024 {
-		return Config{}, errors.New("CPA_MAX_IN_FLIGHT must be between 1 and 1024")
+	if cfg.GatewayMaxInFlight < 1 || cfg.GatewayMaxInFlight > 1024 {
+		return Config{}, errors.New("RELAY_MAX_IN_FLIGHT must be between 1 and 1024")
 	}
-	if cfg.CPAMaxQueue < 0 || cfg.CPAMaxQueue > 10_000 {
-		return Config{}, errors.New("CPA_MAX_QUEUE must be between 0 and 10000")
+	if cfg.GatewayMaxQueue < 0 || cfg.GatewayMaxQueue > 10_000 {
+		return Config{}, errors.New("RELAY_MAX_QUEUE must be between 0 and 10000")
 	}
-	if cfg.CPAQueueTimeout < 0 || cfg.CPAQueueTimeout > time.Minute {
-		return Config{}, errors.New("CPA_QUEUE_TIMEOUT_MILLISECONDS must be between 0 and 60000")
+	if cfg.GatewayQueueTimeout < 0 || cfg.GatewayQueueTimeout > time.Minute {
+		return Config{}, errors.New("RELAY_QUEUE_TIMEOUT_MILLISECONDS must be between 0 and 60000")
 	}
-	if cfg.CPAMaxRequestBytes < 1<<20 || cfg.CPAMaxRequestBytes > 64<<30 {
-		return Config{}, errors.New("CPA_MAX_REQUEST_MIB must be between 1 and 65536")
+	if cfg.MaxRequestBytes < 1<<20 || cfg.MaxRequestBytes > 64<<30 {
+		return Config{}, errors.New("RELAY_MAX_REQUEST_MIB must be between 1 and 65536")
 	}
-	if cfg.CPARequestBytesInFlight < cfg.CPAMaxRequestBytes || cfg.CPARequestBytesInFlight > 256<<30 {
-		return Config{}, errors.New("CPA_REQUEST_BYTES_IN_FLIGHT_MIB must be at least CPA_MAX_REQUEST_MIB and at most 262144")
+	if cfg.RequestBytesInFlight < cfg.MaxRequestBytes || cfg.RequestBytesInFlight > 256<<30 {
+		return Config{}, errors.New("RELAY_REQUEST_BYTES_IN_FLIGHT_MIB must be at least RELAY_MAX_REQUEST_MIB and at most 262144")
 	}
 	if cfg.ExecutorCachePressureBytes < 64<<20 || cfg.ExecutorCachePressureBytes > 512<<30 {
 		return Config{}, errors.New("RELAY_EXECUTOR_CACHE_PRESSURE_MIB must be between 64 and 524288")
 	}
-	if cfg.CPACircuitFailureThreshold < 1 || cfg.CPACircuitFailureThreshold > 100 {
-		return Config{}, errors.New("CPA_CIRCUIT_FAILURE_THRESHOLD must be between 1 and 100")
+	if cfg.GatewayCircuitFailureThreshold < 1 || cfg.GatewayCircuitFailureThreshold > 100 {
+		return Config{}, errors.New("RELAY_CIRCUIT_FAILURE_THRESHOLD must be between 1 and 100")
 	}
-	if cfg.CPACircuitOpenDuration < time.Second || cfg.CPACircuitOpenDuration > 10*time.Minute {
-		return Config{}, errors.New("CPA_CIRCUIT_OPEN_SECONDS must be between 1 and 600")
+	if cfg.GatewayCircuitOpenDuration < time.Second || cfg.GatewayCircuitOpenDuration > 10*time.Minute {
+		return Config{}, errors.New("RELAY_CIRCUIT_OPEN_SECONDS must be between 1 and 600")
 	}
 	if cfg.QuotaSyncInterval < time.Minute {
-		return Config{}, errors.New("CPA_QUOTA_SYNC_INTERVAL_SECONDS must be at least 60")
+		return Config{}, errors.New("RELAY_QUOTA_SYNC_INTERVAL_SECONDS must be at least 60")
 	}
 	if cfg.UnpricedModelPolicy != "allow" && cfg.UnpricedModelPolicy != "deny" {
 		return Config{}, errors.New("UNPRICED_MODEL_POLICY must be allow or deny")

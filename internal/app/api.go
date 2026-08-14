@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/db"
+	"github.com/4627488/RelayAPI/internal/egress"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
@@ -565,7 +565,7 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 	var availableModels []string
 	var availableModelsError error
 	if a.nativeRuntime == nil {
-		availableModelsError = errors.New("embedded CPA runtime is unavailable")
+		availableModelsError = errors.New("native runtime runtime is unavailable")
 	} else {
 		availableModels = a.nativeRuntime.Models()
 	}
@@ -706,7 +706,7 @@ func (a *App) adminPricingSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "pricing_sync_failed", "无法读取系统代理")
 		return
 	}
-	client, err := cpa.OutboundHTTPClient(proxyURL, 30*time.Second)
+	client, err := egress.OutboundHTTPClient(proxyURL, 30*time.Second)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "pricing_sync_failed", err.Error())
 		return

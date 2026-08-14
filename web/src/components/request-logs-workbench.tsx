@@ -458,7 +458,7 @@ function LogDetailSheet({
                   <TabsList variant="line" className="w-full justify-start overflow-x-auto">
                     <TabsTrigger value="overview">概览</TabsTrigger>
                     {requestVisible ? <TabsTrigger value="request">客户端请求</TabsTrigger> : null}
-                    {forwardedVisible ? <TabsTrigger value="forwarded">CPA 转发</TabsTrigger> : null}
+                    {forwardedVisible ? <TabsTrigger value="forwarded">原生运行时 转发</TabsTrigger> : null}
                     {responseVisible ? <TabsTrigger value="response">上游响应</TabsTrigger> : null}
                   </TabsList>
                 </div>
@@ -531,8 +531,8 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
           ["提供商", log.provider],
           ["凭据", log.credential_email || log.credential_name || log.auth_index],
           ["订阅", [log.parent_subscription_name || log.channel_name, log.child_subscription_name].filter(Boolean).join(" / ")],
-          ["CPA Trace", log.cpa_trace_id],
-          ["CPA Execution", log.cpa_execution_id],
+          ["原生运行时 Trace", log.upstream_trace_id],
+          ["原生运行时 Execution", log.upstream_execution_id],
         ]} />
       </DetailGroup>
 
@@ -540,7 +540,7 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
         <Facts items={[
           ["Token", `${compactTokens(log.total_tokens)}（输入 ${compactTokens(log.prompt_tokens)} · 输出 ${compactTokens(log.completion_tokens)}）`],
           ["客户端请求体", bytes(log.request_body_bytes)],
-          ["CPA 转发体", bytes(log.forwarded_body_bytes)],
+          ["原生运行时 转发体", bytes(log.forwarded_body_bytes)],
           ["上游响应体", bytes(log.response_body_bytes)],
           ["首字节", log.ttft_ms != null ? `${log.ttft_ms} ms` : ""],
           ["总耗时", `${log.latency_ms} ms`],

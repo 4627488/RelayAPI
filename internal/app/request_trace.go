@@ -37,8 +37,8 @@ type latencyTrace struct {
 }
 
 // latencyTimeline records only timestamps Relay can observe. The upstream
-// provider is behind embedded CPA, so time after the request is written and
-// before CPA returns headers is deliberately reported as one opaque upstream
+// provider is behind the native runtime, so time after the request is written and
+// before it returns headers is deliberately reported as one opaque upstream
 // span instead of presenting guessed DNS/TLS timings as facts.
 type latencyTimeline struct {
 	started  time.Time
@@ -82,7 +82,7 @@ func (t *latencyTimeline) JSON(completed time.Time) string {
 	}
 	payload := latencyTrace{
 		Version: latencyTraceVersion, TotalMS: elapsedMilliseconds(t.started, completed),
-		Boundary: "Relay 可观测边界：上游供应商内部阶段由 CPA 合并统计",
+		Boundary: "Relay 可观测边界：供应商内部阶段合并为上游耗时",
 		Segments: append([]latencySegment(nil), t.segments...), Marks: append([]latencyMark(nil), t.marks...),
 	}
 	raw, _ := json.Marshal(payload)
@@ -186,25 +186,25 @@ func (t *latencyTimeline) AddHTTPTrace(state *clientHTTPTrace, completed time.Ti
 	if connectionEnd.IsZero() {
 		connectionEnd = firstNonZeroTime(snapshot.wroteRequest, completed)
 	}
-	detail := "获取 Relay 到 CPA 的 HTTP 连接"
+	detail := "获取 Relay 到原生运行时 的 HTTP 连接"
 	if snapshot.reused {
-		detail = "复用 Relay 到 CPA 的空闲连接"
+		detail = "复用 Relay 到原生运行时 的空闲连接"
 	}
 	if snapshot.remoteAddr != "" {
 		detail += " · " + snapshot.remoteAddr
 	}
-	t.Step(connectionEnd, "cpa_connection", "连接 CPA", "cpa", detail)
+	t.Step(connectionEnd, "upstream_connection", "连接原生运行时", "upstream", detail)
 	requestWritten := firstNonZeroTime(snapshot.wroteRequest, snapshot.wroteHeaders, connectionEnd)
-	t.Step(requestWritten, "cpa_request_write", "写入 CPA 请求", "cpa", "请求头与正文已写入 CPA")
+	t.Step(requestWritten, "upstream_request_write", "写入 Upstream 请求", "upstream", "请求头与正文已写入 Upstream")
 	firstHeader := firstNonZeroTime(snapshot.firstResponseByte, completed)
-	t.Step(firstHeader, "upstream_wait_headers", "CPA / 上游处理", "upstream", "包含 CPA 路由、凭据选择、重试，以及供应商生成响应头前的内部耗时")
-	t.Step(completed, "cpa_response_headers", "读取响应头", "cpa", "Relay 已收到 CPA 响应头")
+	t.Step(firstHeader, "upstream_wait_headers", "原生运行时 / 上游处理", "upstream", "包含凭据路由、凭据选择、重试，以及供应商生成响应头前的内部耗时")
+	t.Step(completed, "upstream_response_headers", "读取响应头", "upstream", "Relay 已收到 上游响应头")
 
-	t.Span(snapshot.getConn, snapshot.gotConn, "http_connection_pool", "连接池等待", "cpa", detail)
-	t.Span(snapshot.dnsStart, snapshot.dnsDone, "http_dns", "DNS 查询", "cpa", "Relay 到 CPA 的域名解析")
-	t.Span(snapshot.connectStart, snapshot.connectDone, "http_tcp", "TCP 连接", "cpa", "Relay 到 CPA 的 TCP 建连")
-	t.Span(snapshot.tlsStart, snapshot.tlsDone, "http_tls", "TLS 握手", "cpa", "Relay 到 CPA 的 TLS 握手")
-	t.Span(snapshot.gotConn, snapshot.wroteRequest, "http_request_write", "HTTP 请求写入", "cpa", "底层 Transport 写入请求")
+	t.Span(snapshot.getConn, snapshot.gotConn, "http_connection_pool", "连接池等待", "upstream", detail)
+	t.Span(snapshot.dnsStart, snapshot.dnsDone, "http_dns", "DNS 查询", "upstream", "Relay 到原生运行时 的域名解析")
+	t.Span(snapshot.connectStart, snapshot.connectDone, "http_tcp", "TCP 连接", "upstream", "Relay 到原生运行时 的 TCP 建连")
+	t.Span(snapshot.tlsStart, snapshot.tlsDone, "http_tls", "TLS 握手", "upstream", "Relay 到原生运行时 的 TLS 握手")
+	t.Span(snapshot.gotConn, snapshot.wroteRequest, "http_request_write", "HTTP 请求写入", "upstream", "底层 Transport 写入请求")
 }
 
 func firstNonZeroTime(values ...time.Time) time.Time {

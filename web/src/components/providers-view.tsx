@@ -162,7 +162,6 @@ function isOAuthAccount(account: ProviderAccount) {
 
 function normalizedOAuthProvider(provider: string) {
   const value = provider.trim().toLowerCase()
-  if (value === "anthropic") return "claude"
   if (value === "openai") return "codex"
   if (value === "grok" || value === "x.ai") return "xai"
   return value
@@ -272,7 +271,7 @@ export function ProvidersView() {
     value: ProviderAccountUpdate
   ) {
     if (!value.name.trim() || !value.models.length) {
-      toast.error("账户名称和至少一个 CPA 模型为必填项")
+      toast.error("账户名称和至少一个 原生运行时 模型为必填项")
       return
     }
     setPending(true)
@@ -460,7 +459,7 @@ export function ProvidersView() {
                         <Badge variant="destructive">
                           {account.quota_recover_at
                             ? `${dateTime(account.quota_recover_at)} 后重试`
-                            : "CPA 已限流"}
+                            : "原生运行时 已限流"}
                         </Badge>
                       ) : null}
                     </div>
@@ -477,7 +476,7 @@ export function ProvidersView() {
                       <p className="text-xs text-muted-foreground">
                         {account.last_refreshed_at
                           ? `令牌刷新于 ${dateTime(account.last_refreshed_at)}`
-                          : "CPA 运行时"}
+                          : "原生运行时 运行时"}
                         {" · "}请求 {account.success ?? 0} 成功 /{" "}
                         {account.failed ?? 0} 失败
                       </p>
@@ -501,7 +500,7 @@ export function ProvidersView() {
                   ) : null}
                   {!(account.models?.length ?? 0) ? (
                     <span className="text-xs text-muted-foreground">
-                      CPA 尚未同步可用模型
+                      原生运行时 尚未同步可用模型
                     </span>
                   ) : null}
                 </div>
@@ -644,7 +643,7 @@ function ConnectAccountDialog({
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus | null>(null)
   const [callbackURL, setCallbackURL] = useState("")
   const [name, setName] = useState("")
-  const [document, setDocument] = useState('{\n  "type": "vertex"\n}')
+  const [document, setDocument] = useState('{\n  "type": "codex"\n}')
   const [proxyID, setProxyID] = useState("")
 
   const cancelOAuth = useCallback(async (state: string) => {
@@ -862,7 +861,7 @@ function ConnectAccountDialog({
                   {oauthStatus.email
                     ? `已连接 ${oauthStatus.email}`
                     : "账户身份已验证。"}{" "}
-                  保存后将由 CPA 按账户类型建立模型目录。
+                  保存后将由 原生运行时 按账户类型建立模型目录。
                 </AlertDescription>
               </Alert>
               <Field>
@@ -990,7 +989,7 @@ function ConnectAccountDialog({
                   ? "codex"
                   : next === "api_key"
                     ? "openai"
-                    : "vertex"
+                    : "codex"
               )
             }}
           >
@@ -1161,7 +1160,7 @@ function CredentialFields({
       </div>
       <Alert>
         <RefreshCwIcon />
-        <AlertTitle>模型由 CPA 提供</AlertTitle>
+        <AlertTitle>模型由 原生运行时 提供</AlertTitle>
         <AlertDescription>
           连接成功后自动读取该凭据的模型目录，再到“管理账户”中勾选公开范围。
         </AlertDescription>
@@ -1248,8 +1247,7 @@ function CredentialFields({
               className="font-mono text-xs"
             />
             <FieldDescription>
-              用于 Vertex 服务账户或迁移现有 CPA 凭据。OAuth 账户请使用 OAuth
-              标签页。
+              用于导入 Codex、Kimi、xAI、OpenAI 或百炼凭据。OAuth 账户请使用 OAuth 标签页。
             </FieldDescription>
           </Field>
           <Field>
@@ -1338,19 +1336,19 @@ function ManageAccountDialog({
         setSelectedModels(retained.length ? retained : nextCandidates)
         if (announce) {
           if (result.warning)
-            toast.warning("CPA 已返回缓存目录", { description: result.warning })
+            toast.warning("原生运行时 已返回缓存目录", { description: result.warning })
           else
             toast.success(
-              result.source === "cpa_upstream"
-                ? "已由 CPA 从上游枚举模型"
-                : "已读取 CPA 模型目录"
+              result.source === "upstream"
+                ? "已由 原生运行时 从上游枚举模型"
+                : "已读取 原生运行时 模型目录"
             )
         }
       } catch (cause) {
         setCandidates([])
         setSelectedModels([])
         toast.error(
-          cause instanceof Error ? cause.message : "无法从 CPA 获取模型"
+          cause instanceof Error ? cause.message : "无法从 原生运行时 获取模型"
         )
       } finally {
         setModelLoading(false)
@@ -1476,7 +1474,7 @@ function ManageAccountDialog({
                   <Field>
                     <div className="flex items-center justify-between gap-3">
                       <FieldLabel htmlFor="manage-model-search">
-                        CPA 模型目录
+                        原生运行时 模型目录
                       </FieldLabel>
                       <Button
                         type="button"
@@ -1497,7 +1495,7 @@ function ManageAccountDialog({
                       id="manage-model-search"
                       value={modelSearch}
                       onChange={(event) => setModelSearch(event.target.value)}
-                      placeholder="筛选 CPA 模型"
+                      placeholder="筛选 原生运行时 模型"
                       disabled={modelLoading || account.disabled}
                     />
                     <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -1529,11 +1527,11 @@ function ManageAccountDialog({
                       {modelLoading ? (
                         <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                           <Spinner />
-                          读取 CPA 模型目录…
+                          读取 原生运行时 模型目录…
                         </div>
                       ) : visibleModels.length ? (
                         visibleModels.map((model, index) => {
-                          const id = `cpa-model-${index}`
+                          const id = `upstream-model-${index}`
                           return (
                             <Field key={model} orientation="horizontal">
                               <Checkbox
@@ -1557,7 +1555,7 @@ function ManageAccountDialog({
                         <p className="py-8 text-center text-sm text-muted-foreground">
                           {account.disabled
                             ? "账户已停用；启用后才能刷新模型目录"
-                            : "CPA 没有返回匹配模型"}
+                            : "原生运行时 没有返回匹配模型"}
                         </p>
                       )}
                     </FieldGroup>
@@ -1637,7 +1635,7 @@ function ManageAccountDialog({
                     <FieldContent>
                       <FieldTitle>上游 WebSocket</FieldTitle>
                       <FieldDescription>
-                        允许 CPA 对此账户使用原生 WebSocket 连接。
+                        允许 原生运行时 对此账户使用原生 WebSocket 连接。
                       </FieldDescription>
                     </FieldContent>
                     <Switch

@@ -26,7 +26,7 @@ func TestSanitizedHeadersRedactsSecrets(t *testing.T) {
 	}
 }
 
-func TestClassifyCPATransportError(t *testing.T) {
+func TestClassifyUpstreamTransportError(t *testing.T) {
 	tests := []struct {
 		name, message, code string
 		err                 error
@@ -34,14 +34,14 @@ func TestClassifyCPATransportError(t *testing.T) {
 		status              int
 	}{
 		{name: "client canceled", err: context.Canceled, requestErr: context.Canceled, code: "client_canceled", status: 499},
-		{name: "timeout", err: context.DeadlineExceeded, code: "cpa_timeout", status: http.StatusGatewayTimeout},
-		{name: "reset", err: errors.New("read: connection reset by peer"), code: "cpa_connection_lost", status: http.StatusServiceUnavailable},
-		{name: "unexpected eof", err: errors.New("unexpected EOF"), code: "cpa_connection_lost", status: http.StatusServiceUnavailable},
-		{name: "refused", err: errors.New("dial tcp: connection refused"), code: "cpa_unavailable", status: http.StatusServiceUnavailable},
+		{name: "timeout", err: context.DeadlineExceeded, code: "upstream_timeout", status: http.StatusGatewayTimeout},
+		{name: "reset", err: errors.New("read: connection reset by peer"), code: "upstream_connection_lost", status: http.StatusServiceUnavailable},
+		{name: "unexpected eof", err: errors.New("unexpected EOF"), code: "upstream_connection_lost", status: http.StatusServiceUnavailable},
+		{name: "refused", err: errors.New("dial tcp: connection refused"), code: "upstream_unavailable", status: http.StatusServiceUnavailable},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := classifyCPATransportError(test.err, test.requestErr, "models")
+			got := classifyUpstreamTransportError(test.err, test.requestErr, "models")
 			if got.Code != test.code || got.Status != test.status || got.Phase != "models" {
 				t.Fatalf("classification = %+v", got)
 			}
@@ -122,8 +122,6 @@ func TestRequestTypeRecognizesSupportedSurfaces(t *testing.T) {
 	tests := map[string]string{
 		"/v1/responses":        "responses",
 		"/v1/chat/completions": "chat.completions",
-		"/v1/messages":         "messages",
-		"/v1beta/models/gemini:streamGenerateContent": "gemini.streamGenerateContent",
 	}
 	for path, expected := range tests {
 		if got := requestType(path, false); got != expected {

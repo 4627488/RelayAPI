@@ -21,7 +21,7 @@ import (
 // incident; request_logs still retains the complete structured summary.
 const requestLogDetailLimit = 32 << 10
 
-type cpaTransportError struct {
+type upstreamTransportError struct {
 	Status    int
 	Code      string
 	Message   string
@@ -99,12 +99,6 @@ func requestType(path string, websocket bool) string {
 		return "responses"
 	case strings.Contains(path, "/chat/completions"):
 		return "chat.completions"
-	case strings.Contains(path, "/messages"):
-		return "messages"
-	case strings.Contains(path, ":streamGenerateContent"):
-		return "gemini.streamGenerateContent"
-	case strings.Contains(path, ":generateContent"):
-		return "gemini.generateContent"
 	case strings.Contains(path, "/embeddings"):
 		return "embeddings"
 	case strings.Contains(path, "/images"):
@@ -176,15 +170,15 @@ func boundedErrorText(value string) string {
 	return value
 }
 
-func classifyCPATransportError(err error, requestContextError error, phase string) cpaTransportError {
-	result := cpaTransportError{Status: http.StatusServiceUnavailable, Code: "cpa_unavailable", Message: "CPA 暂时不可用，请稍后重试", Phase: phase, Retryable: true}
+func classifyUpstreamTransportError(err error, requestContextError error, phase string) upstreamTransportError {
+	result := upstreamTransportError{Status: http.StatusServiceUnavailable, Code: "upstream_unavailable", Message: "上游运行时暂时不可用，请稍后重试", Phase: phase, Retryable: true}
 	if err == nil {
 		return result
 	}
 	if errors.Is(requestContextError, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		result.Status = http.StatusGatewayTimeout
-		result.Code = "cpa_timeout"
-		result.Message = "CPA 响应超时，请稍后重试"
+		result.Code = "upstream_timeout"
+		result.Message = "上游响应超时，请稍后重试"
 		return result
 	}
 	if errors.Is(requestContextError, context.Canceled) || errors.Is(err, context.Canceled) {
@@ -197,8 +191,8 @@ func classifyCPATransportError(err error, requestContextError error, phase strin
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		result.Status = http.StatusGatewayTimeout
-		result.Code = "cpa_timeout"
-		result.Message = "CPA 响应超时，请稍后重试"
+		result.Code = "upstream_timeout"
+		result.Message = "上游响应超时，请稍后重试"
 		return result
 	}
 	lower := strings.ToLower(err.Error())
@@ -206,21 +200,21 @@ func classifyCPATransportError(err error, requestContextError error, phase strin
 	case errors.Is(err, io.EOF), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE),
 		strings.Contains(lower, "unexpected eof"), strings.Contains(lower, "connection reset"),
 		strings.Contains(lower, "server closed idle connection"):
-		result.Code = "cpa_connection_lost"
-		result.Message = "与 CPA 的连接提前中断；CPA 可能刚刚重启或触发了内存保护，请重试"
+		result.Code = "upstream_connection_lost"
+		result.Message = "与 Upstream 的连接提前中断；Upstream 可能刚刚重启或触发了内存保护，请重试"
 	case errors.Is(err, syscall.ECONNREFUSED), strings.Contains(lower, "connection refused"), strings.Contains(lower, "no such host"):
-		result.Code = "cpa_unavailable"
-		result.Message = "无法连接 CPA 服务；服务可能正在启动或恢复，请稍后重试"
+		result.Code = "upstream_unavailable"
+		result.Message = "无法连接 上游运行时；服务可能正在启动或恢复，请稍后重试"
 	}
 	return result
 }
 
-func writeCPATransportError(w http.ResponseWriter, r *http.Request, err error, phase, requestID string) cpaTransportError {
+func writeUpstreamTransportError(w http.ResponseWriter, r *http.Request, err error, phase, requestID string) upstreamTransportError {
 	var requestErr error
 	if r != nil {
 		requestErr = r.Context().Err()
 	}
-	classified := classifyCPATransportError(err, requestErr, phase)
+	classified := classifyUpstreamTransportError(err, requestErr, phase)
 	details := map[string]any{"phase": classified.Phase, "retryable": classified.Retryable}
 	if requestID != "" {
 		details["request_id"] = requestID

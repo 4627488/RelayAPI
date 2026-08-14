@@ -36,7 +36,7 @@ function BrandPanel() {
           连接所有模型。
         </p>
         <p className="max-w-md text-primary-foreground/70">
-          安全地管理 API Key、额度和用量。模型路由与协议兼容由 CLIProxyAPI 提供。
+          安全地管理 API Key、额度和用量。模型路由与协议兼容由 Relay 原生运行时提供。
         </p>
         <div className="flex gap-6 text-sm text-primary-foreground/70">
           <span className="flex items-center gap-2">
@@ -49,7 +49,7 @@ function BrandPanel() {
           </span>
         </div>
       </div>
-      <p className="text-xs text-primary-foreground/50">Powered by CLIProxyAPI</p>
+      <p className="text-xs text-primary-foreground/50">Powered by RelayAPI Native Runtime</p>
     </section>
   )
 }

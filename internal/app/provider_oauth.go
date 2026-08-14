@@ -250,7 +250,7 @@ func (a *App) adminProviderOAuthStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if status.Status == "ok" {
-		// The credential capture happens synchronously before CPA marks the session complete.
+		// The credential capture happens synchronously before Upstream marks the session complete.
 		if latest, found := a.providerOAuth.snapshotByState(state); found && len(latest.Document) > 0 {
 			a.adminProviderOAuthStatus(w, r)
 			return
