@@ -28,6 +28,7 @@ var clientUserAgentRules = []clientUserAgentRule{
 	{"Codex CLI", regexp.MustCompile(`(?i)\bcodex-tui/([^\s;()]+)`)},
 	{"Codex CLI", regexp.MustCompile(`(?i)\bcodex_cli_rs/([^\s;()]+)`)},
 	{"Codex CLI", regexp.MustCompile(`(?i)\bcodex-cli/([^\s;()]+)`)},
+	{"DeepSeek Harness", regexp.MustCompile(`(?i)\bdeepseek-harness/([^\s;()]+)`)},
 	{"OpenCode", regexp.MustCompile(`(?i)\bopencode/([^\s;()]+)`)},
 	{"WorkBuddy", regexp.MustCompile(`(?i)\bworkbuddy/([^\s;()]+)`)},
 	{"ChatGPT", regexp.MustCompile(`(?i)\bchatgpt/([^\s;()]+)`)},

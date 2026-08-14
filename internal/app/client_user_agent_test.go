@@ -15,6 +15,7 @@ func TestIdentifyClientUserAgent(t *testing.T) {
 		{"Codex Desktop/0.147.0-alpha.6.5 (Windows 10.0.26200; x86_64)", "Codex Desktop", "0.147.0-alpha.6.5"},
 		{"codex_vscode/0.147.0-alpha.6.5 (Windows 10.0.26200; x86_64)", "Codex VS Code", "0.147.0-alpha.6.5"},
 		{"codex-browser-use/0.142.0-alpha.1 (Windows 10.0.26200; x86_64)", "Codex Browser Use", "0.142.0-alpha.1"},
+		{"deepseek-harness/0.1.0-rc.6 (+https://github.com/deepseek-ai/deepseek-harness)", "DeepSeek Harness", "0.1.0-rc.6"},
 		{"opencode/1.18.14 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14", "OpenCode", "1.18.14"},
 		{"github-copilot/1.300.0", "GitHub Copilot", "1.300.0"},
 		{"ai-sdk/provider-utils/4.0.23", "Vercel AI SDK", "4.0.23"},
