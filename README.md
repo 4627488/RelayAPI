@@ -52,6 +52,11 @@ WebSocket 入口。
 RelayAPI 使用自有的原生数据面，不需要部署第三方代理服务或插件。HTTP、SSE 与
 WebSocket 由同一套运行时完成协议转换、凭据选择、重试和上游连接。
 
+管理端“运行策略”只暴露可热更新且确实生效的控制：凭据调度、临时故障重试、逐凭据
+故障隔离与系统代理。Codex 能力元数据固定完整声明，响应头固定采用安全白名单；这类
+协议正确性和安全边界不提供容易误配的开关。账户模型重名请使用 API Key 模型别名或
+严格订阅绑定处理，不再维护会破坏权限命名一致性的账户级模型前缀。
+
 Codex/xAI WebSocket 支持连接内多轮 `response.create`。收到一轮终态后即使上游断开，
 客户端连接仍会保留，下一次完整请求会自动重连；`generate:false` 预热由本地直接完成。
 `RELAY_UPSTREAM_WEBSOCKETS=true` 默认启用这条链路，关闭后可统一使用 HTTP 流式接口。
@@ -118,8 +123,8 @@ export RELAY_API_KEY=relay_xxx
 
 这些字段与当前 [Codex 配置参考](https://developers.openai.com/codex/config-reference)
 一致；Relay 同时透传 `/v1/responses/ws`，并在 Codex 私有模型目录中默认声明完整的
-代理、图片、搜索、Apps、Skills、Plugins、并行工具和多代理能力。不能承受乐观能力
-声明的上游可在系统设置中切换到 `verified` 严格模式。
+代理、图片、搜索、Apps、Skills、Plugins、并行工具和多代理能力。不同上游的协议差异
+由 Relay 的转换层处理，不再通过降低模型元数据来牺牲 Codex 功能。
 
 OpenCode 可选择 Chat Completions 或 Responses；下面是 Chat Completions 配置：
 

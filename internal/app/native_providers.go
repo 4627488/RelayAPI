@@ -28,7 +28,6 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			APIKey   string          `json:"api_key"`
 			BaseURL  string          `json:"base_url"`
 			ProxyID  string          `json:"proxy_id"`
-			Prefix   string          `json:"prefix"`
 		}
 		if !decodeJSON(w, r, &input) {
 			return
@@ -71,14 +70,6 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				document["base_url"] = baseURL
-			}
-			if value := strings.TrimSpace(input.Prefix); value != "" {
-				value, prefixErr := normalizeNativePrefix(value)
-				if prefixErr != nil {
-					writeError(w, http.StatusBadRequest, "validation_error", prefixErr.Error())
-					return
-				}
-				document["prefix"] = value
 			}
 			input.Document, _ = json.Marshal(document)
 		}
@@ -201,7 +192,6 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	_ = json.Unmarshal(row.Document, &document)
 	email, _ := document["email"].(string)
 	baseURL, _ := document["base_url"].(string)
-	prefix, _ := document["prefix"].(string)
 	websockets, _ := document["websockets"].(bool)
 	expired := row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now())
 	result := map[string]any{"id": row.ID, "auth_index": row.ID, "name": row.ID, "label": row.Name, "provider": row.Provider, "type": row.Provider,
@@ -218,9 +208,6 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	}
 	if strings.TrimSpace(baseURL) != "" {
 		result["base_url"] = baseURL
-	}
-	if strings.TrimSpace(prefix) != "" {
-		result["prefix"] = prefix
 	}
 	if rawHeaders, ok := document["headers"].(map[string]any); ok && len(rawHeaders) > 0 {
 		names := make([]string, 0, len(rawHeaders))
@@ -383,7 +370,6 @@ type nativeProviderUpdateInput struct {
 	Models     *[]string          `json:"models"`
 	BaseURL    *string            `json:"base_url"`
 	ProxyID    *string            `json:"proxy_id"`
-	Prefix     *string            `json:"prefix"`
 	APIKey     *string            `json:"api_key"`
 	WebSockets *bool              `json:"websockets"`
 	Headers    *map[string]string `json:"headers"`
@@ -392,7 +378,7 @@ type nativeProviderUpdateInput struct {
 
 func (input nativeProviderUpdateInput) empty() bool {
 	return input.Disabled == nil && input.Name == nil && input.Models == nil && input.BaseURL == nil &&
-		input.ProxyID == nil && input.Prefix == nil && input.APIKey == nil && input.WebSockets == nil &&
+		input.ProxyID == nil && input.APIKey == nil && input.WebSockets == nil &&
 		input.Headers == nil && input.Document == nil
 }
 
@@ -428,14 +414,7 @@ func updateNativeCredentialDocument(current json.RawMessage, source string, inpu
 	}
 	delete(document, "proxy_url")
 	delete(document, "_relay_proxy_url")
-	if input.Prefix != nil {
-		value, err := normalizeNativePrefix(*input.Prefix)
-		if err != nil {
-			return nil, err
-		}
-		input.Prefix = &value
-		setString("prefix", input.Prefix)
-	}
+	delete(document, "prefix")
 	if input.APIKey != nil {
 		if nativeCredentialAuthKind(document, source) != "api_key" {
 			return nil, errors.New("只有 API Key 账户可以轮换 API Key")
@@ -471,14 +450,6 @@ func updateNativeCredentialDocument(current json.RawMessage, source string, inpu
 func validNativeBaseURL(value string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
-}
-
-func normalizeNativePrefix(value string) (string, error) {
-	value = strings.Trim(strings.TrimSpace(value), "/")
-	if strings.Contains(value, "/") {
-		return "", errors.New("模型前缀只能是单个路径段")
-	}
-	return value, nil
 }
 
 func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request) {

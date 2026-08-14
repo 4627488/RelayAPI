@@ -104,10 +104,7 @@ const apiKeyProviders = [
 ]
 
 const importProviders = [
-  ...new Set([
-    ...apiKeyProviders.map((item) => item.value),
-    "kimi",
-  ]),
+  ...new Set([...apiKeyProviders.map((item) => item.value), "kimi"]),
 ]
 
 type OAuthStart = {
@@ -130,8 +127,7 @@ type ProviderAccountUpdate = {
   name: string
   models: string[]
   base_url?: string
-  prefix: string
-  websockets: boolean
+  websockets?: boolean
   proxy_id: string
   api_key?: string
   headers?: Record<string, string>
@@ -442,7 +438,9 @@ export function ProvidersView() {
                       : account.unavailable
                         ? account.quota_exceeded
                           ? "额度冷却"
-                          : "暂不可用"
+                          : account.status === "cooldown"
+                            ? "故障冷却"
+                            : "暂不可用"
                         : "可用"}
                   </Badge>
                 </CardAction>
@@ -800,7 +798,6 @@ function ConnectAccountDialog({
         api_key: String(form.get("api_key") ?? ""),
         base_url: String(form.get("base_url") ?? ""),
         proxy_id: proxyID,
-        prefix: String(form.get("prefix") ?? ""),
       }
     } else {
       let parsed: unknown
@@ -1222,16 +1219,6 @@ function CredentialFields({
               只影响这个模型账户；未选择时始终直连，不会继承系统代理。
             </FieldDescription>
           </Field>
-          <Field>
-            <FieldLabel htmlFor="account-prefix">模型前缀（可选）</FieldLabel>
-            <Input
-              id="account-prefix"
-              name="prefix"
-              className="font-mono"
-              placeholder="team-a"
-              spellCheck={false}
-            />
-          </Field>
         </>
       ) : (
         <>
@@ -1247,7 +1234,8 @@ function CredentialFields({
               className="font-mono text-xs"
             />
             <FieldDescription>
-              用于导入 Codex、Kimi、xAI、OpenAI 或百炼凭据。OAuth 账户请使用 OAuth 标签页。
+              用于导入 Codex、Kimi、xAI、OpenAI 或百炼凭据。OAuth 账户请使用
+              OAuth 标签页。
             </FieldDescription>
           </Field>
           <Field>
@@ -1306,7 +1294,6 @@ function ManageAccountDialog({
 }) {
   const [name, setName] = useState("")
   const [baseURL, setBaseURL] = useState("")
-  const [prefix, setPrefix] = useState("")
   const [websockets, setWebsockets] = useState(false)
   const [proxyID, setProxyID] = useState("")
   const [apiKey, setAPIKey] = useState("")
@@ -1336,7 +1323,9 @@ function ManageAccountDialog({
         setSelectedModels(retained.length ? retained : nextCandidates)
         if (announce) {
           if (result.warning)
-            toast.warning("原生运行时 已返回缓存目录", { description: result.warning })
+            toast.warning("原生运行时 已返回缓存目录", {
+              description: result.warning,
+            })
           else
             toast.success(
               result.source === "upstream"
@@ -1361,7 +1350,6 @@ function ManageAccountDialog({
     if (!account) return
     setName(displayName(account))
     setBaseURL(account.base_url ?? "")
-    setPrefix(account.prefix ?? "")
     setWebsockets(account.websockets ?? false)
     setProxyID(account.proxy_id ?? "")
     setAPIKey("")
@@ -1419,8 +1407,9 @@ function ManageAccountDialog({
     void onSave(account, {
       name,
       models: selectedModels,
-      prefix: prefix.trim(),
-      websockets,
+      ...(["codex", "xai", "grok"].includes(account.provider.toLowerCase())
+        ? { websockets }
+        : {}),
       proxy_id: proxyID,
       ...(account.auth_kind !== "oauth" ? { base_url: baseURL.trim() } : {}),
       ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
@@ -1617,34 +1606,25 @@ function ManageAccountDialog({
                       该选择用于此账户的推理、模型发现、令牌刷新与额度查询；未选择时明确直连。
                     </FieldDescription>
                   </Field>
-                  <Field>
-                    <FieldLabel htmlFor="manage-prefix">模型前缀</FieldLabel>
-                    <Input
-                      id="manage-prefix"
-                      className="font-mono"
-                      value={prefix}
-                      onChange={(event) => setPrefix(event.target.value)}
-                      placeholder="team-a"
-                      spellCheck={false}
-                    />
-                    <FieldDescription>
-                      可选的单段前缀，用于区分多个提供相同模型名的账户。
-                    </FieldDescription>
-                  </Field>
-                  <Field orientation="horizontal">
-                    <FieldContent>
-                      <FieldTitle>上游 WebSocket</FieldTitle>
-                      <FieldDescription>
-                        允许 原生运行时 对此账户使用原生 WebSocket 连接。
-                      </FieldDescription>
-                    </FieldContent>
-                    <Switch
-                      id="manage-websockets"
-                      checked={websockets}
-                      onCheckedChange={setWebsockets}
-                      aria-label="上游 WebSocket"
-                    />
-                  </Field>
+                  {["codex", "xai", "grok"].includes(
+                    account.provider.toLowerCase()
+                  ) ? (
+                    <Field orientation="horizontal">
+                      <FieldContent>
+                        <FieldTitle>上游 WebSocket</FieldTitle>
+                        <FieldDescription>
+                          对该账户启用原生多轮 Responses WebSocket；HTTP 与 SSE
+                          不受影响。
+                        </FieldDescription>
+                      </FieldContent>
+                      <Switch
+                        id="manage-websockets"
+                        checked={websockets}
+                        onCheckedChange={setWebsockets}
+                        aria-label="上游 WebSocket"
+                      />
+                    </Field>
+                  ) : null}
                   {account.auth_kind === "api_key" ? (
                     <Field>
                       <FieldLabel htmlFor="manage-api-key">

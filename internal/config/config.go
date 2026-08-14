@@ -25,7 +25,7 @@ type Config struct {
 	GatewayQueueTimeout            time.Duration
 	MaxRequestBytes                int64
 	RequestBytesInFlight           int64
-	ExecutorCachePressureBytes     uint64
+	MemoryReclaimThresholdBytes    uint64
 	GatewayCircuitFailureThreshold int
 	GatewayCircuitOpenDuration     time.Duration
 	QuotaSyncInterval              time.Duration
@@ -62,7 +62,7 @@ func Load() (Config, error) {
 		GatewayQueueTimeout:            time.Duration(envInt64("RELAY_QUEUE_TIMEOUT_MILLISECONDS", 2_000)) * time.Millisecond,
 		MaxRequestBytes:                envInt64("RELAY_MAX_REQUEST_MIB", 32) << 20,
 		RequestBytesInFlight:           envInt64("RELAY_REQUEST_BYTES_IN_FLIGHT_MIB", 32) << 20,
-		ExecutorCachePressureBytes:     uint64(envInt64("RELAY_EXECUTOR_CACHE_PRESSURE_MIB", 256)) << 20,
+		MemoryReclaimThresholdBytes:    uint64(envInt64("RELAY_MEMORY_RECLAIM_THRESHOLD_MIB", 256)) << 20,
 		GatewayCircuitFailureThreshold: int(envInt64("RELAY_CIRCUIT_FAILURE_THRESHOLD", 3)),
 		GatewayCircuitOpenDuration:     time.Duration(envInt64("RELAY_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
 		QuotaSyncInterval:              time.Duration(envInt64("RELAY_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
@@ -118,8 +118,8 @@ func Load() (Config, error) {
 	if cfg.RequestBytesInFlight < cfg.MaxRequestBytes || cfg.RequestBytesInFlight > 256<<30 {
 		return Config{}, errors.New("RELAY_REQUEST_BYTES_IN_FLIGHT_MIB must be at least RELAY_MAX_REQUEST_MIB and at most 262144")
 	}
-	if cfg.ExecutorCachePressureBytes < 64<<20 || cfg.ExecutorCachePressureBytes > 512<<30 {
-		return Config{}, errors.New("RELAY_EXECUTOR_CACHE_PRESSURE_MIB must be between 64 and 524288")
+	if cfg.MemoryReclaimThresholdBytes < 64<<20 || cfg.MemoryReclaimThresholdBytes > 512<<30 {
+		return Config{}, errors.New("RELAY_MEMORY_RECLAIM_THRESHOLD_MIB must be between 64 and 524288")
 	}
 	if cfg.GatewayCircuitFailureThreshold < 1 || cfg.GatewayCircuitFailureThreshold > 100 {
 		return Config{}, errors.New("RELAY_CIRCUIT_FAILURE_THRESHOLD must be between 1 and 100")

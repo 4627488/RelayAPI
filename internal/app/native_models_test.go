@@ -104,42 +104,6 @@ func TestFilterCodexCatalogHidesDeniedModelsInsteadOfDroppingThem(t *testing.T) 
 	}
 }
 
-func TestNormalizeCodexCatalogCapabilitiesIsConservativeForTranslatedProviders(t *testing.T) {
-	payload := []byte(`{"models":[
-		{"slug":"qwen-max","apply_patch_tool_type":"freeform","web_search_tool_type":"web_search","multi_agent_version":"v2","supports_parallel_tool_calls":true,"supports_search_tool":true,"support_verbosity":true,"supports_reasoning_summary_parameter":true,"prefer_websockets":true},
-		{"slug":"gpt-native","apply_patch_tool_type":"freeform","supports_parallel_tool_calls":true}
-	]}`)
-	normalized, err := normalizeCodexCatalogCapabilities(payload, func(model string) string {
-		if model == "qwen-max" {
-			return "openai-compatibility"
-		}
-		return "codex"
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(normalized, &document); err != nil {
-		t.Fatal(err)
-	}
-	items := document["models"].([]any)
-	translated := items[0].(map[string]any)
-	for _, key := range []string{"apply_patch_tool_type", "web_search_tool_type", "multi_agent_version"} {
-		if _, exists := translated[key]; exists {
-			t.Fatalf("translated model retained unverified %s: %#v", key, translated)
-		}
-	}
-	for _, key := range []string{"supports_parallel_tool_calls", "supports_search_tool", "support_verbosity", "supports_reasoning_summary_parameter", "prefer_websockets"} {
-		if translated[key] != false {
-			t.Fatalf("translated model %s = %#v, want false", key, translated[key])
-		}
-	}
-	native := items[1].(map[string]any)
-	if native["apply_patch_tool_type"] != "freeform" || native["supports_parallel_tool_calls"] != true {
-		t.Fatalf("native Codex capabilities were downgraded: %#v", native)
-	}
-}
-
 func TestPromoteCodexCatalogCapabilitiesAdvertisesFullAgentSurface(t *testing.T) {
 	payload := []byte(`{"models":[{"slug":"qwen-max","visibility":"list"},{"slug":"private","visibility":"hide"}]}`)
 	promoted, err := promoteCodexCatalogCapabilities(payload)
@@ -166,17 +130,6 @@ func TestPromoteCodexCatalogCapabilitiesAdvertisesFullAgentSurface(t *testing.T)
 	}
 }
 
-func TestCodexCapabilityPolicyDefaultsToOptimistic(t *testing.T) {
-	app := new(App)
-	if got := app.codexCapabilityPolicy(); got != "optimistic" {
-		t.Fatalf("default capability policy = %q", got)
-	}
-	app.nativeSettings.value.CodexCapabilityPolicy = "verified"
-	if got := app.codexCapabilityPolicy(); got != "verified" {
-		t.Fatalf("configured capability policy = %q", got)
-	}
-}
-
 func TestModelCatalogRevisionIsStableAndPermissionScoped(t *testing.T) {
 	first := store.KeyContext{
 		APIKey: store.APIKey{
@@ -197,15 +150,6 @@ func TestModelCatalogRevisionIsStableAndPermissionScoped(t *testing.T) {
 	second.ModelAliases = append(second.ModelAliases, store.APIKeyModelAlias{Alias: "new", Model: "model-a"})
 	if changed := modelCatalogRevision(second, []string{"model-a", "model-b", "private"}, ""); changed == left {
 		t.Fatal("alias change did not invalidate the catalog revision")
-	}
-}
-
-func TestModelCatalogRevisionChangesWithCapabilityPolicy(t *testing.T) {
-	key := store.KeyContext{APIKey: store.APIKey{ModelAllowlist: []string{"gpt-5.6"}}}
-	optimistic := modelCatalogRevision(key, []string{"gpt-5.6"}, "capability-policy=optimistic")
-	verified := modelCatalogRevision(key, []string{"gpt-5.6"}, "capability-policy=verified")
-	if optimistic == verified {
-		t.Fatal("capability policy did not invalidate the Codex model catalog revision")
 	}
 }
 

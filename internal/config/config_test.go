@@ -21,7 +21,7 @@ func TestLoadUsesMemoryBoundedRequestDefaults(t *testing.T) {
 	validEnvironment(t)
 	t.Setenv("RELAY_MAX_REQUEST_MIB", "")
 	t.Setenv("RELAY_REQUEST_BYTES_IN_FLIGHT_MIB", "")
-	t.Setenv("RELAY_EXECUTOR_CACHE_PRESSURE_MIB", "")
+	t.Setenv("RELAY_MEMORY_RECLAIM_THRESHOLD_MIB", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -33,8 +33,8 @@ func TestLoadUsesMemoryBoundedRequestDefaults(t *testing.T) {
 	if cfg.RequestBytesInFlight != 32<<20 {
 		t.Fatalf("in-flight request bytes = %d, want %d", cfg.RequestBytesInFlight, int64(32<<20))
 	}
-	if cfg.ExecutorCachePressureBytes != 256<<20 {
-		t.Fatalf("executor cache pressure = %d, want %d", cfg.ExecutorCachePressureBytes, uint64(256<<20))
+	if cfg.MemoryReclaimThresholdBytes != 256<<20 {
+		t.Fatalf("memory reclaim threshold = %d, want %d", cfg.MemoryReclaimThresholdBytes, uint64(256<<20))
 	}
 }
 
@@ -42,7 +42,7 @@ func TestLoadAllowsVeryLargeRequestBudgets(t *testing.T) {
 	validEnvironment(t)
 	t.Setenv("RELAY_MAX_REQUEST_MIB", "65536")
 	t.Setenv("RELAY_REQUEST_BYTES_IN_FLIGHT_MIB", "262144")
-	t.Setenv("RELAY_EXECUTOR_CACHE_PRESSURE_MIB", "524288")
+	t.Setenv("RELAY_MEMORY_RECLAIM_THRESHOLD_MIB", "524288")
 
 	if _, err := Load(); err != nil {
 		t.Fatal(err)

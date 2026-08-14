@@ -508,7 +508,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Relay-Request-ID", requestID)
 	if isCodexResponsesPath(r.URL.Path) && a.nativeRuntime != nil {
-		w.Header().Set("X-Models-Etag", modelCatalogRevision(key, a.nativeRuntime.Models(), "capability-policy="+a.codexCapabilityPolicy()))
+		w.Header().Set("X-Models-Etag", modelCatalogRevision(key, a.nativeRuntime.Models(), "codex-capabilities=full-v1"))
 	}
 	if admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)

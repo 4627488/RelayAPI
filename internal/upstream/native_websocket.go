@@ -35,7 +35,7 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 	model := websocketModel(first)
 	pinned := strings.TrimSpace(request.Header.Get("X-Relay-Upstream-Credential-ID"))
 	credential, ok := r.selectCredential(model, pinned)
-	if !ok {
+	if !ok || (!credential.WebSockets && !websocketPrewarm(first)) {
 		_ = downstream.WriteJSON(map[string]any{"type": "error", "error": map[string]any{"type": "model_account_unavailable", "message": "no upstream credential can serve this model"}})
 		return
 	}
@@ -49,12 +49,20 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 	connect := func() error {
 		connection, response, dialErr := credential.dialWebSocket(request.Context(), request.URL.Path, request.Header)
 		if dialErr != nil {
+			r.mu.RLock()
+			threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown
+			r.mu.RUnlock()
+			credential.record(false, dialErr.Error(), true, threshold, cooldown)
 			if response != nil {
 				return fmt.Errorf("upstream websocket returned HTTP %d", response.StatusCode)
 			}
 			return dialErr
 		}
 		upstream = connection
+		r.mu.RLock()
+		threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown
+		r.mu.RUnlock()
+		credential.record(true, "", false, threshold, cooldown)
 		frames := make(chan websocketFrame, 1)
 		upstreamFrames = frames
 		go readWebSocketFrames(upstream, frames)
@@ -66,6 +74,9 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 			id := generatedID("resp")
 			_ = downstream.WriteJSON(map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "status": "in_progress", "model": model, "output": []any{}}})
 			return downstream.WriteJSON(map[string]any{"type": "response.completed", "response": map[string]any{"id": id, "object": "response", "status": "completed", "model": model, "output": []any{}, "usage": map[string]any{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}}})
+		}
+		if !credential.WebSockets {
+			return errors.New("upstream WebSocket is disabled for this credential")
 		}
 		payload = rewriteJSONModel(payload, credential.ModelRoutes[strings.ToLower(model)])
 		if credential.Provider == "xai" {

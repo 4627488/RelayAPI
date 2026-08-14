@@ -107,13 +107,79 @@ func TestRuntimeRetriesTransientProviderFailure(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"resp_ok","output":[]}`)
 	}))
 	defer provider.Close()
-	r, err := NewRuntime(Options{APIKey: "runtime-test-key", RequestRetry: 1, MaxRetryInterval: time.Millisecond}, []Credential{{ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL})}})
+	r, err := NewRuntime(Options{APIKey: "runtime-test-key", RequestRetry: 1, RetryMaxBackoff: time.Millisecond, FailureThreshold: 3, FailureCooldown: time.Second}, []Credential{{ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL})}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	response := runtimeRequest(t, r, http.MethodPost, "/v1/responses", `{"model":"gpt","input":"hi"}`)
 	if response.Code != http.StatusOK || attempts.Load() != 2 {
 		t.Fatalf("status = %d, attempts = %d, body = %s", response.Code, attempts.Load(), response.Body.String())
+	}
+}
+
+func TestCredentialIsolationRemovesAndRestoresOnlyFailingRoute(t *testing.T) {
+	runtimeValue, err := NewRuntime(Options{FailureThreshold: 2, FailureCooldown: 200 * time.Millisecond}, []Credential{
+		{ID: "first", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "one"})},
+		{ID: "second", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "two"})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := runtimeValue.(*nativeRuntime)
+	first := runtime.credentials["first"]
+	first.record(false, "temporary", true, 2, 200*time.Millisecond)
+	if !first.available(time.Now()) {
+		t.Fatal("credential isolated before reaching threshold")
+	}
+	first.record(false, "temporary", true, 2, 200*time.Millisecond)
+	if first.available(time.Now()) {
+		t.Fatal("credential remained routable after reaching threshold")
+	}
+	if err := runtime.ApplySettings(t.Context(), Settings{
+		RoutingStrategy: "round-robin", RetryMaxBackoff: time.Second, ProxyURL: "direct",
+		FailureThreshold: 2, FailureCooldown: 200 * time.Millisecond,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first = runtime.credentials["first"]
+	if first.available(time.Now()) {
+		t.Fatal("hot settings update discarded credential isolation state")
+	}
+	for range 4 {
+		selected, ok := runtime.selectCredential("gpt", "")
+		if !ok || selected.ID != "second" {
+			t.Fatalf("selected credential = %#v, want healthy second route", selected)
+		}
+	}
+	time.Sleep(205 * time.Millisecond)
+	if !first.available(time.Now()) {
+		t.Fatal("credential did not return after cooldown")
+	}
+	if first.available(time.Now()) {
+		t.Fatal("credential admitted more than one half-open recovery probe")
+	}
+	first.record(true, "", false, 2, 200*time.Millisecond)
+	if !first.available(time.Now()) {
+		t.Fatal("successful recovery probe did not close credential circuit")
+	}
+}
+
+func TestResponseHeaderPolicyAllowsDiagnosticsButBlocksProviderSecrets(t *testing.T) {
+	source := http.Header{
+		"Content-Type":        {"text/event-stream"},
+		"X-Request-Id":        {"req_1"},
+		"X-Ratelimit-Limit":   {"100"},
+		"Retry-After":         {"2"},
+		"Set-Cookie":          {"provider_session=secret"},
+		"X-Provider-Internal": {"secret"},
+	}
+	destination := make(http.Header)
+	copyResponseHeaders(destination, source)
+	if destination.Get("X-Request-Id") != "req_1" || destination.Get("X-Ratelimit-Limit") != "100" || destination.Get("Retry-After") != "2" {
+		t.Fatalf("diagnostic headers were removed: %#v", destination)
+	}
+	if destination.Get("Set-Cookie") != "" || destination.Get("X-Provider-Internal") != "" {
+		t.Fatalf("unsafe provider headers escaped: %#v", destination)
 	}
 }
 

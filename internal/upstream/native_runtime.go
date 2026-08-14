@@ -39,31 +39,42 @@ type nativeCredential struct {
 	mu      sync.Mutex
 	tokenMu sync.Mutex
 	Credential
-	Provider     string
-	BaseURL      string
-	APIKey       string
-	AccessToken  string
-	RefreshToken string
-	AccountID    string
-	Headers      http.Header
-	ProxyURL     string
-	Prefix       string
-	ModelRoutes  map[string]string
-	Status       CredentialStatus
-	client       *http.Client
-	document     map[string]any
-	expiresAt    time.Time
+	Provider            string
+	BaseURL             string
+	APIKey              string
+	AccessToken         string
+	RefreshToken        string
+	AccountID           string
+	Headers             http.Header
+	ProxyURL            string
+	WebSockets          bool
+	ModelRoutes         map[string]string
+	Status              CredentialStatus
+	client              *http.Client
+	document            map[string]any
+	expiresAt           time.Time
+	consecutiveFailures int
+	probeActive         bool
 }
 
 // NewRuntime creates the focused Relay runtime for Codex, Kimi, xAI and
 // OpenAI-compatible providers.
 func NewRuntime(options Options, credentials []Credential) (Runtime, error) {
+	if options.RetryMaxBackoff <= 0 {
+		options.RetryMaxBackoff = 2 * time.Second
+	}
+	if options.FailureThreshold <= 0 {
+		options.FailureThreshold = 3
+	}
+	if options.FailureCooldown <= 0 {
+		options.FailureCooldown = 30 * time.Second
+	}
 	r := &nativeRuntime{options: options, credentials: make(map[string]*nativeCredential), modelRoutes: make(map[string][]string)}
 	r.settings = Settings{
-		RequestRetry:     options.RequestRetry,
-		MaxRetryInterval: options.MaxRetryInterval, RoutingStrategy: options.RoutingStrategy,
-		ProxyURL: options.ProxyURL, PassthroughHeaders: options.PassthroughHeaders,
-		ForceModelPrefix: options.ForceModelPrefix,
+		RequestRetry:    options.RequestRetry,
+		RetryMaxBackoff: options.RetryMaxBackoff, RoutingStrategy: options.RoutingStrategy,
+		ProxyURL: options.ProxyURL, FailureThreshold: options.FailureThreshold,
+		FailureCooldown: options.FailureCooldown,
 	}
 	r.oauth = newOAuthManager(options)
 	r.handler = http.HandlerFunc(r.serveHTTP)
@@ -142,16 +153,12 @@ func (r *nativeRuntime) DiscoverCredentialModels(ctx context.Context, id string)
 }
 
 func (r *nativeRuntime) ReplaceCredentials(_ context.Context, credentials []Credential) error {
-	compiled := make(map[string]*nativeCredential, len(credentials))
-	for _, source := range credentials {
-		if !source.Enabled {
-			continue
-		}
-		credential, err := compileNativeCredential(source, r.settings.ProxyURL)
-		if err != nil {
-			return err
-		}
-		compiled[credential.ID] = credential
+	r.mu.RLock()
+	globalProxy := r.settings.ProxyURL
+	r.mu.RUnlock()
+	compiled, err := compileNativeCredentials(credentials, globalProxy)
+	if err != nil {
+		return err
 	}
 	r.mu.Lock()
 	r.credentials = compiled
@@ -160,18 +167,62 @@ func (r *nativeRuntime) ReplaceCredentials(_ context.Context, credentials []Cred
 	return nil
 }
 
+func compileNativeCredentials(credentials []Credential, globalProxy string) (map[string]*nativeCredential, error) {
+	compiled := make(map[string]*nativeCredential, len(credentials))
+	for _, source := range credentials {
+		if !source.Enabled {
+			continue
+		}
+		credential, err := compileNativeCredential(source, globalProxy)
+		if err != nil {
+			return nil, err
+		}
+		compiled[credential.ID] = credential
+	}
+	return compiled, nil
+}
+
 func (r *nativeRuntime) ApplySettings(_ context.Context, settings Settings) error {
 	if settings.RoutingStrategy != "" && settings.RoutingStrategy != "round-robin" && settings.RoutingStrategy != "fill-first" {
 		return fmt.Errorf("unsupported routing strategy %q", settings.RoutingStrategy)
 	}
+	if settings.FailureThreshold < 1 || settings.FailureCooldown <= 0 {
+		return errors.New("credential failure isolation settings are invalid")
+	}
+	r.mu.RLock()
+	credentials := make([]Credential, 0, len(r.credentials))
+	previous := make(map[string]*nativeCredential, len(r.credentials))
+	for _, credential := range r.credentials {
+		credential.tokenMu.Lock()
+		source := credential.Credential
+		source.Document = append([]byte(nil), source.Document...)
+		credential.tokenMu.Unlock()
+		credentials = append(credentials, source)
+		previous[credential.ID] = credential
+	}
+	r.mu.RUnlock()
+	compiled, err := compileNativeCredentials(credentials, settings.ProxyURL)
+	if err != nil {
+		return err
+	}
+	for id, credential := range compiled {
+		if old := previous[id]; old != nil {
+			old.mu.Lock()
+			credential.Status = old.Status
+			credential.consecutiveFailures = old.consecutiveFailures
+			credential.probeActive = old.probeActive
+			old.mu.Unlock()
+		}
+	}
+	if err := r.oauth.applyProxy(settings.ProxyURL); err != nil {
+		return fmt.Errorf("apply system proxy: %w", err)
+	}
 	r.mu.Lock()
 	r.settings = settings
-	credentials := make([]Credential, 0, len(r.credentials))
-	for _, credential := range r.credentials {
-		credentials = append(credentials, credential.Credential)
-	}
+	r.credentials = compiled
+	r.rebuildRoutesLocked()
 	r.mu.Unlock()
-	return r.ReplaceCredentials(context.Background(), credentials)
+	return nil
 }
 
 func (r *nativeRuntime) ResolveCredentialModel(id, model string) string {
@@ -220,9 +271,6 @@ func (r *nativeRuntime) rebuildRoutesLocked() {
 			if public == "" {
 				continue
 			}
-			if prefix := strings.Trim(strings.TrimSpace(credential.Prefix), "/"); prefix != "" && r.settings.ForceModelPrefix {
-				public = prefix + "/" + public
-			}
 			key := strings.ToLower(public)
 			r.modelRoutes[key] = append(r.modelRoutes[key], id)
 			modelSet[key] = public
@@ -240,17 +288,26 @@ func (r *nativeRuntime) selectCredential(model, pinnedID string) (*nativeCredent
 	defer r.mu.RUnlock()
 	if pinnedID != "" {
 		credential := r.credentials[pinnedID]
-		return credential, credential != nil
+		return credential, credential != nil && credential.available(time.Now())
 	}
 	ids := r.modelRoutes[strings.ToLower(strings.TrimSpace(model))]
 	if len(ids) == 0 {
 		return nil, false
 	}
+	available := ids[:0]
+	for _, id := range ids {
+		if credential := r.credentials[id]; credential != nil && credential.available(time.Now()) {
+			available = append(available, id)
+		}
+	}
+	if len(available) == 0 {
+		return nil, false
+	}
 	index := 0
 	if r.settings.RoutingStrategy != "fill-first" {
-		index = int(r.next.Add(1)-1) % len(ids)
+		index = int(r.next.Add(1)-1) % len(available)
 	}
-	credential := r.credentials[ids[index]]
+	credential := r.credentials[available[index]]
 	return credential, credential != nil
 }
 
@@ -277,10 +334,11 @@ func compileNativeCredential(source Credential, globalProxy string) (*nativeCred
 		Credential: source, Provider: provider, APIKey: firstString(document, "api_key"),
 		AccessToken: firstString(document, "access_token", "token"), RefreshToken: firstString(document, "refresh_token"),
 		AccountID: firstString(document, "account_id", "chatgpt_account_id"), Headers: make(http.Header),
-		ProxyURL: firstString(document, "proxy_url"), Prefix: firstString(document, "prefix"), ModelRoutes: make(map[string]string),
+		ProxyURL: firstString(document, "proxy_url"), ModelRoutes: make(map[string]string),
 		Status:   CredentialStatus{Status: "active", PlanType: firstString(document, "plan_type")},
 		document: document,
 	}
+	credential.WebSockets, _ = document["websockets"].(bool)
 	credential.BaseURL = strings.TrimRight(firstString(document, "base_url"), "/")
 	credential.expiresAt = parseCredentialTime(firstString(document, "expired", "expires_at", "expire"))
 	if credential.BaseURL == "" {
@@ -551,16 +609,26 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	target := credential.upstreamURL(requestPath)
 	response, err := r.doProviderRequest(request, credential, target, body)
 	if err != nil {
-		credential.record(false, err.Error())
+		r.mu.RLock()
+		threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown
+		r.mu.RUnlock()
+		credential.record(false, err.Error(), true, threshold, cooldown)
 		writeRuntimeError(w, http.StatusBadGateway, "upstream_connection_failed", err.Error())
 		return
 	}
 	defer response.Body.Close()
-	credential.record(response.StatusCode < 400, "")
 	r.mu.RLock()
-	passthroughHeaders := r.settings.PassthroughHeaders
+	threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown
 	r.mu.RUnlock()
-	copyResponseHeaders(w.Header(), response.Header, passthroughHeaders)
+	availabilityFailure := response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || retryableProviderStatus(response.StatusCode)
+	if response.StatusCode < 400 {
+		credential.record(true, "", false, threshold, cooldown)
+	} else if availabilityFailure {
+		credential.record(false, http.StatusText(response.StatusCode), true, threshold, cooldown)
+	} else {
+		credential.releaseProbe()
+	}
+	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	if response.StatusCode >= 400 || (responseMode == "passthrough" && toolRestorer == nil) {
 		_, _ = io.Copy(w, response.Body)
@@ -593,7 +661,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 
 func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nativeCredential, target string, body []byte) (*http.Response, error) {
 	r.mu.RLock()
-	requestRetry, maxRetryInterval := r.settings.RequestRetry, r.settings.MaxRetryInterval
+	requestRetry, retryMaxBackoff := r.settings.RequestRetry, r.settings.RetryMaxBackoff
 	r.mu.RUnlock()
 	attempts := requestRetry + 1
 	if attempts < 1 {
@@ -640,8 +708,8 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 			}
 		}
 		delay := time.Duration(1<<min(attempt, 5)) * 100 * time.Millisecond
-		if maxRetryInterval > 0 && delay > maxRetryInterval {
-			delay = maxRetryInterval
+		if retryMaxBackoff > 0 && delay > retryMaxBackoff {
+			delay = retryMaxBackoff
 		}
 		select {
 		case <-time.After(delay):
@@ -744,17 +812,60 @@ func (c *nativeCredential) upstreamURL(path string) string {
 	return base + path
 }
 
-func (c *nativeCredential) record(success bool, message string) {
+func (c *nativeCredential) available(now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.Status.Unavailable {
+		return true
+	}
+	if c.Status.NextRetryAfter.IsZero() || now.Before(c.Status.NextRetryAfter) || c.probeActive {
+		return false
+	}
+	c.probeActive = true
+	c.Status.Status = "recovering"
+	c.Status.StatusMessage = ""
+	return true
+}
+
+func (c *nativeCredential) record(success bool, message string, availabilityFailure bool, threshold int, cooldown time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if success {
 		c.Status.Success++
 		c.Status.Status = "active"
 		c.Status.StatusMessage = ""
+		c.Status.Unavailable = false
+		c.Status.NextRetryAfter = time.Time{}
+		c.consecutiveFailures = 0
+		c.probeActive = false
 	} else {
 		c.Status.Failed++
 		c.Status.StatusMessage = message
+		if availabilityFailure {
+			wasProbe := c.probeActive
+			c.probeActive = false
+			c.consecutiveFailures++
+			if wasProbe || c.consecutiveFailures >= threshold {
+				c.Status.Status = "cooldown"
+				c.Status.Unavailable = true
+				c.Status.NextRetryAfter = time.Now().Add(cooldown)
+			}
+		}
 	}
+}
+
+func (c *nativeCredential) releaseProbe() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.probeActive {
+		return
+	}
+	c.probeActive = false
+	c.consecutiveFailures = 0
+	c.Status.Unavailable = false
+	c.Status.Status = "active"
+	c.Status.StatusMessage = ""
+	c.Status.NextRetryAfter = time.Time{}
 }
 
 func canonicalInferencePath(path string) string {
@@ -791,10 +902,11 @@ func copyProviderHeaders(destination, source http.Header) {
 	}
 }
 
-func copyResponseHeaders(destination, source http.Header, passthrough bool) {
+func copyResponseHeaders(destination, source http.Header) {
 	for name, values := range source {
 		lower := strings.ToLower(name)
-		if lower == "content-length" || lower == "connection" || lower == "transfer-encoding" || (!passthrough && lower != "content-type") {
+		if lower != "content-type" && lower != "retry-after" && lower != "x-request-id" &&
+			lower != "request-id" && !strings.HasPrefix(lower, "x-ratelimit-") && !strings.HasPrefix(lower, "openai-") {
 			continue
 		}
 		for _, value := range values {

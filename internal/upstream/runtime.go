@@ -39,22 +39,22 @@ type Credential struct {
 type Options struct {
 	APIKey              string
 	RequestRetry        int
-	MaxRetryInterval    time.Duration
+	RetryMaxBackoff     time.Duration
 	RoutingStrategy     string
 	ProxyURL            string
-	PassthroughHeaders  bool
-	ForceModelPrefix    bool
+	FailureThreshold    int
+	FailureCooldown     time.Duration
 	OnCredentialUpdated func(context.Context, string, []byte)
 	OnOAuthCredential   func(context.Context, string, string, string, []byte) error
 }
 
 type Settings struct {
-	RequestRetry       int
-	MaxRetryInterval   time.Duration
-	RoutingStrategy    string
-	ProxyURL           string
-	PassthroughHeaders bool
-	ForceModelPrefix   bool
+	RequestRetry     int
+	RetryMaxBackoff  time.Duration
+	RoutingStrategy  string
+	ProxyURL         string
+	FailureThreshold int
+	FailureCooldown  time.Duration
 }
 
 type CredentialStatus struct {

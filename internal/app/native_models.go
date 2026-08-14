@@ -70,27 +70,12 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 			return
 		}
 		if codexCatalog {
-			if a.codexCapabilityPolicy() == "optimistic" {
-				promoted, promoteErr := promoteCodexCatalogCapabilities(payload)
-				if promoteErr != nil {
-					writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型能力无效: %v", promoteErr))
-					return
-				}
-				payload = promoted
-			} else {
-				normalized, normalizeErr := normalizeCodexCatalogCapabilities(payload, func(model string) string {
-					if a.nativeRuntime == nil {
-						return ""
-					}
-					provider, _ := a.nativeRuntime.ModelProvider(model)
-					return provider
-				})
-				if normalizeErr != nil {
-					writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型能力无效: %v", normalizeErr))
-					return
-				}
-				payload = normalized
+			promoted, promoteErr := promoteCodexCatalogCapabilities(payload)
+			if promoteErr != nil {
+				writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型能力无效: %v", promoteErr))
+				return
 			}
+			payload = promoted
 			if expanded, expandErr := addCodexModelAliases(payload, key.ModelAliases); expandErr == nil {
 				payload = expanded
 			} else {
@@ -103,7 +88,7 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Type", "application/json")
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		etag := modelCatalogRevision(key, runtimeModels, "capability-policy="+a.codexCapabilityPolicy())
+		etag := modelCatalogRevision(key, runtimeModels, "codex-capabilities=full-v1")
 		w.Header().Set("ETag", etag)
 		if etagMatches(r.Header.Get("If-None-Match"), etag) {
 			w.WriteHeader(http.StatusNotModified)
@@ -145,57 +130,6 @@ func promoteCodexCatalogCapabilities(payload []byte) ([]byte, error) {
 		item["prefer_websockets"] = true
 		item["multi_agent_version"] = "v2"
 		item["input_modalities"] = []any{"text", "image"}
-	}
-	return json.Marshal(document)
-}
-
-func (a *App) codexCapabilityPolicy() string {
-	if a == nil {
-		return "optimistic"
-	}
-	a.nativeSettings.RLock()
-	policy := strings.ToLower(strings.TrimSpace(a.nativeSettings.value.CodexCapabilityPolicy))
-	a.nativeSettings.RUnlock()
-	if policy == "verified" {
-		return policy
-	}
-	return "optimistic"
-}
-
-// normalizeCodexCatalogCapabilities removes capabilities that a generic
-// GPT-derived model template cannot prove for translated Chat Completions
-// providers. A false negative only hides an optimization; a false positive can
-// make Codex send a tool dialect the upstream silently drops.
-func normalizeCodexCatalogCapabilities(payload []byte, providerForModel func(string) string) ([]byte, error) {
-	var document map[string]any
-	if err := json.Unmarshal(payload, &document); err != nil {
-		return nil, err
-	}
-	items, ok := document["models"].([]any)
-	if !ok {
-		return nil, fmt.Errorf("missing models array")
-	}
-	for _, raw := range items {
-		item, itemOK := raw.(map[string]any)
-		if !itemOK {
-			continue
-		}
-		provider := ""
-		if providerForModel != nil {
-			provider = strings.ToLower(strings.TrimSpace(providerForModel(catalogModelID(item))))
-		}
-		switch provider {
-		case "kimi", "openai", "openai-compatibility":
-			delete(item, "apply_patch_tool_type")
-			delete(item, "web_search_tool_type")
-			delete(item, "multi_agent_version")
-			delete(item, "experimental_supported_tools")
-			item["supports_parallel_tool_calls"] = false
-			item["supports_search_tool"] = false
-			item["support_verbosity"] = false
-			item["supports_reasoning_summary_parameter"] = false
-			item["prefer_websockets"] = false
-		}
 	}
 	return json.Marshal(document)
 }

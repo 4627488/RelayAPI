@@ -112,7 +112,7 @@ func (a *App) maintenance() {
 	for {
 		select {
 		case <-ticker.C:
-			a.reclaimExecutorCachesUnderPressure()
+			a.reclaimRuntimeMemoryUnderPressure()
 			if count, err := a.store.DeleteExpiredAgentSetups(context.Background(), time.Now()); err != nil {
 				slog.Error("delete expired agent setups", "error", err)
 			} else if count > 0 {
@@ -139,16 +139,16 @@ func (a *App) maintenance() {
 
 const largeRequestMemoryReleaseBytes = 8 << 20
 
-func (a *App) reclaimExecutorCachesUnderPressure() {
-	if a == nil || a.cfg.ExecutorCachePressureBytes == 0 {
+func (a *App) reclaimRuntimeMemoryUnderPressure() {
+	if a == nil || a.cfg.MemoryReclaimThresholdBytes == 0 {
 		return
 	}
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	if stats.HeapAlloc < a.cfg.ExecutorCachePressureBytes {
+	if stats.HeapAlloc < a.cfg.MemoryReclaimThresholdBytes {
 		return
 	}
-	a.reclaimExecutorMemory("heap_pressure", stats.HeapAlloc)
+	a.reclaimRuntimeMemory("heap_pressure", stats.HeapAlloc)
 }
 
 func (a *App) reclaimAfterLargeRequest(requestBytes int) {
@@ -157,10 +157,10 @@ func (a *App) reclaimAfterLargeRequest(requestBytes int) {
 	}
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	a.reclaimExecutorMemory("large_request_complete", stats.HeapAlloc)
+	a.reclaimRuntimeMemory("large_request_complete", stats.HeapAlloc)
 }
 
-func (a *App) reclaimExecutorMemory(reason string, heapAlloc uint64) {
+func (a *App) reclaimRuntimeMemory(reason string, heapAlloc uint64) {
 	if !a.memoryReclaiming.CompareAndSwap(false, true) {
 		return
 	}
@@ -168,7 +168,7 @@ func (a *App) reclaimExecutorMemory(reason string, heapAlloc uint64) {
 	debug.FreeOSMemory()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	slog.Info("released executor memory", "reason", reason,
+	slog.Info("released runtime memory", "reason", reason,
 		"heap_alloc_bytes_before", heapAlloc, "heap_alloc_bytes_after", after.HeapAlloc)
 }
 

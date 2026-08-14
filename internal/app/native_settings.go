@@ -16,13 +16,12 @@ import (
 const nativeRuntimeSettingsKey = "native-runtime"
 
 type nativeRuntimeSettings struct {
-	RequestRetry          int    `json:"request_retry"`
-	MaxRetryInterval      int    `json:"max_retry_interval"`
-	RoutingStrategy       string `json:"routing_strategy"`
-	SystemProxyID         string `json:"system_proxy_id"`
-	PassthroughHeaders    bool   `json:"passthrough_headers"`
-	CodexCapabilityPolicy string `json:"codex_capability_policy"`
-	ForceModelPrefix      bool   `json:"force_model_prefix"`
+	RequestRetry               int    `json:"request_retry"`
+	RetryMaxBackoffMS          int    `json:"retry_max_backoff_ms"`
+	RoutingStrategy            string `json:"routing_strategy"`
+	CredentialFailureThreshold int    `json:"credential_failure_threshold"`
+	CredentialCooldownSeconds  int    `json:"credential_cooldown_seconds"`
+	SystemProxyID              string `json:"system_proxy_id"`
 }
 
 type settingsState struct {
@@ -32,8 +31,8 @@ type settingsState struct {
 
 func defaultNativeRuntimeSettings() nativeRuntimeSettings {
 	return nativeRuntimeSettings{
-		RequestRetry: 2, MaxRetryInterval: 30,
-		RoutingStrategy: "round-robin", PassthroughHeaders: true, CodexCapabilityPolicy: "optimistic",
+		RequestRetry: 2, RetryMaxBackoffMS: 2_000, RoutingStrategy: "round-robin",
+		CredentialFailureThreshold: 3, CredentialCooldownSeconds: 30,
 	}
 }
 
@@ -47,6 +46,19 @@ func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSetti
 	if err = json.Unmarshal(document, &settings); err != nil {
 		return settings, true, "", err
 	}
+	// Settings written before the native UI cleanup do not contain the new
+	// isolation fields. Zero is not a valid user value, so it is safe to fill
+	// these defaults during the one-time shape migration.
+	defaults := defaultNativeRuntimeSettings()
+	if settings.RetryMaxBackoffMS == 0 {
+		settings.RetryMaxBackoffMS = defaults.RetryMaxBackoffMS
+	}
+	if settings.CredentialFailureThreshold == 0 {
+		settings.CredentialFailureThreshold = defaults.CredentialFailureThreshold
+	}
+	if settings.CredentialCooldownSeconds == 0 {
+		settings.CredentialCooldownSeconds = defaults.CredentialCooldownSeconds
+	}
 	var legacy struct {
 		ProxyURL string `json:"proxy_url"`
 	}
@@ -55,20 +67,20 @@ func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSetti
 }
 
 func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
-	if value.RequestRetry < 0 || value.RequestRetry > 20 {
-		return "请求重试次数必须在 0 到 20 之间"
+	if value.RequestRetry < 0 || value.RequestRetry > 5 {
+		return "请求重试次数必须在 0 到 5 之间"
 	}
-	if value.MaxRetryInterval < 0 || value.MaxRetryInterval > 3600 {
-		return "最大重试间隔必须在 0 到 3600 秒之间"
+	if value.RetryMaxBackoffMS < 100 || value.RetryMaxBackoffMS > 10_000 {
+		return "重试退避上限必须在 100 到 10000 毫秒之间"
 	}
 	if value.RoutingStrategy != "round-robin" && value.RoutingStrategy != "fill-first" {
 		return "凭据调度策略无效"
 	}
-	if value.CodexCapabilityPolicy == "" {
-		value.CodexCapabilityPolicy = "optimistic"
+	if value.CredentialFailureThreshold < 1 || value.CredentialFailureThreshold > 20 {
+		return "凭据隔离阈值必须在 1 到 20 之间"
 	}
-	if value.CodexCapabilityPolicy != "optimistic" && value.CodexCapabilityPolicy != "verified" {
-		return "Codex 能力策略必须是 optimistic 或 verified"
+	if value.CredentialCooldownSeconds < 5 || value.CredentialCooldownSeconds > 3600 {
+		return "凭据冷却时间必须在 5 到 3600 秒之间"
 	}
 	return ""
 }
@@ -78,10 +90,11 @@ func runtimeSettings(value nativeRuntimeSettings, systemProxyURL string) upstrea
 		systemProxyURL = "direct"
 	}
 	return upstream.Settings{
-		RequestRetry:     value.RequestRetry,
-		MaxRetryInterval: time.Duration(value.MaxRetryInterval) * time.Second,
-		RoutingStrategy:  value.RoutingStrategy, ProxyURL: systemProxyURL,
-		PassthroughHeaders: value.PassthroughHeaders, ForceModelPrefix: value.ForceModelPrefix,
+		RequestRetry:    value.RequestRetry,
+		RetryMaxBackoff: time.Duration(value.RetryMaxBackoffMS) * time.Millisecond,
+		RoutingStrategy: value.RoutingStrategy, ProxyURL: systemProxyURL,
+		FailureThreshold: value.CredentialFailureThreshold,
+		FailureCooldown:  time.Duration(value.CredentialCooldownSeconds) * time.Second,
 	}
 }
 
@@ -100,9 +113,6 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 	var input nativeRuntimeSettings
 	if !decodeJSON(w, r, &input) {
 		return
-	}
-	if strings.TrimSpace(input.CodexCapabilityPolicy) == "" {
-		input.CodexCapabilityPolicy = "optimistic"
 	}
 	if message := validateNativeRuntimeSettings(input); message != "" {
 		writeError(w, http.StatusBadRequest, "validation_error", message)
@@ -142,11 +152,12 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 func (a *App) nativeRuntimeInfo() map[string]any {
 	return map[string]any{
 		"ready": a.nativeRuntime != nil, "credentials": a.nativeRuntime.CredentialCount(), "models": len(a.nativeRuntime.Models()),
+		"upstream_websockets":     a.cfg.UpstreamWebSockets,
 		"request_timeout_seconds": int(a.cfg.RequestTimeout / time.Second), "max_in_flight": a.cfg.GatewayMaxInFlight,
 		"max_queue": a.cfg.GatewayMaxQueue, "queue_timeout_seconds": int(a.cfg.GatewayQueueTimeout / time.Second),
 		"max_request_bytes": a.cfg.MaxRequestBytes, "request_bytes_in_flight": a.cfg.RequestBytesInFlight,
 		"circuit_failure_threshold": a.cfg.GatewayCircuitFailureThreshold, "circuit_open_seconds": int(a.cfg.GatewayCircuitOpenDuration / time.Second),
-		"executor_cache_pressure_bytes": a.cfg.ExecutorCachePressureBytes, "unpriced_model_policy": a.cfg.UnpricedModelPolicy,
+		"memory_reclaim_threshold_bytes": a.cfg.MemoryReclaimThresholdBytes, "unpriced_model_policy": a.cfg.UnpricedModelPolicy,
 		"request_log_retention_days": a.cfg.RequestLogRetentionDays, "request_success_detail_days": a.cfg.RequestSuccessDetailDays,
 		"request_error_detail_days": a.cfg.RequestDetailRetentionDays,
 	}

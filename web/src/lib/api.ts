@@ -275,7 +275,6 @@ export interface ProviderAccount {
   config_path?: string
   config_index?: number
   base_url?: string
-  prefix?: string
   models?: string[]
   key_count?: number
   can_inspect?: boolean

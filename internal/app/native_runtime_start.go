@@ -69,9 +69,9 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	secret := hex.EncodeToString(secretBytes)
 	runtime, err := upstream.NewRuntime(upstream.Options{
 		APIKey: secret, RequestRetry: settings.RequestRetry,
-		MaxRetryInterval: time.Duration(settings.MaxRetryInterval) * time.Second, RoutingStrategy: settings.RoutingStrategy,
-		ProxyURL: firstNonEmptyString(systemProxyURL, "direct"), PassthroughHeaders: settings.PassthroughHeaders,
-		ForceModelPrefix: settings.ForceModelPrefix,
+		RetryMaxBackoff: time.Duration(settings.RetryMaxBackoffMS) * time.Millisecond, RoutingStrategy: settings.RoutingStrategy,
+		ProxyURL: firstNonEmptyString(systemProxyURL, "direct"), FailureThreshold: settings.CredentialFailureThreshold,
+		FailureCooldown: time.Duration(settings.CredentialCooldownSeconds) * time.Second,
 		OnCredentialUpdated: func(updateCtx context.Context, id string, document []byte) {
 			if persistErr := a.persistEmbeddedCredential(updateCtx, id, document); persistErr != nil {
 				slog.Warn("persist native runtime credential refresh", "credential_id", id, "error", persistErr)

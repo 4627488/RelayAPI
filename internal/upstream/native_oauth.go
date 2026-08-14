@@ -55,6 +55,24 @@ func newOAuthManager(options Options) *oauthManager {
 	return &oauthManager{options: options, sessions: make(map[string]*oauthRuntimeSession), client: client}
 }
 
+func (m *oauthManager) applyProxy(proxyURL string) error {
+	client, err := egress.OutboundHTTPClient(proxyURL, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.options.ProxyURL = proxyURL
+	m.client = client
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *oauthManager) httpClient() *http.Client {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.client
+}
+
 func (m *oauthManager) start(ctx context.Context, provider, relaySession string) (OAuthStartResult, error) {
 	provider = canonicalProvider(provider)
 	if provider == "openai-compatibility" || provider == "openai" || provider == "" {
@@ -133,7 +151,7 @@ func (m *oauthManager) submitCallback(ctx context.Context, provider, state, redi
 		return fmt.Errorf("OAuth callback is missing authorization code")
 	}
 	form := url.Values{"grant_type": {"authorization_code"}, "client_id": {codexClientID}, "code": {code}, "redirect_uri": {codexRedirectURI}, "code_verifier": {session.verifier}}
-	tokens, err := postOAuthForm(ctx, m.client, "https://auth.openai.com/oauth/token", form)
+	tokens, err := postOAuthForm(ctx, m.httpClient(), "https://auth.openai.com/oauth/token", form)
 	if err != nil {
 		m.fail(state, err)
 		return err
@@ -149,14 +167,14 @@ func (m *oauthManager) startDevice(ctx context.Context, provider, deviceID strin
 	if provider == "kimi" {
 		form := url.Values{"client_id": {kimiClientID}}
 		var result deviceAuthorization
-		err := postFormJSONHeaders(ctx, m.client, "https://auth.kimi.com/api/oauth/device_authorization", form, kimiOAuthHeaders(deviceID), &result)
+		err := postFormJSONHeaders(ctx, m.httpClient(), "https://auth.kimi.com/api/oauth/device_authorization", form, kimiOAuthHeaders(deviceID), &result)
 		return result, "https://auth.kimi.com/api/oauth/token", err
 	}
 	var discovery struct {
 		DeviceURL string `json:"device_authorization_endpoint"`
 		TokenURL  string `json:"token_endpoint"`
 	}
-	if err := getJSON(ctx, m.client, "https://auth.x.ai/.well-known/openid-configuration", &discovery); err != nil {
+	if err := getJSON(ctx, m.httpClient(), "https://auth.x.ai/.well-known/openid-configuration", &discovery); err != nil {
 		return deviceAuthorization{}, "", err
 	}
 	if err := validateXAIEndpoint(discovery.DeviceURL); err != nil {
@@ -167,7 +185,7 @@ func (m *oauthManager) startDevice(ctx context.Context, provider, deviceID strin
 	}
 	form := url.Values{"client_id": {xaiClientID}, "scope": {"openid profile email offline_access grok-cli:access api:access"}}
 	var result deviceAuthorization
-	err := postFormJSON(ctx, m.client, discovery.DeviceURL, form, &result)
+	err := postFormJSON(ctx, m.httpClient(), discovery.DeviceURL, form, &result)
 	return result, discovery.TokenURL, err
 }
 
@@ -200,9 +218,9 @@ func (m *oauthManager) pollDevice(ctx context.Context, session *oauthRuntimeSess
 			var tokens map[string]any
 			var err error
 			if session.provider == "kimi" {
-				tokens, err = postOAuthFormHeaders(ctx, m.client, session.tokenURL, form, kimiOAuthHeaders(session.deviceID))
+				tokens, err = postOAuthFormHeaders(ctx, m.httpClient(), session.tokenURL, form, kimiOAuthHeaders(session.deviceID))
 			} else {
-				tokens, err = postOAuthForm(ctx, m.client, session.tokenURL, form)
+				tokens, err = postOAuthForm(ctx, m.httpClient(), session.tokenURL, form)
 			}
 			if err != nil {
 				if strings.Contains(err.Error(), "authorization_pending") || strings.Contains(err.Error(), "slow_down") {
