@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/empty"
 import { Progress, ProgressLabel } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
+import { PageHeader } from "@/components/workspace-ui"
 import {
   api,
   type ChildSubscription,
@@ -42,12 +43,7 @@ export function TenantSubscriptionsView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">我的订阅</h1>
-        <p className="text-sm text-muted-foreground">
-          查看管理员分配给你的模型账户、结算方式和可用模型。
-        </p>
-      </div>
+      <PageHeader title="我的订阅" />
 
       {loading ? (
         <div className="flex justify-center py-12">

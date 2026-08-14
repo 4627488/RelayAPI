@@ -65,6 +65,7 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import { InfoBar, PageHeader, StatStrip } from "@/components/workspace-ui"
 import {
   api,
   deleteRequest,
@@ -193,40 +194,28 @@ export function ProxiesView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">代理</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            集中维护出站代理，再按用途绑定到系统或模型账户。
-          </p>
-        </div>
-        <Button onClick={() => setEditor({ item: null, open: true })}>
-          <PlusIcon />
-          添加代理
-        </Button>
-      </div>
+      <PageHeader
+        title="代理"
+        actions={
+          <Button onClick={() => setEditor({ item: null, open: true })}>
+            <PlusIcon data-icon="inline-start" />
+            添加代理
+          </Button>
+        }
+      />
 
-      <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg border bg-border">
-        {[
-          ["代理条目", items.length],
-          ["账户绑定", accountUses],
-          ["本次已测", tested],
-        ].map(([label, value]) => (
-          <div key={label} className="bg-background px-4 py-3">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
-          </div>
-        ))}
-      </div>
+      <StatStrip
+        className="grid-cols-3"
+        items={[
+          { label: "代理条目", value: items.length },
+          { label: "账户绑定", value: accountUses },
+          { label: "本次已测", value: tested },
+        ]}
+      />
 
-      <div className="rounded-lg border bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
-        <div className="flex gap-3">
-          <ShieldCheckIcon className="mt-0.5 size-4 shrink-0" />
-          <p>
-            地址与认证信息加密保存且不会回显。测试固定访问出口信息服务，避免代理测试接口被用来请求内网或任意地址。
-          </p>
-        </div>
-      </div>
+      <InfoBar icon={ShieldCheckIcon}>
+        地址与认证信息加密保存且不回显；连通性测试固定访问出口信息服务。
+      </InfoBar>
 
       {items.length ? (
         <div className="grid items-stretch gap-3 lg:grid-cols-2">

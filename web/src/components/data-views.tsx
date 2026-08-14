@@ -36,8 +36,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { StatStrip } from "@/components/workspace-ui"
 import type { RequestLog, UsageReport } from "@/lib/api"
-import { compact, compactTokens, dateTime, money, requestLogStatus, requestLogSucceeded } from "@/lib/format"
+import {
+  compact,
+  compactTokens,
+  dateTime,
+  money,
+  requestLogStatus,
+  requestLogSucceeded,
+} from "@/lib/format"
 
 interface Metric {
   label: string
@@ -48,24 +56,15 @@ interface Metric {
 
 export function MetricGrid({ items }: { items: Metric[] }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      {items.map((item) => (
-        <Card key={item.label}>
-          <CardHeader className="flex-row items-start justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <CardDescription>{item.label}</CardDescription>
-              <CardTitle className="text-2xl tabular-nums">{item.value}</CardTitle>
-            </div>
-            <div className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <item.icon className="size-4" />
-            </div>
-          </CardHeader>
-          <CardContent>
-            <p className="text-xs text-muted-foreground">{item.hint}</p>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+    <StatStrip
+      className="sm:grid-cols-2 xl:grid-cols-4"
+      items={items.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail: item.hint,
+        icon: item.icon,
+      }))}
+    />
   )
 }
 
@@ -80,7 +79,9 @@ export function UsageChart({ report }: { report: UsageReport }) {
     <Card>
       <CardHeader>
         <CardTitle>用量趋势</CardTitle>
-        <CardDescription>最近 {report.days} 天的请求与 Token 消耗。</CardDescription>
+        <CardDescription>
+          最近 {report.days} 天的请求与 Token 消耗。
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {daily.length ? (
@@ -94,7 +95,9 @@ export function UsageChart({ report }: { report: UsageReport }) {
                 tickMargin={10}
                 tickFormatter={(value: string) => value.slice(5)}
               />
-              <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
+              <ChartTooltip
+                content={<ChartTooltipContent indicator="line" />}
+              />
               <Area
                 dataKey="tokens"
                 type="monotone"
@@ -116,9 +119,13 @@ export function UsageChart({ report }: { report: UsageReport }) {
         ) : (
           <Empty>
             <EmptyHeader>
-              <EmptyMedia variant="icon"><ActivityIcon /></EmptyMedia>
+              <EmptyMedia variant="icon">
+                <ActivityIcon />
+              </EmptyMedia>
               <EmptyTitle>暂无用量</EmptyTitle>
-              <EmptyDescription>发起第一次模型请求后，趋势会显示在这里。</EmptyDescription>
+              <EmptyDescription>
+                发起第一次模型请求后，趋势会显示在这里。
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         )}
@@ -149,10 +156,18 @@ export function ModelTable({ report }: { report: UsageReport }) {
             <TableBody>
               {models.map((model) => (
                 <TableRow key={model.model}>
-                  <TableCell className="font-mono text-xs">{model.model || "未识别"}</TableCell>
-                  <TableCell className="text-right tabular-nums">{compact(model.requests)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{compactTokens(model.tokens)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{money(model.cost_nano_usd)}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {model.model || "未识别"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {compact(model.requests)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {compactTokens(model.tokens)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(model.cost_nano_usd)}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -160,7 +175,9 @@ export function ModelTable({ report }: { report: UsageReport }) {
         ) : (
           <Empty>
             <EmptyHeader>
-              <EmptyMedia variant="icon"><CoinsIcon /></EmptyMedia>
+              <EmptyMedia variant="icon">
+                <CoinsIcon />
+              </EmptyMedia>
               <EmptyTitle>没有模型数据</EmptyTitle>
               <EmptyDescription>当前时间范围内没有请求。</EmptyDescription>
             </EmptyHeader>
@@ -171,13 +188,21 @@ export function ModelTable({ report }: { report: UsageReport }) {
   )
 }
 
-export function ApiKeyUsageTable({ report, showTenant = false }: { report: UsageReport; showTenant?: boolean }) {
+export function ApiKeyUsageTable({
+  report,
+  showTenant = false,
+}: {
+  report: UsageReport
+  showTenant?: boolean
+}) {
   const apiKeys = report.api_keys ?? []
   return (
     <Card>
       <CardHeader>
         <CardTitle>Key 用量</CardTitle>
-        <CardDescription>按 Token 消耗排序，统计最近 {report.days} 天仍在请求日志中的数据。</CardDescription>
+        <CardDescription>
+          按 Token 消耗排序，统计最近 {report.days} 天仍在请求日志中的数据。
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {apiKeys.length ? (
@@ -194,18 +219,34 @@ export function ApiKeyUsageTable({ report, showTenant = false }: { report: Usage
             </TableHeader>
             <TableBody>
               {apiKeys.map((apiKey) => (
-                <TableRow key={`${apiKey.api_key_id}-${apiKey.api_key_name}-${apiKey.api_key_prefix}`}>
-                  {showTenant ? <TableCell>{apiKey.tenant_name || "未知用户"}</TableCell> : null}
+                <TableRow
+                  key={`${apiKey.api_key_id}-${apiKey.api_key_name}-${apiKey.api_key_prefix}`}
+                >
+                  {showTenant ? (
+                    <TableCell>{apiKey.tenant_name || "未知用户"}</TableCell>
+                  ) : null}
                   <TableCell>
                     <div className="flex flex-col gap-1">
-                      <span className="font-medium">{apiKey.api_key_name || "已删除的 Key"}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{apiKey.api_key_prefix || "未知前缀"}…</span>
+                      <span className="font-medium">
+                        {apiKey.api_key_name || "已删除的 Key"}
+                      </span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {apiKey.api_key_prefix || "未知前缀"}…
+                      </span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{compact(apiKey.requests)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{compact(apiKey.errors)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{compactTokens(apiKey.tokens)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{money(apiKey.cost_nano_usd)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {compact(apiKey.requests)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {compact(apiKey.errors)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {compactTokens(apiKey.tokens)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(apiKey.cost_nano_usd)}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -213,9 +254,13 @@ export function ApiKeyUsageTable({ report, showTenant = false }: { report: Usage
         ) : (
           <Empty>
             <EmptyHeader>
-              <EmptyMedia variant="icon"><CoinsIcon /></EmptyMedia>
+              <EmptyMedia variant="icon">
+                <CoinsIcon />
+              </EmptyMedia>
               <EmptyTitle>没有 Key 用量</EmptyTitle>
-              <EmptyDescription>当前时间范围内没有 API Key 请求。</EmptyDescription>
+              <EmptyDescription>
+                当前时间范围内没有 API Key 请求。
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         )}
@@ -248,19 +293,40 @@ export function LogsTable({ logs }: { logs: RequestLog[] }) {
             <TableBody>
               {logs.map((log) => (
                 <TableRow key={log.id}>
-                  <TableCell className="text-muted-foreground">{dateTime(log.started_at)}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {dateTime(log.started_at)}
+                  </TableCell>
                   <TableCell>
-                    <Badge variant={requestLogSucceeded(log.status_code, log.error_code) ? "secondary" : "destructive"}>
+                    <Badge
+                      variant={
+                        requestLogSucceeded(log.status_code, log.error_code)
+                          ? "secondary"
+                          : "destructive"
+                      }
+                    >
                       {requestLogStatus(log.status_code)}
                     </Badge>
                   </TableCell>
-                  <TableCell className="max-w-52 truncate font-mono text-xs">{log.model || log.path}</TableCell>
-                  <TableCell className="max-w-44 truncate text-xs" title={log.user_agent || undefined}>
-                    {[log.client_name, log.client_version].filter(Boolean).join(" ") || "未知客户端"}
+                  <TableCell className="max-w-52 truncate font-mono text-xs">
+                    {log.model || log.path}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{compactTokens(log.total_tokens)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{log.latency_ms} ms</TableCell>
-                  <TableCell className="text-right tabular-nums">{money(log.cost_nano_usd)}</TableCell>
+                  <TableCell
+                    className="max-w-44 truncate text-xs"
+                    title={log.user_agent || undefined}
+                  >
+                    {[log.client_name, log.client_version]
+                      .filter(Boolean)
+                      .join(" ") || "未知客户端"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {compactTokens(log.total_tokens)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {log.latency_ms} ms
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(log.cost_nano_usd)}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -268,7 +334,9 @@ export function LogsTable({ logs }: { logs: RequestLog[] }) {
         ) : (
           <Empty>
             <EmptyHeader>
-              <EmptyMedia variant="icon"><Clock3Icon /></EmptyMedia>
+              <EmptyMedia variant="icon">
+                <Clock3Icon />
+              </EmptyMedia>
               <EmptyTitle>暂无请求记录</EmptyTitle>
               <EmptyDescription>API 调用记录会显示在这里。</EmptyDescription>
             </EmptyHeader>
@@ -283,9 +351,24 @@ export function UsageMetrics({ report }: { report: UsageReport }) {
   return (
     <MetricGrid
       items={[
-        { label: "请求", value: compact(report.summary.requests), hint: `最近 ${report.days} 天`, icon: ActivityIcon },
-        { label: "Tokens", value: compactTokens(report.summary.tokens), hint: "输入与输出合计", icon: CoinsIcon },
-        { label: "错误", value: compact(report.summary.errors), hint: "HTTP 错误或中断", icon: TriangleAlertIcon },
+        {
+          label: "请求",
+          value: compact(report.summary.requests),
+          hint: `最近 ${report.days} 天`,
+          icon: ActivityIcon,
+        },
+        {
+          label: "Tokens",
+          value: compactTokens(report.summary.tokens),
+          hint: "输入与输出合计",
+          icon: CoinsIcon,
+        },
+        {
+          label: "错误",
+          value: compact(report.summary.errors),
+          hint: "HTTP 错误或中断",
+          icon: TriangleAlertIcon,
+        },
         {
           label: "模型成本",
           value: money(report.summary.cost_nano_usd),

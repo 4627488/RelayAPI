@@ -30,19 +30,16 @@ export interface ModelAliasPreset {
   target: string
 }
 
-const grokTargetNames = [
-  "grok-4.6",
-  "xai/grok-4.6",
-  "grok-4.5",
-  "xai/grok-4.5",
-]
+const grokTargetNames = ["grok-4.6", "xai/grok-4.6", "grok-4.5", "xai/grok-4.5"]
 
-const clientPresets = [{
-  id: "codex-grok-latest",
-  label: "Codex → Grok",
-  description: "将 Codex 当前 GPT-5.6 模型入口统一路由到最新可用 Grok。",
-  aliases: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6"],
-}] as const
+const clientPresets = [
+  {
+    id: "codex-grok-latest",
+    label: "Codex → Grok",
+    description: "将 Codex 当前 GPT-5.6 模型入口统一路由到最新可用 Grok。",
+    aliases: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6"],
+  },
+] as const
 
 function grokTarget(models: string[]) {
   return grokTargetNames.flatMap((name) =>
@@ -141,6 +138,7 @@ export function ApiKeyModelAliasEditor({
                 required
               />
               <Select
+                items={options.map((model) => ({ value: model, label: model }))}
                 value={item.model || null}
                 onValueChange={(value) =>
                   update(item.clientId, "model", value ?? "")

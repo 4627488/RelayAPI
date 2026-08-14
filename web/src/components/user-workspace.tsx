@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -174,14 +175,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          你好，{session.tenant?.name}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          这里是你的模型访问和用量概况。
-        </p>
-      </div>
+      <PageHeader title={`你好，${session.tenant?.name ?? ""}`} />
       <UsageMetrics report={usage} />
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <UsageChart report={usage} />
@@ -434,18 +428,15 @@ function KeysView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">API Keys</h1>
-          <p className="text-sm text-muted-foreground">
-            为不同应用创建独立密钥与限制。
-          </p>
-        </div>
-        <Button onClick={openCreateDialog}>
-          <PlusIcon data-icon="inline-start" />
-          创建 Key
-        </Button>
-      </div>
+      <PageHeader
+        title="API Keys"
+        actions={
+          <Button onClick={openCreateDialog}>
+            <PlusIcon data-icon="inline-start" />
+            创建 Key
+          </Button>
+        }
+      />
 
       <Card>
         <CardHeader>

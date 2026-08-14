@@ -8,13 +8,11 @@ import {
   RouteIcon,
   SaveIcon,
   ServerCogIcon,
-  ShieldCheckIcon,
   SparklesIcon,
   TimerResetIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -40,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import { PageHeader, StatStrip } from "@/components/workspace-ui"
 import { api, type OutboundProxy } from "@/lib/api"
 
 type RuntimeSettings = {
@@ -217,66 +216,57 @@ export function RuntimeSettingsView() {
 
   return (
     <div className="flex flex-col gap-5 pb-20">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="mb-2 flex items-center gap-2">
-            <Badge variant="secondary">
-              <SparklesIcon /> Relay Native
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              保存后立即作用于新请求
-            </span>
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">运行策略</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            只保留会真实改变自研数据面的选项。容量参数展示当前部署值，不伪装成可热更新配置。
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="ghost"
-            disabled={saving}
-            onClick={() =>
-              setValue((current) =>
-                current ? { ...current, ...recommended } : current
-              )
-            }
-          >
-            <TimerResetIcon /> 建议值
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!dirty || saving}
-            onClick={() => saved && setValue(saved)}
-          >
-            <RotateCcwIcon /> 撤销
-          </Button>
-          <Button disabled={!dirty || saving} onClick={() => void save()}>
-            {saving ? <Spinner /> : <SaveIcon />}
-            {dirty ? "保存更改" : "已保存"}
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="运行策略"
+        accessory={
+          <Badge variant="secondary">
+            <SparklesIcon /> Relay Native
+          </Badge>
+        }
+        actions={
+          <>
+            <Button
+              variant="ghost"
+              disabled={saving}
+              onClick={() =>
+                setValue((current) =>
+                  current ? { ...current, ...recommended } : current
+                )
+              }
+            >
+              <TimerResetIcon /> 建议值
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!dirty || saving}
+              onClick={() => saved && setValue(saved)}
+            >
+              <RotateCcwIcon /> 撤销
+            </Button>
+            <Button disabled={!dirty || saving} onClick={() => void save()}>
+              {saving ? <Spinner /> : <SaveIcon />}
+              {dirty ? "保存更改" : "已保存"}
+            </Button>
+          </>
+        }
+      />
 
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-border lg:grid-cols-4">
-        {[
-          [
-            "运行状态",
-            runtime.ready ? "正常" : "异常",
-            runtime.ready ? "text-emerald-600" : "text-destructive",
-          ],
-          ["有效凭据", runtime.credentials, ""],
-          ["发布模型", runtime.models, ""],
-          ["流量容量", `${runtime.max_in_flight} + ${runtime.max_queue}`, ""],
-        ].map(([label, item, tone]) => (
-          <div key={label} className="bg-background px-4 py-3.5">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className={`mt-1 text-lg font-semibold tabular-nums ${tone}`}>
-              {item}
-            </p>
-          </div>
-        ))}
-      </div>
+      <StatStrip
+        className="lg:grid-cols-4"
+        items={[
+          {
+            label: "运行状态",
+            value: runtime.ready ? "正常" : "异常",
+            tone: runtime.ready ? "positive" : "negative",
+          },
+          { label: "有效凭据", value: runtime.credentials },
+          { label: "发布模型", value: runtime.models },
+          {
+            label: "流量容量",
+            value: `${runtime.max_in_flight} + ${runtime.max_queue}`,
+          },
+        ]}
+      />
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,.65fr)]">
         <div className="grid gap-5">
@@ -299,6 +289,10 @@ export function RuntimeSettingsView() {
                 <Field>
                   <FieldLabel>凭据调度</FieldLabel>
                   <Select
+                    items={{
+                      "round-robin": "轮询均衡（推荐）",
+                      "fill-first": "固定优先级",
+                    }}
                     value={value.routing_strategy}
                     onValueChange={(next) =>
                       next &&
@@ -412,6 +406,13 @@ export function RuntimeSettingsView() {
               <Field>
                 <FieldLabel>系统代理</FieldLabel>
                 <Select
+                  items={[
+                    { value: "direct", label: "直连" },
+                    ...proxies.map((item) => ({
+                      value: item.id,
+                      label: `${item.name} · ${item.endpoint}`,
+                    })),
+                  ]}
                   value={value.system_proxy_id || "direct"}
                   onValueChange={(next) =>
                     patch(
@@ -440,16 +441,6 @@ export function RuntimeSettingsView() {
               </Field>
             </CardContent>
           </Card>
-
-          <Alert>
-            <ShieldCheckIcon />
-            <AlertTitle>协议能力由 Relay 统一保证</AlertTitle>
-            <AlertDescription>
-              Codex 工具、搜索、图片、并行调用、Skills、Plugins、Apps 与
-              Multi-agent v2 默认完整声明；上游响应头仅放行请求
-              ID、限流和重试信息。两项均不再提供容易误配的开关。
-            </AlertDescription>
-          </Alert>
 
           <Card>
             <CardHeader>

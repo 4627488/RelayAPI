@@ -23,6 +23,7 @@ import { toast } from "sonner"
 
 import { ModelSelector } from "@/components/model-selector"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
+import { PageHeader } from "@/components/workspace-ui"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -396,27 +397,24 @@ export function AdminSubscriptionsView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">订阅分配</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            选择模型账户，将它的模型和额度能力直接授权给租户。
-          </p>
-        </div>
-        <Button
-          disabled={
-            !selected ||
-            !isAllocatable(selected) ||
-            !tenants.some((tenant) => tenant.enabled)
-          }
-          onClick={() => selected && openAssignment(selected)}
-        >
-          <UserPlusIcon data-icon="inline-start" />
-          {selected?.item.capacity_mode === "unmetered"
-            ? "添加用户"
-            : "分配给租户"}
-        </Button>
-      </div>
+      <PageHeader
+        title="订阅分配"
+        actions={
+          <Button
+            disabled={
+              !selected ||
+              !isAllocatable(selected) ||
+              !tenants.some((tenant) => tenant.enabled)
+            }
+            onClick={() => selected && openAssignment(selected)}
+          >
+            <UserPlusIcon data-icon="inline-start" />
+            {selected?.item.capacity_mode === "unmetered"
+              ? "添加用户"
+              : "分配给租户"}
+          </Button>
+        }
+      />
 
       {loading ? (
         <AllocationSkeleton />
@@ -533,6 +531,10 @@ export function AdminSubscriptionsView() {
               <Field>
                 <FieldLabel>模型账户</FieldLabel>
                 <Select
+                  items={currentParents.map((view) => ({
+                    value: view.item.id,
+                    label: `${view.item.name} · ${billingLabel(view)}`,
+                  }))}
                   value={assignParentID}
                   onValueChange={(value) => changeAssignParent(value ?? "")}
                   required
@@ -611,6 +613,12 @@ export function AdminSubscriptionsView() {
                 <Field>
                   <FieldLabel>租户</FieldLabel>
                   <Select
+                    items={tenants
+                      .filter((tenant) => tenant.enabled)
+                      .map((tenant) => ({
+                        value: tenant.id,
+                        label: `${tenant.name} · ${tenant.owner_email}`,
+                      }))}
                     value={assignTenantID}
                     onValueChange={(value) => setAssignTenantID(value ?? "")}
                     required
@@ -1654,6 +1662,10 @@ function ChildSettingsDialog({
             <Field>
               <FieldLabel>模型账户</FieldLabel>
               <Select
+                items={parents.map((view) => ({
+                  value: view.item.id,
+                  label: `${view.item.name} · ${billingLabel(view)}`,
+                }))}
                 value={parentID}
                 onValueChange={(value) => {
                   setParentID(value ?? "")
@@ -1814,7 +1826,8 @@ function accountBlockReason(view: ParentSubscriptionView) {
   if (view.item.status === "missing")
     return "模型账户已删除；历史授权仅可迁移到其他账户或删除。"
   if (!view.item.enabled) return "账户分配规则已停用。"
-  if (view.item.upstream_unavailable) return "模型账户当前不可用，请先检查账户状态。"
+  if (view.item.upstream_unavailable)
+    return "模型账户当前不可用，请先检查账户状态。"
   if (view.item.capacity_mode === "observed" && !view.windows.length)
     return view.item.quota_probe_status === "unsupported"
       ? "上游不支持额度观测，请改为余额结算。"

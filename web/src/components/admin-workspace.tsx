@@ -33,6 +33,7 @@ import { ProxiesView } from "@/components/proxies-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { RuntimeSettingsView } from "@/components/runtime-settings-view"
 import { AdminSubscriptionsView } from "@/components/admin-subscriptions-view"
+import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
@@ -187,12 +188,7 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">管理总览</h1>
-        <p className="text-sm text-muted-foreground">
-          用户增长、系统负载和异常概况。
-        </p>
-      </div>
+      <PageHeader title="管理总览" />
       <MetricGrid
         items={[
           {
@@ -368,12 +364,7 @@ function UsersView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">用户</h1>
-        <p className="text-sm text-muted-foreground">
-          受邀注册账户与当前余额。
-        </p>
-      </div>
+      <PageHeader title="用户" />
       <Card>
         <CardHeader>
           <CardTitle>全部用户</CardTitle>
@@ -751,23 +742,20 @@ function InvitationsView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">邀请</h1>
-          <p className="text-sm text-muted-foreground">
-            生成单次邀请链接并追踪使用状态。
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setShowResult(false)
-            setOpen(true)
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          生成邀请
-        </Button>
-      </div>
+      <PageHeader
+        title="邀请"
+        actions={
+          <Button
+            onClick={() => {
+              setShowResult(false)
+              setOpen(true)
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            生成邀请
+          </Button>
+        }
+      />
       {result ? (
         <Card className="border-primary/30 bg-primary/5">
           <CardHeader className="flex-row items-start justify-between gap-4">

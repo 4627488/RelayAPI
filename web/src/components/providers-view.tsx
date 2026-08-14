@@ -14,7 +14,6 @@ import {
   NetworkIcon,
   PlusIcon,
   RefreshCwIcon,
-  SearchIcon,
   ShieldCheckIcon,
   Trash2Icon,
 } from "lucide-react"
@@ -78,6 +77,12 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  InfoBar,
+  PageHeader,
+  SearchField,
+  StatStrip,
+} from "@/components/workspace-ui"
 import { Textarea } from "@/components/ui/textarea"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
 import {
@@ -316,71 +321,64 @@ export function ProvidersView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">模型账户</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            连接订阅账户或 API Key，并控制它们可以承载的模型。
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={syncingQuota}
-            onClick={() => void syncQuota()}
-          >
-            {syncingQuota ? (
-              <Spinner />
-            ) : (
-              <RefreshCwIcon data-icon="inline-start" />
-            )}
-            刷新额度
-          </Button>
-          <Button
-            onClick={() => {
-              setReauthenticating(null)
-              setConnectOpen(true)
-            }}
-          >
-            <PlusIcon data-icon="inline-start" />
-            连接账户
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="模型账户"
+        actions={
+          <>
+            <Button
+              variant="outline"
+              disabled={syncingQuota}
+              onClick={() => void syncQuota()}
+            >
+              {syncingQuota ? (
+                <Spinner />
+              ) : (
+                <RefreshCwIcon data-icon="inline-start" />
+              )}
+              刷新额度
+            </Button>
+            <Button
+              onClick={() => {
+                setReauthenticating(null)
+                setConnectOpen(true)
+              }}
+            >
+              <PlusIcon data-icon="inline-start" />
+              连接账户
+            </Button>
+          </>
+        }
+      />
 
-      <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg border bg-border">
-        {[
-          ["账户", accounts.length],
-          ["可用", enabled],
-          ["公开模型", modelCount],
-        ].map(([label, value]) => (
-          <div key={label} className="bg-background px-4 py-3">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
-          </div>
-        ))}
-      </div>
+      <StatStrip
+        className="grid-cols-3"
+        items={[
+          { label: "账户", value: accounts.length },
+          { label: "可用", value: enabled },
+          { label: "公开模型", value: modelCount },
+        ]}
+      />
 
-      <Alert>
-        <ShieldCheckIcon />
-        <AlertTitle>Relay 托管凭据</AlertTitle>
-        <AlertDescription>
-          OAuth 授权后和 API Key
-          均整体加密保存。页面只展示账户元数据，不会返回令牌明文。
-        </AlertDescription>
-      </Alert>
+      <InfoBar icon={ShieldCheckIcon}>
+        OAuth 与 API Key 均整体加密保存；界面只返回账户元数据，不返回令牌明文。
+      </InfoBar>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative flex-1">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜索账户或模型"
-            className="pl-9"
-          />
-        </div>
+        <SearchField
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onClear={() => setSearch("")}
+          placeholder="搜索账户或模型"
+          className="flex-1"
+        />
         <Select
+          items={[
+            { value: "all", label: "全部提供商" },
+            ...providerOptions.map((item) => ({
+              value: item,
+              label: providerLabel(item),
+            })),
+          ]}
           value={provider}
           onValueChange={(next) => {
             if (next) setProvider(next)
@@ -873,6 +871,13 @@ function ConnectAccountDialog({
               <Field>
                 <FieldLabel>账户代理</FieldLabel>
                 <Select
+                  items={[
+                    { value: "direct", label: "不使用代理（直连）" },
+                    ...proxies.map((item) => ({
+                      value: item.id,
+                      label: `${item.name} · ${item.endpoint}`,
+                    })),
+                  ]}
                   value={proxyID || "direct"}
                   onValueChange={(next) =>
                     setProxyID(next === "direct" || !next ? "" : next)
@@ -1008,6 +1013,7 @@ function ConnectAccountDialog({
               <Field>
                 <FieldLabel>提供商</FieldLabel>
                 <Select
+                  items={oauthProviders}
                   value={provider}
                   onValueChange={(next) => {
                     if (next) setProvider(next)
@@ -1135,6 +1141,7 @@ function CredentialFields({
         <Field>
           <FieldLabel>提供商</FieldLabel>
           <Select
+            items={options}
             value={provider}
             onValueChange={(next) => {
               if (next) setProvider(next)
@@ -1196,6 +1203,13 @@ function CredentialFields({
           <Field>
             <FieldLabel>账户代理</FieldLabel>
             <Select
+              items={[
+                { value: "direct", label: "不使用代理（直连）" },
+                ...proxies.map((item) => ({
+                  value: item.id,
+                  label: `${item.name} · ${item.endpoint}`,
+                })),
+              ]}
               value={proxyID || "direct"}
               onValueChange={(next) =>
                 setProxyID(next === "direct" || !next ? "" : next)
@@ -1241,6 +1255,13 @@ function CredentialFields({
           <Field>
             <FieldLabel>账户代理</FieldLabel>
             <Select
+              items={[
+                { value: "direct", label: "不使用代理（直连）" },
+                ...proxies.map((item) => ({
+                  value: item.id,
+                  label: `${item.name} · ${item.endpoint}`,
+                })),
+              ]}
               value={proxyID || "direct"}
               onValueChange={(next) =>
                 setProxyID(next === "direct" || !next ? "" : next)
@@ -1581,6 +1602,13 @@ function ManageAccountDialog({
                   <Field>
                     <FieldLabel>账户代理</FieldLabel>
                     <Select
+                      items={[
+                        { value: "direct", label: "不使用代理（直连）" },
+                        ...proxies.map((item) => ({
+                          value: item.id,
+                          label: `${item.name} · ${item.endpoint}`,
+                        })),
+                      ]}
                       value={proxyID || "direct"}
                       onValueChange={(next) =>
                         setProxyID(next === "direct" || !next ? "" : next)

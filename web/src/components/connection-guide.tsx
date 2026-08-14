@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { PageHeader } from "@/components/workspace-ui"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -200,12 +201,7 @@ export function ConnectionGuide({
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">接入向导</h1>
-        <p className="text-sm text-muted-foreground">
-          选择客户端和模型，复制一条命令完成用户级配置。
-        </p>
-      </header>
+      <PageHeader title="接入向导" />
 
       {!usableKeys.length ? (
         <Alert>
@@ -336,7 +332,6 @@ export function ConnectionGuide({
                       />
                     </FieldGroup>
                   </FieldSet>
-
                 </FieldGroup>
               </CollapsibleContent>
             </Collapsible>
