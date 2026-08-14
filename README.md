@@ -70,16 +70,15 @@ RelayAPI 默认完整保留 CPA 原生 Codex/xAI WebSocket：一个客户端连�
 
 ## 客户端兼容
 
-Relay 原样提供内置执行器的 OpenAI Responses、OpenAI Chat Completions、Anthropic
-Messages、Gemini native 和 Codex direct 路径。Grok/xAI 与其他 OpenAI-compatible
-模型共用 `/v1/chat/completions` 或 `/v1/responses`，由请求中的 `model` 和 native
+Relay 对外提供 OpenAI Responses、OpenAI Chat Completions 和 Codex direct 路径。
+Grok/xAI、Kimi 与其他 OpenAI-compatible 模型共用 `/v1/chat/completions` 或
+`/v1/responses`，由请求中的 `model` 和 native
 凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在独立“代理”页面维护和
 测试可复用代理，在“系统设置”中选择系统请求代理并热更新重试、调度、图像/视频和连接行为。
 系统代理仅用于 Models.dev 同步、系统级 OAuth 等 RelayAPI 自身请求；每个模型账户单独
 选择代理，未选择时明确直连。账户代理同时作用于推理、模型发现、令牌刷新和额度查询。
 
-模型账户使用 CPA 的凭据级模型目录：Codex、Claude、
-Gemini、Vertex、AI Studio、Kimi、Antigravity 和 xAI 使用 CPA 静态注册表；OpenAI 及
+模型账户使用内嵌运行时的凭据级模型目录：Codex、Kimi 和 xAI 使用受控静态目录；OpenAI 及
 OpenAI-compatible 凭据由 CPA executor 携带同一凭据、代理和自定义请求头访问上游
 `GET {base_url}/models`。模型账户不接受自由填写模型名；管理员只能从 CPA 返回的
 凭据目录中勾选公开范围，后端保存时会再次校验，避免把不存在或不兼容的模型注册进
@@ -93,8 +92,8 @@ Responses；百炼请求会统一由 CPA 转换为 Responses 格式并发送到�
 专用协议的模型不在该接入范围内。
 
 用户面板的“接入向导”会生成 5 分钟有效的一键 Bash 或 PowerShell 命令，可同时
-配置 Codex、Claude Code 与 OpenCode。脚本先验证 `/v1/models`，可选择安装缺失
-客户端，并以备份、合并、原子替换和失败回滚方式写用户级配置；三个客户端通过
+配置 Codex 与 OpenCode。脚本先验证 `/v1/models`，可选择安装缺失
+客户端，并以备份、合并、原子替换和失败回滚方式写用户级配置；两个客户端通过
 权限受限的 `~/.config/relayapi/api-key` 共用凭据，不向 shell profile 或 Codex
 `auth.json` 写入明文。OpenCode 配置会包含该 API Key 当前可用的完整模型列表；
 重复执行脚本会替换 RelayAPI 管理的模型集合，避免已撤销模型继续出现在选择器中。
@@ -112,6 +111,11 @@ base_url = "http://localhost:8080/v1"
 env_key = "RELAY_API_KEY"
 wire_api = "responses"
 requires_openai_auth = false
+supports_websockets = true
+supports_standalone_web_search = true
+
+[features]
+apps = true
 ```
 
 ```bash
@@ -119,18 +123,9 @@ export RELAY_API_KEY=relay_xxx
 ```
 
 这些字段与当前 [Codex 配置参考](https://developers.openai.com/codex/config-reference)
-一致；Relay 同时透传 `/v1/responses/ws`，可供 CPA 支持 WebSocket 时使用。
-
-Claude Code 使用 Anthropic Messages 路径：
-
-```bash
-export ANTHROPIC_BASE_URL=http://localhost:8080
-export ANTHROPIC_AUTH_TOKEN=relay_xxx
-claude
-```
-
-`ANTHROPIC_AUTH_TOKEN` 会发送 Bearer 认证，Relay 也接受 `ANTHROPIC_API_KEY`
-对应的 `x-api-key`。配置方式见 [Claude Code gateway 文档](https://code.claude.com/docs/en/llm-gateway-connect)。
+一致；Relay 同时透传 `/v1/responses/ws`，并在 Codex 私有模型目录中默认声明完整的
+代理、图片、搜索、Apps、Skills、Plugins、并行工具和多代理能力。不能承受乐观能力
+声明的上游可在系统设置中切换到 `verified` 严格模式。
 
 OpenCode 可选择 Chat Completions 或 Responses；下面是 Chat Completions 配置：
 
@@ -221,7 +216,7 @@ API Key 与邀请不同：新 Key 同时保存用于鉴权的 SHA-256 哈希和�
 但无法恢复明文，需要新建 Key 后逐步替换。
 
 API Key 模型别名是客户端可见的附加入口。例如将 `fast` 指向
-`gemini-2.5-flash` 后，客户端可以用 `fast` 发起请求。RelayAPI 会先解析别名，
+`qwen-plus` 后，客户端可以用 `fast` 发起请求。RelayAPI 会先解析别名，
 再以实际模型执行 Key/租户权限检查、订阅准入和计费，最后交给 CPA 完成提供商路由
 和协议转换。空模型范围仍表示继承全部可用模型；别名不会绕过模型范围限制。
 
@@ -235,7 +230,11 @@ go vet ./...
 ## 内嵌 CPA 边界
 
 RelayAPI 在进程内启动 CPA 的完整推理路由。外层负责租户鉴权、准入、计费和审计；
-内层负责协议语义、模型路由、凭据选择、重试及 WebSocket 会话状态。Responses
+内层负责协议语义、模型路由、凭据选择、重试及 WebSocket 会话状态。Relay 自有的
+`internal/upstream.Runtime` 隔离了 CPA 类型，并在提供商边界修复 Codex 工具语义；
+例如 Grok 不原生接受的 freeform `apply_patch` 会被可逆地降级成 string-input
+function，响应再恢复成标准 `custom_tool_call`。Responses
 WebSocket 的首帧与后续帧都透明交给内层处理，Relay 只读取终态事件中的 usage 并
 按连接内所有轮次累计结算。旧的外置 CPA 数据面、C-ABI bridge 和直连 executor
-适配层均已移除。
+适配层均已移除。当前 CPA 只作为进程内兼容运行时使用，并可按提供商逐步替换，
+不会再向业务、计费或 HTTP 层泄漏其注册表与执行器类型。

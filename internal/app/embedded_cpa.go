@@ -130,6 +130,9 @@ func bridgeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSocke
 	now := time.Now()
 	credentials := make([]upstream.Credential, 0, len(rows))
 	for _, row := range rows {
+		if !supportedStoredCredential(row.Provider, row.Document) {
+			continue
+		}
 		enabled := row.Enabled && (row.ExpiresAt == nil || row.ExpiresAt.After(now))
 		document := append([]byte(nil), row.Document...)
 		var value map[string]any

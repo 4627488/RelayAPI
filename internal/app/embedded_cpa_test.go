@@ -46,18 +46,14 @@ func TestBridgeCredentialsEnablesProviderWebSocketsInRelayMode(t *testing.T) {
 	}
 }
 
-func TestBridgeCredentialsDoesNotAddWebSocketsToUnsupportedProvider(t *testing.T) {
+func TestBridgeCredentialsDropsUnsupportedProvider(t *testing.T) {
 	rows := []store.UpstreamCredentialSnapshot{{
 		ID: "gemini", Provider: "gemini", Enabled: true,
 		Document: json.RawMessage(`{"type":"gemini","api_key":"secret"}`),
 	}}
 	credentials := bridgeCredentials(rows, true, nil)
-	var document map[string]any
-	if len(credentials) != 1 || json.Unmarshal(credentials[0].Document, &document) != nil {
-		t.Fatalf("compiled credentials = %#v", credentials)
-	}
-	if _, exists := document["websockets"]; exists {
-		t.Fatalf("unsupported provider received websocket capability: %#v", document)
+	if len(credentials) != 0 {
+		t.Fatalf("unsupported provider reached runtime: %#v", credentials)
 	}
 }
 

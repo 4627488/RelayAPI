@@ -34,6 +34,12 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
+		var supported bool
+		input.Provider, supported = normalizeSupportedProvider(input.Provider)
+		if !supported {
+			writeError(w, http.StatusBadRequest, "unsupported_provider", "仅支持 Codex、Kimi、xAI/Grok、OpenAI 和阿里云百炼")
+			return
+		}
 		input.Name = strings.TrimSpace(input.Name)
 		// New credentials always derive their initial public catalog from CPA.
 		// Ignore legacy client-supplied model text instead of letting it define
@@ -78,6 +84,10 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		if input.Provider == "" || input.Name == "" || !json.Valid(input.Document) {
 			writeError(w, http.StatusBadRequest, "validation_error", "名称、提供商和有效凭据 JSON 均为必填项")
+			return
+		}
+		if documentErr := validateSupportedCredentialDocument(input.Provider, input.Document); documentErr != nil {
+			writeError(w, http.StatusBadRequest, "unsupported_credential", documentErr.Error())
 			return
 		}
 		id := strings.TrimSpace(input.ID)
@@ -494,6 +504,10 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 	document, documentErr := updateNativeCredentialDocument(row.Document, row.Source, input)
 	if documentErr != nil {
 		writeError(w, http.StatusBadRequest, "validation_error", documentErr.Error())
+		return
+	}
+	if documentErr = validateSupportedCredentialDocument(row.Provider, document); documentErr != nil {
+		writeError(w, http.StatusBadRequest, "unsupported_credential", documentErr.Error())
 		return
 	}
 	name, models, enabled := row.Name, row.Models, row.Enabled

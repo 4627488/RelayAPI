@@ -55,13 +55,13 @@ func TestBuildAgentSetupConfiguration(t *testing.T) {
 		KeyID: "key-1", Agents: []string{"codex", "opencode"}, Model: "gpt-5.6-sol",
 		Models:          []string{"gpt-5.6-sol", "qwen-max"},
 		ReasoningEffort: "xhigh", OpenCodeProtocol: "responses", InstallMissing: true,
-		VerifyConnection: true, ClaudeGatewayDiscovery: true,
+		VerifyConnection: true,
 	}
 	data, err := buildAgentSetupTemplateData("https://relay.example/", "relay_super_secret", input, "bash")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !data.Codex || data.Claude || !data.OpenCode || !data.InstallMissing || !data.VerifyConnection {
+	if !data.Codex || !data.OpenCode || !data.InstallMissing || !data.VerifyConnection {
 		t.Fatalf("template flags = %+v", data)
 	}
 
@@ -85,11 +85,14 @@ func TestBuildAgentSetupConfiguration(t *testing.T) {
 	if values["model_providers.relayapi.wire_api"] != "responses" || values["model_providers.relayapi.supports_websockets"] != true || values["model_reasoning_effort"] != "xhigh" {
 		t.Fatalf("codex edits = %#v", values)
 	}
+	if values["model_providers.relayapi.supports_standalone_web_search"] != true || values["features.apps"] != true {
+		t.Fatalf("Codex full capabilities were not enabled: %#v", values)
+	}
 }
 
 func TestAgentSetupScriptsRenderAndParse(t *testing.T) {
 	input := agentSetupInput{
-		KeyID: "key", Agents: []string{"codex", "claude", "opencode"}, Model: "model",
+		KeyID: "key", Agents: []string{"codex", "opencode"}, Model: "model",
 		ReasoningEffort: "high", OpenCodeProtocol: "chat", InstallMissing: true, VerifyConnection: true,
 	}
 	for _, platform := range []string{"bash", "powershell"} {
@@ -111,8 +114,8 @@ func TestAgentSetupScriptsRenderAndParse(t *testing.T) {
 		if !bytes.Contains(output.Bytes(), []byte("relayapi-backup")) || !bytes.Contains(output.Bytes(), []byte("/v1/models")) {
 			t.Fatalf("%s script is missing backup or verification logic", platform)
 		}
-		if !bytes.Contains(output.Bytes(), []byte("conflict with apiKeyHelper")) {
-			t.Fatalf("%s script is missing the conflicting Claude credential warning", platform)
+		if bytes.Contains(output.Bytes(), []byte("Claude Code")) || bytes.Contains(output.Bytes(), []byte("ANTHROPIC_")) {
+			t.Fatalf("%s script still contains the retired Claude Code setup path", platform)
 		}
 		if platform == "powershell" {
 			for _, unsafe := range []string{"$message.id", "$message.error", "$message.result", "$result.status"} {
@@ -211,79 +214,6 @@ func TestOpenCodeSetupReplacesManagedModelsAndResolvesProviderFilters(t *testing
 	}
 	if values := stringSlice(config["enabled_providers"]); strings.Join(values, ",") != "openai,relayapi" {
 		t.Fatalf("enabled providers = %v", values)
-	}
-}
-
-func TestClaudeSetupRemovesConflictingStoredCredentials(t *testing.T) {
-	binary, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash unavailable")
-	}
-	home := t.TempDir()
-	binDir := filepath.Join(home, ".local", "bin")
-	configDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(binDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	claudePath := filepath.Join(binDir, "claude")
-	if err := os.WriteFile(claudePath, []byte("#!/usr/bin/env bash\nprintf '2.1.0\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join(configDir, "settings.json")
-	existing := `{
-  "theme": "dark",
-  "env": {
-    "ANTHROPIC_AUTH_TOKEN": "stale-token",
-    "ANTHROPIC_API_KEY": "stale-api-key",
-    "KEEP_ME": "preserved"
-  }
-}`
-	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	input := agentSetupInput{
-		KeyID: "key", Agents: []string{"claude"}, Model: "claude-sonnet-4-6",
-	}
-	data, err := buildAgentSetupTemplateData("https://relay.example", "relay_secret", input, "bash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var rendered bytes.Buffer
-	if err := agentSetupShellTemplate.Execute(&rendered, data); err != nil {
-		t.Fatal(err)
-	}
-	scriptPath := filepath.Join(home, "setup.sh")
-	if err := os.WriteFile(scriptPath, rendered.Bytes(), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	homeForShell := filepath.ToSlash(home)
-	scriptForShell := filepath.ToSlash(scriptPath)
-	if runtime.GOOS == "windows" {
-		homeForShell = wslPath(t, home)
-		scriptForShell = wslPath(t, scriptPath)
-	}
-	command := exec.Command(binary, scriptForShell)
-	command.Env = append(os.Environ(), "HOME="+homeForShell, "XDG_CONFIG_HOME="+homeForShell+"/.config")
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("run setup: %v\n%s", err, output)
-	}
-	payload, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config map[string]any
-	if err := json.Unmarshal(payload, &config); err != nil {
-		t.Fatal(err)
-	}
-	if config["theme"] != "dark" || !strings.Contains(config["apiKeyHelper"].(string), "api-key") {
-		t.Fatalf("unrelated config or helper was not preserved: %#v", config)
-	}
-	env := config["env"].(map[string]any)
-	if env["ANTHROPIC_AUTH_TOKEN"] != nil || env["ANTHROPIC_API_KEY"] != nil || env["KEEP_ME"] != "preserved" {
-		t.Fatalf("claude credentials were not normalized: %#v", env)
 	}
 }
 

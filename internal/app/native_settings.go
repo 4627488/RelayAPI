@@ -22,6 +22,7 @@ type nativeRuntimeSettings struct {
 	RoutingStrategy            string `json:"routing_strategy"`
 	SystemProxyID              string `json:"system_proxy_id"`
 	PassthroughHeaders         bool   `json:"passthrough_headers"`
+	CodexCapabilityPolicy      string `json:"codex_capability_policy"`
 	ImageGenerationMode        string `json:"image_generation_mode"`
 	GPTImageBaseModel          string `json:"gpt_image_base_model"`
 	VideoResultAuthCacheTTL    string `json:"video_result_auth_cache_ttl"`
@@ -39,7 +40,7 @@ type settingsState struct {
 func defaultNativeRuntimeSettings() nativeRuntimeSettings {
 	return nativeRuntimeSettings{
 		RequestRetry: 2, MaxRetryCredentials: 0, MaxRetryInterval: 30,
-		RoutingStrategy: "round-robin", PassthroughHeaders: true,
+		RoutingStrategy: "round-robin", PassthroughHeaders: true, CodexCapabilityPolicy: "optimistic",
 		ImageGenerationMode: "enabled", GPTImageBaseModel: "gpt-5.4-mini",
 		VideoResultAuthCacheTTL: "3h", StreamKeepAliveSeconds: 15,
 		StreamBootstrapRetries: 1,
@@ -75,6 +76,12 @@ func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
 	}
 	if value.RoutingStrategy != "round-robin" && value.RoutingStrategy != "fill-first" {
 		return "凭据调度策略无效"
+	}
+	if value.CodexCapabilityPolicy == "" {
+		value.CodexCapabilityPolicy = "optimistic"
+	}
+	if value.CodexCapabilityPolicy != "optimistic" && value.CodexCapabilityPolicy != "verified" {
+		return "Codex 能力策略必须是 optimistic 或 verified"
 	}
 	if value.StreamKeepAliveSeconds < 0 || value.StreamKeepAliveSeconds > 300 || value.NonStreamKeepAliveInterval < 0 || value.NonStreamKeepAliveInterval > 300 {
 		return "保活间隔必须在 0 到 300 秒之间"
@@ -132,6 +139,9 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 	var input nativeRuntimeSettings
 	if !decodeJSON(w, r, &input) {
 		return
+	}
+	if strings.TrimSpace(input.CodexCapabilityPolicy) == "" {
+		input.CodexCapabilityPolicy = "optimistic"
 	}
 	if message := validateNativeRuntimeSettings(input); message != "" {
 		writeError(w, http.StatusBadRequest, "validation_error", message)

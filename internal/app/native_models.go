@@ -67,17 +67,26 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 			return
 		}
 		if codexCatalog {
-			if normalized, normalizeErr := normalizeCodexCatalogCapabilities(payload, func(model string) string {
-				if a.nativeRuntime == nil {
-					return ""
+			if a.codexCapabilityPolicy() == "optimistic" {
+				promoted, promoteErr := promoteCodexCatalogCapabilities(payload)
+				if promoteErr != nil {
+					writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型能力无效: %v", promoteErr))
+					return
 				}
-				provider, _ := a.nativeRuntime.ModelProvider(model)
-				return provider
-			}); normalizeErr == nil {
-				payload = normalized
+				payload = promoted
 			} else {
-				writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型能力无效: %v", normalizeErr))
-				return
+				normalized, normalizeErr := normalizeCodexCatalogCapabilities(payload, func(model string) string {
+					if a.nativeRuntime == nil {
+						return ""
+					}
+					provider, _ := a.nativeRuntime.ModelProvider(model)
+					return provider
+				})
+				if normalizeErr != nil {
+					writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型能力无效: %v", normalizeErr))
+					return
+				}
+				payload = normalized
 			}
 			if expanded, expandErr := addCodexModelAliases(payload, key.ModelAliases); expandErr == nil {
 				payload = expanded
@@ -91,7 +100,7 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Type", "application/json")
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		etag := modelCatalogRevision(key, runtimeModels, "")
+		etag := modelCatalogRevision(key, runtimeModels, "capability-policy="+a.codexCapabilityPolicy())
 		w.Header().Set("ETag", etag)
 		if etagMatches(r.Header.Get("If-None-Match"), etag) {
 			w.WriteHeader(http.StatusNotModified)
@@ -100,6 +109,55 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, bytes.NewReader(payload))
+}
+
+// promoteCodexCatalogCapabilities implements Relay's default product policy:
+// expose the richest Codex agent surface and let the provider adapter lower
+// unsupported wire details. This is intentionally explicit rather than
+// inheriting whichever conservative defaults happen to exist in CPA's model
+// template.
+func promoteCodexCatalogCapabilities(payload []byte) ([]byte, error) {
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		return nil, err
+	}
+	items, ok := document["models"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("missing models array")
+	}
+	for _, raw := range items {
+		item, itemOK := raw.(map[string]any)
+		if !itemOK || item["visibility"] == "hide" {
+			continue
+		}
+		item["apply_patch_tool_type"] = "freeform"
+		item["web_search_tool_type"] = "text_and_image"
+		item["supports_parallel_tool_calls"] = true
+		item["supports_image_detail_original"] = true
+		item["supports_search_tool"] = true
+		item["support_verbosity"] = true
+		item["supports_reasoning_summary_parameter"] = true
+		item["include_skills_usage_instructions"] = true
+		item["include_plugin_usage_instructions"] = true
+		item["include_apps_usage_instructions"] = true
+		item["prefer_websockets"] = true
+		item["multi_agent_version"] = "v2"
+		item["input_modalities"] = []any{"text", "image"}
+	}
+	return json.Marshal(document)
+}
+
+func (a *App) codexCapabilityPolicy() string {
+	if a == nil {
+		return "optimistic"
+	}
+	a.nativeSettings.RLock()
+	policy := strings.ToLower(strings.TrimSpace(a.nativeSettings.value.CodexCapabilityPolicy))
+	a.nativeSettings.RUnlock()
+	if policy == "verified" {
+		return policy
+	}
+	return "optimistic"
 }
 
 // normalizeCodexCatalogCapabilities removes capabilities that CPA's generic

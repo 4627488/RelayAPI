@@ -50,6 +50,7 @@ type RuntimeSettings = {
   routing_strategy: "round-robin" | "fill-first"
   system_proxy_id: string
   passthrough_headers: boolean
+  codex_capability_policy: "optimistic" | "verified"
   image_generation_mode: "enabled" | "disabled" | "chat" | "passthrough"
   gpt_image_base_model: string
   video_result_auth_cache_ttl: string
@@ -518,6 +519,36 @@ export function RuntimeSettingsView() {
             </CardHeader>
             <CardContent>
               <FieldGroup className="grid md:grid-cols-2">
+                <Field>
+                  <FieldLabel>Codex 能力声明</FieldLabel>
+                  <Select
+                    value={value.codex_capability_policy || "optimistic"}
+                    onValueChange={(next) => {
+                      if (next)
+                        patch(
+                          "codex_capability_policy",
+                          next as RuntimeSettings["codex_capability_policy"]
+                        )
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="optimistic">
+                          乐观 — 默认声明全部能力
+                        </SelectItem>
+                        <SelectItem value="verified">
+                          严格 — 仅声明已验证能力
+                        </SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    乐观模式功能更完整；若某个转换型上游出现工具兼容问题，可切换严格模式诊断。
+                  </FieldDescription>
+                </Field>
                 <SwitchField
                   id="headers"
                   title="透传上游响应头"

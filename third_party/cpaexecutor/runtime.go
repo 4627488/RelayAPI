@@ -249,7 +249,7 @@ func (h runtimeAuthHook) OnAuthUpdated(ctx context.Context, auth *coreauth.Auth)
 func (r *Runtime) registerBaselineExecutors() {
 	for _, exec := range []coreauth.ProviderExecutor{
 		executor.NewCodexAutoExecutor(r.cfg),
-		executor.NewXAIAutoExecutor(r.cfg),
+		newCodexInteropExecutor(executor.NewXAIAutoExecutor(r.cfg)),
 		executor.NewKimiExecutor(r.cfg),
 		executor.NewOpenAICompatExecutor("openai", r.cfg),
 		executor.NewOpenAICompatExecutor("openai-compatibility", r.cfg),
@@ -1029,7 +1029,7 @@ func (r *Runtime) Close(ctx context.Context) error {
 	r.modelRoutes = map[string]credentialRoute{}
 	r.modelNames = map[string]string{}
 	r.mu.Unlock()
-	for _, provider := range []string{"codex", "xai", "claude", "gemini", "gemini-interactions", "vertex", "aistudio", "antigravity", "kimi", "openai", "openai-compatibility"} {
+	for _, provider := range []string{"codex", "xai", "kimi", "openai", "openai-compatibility"} {
 		if exec, ok := r.manager.Executor(provider); ok {
 			CloseAllExecutionSessions(exec)
 		}

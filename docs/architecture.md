@@ -85,7 +85,7 @@ CLIProxyAPI without silently inventing prices.
   remain bounded, and the CPA connection pool cannot exceed the inference
   concurrency limit.
 - SSE and WebSocket operations have no whole-request client timeout. Only the
-  wait for CPA response headers is bounded, so long Codex and Claude Code
+  wait for CPA response headers is bounded, so long Codex
   generations are not terminated by the gateway.
 - Inference and control traffic use separate HTTP transports. Long-lived
   inference streams cannot exhaust the connections used by readiness checks,
@@ -115,6 +115,19 @@ requests enter CPA's complete public handler through a loopback connection, so
 prewarm, replay, compaction, credential pinning and multi-turn state retain CPA
 semantics. Relay observes terminal response events only for accounting and
 does not translate protocol frames.
+
+The exception is a focused provider-boundary decorator: for xAI, Codex's
+freeform `apply_patch` declaration is lowered to an object-root function with a
+single string `input`, then restored to `custom_tool_call` events and items on
+the response path. Call IDs and namespaces remain stable. This repair is kept
+inside the compatibility module rather than duplicating CPA translation in the
+application proxy.
+
+Codex catalogs use an optimistic capability policy by default. Every visible
+model advertises the full agent surface; adapters are expected to lower wire
+dialects where necessary. Administrators can select `verified` mode for
+diagnostics when a provider rejects an advertised feature. Hidden tombstones
+remain unpromoted so Codex's bundled catalog cannot reintroduce denied models.
 
 Relay request logs have separate summary and detail retention. Sensitive
 headers are redacted; bodies carry original byte counts and truncation flags.

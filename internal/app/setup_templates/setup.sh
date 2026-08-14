@@ -8,11 +8,9 @@ if [ "${1:-}" = "--check" ]; then CHECK_ONLY=1; fi
 
 ENDPOINT_B64='{{.EndpointBase64}}'
 API_KEY_B64='{{.APIKeyBase64}}'
-CLAUDE_PATCH_B64='{{.ClaudePatchBase64}}'
 OPENCODE_PATCH_B64='{{.OpenCodePatchBase64}}'
 CODEX_EDITS_B64='{{.CodexEditsBase64}}'
 DO_CODEX={{if .Codex}}1{{else}}0{{end}}
-DO_CLAUDE={{if .Claude}}1{{else}}0{{end}}
 DO_OPENCODE={{if .OpenCode}}1{{else}}0{{end}}
 INSTALL_MISSING={{if .InstallMissing}}1{{else}}0{{end}}
 VERIFY_CONNECTION={{if .VerifyConnection}}1{{else}}0{{end}}
@@ -64,7 +62,6 @@ show_cli() {
 
 if [ "$CHECK_ONLY" = 1 ]; then
   [ "$DO_CODEX" = 1 ] && show_cli codex
-  [ "$DO_CLAUDE" = 1 ] && show_cli claude
   [ "$DO_OPENCODE" = 1 ] && show_cli opencode
   ok 'Preflight completed; no files were changed.'
   exit 0
@@ -79,10 +76,6 @@ install_cli() {
       info 'Installing Codex with the official installer.'
       curl -fsSL https://raw.githubusercontent.com/openai/codex/refs/heads/main/scripts/install/install.sh | CODEX_NON_INTERACTIVE=1 sh
       ;;
-    claude)
-      info 'Installing Claude Code with the official installer.'
-      curl -fsSL https://claude.ai/install.sh | bash
-      ;;
     opencode)
       info 'Installing OpenCode with the official installer.'
       curl -fsSL https://opencode.ai/install | bash
@@ -93,11 +86,10 @@ install_cli() {
 }
 
 [ "$DO_CODEX" = 1 ] && install_cli codex
-[ "$DO_CLAUDE" = 1 ] && install_cli claude
 [ "$DO_OPENCODE" = 1 ] && install_cli opencode
 
 JSON_TOOL=''
-if [ "$DO_CLAUDE" = 1 ] || [ "$DO_OPENCODE" = 1 ]; then
+if [ "$DO_OPENCODE" = 1 ]; then
   if command -v python3 >/dev/null 2>&1; then JSON_TOOL=python3
   elif command -v node >/dev/null 2>&1; then JSON_TOOL=node
   else fail 'Python 3 or Node.js is required to merge existing JSON settings safely.'; exit 1
@@ -149,12 +141,10 @@ KEY_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/relayapi"
 KEY_PATH="$KEY_DIR/api-key"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 CODEX_CONFIG="$CODEX_HOME_DIR/config.toml"
-CLAUDE_CONFIG="$HOME/.claude/settings.json"
 OPENCODE_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
 
 backup_target "$KEY_PATH"
 [ "$DO_CODEX" = 1 ] && backup_target "$CODEX_CONFIG"
-[ "$DO_CLAUDE" = 1 ] && backup_target "$CLAUDE_CONFIG"
 [ "$DO_OPENCODE" = 1 ] && backup_target "$OPENCODE_CONFIG"
 trap rollback ERR
 
@@ -193,12 +183,7 @@ def merge(left, right, path=()):
         else:
             left[key] = value
 merge(base, patch)
-if mode == "claude":
-    env = base.get("env")
-    if isinstance(env, dict):
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
-        env.pop("ANTHROPIC_API_KEY", None)
-elif mode == "opencode":
+if mode == "opencode":
     disabled = base.get("disabled_providers")
     if isinstance(disabled, list):
         base["disabled_providers"] = [item for item in disabled if item != "relayapi"]
@@ -224,12 +209,7 @@ function merge(left, right, path = []) {
   }
 }
 merge(base, patch);
-if (mode === "claude") {
-  if (base.env && typeof base.env === "object" && !Array.isArray(base.env)) {
-    delete base.env.ANTHROPIC_AUTH_TOKEN;
-    delete base.env.ANTHROPIC_API_KEY;
-  }
-} else if (mode === "opencode") {
+if (mode === "opencode") {
   if (Array.isArray(base.disabled_providers)) base.disabled_providers = base.disabled_providers.filter((item) => item !== "relayapi");
   if (Array.isArray(base.enabled_providers) && !base.enabled_providers.includes("relayapi")) base.enabled_providers.push("relayapi");
 }
@@ -293,23 +273,12 @@ configure_codex() {
   ok "Codex configured in $CODEX_CONFIG"
 }
 
-configure_claude() {
-  merge_json "$CLAUDE_CONFIG" "$CLAUDE_PATCH_B64" claude
-  ok "Claude Code configured in $CLAUDE_CONFIG"
-  if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    warn 'Claude authentication variables are set in this shell and conflict with apiKeyHelper.'
-    info 'Run: unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY'
-    info 'Also remove those exports from your shell profile before starting Claude Code.'
-  fi
-}
-
 configure_opencode() {
   merge_json "$OPENCODE_CONFIG" "$OPENCODE_PATCH_B64" opencode
   ok "OpenCode configured in $OPENCODE_CONFIG"
 }
 
 [ "$DO_CODEX" = 1 ] && configure_codex
-[ "$DO_CLAUDE" = 1 ] && configure_claude
 [ "$DO_OPENCODE" = 1 ] && configure_opencode
 
 trap - ERR

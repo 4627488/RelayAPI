@@ -144,6 +144,65 @@ func TestRuntimeDiscoversOpenAICompatibleModelsThroughCPAExecutor(t *testing.T) 
 	}
 }
 
+func TestRuntimePreservesCodexApplyPatchThroughXAI(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("path = %q, want /v1/responses", r.URL.Path)
+		}
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		tools, _ := request["tools"].([]any)
+		if len(tools) != 1 {
+			t.Fatalf("upstream tools = %#v", request["tools"])
+		}
+		tool := tools[0].(map[string]any)
+		if tool["type"] != "function" || tool["name"] != "apply_patch" {
+			t.Fatalf("apply_patch was not lowered for xAI: %#v", tool)
+		}
+		parameters := tool["parameters"].(map[string]any)
+		if parameters["type"] != "object" {
+			t.Fatalf("apply_patch parameters = %#v", parameters)
+		}
+		item := `{"id":"fc_1","type":"function_call","call_id":"call_1","name":"apply_patch","arguments":"{\"input\":\"*** Begin Patch\\n*** End Patch\"}"}`
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":" + item + "}\n\n"))
+		_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"grok-test\",\"output\":[" + item + "],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"))
+	}))
+	defer upstream.Close()
+
+	document, _ := json.Marshal(map[string]any{
+		"type": "xai", "api_key": "xai-test-key", "base_url": upstream.URL + "/v1", "websockets": false,
+	})
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "xai-apply-patch", Provider: "xai", Enabled: true, Models: []string{"grok-test"}, Document: document,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	body := `{"model":"grok-test","stream":false,"tools":[{"type":"custom","name":"apply_patch","description":"Edit files","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}],"input":"edit the file"}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer internal-test-key")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Relay-CPA-Auth-ID", "xai-apply-patch")
+	response := httptest.NewRecorder()
+	runtime.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	output := payload["output"].([]any)[0].(map[string]any)
+	if output["type"] != "custom_tool_call" || output["input"] != "*** Begin Patch\n*** End Patch" || output["call_id"] != "call_1" {
+		t.Fatalf("restored output = %#v", output)
+	}
+}
+
 func TestRuntimeRetriesSoleCredentialAfterShortTransientCooldown(t *testing.T) {
 	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
 		ID: "codex-only", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},

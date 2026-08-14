@@ -32,16 +32,14 @@ var agentSetupShellTemplate = template.Must(template.New("setup.sh").Parse(agent
 var agentSetupPowerShellTemplate = template.Must(template.New("setup.ps1").Parse(agentSetupPowerShellSource))
 
 type agentSetupInput struct {
-	KeyID                     string   `json:"key_id"`
-	Agents                    []string `json:"agents"`
-	Model                     string   `json:"model"`
-	Models                    []string `json:"models,omitempty"`
-	ReasoningEffort           string   `json:"reasoning_effort"`
-	OpenCodeProtocol          string   `json:"opencode_protocol"`
-	InstallMissing            bool     `json:"install_missing"`
-	VerifyConnection          bool     `json:"verify_connection"`
-	ClaudeGatewayDiscovery    bool     `json:"claude_gateway_discovery"`
-	ClaudeDisableExtraTraffic bool     `json:"claude_disable_extra_traffic"`
+	KeyID            string   `json:"key_id"`
+	Agents           []string `json:"agents"`
+	Model            string   `json:"model"`
+	Models           []string `json:"models,omitempty"`
+	ReasoningEffort  string   `json:"reasoning_effort"`
+	OpenCodeProtocol string   `json:"opencode_protocol"`
+	InstallMissing   bool     `json:"install_missing"`
+	VerifyConnection bool     `json:"verify_connection"`
 }
 
 type agentSetupClaim struct {
@@ -53,11 +51,9 @@ type agentSetupClaim struct {
 type agentSetupTemplateData struct {
 	EndpointBase64      string
 	APIKeyBase64        string
-	ClaudePatchBase64   string
 	OpenCodePatchBase64 string
 	CodexEditsBase64    string
 	Codex               bool
-	Claude              bool
 	OpenCode            bool
 	InstallMissing      bool
 	VerifyConnection    bool
@@ -285,28 +281,11 @@ func (a *App) agentSetupModels(ctx context.Context, tenantID, plain string) ([]s
 func buildAgentSetupTemplateData(endpoint, apiKey string, input agentSetupInput, platform string) (agentSetupTemplateData, error) {
 	endpoint = strings.TrimRight(endpoint, "/")
 	keyPath := "~/.config/relayapi/api-key"
-	claudeHelper := `cat ~/.config/relayapi/api-key`
 	codexAuth := map[string]any{"command": "sh", "args": []string{"-c", `cat "$HOME/.config/relayapi/api-key"`}}
 	if platform == "powershell" {
 		keyPath = "~/.config/relayapi/api-key"
-		claudeHelper = `powershell -NoProfile -Command "$p=Join-Path $HOME '.config\relayapi\api-key'; [IO.File]::ReadAllText($p)"`
 		codexAuth = map[string]any{"command": "powershell", "args": []string{"-NoProfile", "-Command", `$p=Join-Path $HOME '.config\relayapi\api-key'; [IO.File]::ReadAllText($p)`}}
 	}
-	claudeEnv := map[string]string{
-		"ANTHROPIC_BASE_URL":             endpoint,
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":   input.Model,
-		"ANTHROPIC_DEFAULT_SONNET_MODEL": input.Model,
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  input.Model,
-		"ANTHROPIC_MODEL":                input.Model,
-		"ANTHROPIC_SMALL_FAST_MODEL":     input.Model,
-	}
-	if input.ClaudeGatewayDiscovery && !input.ClaudeDisableExtraTraffic {
-		claudeEnv["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
-	}
-	if input.ClaudeDisableExtraTraffic {
-		claudeEnv["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-	}
-	claudePatch := map[string]any{"apiKeyHelper": claudeHelper, "env": claudeEnv}
 
 	npmPackage := "@ai-sdk/openai"
 	if input.OpenCodeProtocol == "chat" {
@@ -338,7 +317,8 @@ func buildAgentSetupTemplateData(endpoint, apiKey string, input agentSetupInput,
 		{"keyPath": "model_providers.relayapi.auth", "mergeStrategy": "replace", "value": codexAuth},
 		{"keyPath": "model_providers.relayapi.wire_api", "mergeStrategy": "replace", "value": "responses"},
 		{"keyPath": "model_providers.relayapi.supports_websockets", "mergeStrategy": "replace", "value": true},
-		{"keyPath": "features.apps", "mergeStrategy": "replace", "value": false},
+		{"keyPath": "model_providers.relayapi.supports_standalone_web_search", "mergeStrategy": "replace", "value": true},
+		{"keyPath": "features.apps", "mergeStrategy": "replace", "value": true},
 	}
 	encodeJSON := func(value any) (string, error) {
 		encoded, err := json.Marshal(value)
@@ -346,10 +326,6 @@ func buildAgentSetupTemplateData(endpoint, apiKey string, input agentSetupInput,
 			return "", err
 		}
 		return base64.StdEncoding.EncodeToString(encoded), nil
-	}
-	claude, err := encodeJSON(claudePatch)
-	if err != nil {
-		return agentSetupTemplateData{}, err
 	}
 	opencode, err := encodeJSON(openCodePatch)
 	if err != nil {
@@ -361,8 +337,8 @@ func buildAgentSetupTemplateData(endpoint, apiKey string, input agentSetupInput,
 	}
 	return agentSetupTemplateData{
 		EndpointBase64: base64.StdEncoding.EncodeToString([]byte(endpoint)), APIKeyBase64: base64.StdEncoding.EncodeToString([]byte(apiKey)),
-		ClaudePatchBase64: claude, OpenCodePatchBase64: opencode, CodexEditsBase64: codex,
-		Codex: slices.Contains(input.Agents, "codex"), Claude: slices.Contains(input.Agents, "claude"),
+		OpenCodePatchBase64: opencode, CodexEditsBase64: codex,
+		Codex:    slices.Contains(input.Agents, "codex"),
 		OpenCode: slices.Contains(input.Agents, "opencode"), InstallMissing: input.InstallMissing,
 		VerifyConnection: input.VerifyConnection,
 	}, nil

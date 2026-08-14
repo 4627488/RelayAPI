@@ -141,6 +141,43 @@ func TestNormalizeCodexCatalogCapabilitiesIsConservativeForTranslatedProviders(t
 	}
 }
 
+func TestPromoteCodexCatalogCapabilitiesAdvertisesFullAgentSurface(t *testing.T) {
+	payload := []byte(`{"models":[{"slug":"qwen-max","visibility":"list"},{"slug":"private","visibility":"hide"}]}`)
+	promoted, err := promoteCodexCatalogCapabilities(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(promoted, &document); err != nil {
+		t.Fatal(err)
+	}
+	items := document["models"].([]any)
+	model := items[0].(map[string]any)
+	if model["apply_patch_tool_type"] != "freeform" || model["web_search_tool_type"] != "text_and_image" || model["multi_agent_version"] != "v2" {
+		t.Fatalf("full Codex capabilities were not advertised: %#v", model)
+	}
+	for _, key := range []string{"supports_parallel_tool_calls", "supports_image_detail_original", "supports_search_tool", "support_verbosity", "supports_reasoning_summary_parameter", "prefer_websockets"} {
+		if model[key] != true {
+			t.Fatalf("%s = %#v, want true", key, model[key])
+		}
+	}
+	hidden := items[1].(map[string]any)
+	if _, exists := hidden["apply_patch_tool_type"]; exists {
+		t.Fatalf("hidden tombstone was promoted: %#v", hidden)
+	}
+}
+
+func TestCodexCapabilityPolicyDefaultsToOptimistic(t *testing.T) {
+	app := new(App)
+	if got := app.codexCapabilityPolicy(); got != "optimistic" {
+		t.Fatalf("default capability policy = %q", got)
+	}
+	app.nativeSettings.value.CodexCapabilityPolicy = "verified"
+	if got := app.codexCapabilityPolicy(); got != "verified" {
+		t.Fatalf("configured capability policy = %q", got)
+	}
+}
+
 func TestModelCatalogRevisionIsStableAndPermissionScoped(t *testing.T) {
 	first := store.KeyContext{
 		APIKey: store.APIKey{
@@ -161,6 +198,15 @@ func TestModelCatalogRevisionIsStableAndPermissionScoped(t *testing.T) {
 	second.ModelAliases = append(second.ModelAliases, store.APIKeyModelAlias{Alias: "new", Model: "model-a"})
 	if changed := modelCatalogRevision(second, []string{"model-a", "model-b", "private"}, ""); changed == left {
 		t.Fatal("alias change did not invalidate the catalog revision")
+	}
+}
+
+func TestModelCatalogRevisionChangesWithCapabilityPolicy(t *testing.T) {
+	key := store.KeyContext{APIKey: store.APIKey{ModelAllowlist: []string{"gpt-5.6"}}}
+	optimistic := modelCatalogRevision(key, []string{"gpt-5.6"}, "capability-policy=optimistic")
+	verified := modelCatalogRevision(key, []string{"gpt-5.6"}, "capability-policy=verified")
+	if optimistic == verified {
+		t.Fatal("capability policy did not invalidate the Codex model catalog revision")
 	}
 }
 
