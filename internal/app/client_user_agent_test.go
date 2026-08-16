@@ -17,6 +17,7 @@ func TestIdentifyClientUserAgent(t *testing.T) {
 		{"codex-browser-use/0.142.0-alpha.1 (Windows 10.0.26200; x86_64)", "Codex Browser Use", "0.142.0-alpha.1"},
 		{"claude-cli/2.1.220 (external, claude-vscode, agent-sdk/0.3.220)", "Claude Code VS Code", "2.1.220"},
 		{"claude-cli/2.1.116 (external, cli)", "Claude Code", "2.1.116"},
+		{"deepseek-harness/0.1.0-rc.6 (+https://github.com/deepseek-ai/deepseek-harness)", "DeepSeek Harness", "0.1.0-rc.6"},
 		{"opencode/1.18.14 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14", "OpenCode", "1.18.14"},
 		{"gemini-cli/0.12.0", "Gemini CLI", "0.12.0"},
 		{"github-copilot/1.300.0", "GitHub Copilot", "1.300.0"},

@@ -924,6 +924,7 @@ type LogSummary struct {
 	Requests       int64   `json:"requests"`
 	Errors         int64   `json:"errors"`
 	Tokens         int64   `json:"tokens"`
+	PromptTokens   int64   `json:"prompt_tokens"`
 	CachedTokens   int64   `json:"cached_tokens"`
 	CostNanoUSD    int64   `json:"cost_nano_usd"`
 	AverageLatency float64 `json:"average_latency_ms"`
@@ -990,7 +991,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	var summary LogSummary
 	if err := summaryQuery.Select(
 		"count(*) AS requests, COALESCE(sum(CASE WHEN status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
-			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
+			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
 			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, COALESCE(avg(latency_ms),0) AS average_latency, " +
 			"COALESCE(sum(request_body_bytes),0) AS request_bytes, COALESCE(sum(response_body_bytes),0) AS response_bytes",
 	).Scan(&summary).Error; err != nil {

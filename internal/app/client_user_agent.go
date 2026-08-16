@@ -31,6 +31,7 @@ var clientUserAgentRules = []clientUserAgentRule{
 	{"Claude Code VS Code", regexp.MustCompile(`(?i)\bclaude-cli/([^\s;()]+).*\bclaude-vscode\b`)},
 	{"Claude Code", regexp.MustCompile(`(?i)\bclaude-cli/([^\s;()]+)`)},
 	{"Claude Code", regexp.MustCompile(`(?i)\bclaude-code/([^\s;()]+)`)},
+	{"DeepSeek Harness", regexp.MustCompile(`(?i)\bdeepseek-harness/([^\s;()]+)`)},
 	{"OpenCode", regexp.MustCompile(`(?i)\bopencode/([^\s;()]+)`)},
 	{"WorkBuddy", regexp.MustCompile(`(?i)\bworkbuddy/([^\s;()]+)`)},
 	{"ChatGPT", regexp.MustCompile(`(?i)\bchatgpt/([^\s;()]+)`)},

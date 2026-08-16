@@ -78,6 +78,7 @@ import {
 } from "@/lib/api"
 import {
   bytes,
+  cacheHitRateLabel,
   compact,
   compactTokens,
   dateTime,
@@ -87,6 +88,7 @@ import {
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
+import { CacheHitRateBadge } from "@/components/token-cache-rate"
 
 const emptyPage: RequestLogPage = {
   items: [],
@@ -97,6 +99,7 @@ const emptyPage: RequestLogPage = {
     requests: 0,
     errors: 0,
     tokens: 0,
+    prompt_tokens: 0,
     cached_tokens: 0,
     cost_nano_usd: 0,
     average_latency_ms: 0,
@@ -177,7 +180,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   }
 
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
-  const cacheRate = data.summary.tokens > 0 ? data.summary.cached_tokens / data.summary.tokens : 0
+  const cacheRate = cacheHitRateLabel(data.summary.cached_tokens, data.summary.prompt_tokens)
   const advancedFilterCount = [method !== "all", model, minLatency, from, to].filter(Boolean).length
   const hasFilters = Boolean(query || status !== "all" || advancedFilterCount)
 
@@ -195,7 +198,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
           value={data.summary.requests ? `${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%` : "0%"}
           hint="HTTP 错误或中断"
         />
-        <Stat label="Tokens" value={compactTokens(data.summary.tokens)} hint={`缓存 ${(cacheRate * 100).toFixed(1)}%`} />
+        <Stat label="Tokens" value={compactTokens(data.summary.tokens)} hint={`缓存命中 ${cacheRate}`} />
         <Stat
           label="负载"
           value={bytes(data.summary.request_bytes + data.summary.response_bytes)}
@@ -351,7 +354,12 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                         <p className="max-w-40 truncate text-xs text-muted-foreground">{log.api_key_name || log.api_key_prefix || "—"}</p>
                       </TableCell>
                     ) : null}
-                    <TableCell className="text-right tabular-nums">{compactTokens(log.total_tokens)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
+                        <span>{compactTokens(log.total_tokens)}</span>
+                        <CacheHitRateBadge cachedTokens={log.cached_tokens} promptTokens={log.prompt_tokens} />
+                      </span>
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-right text-xs tabular-nums">
                       <span>{bytes(log.request_body_bytes)}</span>
                       <ArrowRightIcon className="mx-1 inline size-3 text-muted-foreground" />
@@ -538,7 +546,7 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
 
       <DetailGroup title="用量与性能">
         <Facts items={[
-          ["Token", `${compactTokens(log.total_tokens)}（输入 ${compactTokens(log.prompt_tokens)} · 输出 ${compactTokens(log.completion_tokens)}）`],
+          ["Token", `${compactTokens(log.total_tokens)}（输入 ${compactTokens(log.prompt_tokens)} · 输出 ${compactTokens(log.completion_tokens)}） · 缓存命中 ${cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}`],
           ["客户端请求体", bytes(log.request_body_bytes)],
           ["CPA 转发体", bytes(log.forwarded_body_bytes)],
           ["上游响应体", bytes(log.response_body_bytes)],

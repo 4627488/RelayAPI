@@ -115,7 +115,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		t.Fatalf("empty subscription IDs must be stored as NULL: %+v", detailed.Log)
 	}
 	page, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Query: "cpa-trace", PageSize: 25})
-	if err != nil || page.Total != 1 || page.Summary.Tokens != 12 || page.Summary.RequestBytes != 128 || page.Summary.ResponseBytes != 512 {
+	if err != nil || page.Total != 1 || page.Summary.Tokens != 12 || page.Summary.PromptTokens != 10 || page.Summary.RequestBytes != 128 || page.Summary.ResponseBytes != 512 {
 		t.Fatalf("log query = %+v, err=%v", page, err)
 	}
 

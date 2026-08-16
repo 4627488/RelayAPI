@@ -156,6 +156,7 @@ export interface RequestLogPage {
     requests: number
     errors: number
     tokens: number
+    prompt_tokens: number
     cached_tokens: number
     cost_nano_usd: number
     average_latency_ms: number

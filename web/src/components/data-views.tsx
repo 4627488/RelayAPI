@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/table"
 import type { RequestLog, UsageReport } from "@/lib/api"
 import { compact, compactTokens, dateTime, money, requestLogStatus, requestLogSucceeded } from "@/lib/format"
+import { CacheHitRateBadge } from "@/components/token-cache-rate"
 
 interface Metric {
   label: string
@@ -258,7 +259,12 @@ export function LogsTable({ logs }: { logs: RequestLog[] }) {
                   <TableCell className="max-w-44 truncate text-xs" title={log.user_agent || undefined}>
                     {[log.client_name, log.client_version].filter(Boolean).join(" ") || "未知客户端"}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{compactTokens(log.total_tokens)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
+                      <span>{compactTokens(log.total_tokens)}</span>
+                      <CacheHitRateBadge cachedTokens={log.cached_tokens} promptTokens={log.prompt_tokens} />
+                    </span>
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{log.latency_ms} ms</TableCell>
                   <TableCell className="text-right tabular-nums">{money(log.cost_nano_usd)}</TableCell>
                 </TableRow>

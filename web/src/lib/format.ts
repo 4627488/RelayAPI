@@ -13,6 +13,17 @@ export function compactTokens(value: number) {
   }).format(value)
 }
 
+export function cacheHitRate(cachedTokens: number, promptTokens: number) {
+  if (!Number.isFinite(promptTokens) || promptTokens <= 0) return null
+  const cached = Number.isFinite(cachedTokens) ? Math.max(0, cachedTokens) : 0
+  return Math.min(1, cached / promptTokens)
+}
+
+export function cacheHitRateLabel(cachedTokens: number, promptTokens: number) {
+  const rate = cacheHitRate(cachedTokens, promptTokens)
+  return rate == null ? "—" : `${(rate * 100).toFixed(1)}%`
+}
+
 export function bytes(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value) || value <= 0) return "0 B"
   const units = ["B", "KB", "MB", "GB"]
