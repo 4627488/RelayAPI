@@ -75,3 +75,14 @@ func TestBridgeCredentialsUsesSelectedProxyOrExplicitDirect(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeRuntimeDisablesCredentialCoolingByDefault(t *testing.T) {
+	settings := defaultNativeRuntimeSettings()
+	if !settings.DisableCredentialCooling {
+		t.Fatal("credential cooling is enabled by default")
+	}
+	bridge := runtimeBridgeSettings(settings, "direct")
+	if !bridge.DisableCredentialCooling {
+		t.Fatal("runtime bridge did not preserve disabled credential cooling")
+	}
+}

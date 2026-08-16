@@ -29,6 +29,7 @@ type nativeRuntimeSettings struct {
 	StreamKeepAliveSeconds     int    `json:"stream_keepalive_seconds"`
 	StreamBootstrapRetries     int    `json:"stream_bootstrap_retries"`
 	NonStreamKeepAliveInterval int    `json:"nonstream_keepalive_interval"`
+	DisableCredentialCooling   bool   `json:"disable_credential_cooling"`
 }
 
 type settingsState struct {
@@ -42,7 +43,7 @@ func defaultNativeRuntimeSettings() nativeRuntimeSettings {
 		RoutingStrategy: "round-robin", PassthroughHeaders: true,
 		ImageGenerationMode: "enabled", GPTImageBaseModel: "gpt-5.4-mini",
 		VideoResultAuthCacheTTL: "3h", StreamKeepAliveSeconds: 15,
-		StreamBootstrapRetries: 1,
+		StreamBootstrapRetries: 1, DisableCredentialCooling: true,
 	}
 }
 
@@ -114,6 +115,7 @@ func runtimeBridgeSettings(value nativeRuntimeSettings, systemProxyURL string) r
 		GPTImage2BaseModel: value.GPTImageBaseModel, VideoResultAuthCacheTTL: value.VideoResultAuthCacheTTL,
 		ForceModelPrefix: value.ForceModelPrefix, StreamKeepAliveSeconds: value.StreamKeepAliveSeconds,
 		StreamBootstrapRetries: value.StreamBootstrapRetries, NonStreamKeepAliveInterval: value.NonStreamKeepAliveInterval,
+		DisableCredentialCooling: value.DisableCredentialCooling,
 	}
 }
 

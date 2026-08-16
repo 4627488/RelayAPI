@@ -78,6 +78,7 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 		GPTImage2BaseModel:     settings.GPTImageBaseModel, VideoResultAuthCacheTTL: settings.VideoResultAuthCacheTTL,
 		ForceModelPrefix: settings.ForceModelPrefix, StreamKeepAliveSeconds: settings.StreamKeepAliveSeconds,
 		StreamBootstrapRetries: settings.StreamBootstrapRetries, NonStreamKeepAliveInterval: settings.NonStreamKeepAliveInterval,
+		DisableCredentialCooling: settings.DisableCredentialCooling,
 		OnCredentialUpdated: func(updateCtx context.Context, id string, document []byte) {
 			if persistErr := a.persistEmbeddedCredential(updateCtx, id, document); persistErr != nil {
 				slog.Warn("persist embedded CPA credential refresh", "credential_id", id, "error", persistErr)

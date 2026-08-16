@@ -17,6 +17,7 @@ func TestClassifyUpstreamErrorReportsCauseInsteadOfBlindStatus(t *testing.T) {
 		body     string
 		want     int
 		wantCode string
+		wantText string
 	}{
 		{name: "CPA scheduler has no account", status: http.StatusTooManyRequests, body: `{"error":{"code":"auth_unavailable","message":"no auth available"}}`, want: http.StatusServiceUnavailable, wantCode: "model_account_unavailable"},
 		{name: "account quota exhausted", status: http.StatusTooManyRequests, body: `{"error":{"code":"insufficient_quota","message":"usage limit reached"}}`, want: http.StatusPaymentRequired, wantCode: "model_account_quota_exhausted"},
@@ -25,6 +26,7 @@ func TestClassifyUpstreamErrorReportsCauseInsteadOfBlindStatus(t *testing.T) {
 		{name: "account lacks model permission", status: http.StatusForbidden, body: `{"error":{"message":"model not allowed for this account"}}`, want: http.StatusServiceUnavailable, wantCode: "model_account_permission_denied"},
 		{name: "provider outage", status: http.StatusInternalServerError, body: `{"error":{"message":"internal"}}`, want: http.StatusBadGateway, wantCode: "upstream_service_error"},
 		{name: "context too large", status: http.StatusBadRequest, body: `{"error":{"message":"maximum context length exceeded"}}`, want: http.StatusBadRequest, wantCode: "context_length_exceeded"},
+		{name: "provider request error", status: http.StatusBadRequest, body: `{"error":{"type":"invalid_request_error","code":"invalid_request_error","message":"reasoning_content must be passed back"}}`, want: http.StatusBadRequest, wantCode: "invalid_request_error", wantText: "reasoning_content must be passed back"},
 	}
 	app := &App{}
 	for _, test := range tests {
@@ -32,6 +34,9 @@ func TestClassifyUpstreamErrorReportsCauseInsteadOfBlindStatus(t *testing.T) {
 			got := app.classifyUpstreamError(test.status, []byte(test.body), store.Admission{})
 			if got.Status != test.want || got.Code != test.wantCode || got.UpstreamStatus != test.status {
 				t.Fatalf("classification = %+v, want status/code %d/%s", got, test.want, test.wantCode)
+			}
+			if test.wantText != "" && got.Message != test.wantText {
+				t.Fatalf("message = %q, want %q", got.Message, test.wantText)
 			}
 		})
 	}

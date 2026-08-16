@@ -616,6 +616,21 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	logContext.detail.UpstreamBodyTruncated = responseTruncated || responseBytes > requestLogDetailLimit
 	logContext.detail.UpstreamBodyBytes = responseBytes
 	logContext.responseBytes = responseBytes
+	upstreamError := upstreamErrorInfo{}
+	if response.StatusCode >= http.StatusBadRequest {
+		upstreamError = describeUpstreamError(response.StatusCode, rawResponse)
+		logContext.detail.ErrorDetail = upstreamError.Summary
+		slog.Warn("upstream request failed",
+			"request_id", requestID,
+			"cpa_trace_id", logContext.cpaTraceID,
+			"model", meta.Model,
+			"credential_id", admission.CPAAuthID,
+			"upstream_status", response.StatusCode,
+			"upstream_code", upstreamError.Code,
+			"upstream_type", upstreamError.Type,
+			"upstream_message", upstreamError.Message,
+		)
+	}
 	if !firstByteAt.IsZero() {
 		ttft := firstByteAt.Sub(started).Milliseconds()
 		logContext.ttftMS = &ttft
@@ -627,7 +642,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		logContext.errorCode = normalizedError.Code
 		logContext.detail.ErrorName = logContext.errorCode
 		logContext.detail.ErrorMessage = normalizedError.Message
-		errorMessage = normalizedError.Message
+		errorMessage = firstNonEmptyString(upstreamError.Summary, normalizedError.Message)
 	} else if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
 		logContext.errorCode = "upstream_http_error"
 		logContext.detail.ErrorName = logContext.errorCode

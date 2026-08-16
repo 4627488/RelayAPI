@@ -125,10 +125,6 @@ func (a *App) classifyUpstreamError(status int, payload []byte, admission store.
 	if hasAny(lower, "model_not_found", "model_not_supported", "model does not exist", "model is not available", "unknown model") {
 		return userFacingError{Status: http.StatusServiceUnavailable, Code: "model_account_model_unavailable", Message: account + "未提供该模型，请联系管理员检查模型配置", UpstreamStatus: status}
 	}
-	if runtimeError := a.runtimeCredentialError(admission, status); runtimeError != nil {
-		return *runtimeError
-	}
-
 	switch {
 	case status == http.StatusTooManyRequests:
 		return userFacingError{Status: http.StatusTooManyRequests, Code: "upstream_rate_limited", Message: "模型服务当前请求过多，请稍后重试", Retryable: true, UpstreamStatus: status}
@@ -143,33 +139,13 @@ func (a *App) classifyUpstreamError(status int, payload []byte, admission store.
 	case status == http.StatusBadRequest && hasAny(lower, "context_length", "context length", "maximum context", "too many tokens"):
 		return userFacingError{Status: http.StatusBadRequest, Code: "context_length_exceeded", Message: "请求内容超过该模型的上下文长度，请缩短输入后重试", UpstreamStatus: status}
 	case status == http.StatusBadRequest:
-		result.Code = "invalid_request"
+		result.Code = firstNonEmptyString(code, "invalid_request")
 	case status == http.StatusForbidden:
 		result.Code = "upstream_request_forbidden"
 	default:
 		result.Code = firstNonEmptyString(code, "upstream_request_failed")
 	}
 	return result
-}
-
-func (a *App) runtimeCredentialError(admission store.Admission, upstreamStatus int) *userFacingError {
-	if a == nil || a.nativeCPARuntime == nil || strings.TrimSpace(admission.CPAAuthID) == "" {
-		return nil
-	}
-	status, ok := a.nativeCPARuntime.CredentialStatus(admission.CPAAuthID)
-	if !ok {
-		value := userFacingError{Status: http.StatusServiceUnavailable, Code: "model_account_unavailable", Message: "当前订阅绑定的模型账户已不存在，请联系管理员重新配置", Retryable: true, UpstreamStatus: upstreamStatus}
-		return &value
-	}
-	if status.QuotaExceeded {
-		value := userFacingError{Status: http.StatusPaymentRequired, Code: "model_account_quota_exhausted", Message: modelAccountSubject(admission) + "额度已用尽，请等待额度重置或联系管理员", UpstreamStatus: upstreamStatus}
-		return &value
-	}
-	if status.Unavailable {
-		value := userFacingError{Status: http.StatusServiceUnavailable, Code: "model_account_unavailable", Message: modelAccountSubject(admission) + "暂时不可用，请联系管理员检查账户状态", Retryable: true, UpstreamStatus: upstreamStatus}
-		return &value
-	}
-	return nil
 }
 
 func modelAccountSubject(admission store.Admission) string {

@@ -57,6 +57,7 @@ type RuntimeSettings = {
   stream_keepalive_seconds: number
   stream_bootstrap_retries: number
   nonstream_keepalive_interval: number
+  disable_credential_cooling: boolean
 }
 
 type RuntimeInfo = {
@@ -294,6 +295,15 @@ export function RuntimeSettingsView() {
             </CardHeader>
             <CardContent>
               <FieldGroup className="grid md:grid-cols-2">
+                <SwitchField
+                  id="disable-credential-cooling"
+                  title="禁用凭据冷却"
+                  description="上游返回错误后仍允许后续请求立即使用同一凭据，不进入等待或黑屏状态。"
+                  checked={value.disable_credential_cooling}
+                  onCheckedChange={(next) =>
+                    patch("disable_credential_cooling", next)
+                  }
+                />
                 <NumberField
                   id="request-retry"
                   label="请求重试次数"
@@ -315,7 +325,7 @@ export function RuntimeSettingsView() {
                 <NumberField
                   id="retry-interval"
                   label="最大等待时间（秒）"
-                  description="等待冷却中凭据恢复的最长时间。"
+                  description="启用凭据冷却时，等待账户恢复的最长时间。"
                   value={value.max_retry_interval}
                   min={0}
                   max={3600}

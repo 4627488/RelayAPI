@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"io"
 	"net"
@@ -15,6 +16,13 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
+
+type upstreamErrorInfo struct {
+	Code    string
+	Type    string
+	Message string
+	Summary string
+}
 
 // Raw bodies are diagnostic data, not accounting data. Keep the error detail
 // ceiling small enough that a burst of bad requests cannot become a storage
@@ -161,6 +169,26 @@ func upstreamErrorMessage(status int, payload []byte) string {
 		return text
 	}
 	return "upstream request failed"
+}
+
+func describeUpstreamError(status int, payload []byte) upstreamErrorInfo {
+	code, errorType, message := upstreamErrorFields(payload)
+	if message == "" {
+		message = upstreamErrorMessage(status, payload)
+	}
+	descriptor := code
+	if errorType != "" && !strings.EqualFold(errorType, code) {
+		descriptor = strings.TrimSpace(descriptor + "/" + errorType)
+	}
+	prefix := fmt.Sprintf("upstream HTTP %d", status)
+	if descriptor != "" {
+		prefix += " " + descriptor
+	}
+	summary := prefix
+	if message != "" {
+		summary += ": " + message
+	}
+	return upstreamErrorInfo{Code: code, Type: errorType, Message: message, Summary: boundedErrorText(summary)}
 }
 
 func boundedErrorText(value string) string {

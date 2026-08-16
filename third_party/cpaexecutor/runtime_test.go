@@ -216,6 +216,46 @@ func TestRuntimePrefersHealthyCredentialDuringTransientCooldown(t *testing.T) {
 	}
 }
 
+func TestRuntimeDisabledCredentialCoolingNeverBlackoutsAccount(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key", DisableCredentialCooling: true}, []Credential{{
+		ID: "always-available", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
+		Document: []byte(`{"type":"codex","access_token":"test-token"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+	if !runtime.cfg.DisableCooling || runtime.cfg.TransientErrorCooldownSeconds != -1 {
+		t.Fatalf("cooling config = disabled %v, transient %d", runtime.cfg.DisableCooling, runtime.cfg.TransientErrorCooldownSeconds)
+	}
+
+	retryAfter := 30 * time.Second
+	for _, test := range []struct {
+		name       string
+		status     int
+		retryAfter *time.Duration
+	}{
+		{name: "bad request", status: http.StatusBadRequest},
+		{name: "quota", status: http.StatusTooManyRequests, retryAfter: &retryAfter},
+		{name: "provider outage", status: http.StatusServiceUnavailable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime.manager.MarkResult(context.Background(), coreauth.Result{
+				AuthID: "always-available", Provider: "codex", Model: "gpt-test", RetryAfter: test.retryAfter,
+				Error: &coreauth.Error{HTTPStatus: test.status, Message: http.StatusText(test.status)},
+			})
+			status, ok := runtime.CredentialStatus("always-available")
+			if !ok || status.Unavailable || status.QuotaExceeded || !status.NextRetryAfter.IsZero() || !status.QuotaRecoverAt.IsZero() {
+				t.Fatalf("credential entered cooldown: %+v", status)
+			}
+			selected, selectErr := runtime.manager.SelectAuth(context.Background(), "codex", "gpt-test", cliproxyexecutor.Options{})
+			if selectErr != nil || selected.ID != "always-available" {
+				t.Fatalf("credential was not immediately selectable: selected=%v err=%v", selected, selectErr)
+			}
+		})
+	}
+}
+
 func TestRuntimeRegistersCompletePublicInferenceSurface(t *testing.T) {
 	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
 		ID: "codex.json", Label: "Codex", Provider: "codex", Enabled: true,

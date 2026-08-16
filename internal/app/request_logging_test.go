@@ -142,6 +142,18 @@ func TestUpstreamErrorMessageExtractsStructuredMessage(t *testing.T) {
 	}
 }
 
+func TestDescribeUpstreamErrorPreservesProviderDiagnostics(t *testing.T) {
+	got := describeUpstreamError(http.StatusBadRequest, []byte(`{"error":{"type":"invalid_request_error","code":"reasoning_missing","message":"reasoning_content must be passed back"}}`))
+	if got.Code != "reasoning_missing" || got.Type != "invalid_request_error" || got.Message != "reasoning_content must be passed back" {
+		t.Fatalf("upstream error = %+v", got)
+	}
+	for _, value := range []string{"upstream HTTP 400", "reasoning_missing/invalid_request_error", "reasoning_content must be passed back"} {
+		if !strings.Contains(got.Summary, value) {
+			t.Fatalf("summary %q does not contain %q", got.Summary, value)
+		}
+	}
+}
+
 func TestBoundedErrorTextNeverReturnsInvalidUTF8(t *testing.T) {
 	value := boundedErrorText(strings.Repeat("中", 1_000))
 	if len(value) > 2048 || !utf8.ValidString(value) {

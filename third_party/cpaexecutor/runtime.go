@@ -30,10 +30,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Keep transport failures long enough to prefer another credential, but short
-// enough that a single-credential pool retries instead of becoming unavailable.
-// Credential-specific failures (for example 401, 403 and 429) retain CPA's
-// provider-aware cooldowns.
+// Keep transport failures briefly unavailable only when credential cooling is
+// explicitly enabled by Relay's runtime settings.
 const transientCredentialCooldownSeconds = 1
 
 const maxDiscoveredModelCatalogBytes int64 = 16 << 20
@@ -65,6 +63,7 @@ type Options struct {
 	StreamKeepAliveSeconds     int
 	StreamBootstrapRetries     int
 	NonStreamKeepAliveInterval int
+	DisableCredentialCooling   bool
 	OnCredentialUpdated        func(context.Context, string, []byte)
 	OnOAuthCredential          func(context.Context, string, string, string, []byte) error
 }
@@ -84,6 +83,7 @@ type Settings struct {
 	StreamKeepAliveSeconds     int
 	StreamBootstrapRetries     int
 	NonStreamKeepAliveInterval int
+	DisableCredentialCooling   bool
 }
 
 // CredentialStatus is the secret-free runtime state CPA tracks for one
@@ -158,10 +158,11 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 		},
 		CommercialMode:                true,
 		WebsocketAuth:                 true,
+		DisableCooling:                opts.DisableCredentialCooling,
 		RequestRetry:                  opts.RequestRetry,
 		MaxRetryCredentials:           opts.MaxRetryCredentials,
 		MaxRetryInterval:              maxRetryInterval,
-		TransientErrorCooldownSeconds: transientCredentialCooldownSeconds,
+		TransientErrorCooldownSeconds: credentialCooldownSeconds(opts.DisableCredentialCooling),
 	}
 	cfg.DisableImageGeneration = imageGenerationMode(opts.DisableImageGeneration)
 	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, runtimeAuthHook{updated: opts.OnCredentialUpdated})
@@ -662,6 +663,8 @@ func (r *Runtime) ApplySettings(ctx context.Context, settings Settings) error {
 	r.cfg.Streaming.KeepAliveSeconds = settings.StreamKeepAliveSeconds
 	r.cfg.Streaming.BootstrapRetries = settings.StreamBootstrapRetries
 	r.cfg.NonStreamKeepAliveInterval = settings.NonStreamKeepAliveInterval
+	r.cfg.DisableCooling = settings.DisableCredentialCooling
+	r.cfg.TransientErrorCooldownSeconds = credentialCooldownSeconds(settings.DisableCredentialCooling)
 	r.globalProxy = strings.TrimSpace(settings.ProxyURL)
 	credentials := append([]Credential(nil), r.credentials...)
 	r.mu.Unlock()
@@ -671,7 +674,17 @@ func (r *Runtime) ApplySettings(ctx context.Context, settings Settings) error {
 		r.manager.SetSelector(&coreauth.RoundRobinSelector{})
 	}
 	r.manager.SetRetryConfig(settings.RequestRetry, settings.MaxRetryInterval, settings.MaxRetryCredentials)
+	coreauth.SetQuotaCooldownDisabled(settings.DisableCredentialCooling)
+	coreauth.SetTransientErrorCooldownSeconds(credentialCooldownSeconds(settings.DisableCredentialCooling))
+	r.manager.SetConfig(r.cfg)
 	return r.ReplaceCredentials(ctx, credentials)
+}
+
+func credentialCooldownSeconds(disabled bool) int {
+	if disabled {
+		return -1
+	}
+	return transientCredentialCooldownSeconds
 }
 
 func imageGenerationMode(value string) internalconfig.DisableImageGenerationMode {
