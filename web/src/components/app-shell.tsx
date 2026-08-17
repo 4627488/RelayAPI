@@ -214,12 +214,12 @@ export function AppShell({
                 onClick={() => onPageChange("overview")}
               >
                 <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <SendIcon className="size-4" />
+                  <SendIcon />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">RelayAPI</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    Model Gateway
+                    模型网关
                   </span>
                 </div>
               </SidebarMenuButton>

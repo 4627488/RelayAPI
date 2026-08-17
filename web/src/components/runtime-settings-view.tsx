@@ -12,7 +12,6 @@ import {
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -222,14 +221,8 @@ export function RuntimeSettingsView() {
     <div className="flex flex-col gap-5 pb-20">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="mb-2 flex items-center gap-2">
-            <Badge variant="secondary">Native</Badge>
-            <span className="text-xs text-muted-foreground">运行时配置</span>
-          </div>
           <h1 className="text-2xl font-semibold tracking-tight">系统设置</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            配置 RelayAPI 内置推理引擎。保存后立即作用于新请求。
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">配置内置推理引擎；更改作用于新请求。</p>
         </div>
         <div className="flex gap-2">
           <Button

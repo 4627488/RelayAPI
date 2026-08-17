@@ -209,9 +209,7 @@ export function ConnectionGuide({
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">接入向导</h1>
-        <p className="text-sm text-muted-foreground">
-          选择客户端和模型，复制一条命令完成用户级配置。
-        </p>
+        <p className="text-sm text-muted-foreground">生成客户端配置命令。</p>
       </header>
 
       {!usableKeys.length ? (
@@ -227,9 +225,7 @@ export function ConnectionGuide({
       <Card>
         <CardHeader>
           <CardTitle>配置客户端</CardTitle>
-          <CardDescription>
-            已有配置会先备份；脚本失败时自动恢复。
-          </CardDescription>
+          <CardDescription>脚本会备份现有配置，失败时自动恢复。</CardDescription>
         </CardHeader>
         <CardContent>
           <FieldGroup>

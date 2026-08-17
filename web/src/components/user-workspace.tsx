@@ -178,9 +178,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
         <h1 className="text-2xl font-semibold tracking-tight">
           你好，{session.tenant?.name}
         </h1>
-        <p className="text-sm text-muted-foreground">
-          这里是你的模型访问和用量概况。
-        </p>
+        <p className="text-sm text-muted-foreground">模型访问与用量概况。</p>
       </div>
       <UsageMetrics report={usage} />
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
@@ -188,7 +186,6 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
         <Card>
           <CardHeader>
             <CardTitle>账户状态</CardTitle>
-            <CardDescription>当前额度与访问策略。</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
             <div className="flex items-center justify-between">

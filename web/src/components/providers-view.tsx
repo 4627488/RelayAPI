@@ -336,9 +336,7 @@ export function ProvidersView() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">模型账户</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            连接订阅账户或 API Key，并控制它们可以承载的模型。
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">连接凭据并设置可用模型。</p>
         </div>
         <div className="flex gap-2">
           <Button

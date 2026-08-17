@@ -164,7 +164,7 @@ export function PricingView() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">模型定价</h1>
-          <p className="text-sm text-muted-foreground">这里只列出本站当前可调用的模型。价格按管理员覆盖、Models.dev、内置目录的顺序解析。</p>
+          <p className="text-sm text-muted-foreground">当前可调用模型及其计费价格。</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" disabled={pending} onClick={() => void syncCatalog(false)}><CloudDownloadIcon />预览同步</Button>
@@ -201,7 +201,7 @@ export function PricingView() {
       <Card>
         <CardHeader>
           <CardTitle>已接入模型价目表</CardTitle>
-          <CardDescription>模型来自 native 运行时目录。文本与图片 token 分模态计价，单位为 USD / 1M tokens。</CardDescription>
+          <CardDescription>单位：USD / 1M tokens。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="relative max-w-sm">

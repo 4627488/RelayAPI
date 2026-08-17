@@ -207,7 +207,7 @@ CPA 多维倍率规则和分模态费率快照（文本五段加图片输入、�
 - `GET /api/keys/{id}/secret`：按需读取自己可恢复的完整 API Key（禁止缓存）
 - `PUT /api/keys/{id}`：编辑 API Key 名称、额度、启用模型和模型别名
 - `DELETE /api/keys/{id}`：删除个人 API Key
-- `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
+- `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和受限详情；不返回路由凭据、CPA 标识、转发头或内部诊断
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
 - `POST /api/agent-setup`：创建 5 分钟有效的短随机安装令牌与跨平台一键命令；数据库只保存令牌哈希和加密配置
 - `GET /setup/{token}/install.sh|install.ps1`：读取禁止缓存的短时安装脚本

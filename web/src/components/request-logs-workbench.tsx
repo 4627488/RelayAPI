@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -53,12 +52,12 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -188,7 +187,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">请求日志</h1>
-        <p className="text-sm text-muted-foreground">先定位异常，再查看请求、转发、响应与计费细节。</p>
+        <p className="text-sm text-muted-foreground">按状态、模型和时间查看请求。</p>
       </div>
 
       <dl className="grid grid-cols-2 overflow-hidden rounded-lg border sm:grid-cols-3 xl:grid-cols-6">
@@ -211,7 +210,6 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       <Card>
         <CardHeader className="border-b">
           <CardTitle>请求明细</CardTitle>
-          <CardDescription>点击一行打开详情；负载大小不依赖正文采样，会随日志摘要保留。</CardDescription>
           <FieldGroup className="grid gap-2 pt-2 md:grid-cols-[minmax(16rem,1fr)_9rem_auto_auto]">
             <Field>
               <FieldLabel htmlFor="log-search" className="sr-only">搜索日志</FieldLabel>
@@ -221,7 +219,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                   id="log-search"
                   value={query}
                   onChange={(event) => { setQuery(event.target.value); setPage(1) }}
-                  placeholder="搜索模型、路径、用户、Key、Trace ID 或错误"
+                  placeholder={admin ? "搜索模型、路径、用户、Key、Trace ID 或错误" : "搜索模型、路径或错误"}
                 />
                 {query ? (
                   <InputGroupAddon align="inline-end">
@@ -341,7 +339,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                       <p className="max-w-72 truncate font-mono text-xs">{log.actual_model || log.requested_model || log.model || log.path}</p>
                       <p className="max-w-72 truncate text-xs text-muted-foreground">
                         {log.request_type || `${log.method} ${log.path}`}
-                        {log.provider ? ` · ${log.provider}${log.auth_index ? ` / ${log.auth_index}` : ""}` : ""}
+                        {admin && log.provider ? ` · ${log.provider}${log.auth_index ? ` / ${log.auth_index}` : ""}` : ""}
                       </p>
                     </TableCell>
                     <TableCell title={log.user_agent || undefined}>
@@ -379,7 +377,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               <EmptyHeader>
                 <EmptyMedia variant="icon"><SearchIcon /></EmptyMedia>
                 <EmptyTitle>{hasFilters ? "没有匹配的请求" : "暂无请求记录"}</EmptyTitle>
-                <EmptyDescription>{hasFilters ? "调整或清除筛选条件后再试。" : "API 调用记录会显示在这里。"}</EmptyDescription>
+                <EmptyDescription>{hasFilters ? "请调整筛选条件。" : "完成首次 API 调用后会生成记录。"}</EmptyDescription>
               </EmptyHeader>
               {hasFilters ? <Button variant="outline" size="sm" onClick={resetFilters}>清除筛选</Button> : null}
             </Empty>
@@ -405,9 +403,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
         </CardFooter>
       </Card>
 
-      <LogDetailSheet
+      <LogDetailDialog
         value={selected}
         loading={detailLoading}
+        admin={admin}
         onOpenChange={(open) => { if (!open) setSelected(null) }}
       />
     </div>
@@ -424,68 +423,70 @@ function Stat({ label, value, hint }: { label: string; value: string; hint: stri
   )
 }
 
-function LogDetailSheet({
+function LogDetailDialog({
   value,
   loading,
+  admin,
   onOpenChange,
 }: {
   value: SelectedLog | null
   loading: boolean
+  admin: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const log = value?.log
   const detail = value?.detail ?? null
   const requestVisible = Boolean(detail && (hasJSONObject(detail.request_headers) || detail.request_body || detail.request_body_bytes))
-  const forwardedVisible = Boolean(detail && (hasJSONObject(detail.forwarded_headers) || detail.forwarded_body || detail.forwarded_body_bytes))
-  const responseVisible = Boolean(detail && (detail.upstream_status || hasJSONObject(detail.upstream_headers) || detail.upstream_body || detail.upstream_body_bytes))
+  const forwardedVisible = Boolean(admin && detail && (hasJSONObject(detail.forwarded_headers) || detail.forwarded_body || detail.forwarded_body_bytes))
+  const responseVisible = Boolean(detail && (detail.upstream_status || detail.upstream_body || detail.upstream_body_bytes || (admin && hasJSONObject(detail.upstream_headers))))
   const detailSections = Number(requestVisible) + Number(forwardedVisible) + Number(responseVisible)
 
   return (
-    <Sheet open={Boolean(value)} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 sm:max-w-3xl">
-        <SheetHeader className="border-b pr-14">
+    <Dialog open={Boolean(value)} onOpenChange={onOpenChange}>
+      <DialogContent className="grid h-[min(52rem,calc(100dvh-2rem))] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-5xl">
+        <DialogHeader className="border-b p-4 pr-14">
           <div className="flex flex-wrap items-center gap-2">
             {log ? (
               <Badge variant={requestLogSucceeded(log.status_code, log.error_code) ? "secondary" : "destructive"}>
                 {requestLogStatus(log.status_code)}
               </Badge>
             ) : null}
-            <SheetTitle>请求详情</SheetTitle>
+            <DialogTitle>请求详情</DialogTitle>
           </div>
-          <SheetDescription className="flex min-w-0 items-center gap-1 font-mono text-xs">
+          <DialogDescription className="flex min-w-0 items-center gap-1 font-mono text-xs">
             <span className="truncate">{log?.id}</span>
             {log ? <CopyButton value={log.id} label="复制请求 ID" /> : null}
-          </SheetDescription>
-        </SheetHeader>
+          </DialogDescription>
+        </DialogHeader>
 
         {log ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 overflow-hidden">
             {detailSections ? (
-              <Tabs defaultValue="overview" className="gap-0">
-                <div className="sticky top-0 bg-popover px-4 pt-2">
+              <Tabs defaultValue="overview" className="h-full gap-0">
+                <div className="border-b px-4 pt-2">
                   <TabsList variant="line" className="w-full justify-start overflow-x-auto">
                     <TabsTrigger value="overview">概览</TabsTrigger>
-                    {requestVisible ? <TabsTrigger value="request">客户端请求</TabsTrigger> : null}
+                    {requestVisible ? <TabsTrigger value="request">{admin ? "客户端请求" : "请求"}</TabsTrigger> : null}
                     {forwardedVisible ? <TabsTrigger value="forwarded">CPA 转发</TabsTrigger> : null}
-                    {responseVisible ? <TabsTrigger value="response">上游响应</TabsTrigger> : null}
+                    {responseVisible ? <TabsTrigger value="response">{admin ? "上游响应" : "响应"}</TabsTrigger> : null}
                   </TabsList>
                 </div>
-                <TabsContent value="overview"><LogOverview log={log} detail={detail} loading={loading} /></TabsContent>
-                {requestVisible && detail ? <TabsContent value="request"><RequestSection detail={detail} /></TabsContent> : null}
-                {forwardedVisible && detail ? <TabsContent value="forwarded"><ForwardedSection detail={detail} /></TabsContent> : null}
-                {responseVisible && detail ? <TabsContent value="response"><ResponseSection detail={detail} /></TabsContent> : null}
+                <TabsContent value="overview" className="min-h-0 overflow-y-auto"><LogOverview log={log} detail={detail} loading={loading} admin={admin} /></TabsContent>
+                {requestVisible && detail ? <TabsContent value="request" className="min-h-0 overflow-y-auto"><RequestSection detail={detail} /></TabsContent> : null}
+                {forwardedVisible && detail ? <TabsContent value="forwarded" className="min-h-0 overflow-y-auto"><ForwardedSection detail={detail} /></TabsContent> : null}
+                {responseVisible && detail ? <TabsContent value="response" className="min-h-0 overflow-y-auto"><ResponseSection detail={detail} admin={admin} /></TabsContent> : null}
               </Tabs>
             ) : (
-              <LogOverview log={log} detail={detail} loading={loading} />
+              <div className="h-full overflow-y-auto"><LogOverview log={log} detail={detail} loading={loading} admin={admin} /></div>
             )}
           </div>
         ) : null}
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   )
 }
 
-function LogOverview({ log, detail, loading }: { log: RequestLog; detail: RequestLogDetail | null; loading: boolean }) {
+function LogOverview({ log, detail, loading, admin }: { log: RequestLog; detail: RequestLogDetail | null; loading: boolean; admin: boolean }) {
   const costRows = useMemo(() => {
     const imageInput = Math.min(Math.max(0, log.image_input_tokens ?? 0), Math.max(0, log.prompt_tokens))
     const cachedInput = Math.min(Math.max(0, log.cached_tokens), Math.max(0, log.prompt_tokens))
@@ -511,7 +512,7 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
   const latencyTrace = log.stage_timings && log.stage_timings !== "{}" ? log.stage_timings : detail?.stage_timings
   const errorTitle = log.error_code || detail?.error_name
   const errorMessage = detail?.error_detail || detail?.error_message || log.error_message
-  const hasBilling = Boolean(costRows.length || log.cost_nano_usd != null || log.price_source)
+  const hasBilling = Boolean((admin && (costRows.length || log.price_source)) || log.cost_nano_usd != null)
 
   return (
     <div className="flex flex-col gap-5 p-4 sm:p-5">
@@ -534,30 +535,32 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
         ]} />
       </DetailGroup>
 
-      <DetailGroup title="链路">
-        <Facts items={[
-          ["提供商", log.provider],
-          ["凭据", log.credential_email || log.credential_name || log.auth_index],
-          ["订阅", [log.parent_subscription_name || log.channel_name, log.child_subscription_name].filter(Boolean).join(" / ")],
-          ["CPA Trace", log.cpa_trace_id],
-          ["CPA Execution", log.cpa_execution_id],
-        ]} />
-      </DetailGroup>
+      {admin ? (
+        <DetailGroup title="路由">
+          <Facts items={[
+            ["提供商", log.provider],
+            ["凭据", log.credential_email || log.credential_name || log.auth_index],
+            ["订阅", [log.parent_subscription_name || log.channel_name, log.child_subscription_name].filter(Boolean).join(" / ")],
+            ["CPA Trace", log.cpa_trace_id],
+            ["CPA Execution", log.cpa_execution_id],
+          ]} />
+        </DetailGroup>
+      ) : null}
 
       <DetailGroup title="用量与性能">
         <Facts items={[
           ["Token", `${compactTokens(log.total_tokens)}（输入 ${compactTokens(log.prompt_tokens)} · 输出 ${compactTokens(log.completion_tokens)}） · 缓存命中 ${cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}`],
           ["客户端请求体", bytes(log.request_body_bytes)],
-          ["CPA 转发体", bytes(log.forwarded_body_bytes)],
+          ...(admin ? [["CPA 转发体", bytes(log.forwarded_body_bytes)] as [string, string]] : []),
           ["上游响应体", bytes(log.response_body_bytes)],
           ["首字节", log.ttft_ms != null ? `${log.ttft_ms} ms` : ""],
           ["总耗时", `${log.latency_ms} ms`],
         ]} />
       </DetailGroup>
 
-      <RequestLatencyTimeline value={latencyTrace} totalMS={log.latency_ms} ttftMS={log.ttft_ms} stream={log.stream} />
+      {admin ? <RequestLatencyTimeline value={latencyTrace} totalMS={log.latency_ms} ttftMS={log.ttft_ms} stream={log.stream} /> : null}
 
-      {Object.keys(timings).length ? (
+      {admin && Object.keys(timings).length ? (
         <DetailGroup title="阶段耗时">
           <div className="grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-3">
             {Object.entries(timings).map(([key, value]) => (
@@ -570,12 +573,14 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
       {hasBilling ? (
         <DetailGroup title="计费">
           <Facts items={[
-            ["价格来源", [log.price_source, log.price_version].filter(Boolean).join(" · ")],
-            ["计价模型", log.price_model],
-            ["倍率", log.price_multiplier != null ? `${log.price_multiplier}×` : ""],
+            ...(admin ? [
+              ["价格来源", [log.price_source, log.price_version].filter(Boolean).join(" · ")],
+              ["计价模型", log.price_model],
+              ["倍率", log.price_multiplier != null ? `${log.price_multiplier}×` : ""],
+            ] as Array<[string, string | undefined]> : []),
             ["合计", money(log.cost_nano_usd)],
           ]} />
-          {costRows.length ? (
+          {admin && costRows.length ? (
             <Table>
               <TableHeader>
                 <TableRow><TableHead>成本项</TableHead><TableHead className="text-right">Tokens</TableHead><TableHead className="text-right">单价</TableHead><TableHead className="text-right">成本</TableHead></TableRow>
@@ -595,7 +600,7 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
         </DetailGroup>
       ) : null}
 
-      {detail?.error_cause || detail?.error_stack ? (
+      {admin && (detail?.error_cause || detail?.error_stack) ? (
         <DetailGroup title="错误诊断">
           {detail.error_cause ? <Payload title="Cause" value={detail.error_cause} /> : null}
           {detail.error_stack ? <Payload title="Stack" value={detail.error_stack} /> : null}
@@ -608,7 +613,7 @@ function LogOverview({ log, detail, loading }: { log: RequestLog; detail: Reques
           <Skeleton className="h-14 w-full" />
         </div>
       ) : !detail ? (
-        <p className="text-xs text-muted-foreground">原始 Headers 与正文未采样或已过保留期；上面的摘要、大小、Token 和计费数据仍然完整。</p>
+        <p className="text-xs text-muted-foreground">请求内容未采样或已过保留期。</p>
       ) : null}
     </div>
   )
@@ -640,12 +645,12 @@ function ForwardedSection({ detail }: { detail: RequestLogDetail }) {
   )
 }
 
-function ResponseSection({ detail }: { detail: RequestLogDetail }) {
+function ResponseSection({ detail, admin }: { detail: RequestLogDetail; admin: boolean }) {
   const headers = hasJSONObject(detail.upstream_headers) ? prettyJSON(detail.upstream_headers) : ""
   return (
     <div className="flex flex-col gap-5 p-4 sm:p-5">
       {detail.upstream_status ? <Badge variant="outline">HTTP {detail.upstream_status}</Badge> : null}
-      {headers ? <Payload title="Headers" value={headers} /> : null}
+      {admin && headers ? <Payload title="Headers" value={headers} /> : null}
       {detail.upstream_body || detail.upstream_body_bytes ? (
         <Payload title="Body" value={prettyJSON(detail.upstream_body)} bytes={detail.upstream_body_bytes} truncated={detail.upstream_body_truncated} />
       ) : null}

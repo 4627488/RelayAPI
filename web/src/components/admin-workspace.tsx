@@ -226,7 +226,6 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
         <Card>
           <CardHeader>
             <CardTitle>需要关注</CardTitle>
-            <CardDescription>运营入口与待处理事项。</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <div className="flex items-center justify-between rounded-lg bg-muted p-3">
@@ -377,7 +376,7 @@ function UsersView({
       <Card>
         <CardHeader>
           <CardTitle>全部用户</CardTitle>
-          <CardDescription>{users.length} 个账户。</CardDescription>
+          <CardDescription>{users.length} 个账户</CardDescription>
         </CardHeader>
         <CardContent>
           {users.length ? (
@@ -754,9 +753,7 @@ function InvitationsView({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">邀请</h1>
-          <p className="text-sm text-muted-foreground">
-            生成单次邀请链接并追踪使用状态。
-          </p>
+          <p className="text-sm text-muted-foreground">生成单次邀请并查看使用状态。</p>
         </div>
         <Button
           onClick={() => {
@@ -769,13 +766,11 @@ function InvitationsView({
         </Button>
       </div>
       {result ? (
-        <Card className="border-primary/30 bg-primary/5">
+        <Card>
           <CardHeader className="flex-row items-start justify-between gap-4">
             <div>
               <CardTitle>最近生成的邀请链接</CardTitle>
-              <CardDescription>
-                已临时保留在当前浏览器标签页中，关闭标签页或清除后无法恢复。
-              </CardDescription>
+              <CardDescription>关闭标签页后无法再次查看。</CardDescription>
             </div>
             <Button
               variant="ghost"

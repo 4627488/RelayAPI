@@ -30,13 +30,13 @@ type LatencyTrace = {
   marks?: LatencyMark[]
 }
 
-const ownerMeta: Record<LatencyOwner, { label: string; dot: string; bar: string; soft: string }> = {
-  relay: { label: "Relay", dot: "bg-violet-500", bar: "bg-violet-500", soft: "bg-violet-500/10 text-violet-700 dark:text-violet-300" },
-  queue: { label: "排队", dot: "bg-amber-500", bar: "bg-amber-500", soft: "bg-amber-500/10 text-amber-700 dark:text-amber-300" },
-  cpa: { label: "CPA 链路", dot: "bg-sky-500", bar: "bg-sky-500", soft: "bg-sky-500/10 text-sky-700 dark:text-sky-300" },
-  upstream: { label: "上游", dot: "bg-rose-500", bar: "bg-rose-500", soft: "bg-rose-500/10 text-rose-700 dark:text-rose-300" },
-  downstream: { label: "响应传输", dot: "bg-emerald-500", bar: "bg-emerald-500", soft: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
-  billing: { label: "计费", dot: "bg-indigo-500", bar: "bg-indigo-500", soft: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300" },
+const ownerMeta: Record<LatencyOwner, { label: string; bar: string }> = {
+  relay: { label: "Relay", bar: "bg-foreground" },
+  queue: { label: "排队", bar: "bg-chart-2" },
+  cpa: { label: "CPA 链路", bar: "bg-chart-3" },
+  upstream: { label: "上游", bar: "bg-chart-4" },
+  downstream: { label: "响应传输", bar: "bg-chart-2" },
+  billing: { label: "计费", bar: "bg-chart-5" },
 }
 
 export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { value?: string; totalMS: number; ttftMS?: number; stream: boolean }) {
@@ -50,30 +50,28 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
   const diagnosis = diagnose(attribution, total, stream)
 
   return (
-    <section className="overflow-hidden rounded-2xl border bg-card shadow-sm">
-      <div className="border-b bg-gradient-to-br from-violet-500/[0.08] via-background to-sky-500/[0.08] p-4 sm:p-5">
+    <section className="overflow-hidden rounded-lg border bg-card">
+      <div className="border-b p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <ActivityIcon className="size-4 text-violet-500" />
+              <ActivityIcon className="size-4 text-muted-foreground" />
               <h3 className="text-sm font-semibold">请求关键路径</h3>
-              <Badge variant="outline" className="rounded-full bg-background/70 font-normal">实测</Badge>
+              <Badge variant="outline">实测</Badge>
             </div>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">{diagnosis.message}</p>
           </div>
-          <span className={cn("rounded-full px-2.5 py-1 text-xs font-medium", ownerMeta[diagnosis.owner].soft)}>
-            {diagnosis.label}
-          </span>
+          <Badge variant="secondary">{diagnosis.label}</Badge>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 border sm:grid-cols-4">
           <Metric icon={<ClockIcon />} label="端到端" value={formatMS(total)} />
           <Metric icon={<GaugeIcon />} label="首字节" value={ttftMS != null ? formatMS(ttftMS) : "未观测"} />
           <Metric icon={<NetworkIcon />} label="主要耗时" value={`${ownerMeta[diagnosis.owner].label} ${formatPercent(diagnosis.duration / total)}`} />
           <Metric icon={<ActivityIcon />} label="关键阶段" value={`${critical.length} 个`} />
         </div>
 
-        <div className="mt-4 flex h-2.5 overflow-hidden rounded-full bg-muted ring-1 ring-border/60">
+        <div className="mt-4 flex h-2 overflow-hidden rounded-sm bg-muted">
           {critical.map((segment, index) => (
             <div
               key={`${segment.id}-${index}`}
@@ -86,7 +84,7 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
           {(Object.keys(ownerMeta) as LatencyOwner[]).map((owner) => attribution[owner] > 0 ? (
             <span key={owner} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span className={cn("size-1.5 rounded-full", ownerMeta[owner].dot)} />
+              <span className={cn("size-1.5 rounded-[1px]", ownerMeta[owner].bar)} />
               {ownerMeta[owner].label} {formatMS(attribution[owner])}
             </span>
           ) : null)}
@@ -96,7 +94,7 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
       <div className="overflow-x-auto p-4 sm:p-5">
         <div className="min-w-[600px]">
           <TimeRuler total={total} />
-          <div className="mt-3 space-y-2">
+          <div className="mt-3 flex flex-col gap-2">
             {critical.map((segment, index) => <TimelineRow key={`${segment.id}-${index}`} segment={segment} total={total} />)}
           </div>
 
@@ -107,7 +105,7 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
                 HTTP 网络细节
                 <span className="font-normal text-muted-foreground">可与关键路径重叠，不重复计入归因</span>
               </div>
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 {network.map((segment, index) => <TimelineRow key={`${segment.id}-${index}`} segment={segment} total={total} compact />)}
               </div>
             </div>
@@ -118,8 +116,8 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
       </div>
 
       {trace.boundary ? (
-        <div className="border-t bg-muted/25 px-4 py-3 text-[11px] leading-relaxed text-muted-foreground sm:px-5">
-          {trace.boundary}。因此“CPA / 上游处理”可以可靠判断慢在 Relay 之外，但不能虚构供应商内部的 DNS、排队或推理占比。
+        <div className="border-t bg-muted/25 px-4 py-3 text-xs text-muted-foreground sm:px-5">
+          {trace.boundary}。供应商内部阶段不在观测范围内。
         </div>
       ) : null}
     </section>
@@ -128,7 +126,7 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
 
 function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
-    <div className="rounded-xl border bg-background/70 p-3 backdrop-blur-sm">
+    <div className="border-r border-b p-3 last:border-r-0 sm:border-b-0">
       <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground [&_svg]:size-3.5">{icon}{label}</div>
       <div className="mt-1 truncate text-sm font-semibold tabular-nums">{value}</div>
     </div>
@@ -138,7 +136,7 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value:
 function TimeRuler({ total }: { total: number }) {
   return (
     <div className="grid grid-cols-[150px_1fr] items-end gap-3">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">阶段</span>
+      <span className="text-xs text-muted-foreground">阶段</span>
       <div className="relative h-5 border-b">
         {[0, 25, 50, 75, 100].map((percent) => (
           <div key={percent} className="absolute bottom-0 -translate-x-1/2 text-[10px] tabular-nums text-muted-foreground" style={{ left: `${percent}%` }}>
@@ -166,11 +164,11 @@ function TimelineRow({ segment, total, compact = false }: { segment: LatencySegm
         <div className="absolute inset-y-0 left-1/2 border-l border-dashed border-border/70" />
         <div className="absolute inset-y-0 left-3/4 border-l border-dashed border-border/70" />
         <div
-          className={cn("absolute inset-y-1 min-w-[3px] rounded-sm shadow-sm transition-all group-hover:brightness-110", meta.bar, compact && "opacity-75")}
+          className={cn("absolute inset-y-1 min-w-[3px] rounded-sm transition-opacity duration-150 group-hover:opacity-75", meta.bar, compact && "opacity-75")}
           style={{ left: `${left}%`, width: `max(${width}%, 3px)` }}
         />
         {!compact && width > 14 ? (
-          <span className="absolute inset-y-0 flex items-center truncate px-2 text-[10px] font-medium text-white drop-shadow-sm" style={{ left: `${left}%`, width: `${width}%` }}>
+          <span className="absolute inset-y-0 flex items-center truncate px-2 text-[10px] font-medium text-background" style={{ left: `${left}%`, width: `${width}%` }}>
             {formatMS(segment.duration_ms)}
           </span>
         ) : null}
@@ -182,14 +180,14 @@ function TimelineRow({ segment, total, compact = false }: { segment: LatencySegm
 function TimelineMarks({ marks, total }: { marks: LatencyMark[]; total: number }) {
   return (
     <div className="mt-4 grid grid-cols-[150px_1fr] gap-3 border-t pt-3">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">里程碑</span>
+      <span className="text-xs text-muted-foreground">里程碑</span>
       <div className="relative h-9">
         {marks.map((mark) => {
           const left = Math.min(100, Math.max(0, mark.offset_ms / total * 100))
           return (
             <div key={mark.id} className="absolute top-0 -translate-x-1/2" style={{ left: `${left}%` }} title={`${mark.label} · +${formatMS(mark.offset_ms)}`}>
               <span className="mx-auto block h-3 border-l-2 border-foreground/60" />
-              <span className="block whitespace-nowrap rounded-full bg-foreground px-2 py-0.5 text-[9px] text-background">{mark.label}</span>
+              <span className="block whitespace-nowrap rounded-sm bg-foreground px-1.5 py-0.5 text-[9px] text-background">{mark.label}</span>
             </div>
           )
         })}

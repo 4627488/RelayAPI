@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { ArrowRightIcon, KeyRoundIcon, ShieldCheckIcon, SparklesIcon } from "lucide-react"
+import { ArrowRightIcon, KeyRoundIcon, SendIcon, ShieldCheckIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -25,18 +25,14 @@ function BrandPanel() {
     <section className="hidden min-h-svh flex-col justify-between bg-primary p-10 text-primary-foreground lg:flex">
       <div className="flex items-center gap-3">
         <div className="flex size-9 items-center justify-center rounded-lg bg-primary-foreground text-primary">
-          <SparklesIcon className="size-5" />
+          <SendIcon className="size-5" />
         </div>
         <span className="text-lg font-semibold tracking-tight">RelayAPI</span>
       </div>
       <div className="flex max-w-lg flex-col gap-6">
-        <p className="text-4xl font-medium leading-tight tracking-tight">
-          一个入口，
-          <br />
-          连接所有模型。
-        </p>
+        <p className="text-4xl font-medium leading-tight tracking-tight">管理模型访问</p>
         <p className="max-w-md text-primary-foreground/70">
-          安全地管理 API Key、额度和用量。模型路由与协议兼容由 CLIProxyAPI 提供。
+          在一个工作区管理用户、密钥、路由和用量。
         </p>
         <div className="flex gap-6 text-sm text-primary-foreground/70">
           <span className="flex items-center gap-2">
@@ -110,7 +106,6 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
       <section className="flex items-center justify-center p-6 sm:p-10">
         <div className="flex w-full max-w-md flex-col gap-6">
           <div className="flex flex-col gap-2">
-            <p className="text-sm text-muted-foreground">账户中心</p>
             <h1 className="text-3xl font-semibold tracking-tight">
               {mode === "register" ? (setupRequired ? "初始化 RelayAPI" : "接受邀请") : "登录 RelayAPI"}
             </h1>
@@ -118,8 +113,8 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
               {mode === "register"
                 ? setupRequired
                   ? "创建首个用户。该用户会同时获得管理员权限。"
-                  : "完成资料后即可创建自己的 API Key。"
-                : "访问你的模型、密钥和用量数据。"}
+                  : "填写资料以接受邀请。"
+                : "登录后管理模型、密钥和用量。"}
             </p>
           </div>
 
@@ -134,9 +129,7 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
             <Card>
               <CardHeader>
                 <CardTitle>创建账户</CardTitle>
-                <CardDescription>
-                  {setupRequired ? "管理员是该普通用户的附加身份，提交后默认进入个人面板。" : "邀请为单次使用，提交后会自动登录。"}
-                </CardDescription>
+                <CardDescription>{setupRequired ? "首个用户同时拥有管理员权限。" : "邀请仅可使用一次。"}</CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={register}>
@@ -180,7 +173,6 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
             <Card>
               <CardHeader>
                 <CardTitle>账户登录</CardTitle>
-                <CardDescription>管理员也使用自己的普通用户邮箱和密码登录。</CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={login}>

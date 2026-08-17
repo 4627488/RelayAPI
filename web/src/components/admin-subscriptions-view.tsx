@@ -399,9 +399,7 @@ export function AdminSubscriptionsView() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">订阅分配</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            选择模型账户，将它的模型和额度能力直接授权给租户。
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">向租户分配模型与额度。</p>
         </div>
         <Button
           disabled={
@@ -427,9 +425,7 @@ export function AdminSubscriptionsView() {
               <PackageOpenIcon />
             </EmptyMedia>
             <EmptyTitle>还没有可分配的模型账户</EmptyTitle>
-            <EmptyDescription>
-              连接模型账户后，它会直接出现在这里，不需要额外同步。
-            </EmptyDescription>
+            <EmptyDescription>请先连接模型账户。</EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
@@ -838,7 +834,7 @@ function AccountAllocationPanel({
       <div className="flex flex-col gap-4 border-b px-4 py-4 sm:px-6 sm:py-5 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-heading text-lg leading-tight font-semibold sm:text-xl">
+            <h2 className="font-heading text-xl leading-tight font-semibold">
               {view.item.name}
             </h2>
             <AccountStatusBadge view={view} />
@@ -862,7 +858,7 @@ function AccountAllocationPanel({
       </div>
 
       <div className="flex flex-col gap-6 px-4 py-5 sm:px-6">
-        <div className="grid grid-cols-3 overflow-hidden rounded-xl border bg-muted/20">
+        <div className="grid grid-cols-3 overflow-hidden rounded-lg border bg-muted/20">
           <AccountFact
             icon={<UsersIcon />}
             label={
@@ -1108,7 +1104,7 @@ function MobileChildGrant({
   const balanceMode = view.item.capacity_mode === "unmetered"
   const modelCount = parentModelOptions(view).length
   return (
-    <div className="rounded-xl border p-3">
+    <div className="rounded-lg border p-3">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">
@@ -1169,10 +1165,10 @@ function MobileChildGrant({
 
 function OversubscriptionWarning({ allocatedPPM }: { allocatedPPM: number }) {
   return (
-    <Alert className="border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300">
+    <Alert>
       <AlertTriangleIcon />
       <AlertTitle>共享额度已超卖</AlertTitle>
-      <AlertDescription className="text-amber-700/90 dark:text-amber-300/80">
+      <AlertDescription>
         当前总分配为 {percent(allocatedPPM)}
         。系统不会阻止继续分配，但多个租户同时高负载时可能提前耗尽上游额度。
       </AlertDescription>

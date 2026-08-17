@@ -303,12 +303,13 @@ func (a *App) keyDelete(w http.ResponseWriter, r *http.Request) {
 func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 	query := requestLogQuery(r)
 	query.TenantID = currentSession(r).TenantID
+	query.Public = true
 	page, err := a.store.QueryLogs(r.Context(), query)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, page)
+	writeJSON(w, 200, publicLogPage(page))
 }
 
 func (a *App) adminLogs(w http.ResponseWriter, r *http.Request) {
@@ -352,7 +353,78 @@ func (a *App) logDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "请求日志不存在")
 		return
 	}
-	writeJSON(w, http.StatusOK, item)
+	writeJSON(w, http.StatusOK, publicLogDetail(item))
+}
+
+// Public log responses keep tenant-owned request and response content while
+// removing routing, credential, accounting, and diagnostic internals.
+func publicLogPage(page store.LogPage) store.LogPage {
+	for index := range page.Items {
+		redactPublicLog(&page.Items[index])
+	}
+	return page
+}
+
+func publicLogDetail(item store.LogWithDetail) store.LogWithDetail {
+	redactPublicLog(&item.Log)
+	if item.Detail != nil {
+		item.Detail.ForwardedHeaders = "{}"
+		item.Detail.ForwardedBody = ""
+		item.Detail.ForwardedBodyTruncated = false
+		item.Detail.ForwardedBodyBytes = 0
+		item.Detail.UpstreamHeaders = "{}"
+		item.Detail.ErrorMessage = ""
+		item.Detail.ErrorStack = ""
+		item.Detail.ErrorCause = ""
+		item.Detail.ErrorDetail = ""
+		item.Detail.StageTimings = "{}"
+	}
+	return item
+}
+
+func redactPublicLog(log *db.RequestLog) {
+	log.TenantID = ""
+	log.APIKeyID = ""
+	log.ReservationRequestID = nil
+	log.CPARequestID = ""
+	log.CPATraceID = ""
+	log.CPAExecutionID = ""
+	log.Provider = ""
+	log.ExecutorType = ""
+	log.AuthType = ""
+	log.AuthIndex = ""
+	log.ServiceTier = ""
+	log.ResponseServiceTier = ""
+	log.ParentSubscriptionID = nil
+	log.ChildSubscriptionID = nil
+	log.ParentSubscriptionName = ""
+	log.ChildSubscriptionName = ""
+	log.ChannelID = ""
+	log.ChannelName = ""
+	log.CredentialID = ""
+	log.CredentialName = ""
+	log.CredentialEmail = ""
+	log.TenantName = ""
+	log.APIKeyName = ""
+	log.APIKeyPrefix = ""
+	log.PriceSource = ""
+	log.PriceVersion = ""
+	log.PriceModel = ""
+	log.InputPriceNanoUSD = 0
+	log.OutputPriceNanoUSD = 0
+	log.CachedPriceNanoUSD = 0
+	log.CacheWritePriceNanoUSD = 0
+	log.ReasoningPriceNanoUSD = 0
+	log.ImageInputPriceNanoUSD = 0
+	log.CachedImageInputPriceNanoUSD = 0
+	log.ImageOutputPriceNanoUSD = 0
+	log.PriceMultiplier = 0
+	log.PricingComplete = false
+	log.Settled = false
+	log.ReservedNanoUSD = 0
+	log.ForwardedBodyBytes = 0
+	log.StageTimings = "{}"
+	log.ErrorMessage = ""
 }
 
 func (a *App) adminLogDetail(w http.ResponseWriter, r *http.Request) {

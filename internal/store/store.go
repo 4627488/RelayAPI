@@ -909,6 +909,7 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 
 type LogQuery struct {
 	TenantID     string
+	Public       bool
 	Page         int
 	PageSize     int
 	Query        string
@@ -953,10 +954,17 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	}
 	if text := strings.TrimSpace(input.Query); text != "" {
 		like := "%" + text + "%"
-		query = query.Where(
-			"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR cpa_trace_id ILIKE ?",
-			like, like, like, like, like, like, like, like, like, like, like, like, like, like,
-		)
+		if input.Public {
+			query = query.Where(
+				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_code ILIKE ?",
+				like, like, like, like, like, like, like, like,
+			)
+		} else {
+			query = query.Where(
+				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR cpa_trace_id ILIKE ?",
+				like, like, like, like, like, like, like, like, like, like, like, like, like, like,
+			)
+		}
 	}
 	switch input.Status {
 	case "success":

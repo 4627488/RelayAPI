@@ -32,6 +32,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -219,14 +220,11 @@ export function ProxiesView() {
         ))}
       </div>
 
-      <div className="rounded-lg border bg-muted/35 px-4 py-3 text-sm text-muted-foreground">
-        <div className="flex gap-3">
-          <ShieldCheckIcon className="mt-0.5 size-4 shrink-0" />
-          <p>
-            地址与认证信息加密保存且不会回显。测试固定访问出口信息服务，避免代理测试接口被用来请求内网或任意地址。
-          </p>
-        </div>
-      </div>
+      <Alert>
+        <ShieldCheckIcon />
+        <AlertTitle>凭据不会回显</AlertTitle>
+        <AlertDescription>代理测试仅访问固定的出口信息服务。</AlertDescription>
+      </Alert>
 
       {items.length ? (
         <div className="grid items-stretch gap-3 lg:grid-cols-2">
@@ -274,18 +272,15 @@ export function ProxiesView() {
                   </div>
                   {result ? (
                     result.ok ? (
-                      <div className="space-y-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3">
+                      <Alert>
                         <div className="flex items-center justify-between gap-3">
-                          <span className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                            <CircleCheckIcon className="size-4" />
-                            代理可用
-                          </span>
+                          <AlertTitle className="flex items-center gap-2"><CircleCheckIcon />代理可用</AlertTitle>
                           <Badge variant="outline">
                             <Clock3Icon />
                             {result.latency_ms} ms
                           </Badge>
                         </div>
-                        <div className="grid gap-2 text-sm sm:grid-cols-2">
+                        <AlertDescription className="grid gap-2 sm:grid-cols-2">
                           <p className="flex min-w-0 items-center gap-2">
                             <Globe2Icon className="size-4 shrink-0 text-muted-foreground" />
                             <span
@@ -313,13 +308,14 @@ export function ProxiesView() {
                               {result.asn ? ` · AS${result.asn}` : ""}
                             </span>
                           </p>
-                        </div>
-                      </div>
+                        </AlertDescription>
+                      </Alert>
                     ) : (
-                      <div className="flex gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive">
-                        <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
-                        <span>{result.error || "代理测试失败"}</span>
-                      </div>
+                      <Alert variant="destructive">
+                        <TriangleAlertIcon />
+                        <AlertTitle>代理测试失败</AlertTitle>
+                        <AlertDescription>{result.error}</AlertDescription>
+                      </Alert>
                     )
                   ) : (
                     <div className="flex flex-1 items-center gap-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
