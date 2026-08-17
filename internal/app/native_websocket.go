@@ -136,6 +136,7 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	completed := time.Now()
 	timeline.Step(completed, "websocket_settlement", "WebSocket 结算", "billing", "结算会话内已完成的计费用量")
 	timeline.Mark(completed, "complete", "会话结束")
+	a.addEmbeddedCPATrace(timeline, requestID)
 	logContext.requestBytes = accounting.requestBytes
 	logContext.forwardedBytes = accounting.forwardedBytes
 	logContext.responseBytes = accounting.responseBytes
@@ -194,6 +195,7 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	turnTimeline := newLatencyTimeline(entry.StartedAt)
 	turnTimeline.Step(turnCompleted, "websocket_turn", "WebSocket 请求轮次", "downstream", "从 response.create 到终止事件的完整轮次")
 	turnTimeline.Mark(turnCompleted, "complete", "轮次结束")
+	a.addEmbeddedCPATraceSnapshot(turnTimeline, requestID)
 	logContext.stageTimings = turnTimeline.JSON(turnCompleted)
 	logID := requestID
 	if accounting.turnsSeen > 0 {

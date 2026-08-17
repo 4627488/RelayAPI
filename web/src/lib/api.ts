@@ -160,6 +160,11 @@ export interface RequestLogPage {
     cached_tokens: number
     cost_nano_usd: number
     average_latency_ms: number
+    latency_p50_ms: number
+    latency_p95_ms: number
+    ttft_p50_ms: number
+    ttft_p95_ms: number
+    ttft_samples: number
     request_bytes: number
     response_bytes: number
   }

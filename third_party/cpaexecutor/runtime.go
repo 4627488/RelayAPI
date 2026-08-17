@@ -121,6 +121,7 @@ type Runtime struct {
 	globalProxy      string
 	managementSecret string
 	oauthDir         string
+	traces           *requestTraceRegistry
 }
 
 type credentialRoute struct {
@@ -174,6 +175,7 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 	runtime := &Runtime{
 		cfg: cfg, manager: manager, routes: make(map[string]credentialRoute),
 		modelRoutes: make(map[string]credentialRoute), modelNames: make(map[string]string), authIDs: make(map[string]struct{}), globalProxy: strings.TrimSpace(opts.ProxyURL),
+		traces: newRequestTraceRegistry(),
 	}
 	if opts.OnOAuthCredential != nil {
 		oauthDir, errTemp := os.MkdirTemp("", "relayapi-oauth-")
@@ -200,7 +202,7 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 
 	var engine *gin.Engine
 	serverOptions := []api.ServerOption{
-		api.WithMiddleware(runtime.pinCredentialMiddleware()),
+		api.WithMiddleware(runtime.requestTraceMiddleware(), runtime.pinCredentialMiddleware()),
 		api.WithEngineConfigurator(func(value *gin.Engine) { engine = value }),
 		api.WithRouterConfigurator(func(_ *gin.Engine, base *handlers.BaseAPIHandler, _ *internalconfig.Config) {
 			base.SetModelRouterHost(runtime)
@@ -261,12 +263,31 @@ func (r *Runtime) registerBaselineExecutors() {
 		executor.NewOpenAICompatExecutor("openai", r.cfg),
 		executor.NewOpenAICompatExecutor("openai-compatibility", r.cfg),
 	} {
-		r.manager.RegisterExecutor(exec)
+		r.manager.RegisterExecutor(observeExecutor(exec, r.traces))
 	}
 }
 
 // Handler returns CPA's public inference HTTP handler.
 func (r *Runtime) Handler() http.Handler { return r.handler }
+
+// TakeRequestTrace returns and removes the CPA-internal trace for one Relay
+// request. Relay calls this after the downstream response has completed so
+// long streaming traces do not need to cross an HTTP response header.
+func (r *Runtime) TakeRequestTrace(requestID string) (RequestTrace, bool) {
+	if r == nil {
+		return RequestTrace{}, false
+	}
+	return r.traces.take(requestID)
+}
+
+// RequestTraceSnapshot returns a non-consuming copy for a completed turn of a
+// long-lived WebSocket request. The final session still consumes the trace.
+func (r *Runtime) RequestTraceSnapshot(requestID string) (RequestTrace, bool) {
+	if r == nil {
+		return RequestTrace{}, false
+	}
+	return r.traces.snapshot(requestID)
+}
 
 // CredentialCount reports the number of enabled credentials installed.
 func (r *Runtime) CredentialCount() int {
@@ -704,7 +725,7 @@ func (r *Runtime) ensureExecutor(provider string) {
 	if _, ok := r.manager.Executor(provider); ok {
 		return
 	}
-	r.manager.RegisterExecutor(executor.NewOpenAICompatExecutor(provider, r.cfg))
+	r.manager.RegisterExecutor(observeExecutor(executor.NewOpenAICompatExecutor(provider, r.cfg), r.traces))
 }
 
 func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, credentialRoute, []*registry.ModelInfo, error) {
