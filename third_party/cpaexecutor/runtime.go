@@ -36,6 +36,8 @@ const transientCredentialCooldownSeconds = 1
 
 const maxDiscoveredModelCatalogBytes int64 = 16 << 20
 
+const credentialSessionAffinityTTL = time.Hour
+
 // Credential is Relay's storage-neutral representation of one CPA credential.
 // Document is the original CPA auth JSON (or a config-derived API-key document).
 type Credential struct {
@@ -122,6 +124,7 @@ type Runtime struct {
 	managementSecret string
 	oauthDir         string
 	traces           *requestTraceRegistry
+	routingStrategy  string
 }
 
 type credentialRoute struct {
@@ -166,16 +169,14 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 		TransientErrorCooldownSeconds: credentialCooldownSeconds(opts.DisableCredentialCooling),
 	}
 	cfg.DisableImageGeneration = imageGenerationMode(opts.DisableImageGeneration)
-	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{}, runtimeAuthHook{updated: opts.OnCredentialUpdated})
-	if opts.RoutingStrategy == "fill-first" {
-		manager.SetSelector(&coreauth.FillFirstSelector{})
-	}
+	routingStrategy := normalizedRoutingStrategy(opts.RoutingStrategy)
+	manager := coreauth.NewManager(nil, newCredentialSelector(routingStrategy), runtimeAuthHook{updated: opts.OnCredentialUpdated})
 	manager.SetRetryConfig(opts.RequestRetry, opts.MaxRetryInterval, opts.MaxRetryCredentials)
 	accessManager := sdkaccess.NewManager()
 	runtime := &Runtime{
 		cfg: cfg, manager: manager, routes: make(map[string]credentialRoute),
 		modelRoutes: make(map[string]credentialRoute), modelNames: make(map[string]string), authIDs: make(map[string]struct{}), globalProxy: strings.TrimSpace(opts.ProxyURL),
-		traces: newRequestTraceRegistry(),
+		traces: newRequestTraceRegistry(), routingStrategy: routingStrategy,
 	}
 	if opts.OnOAuthCredential != nil {
 		oauthDir, errTemp := os.MkdirTemp("", "relayapi-oauth-")
@@ -637,9 +638,15 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	nextIDs := make(map[string]struct{}, len(compiled))
+	for _, item := range compiled {
+		nextIDs[item.auth.ID] = struct{}{}
+	}
 	for id := range r.authIDs {
-		r.manager.Remove(ctx, id)
-		registry.GetGlobalRegistry().UnregisterClient(id)
+		if _, keep := nextIDs[id]; !keep {
+			r.manager.Remove(ctx, id)
+			registry.GetGlobalRegistry().UnregisterClient(id)
+		}
 	}
 	r.routes = make(map[string]credentialRoute, len(compiled))
 	r.modelRoutes = make(map[string]credentialRoute)
@@ -649,8 +656,17 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 	for _, item := range compiled {
 		provider := item.route.provider
 		r.ensureExecutor(provider)
-		if _, err := r.manager.Register(ctx, item.auth); err != nil {
-			return fmt.Errorf("register CPA credential %q: %w", item.auth.ID, err)
+		if previous, exists := r.manager.GetByID(item.auth.ID); exists && credentialAffinityScopeEqual(previous, item.auth) {
+			if _, err := r.manager.Update(ctx, item.auth); err != nil {
+				return fmt.Errorf("update CPA credential %q: %w", item.auth.ID, err)
+			}
+		} else {
+			if exists {
+				r.manager.Remove(ctx, item.auth.ID)
+			}
+			if _, err := r.manager.Register(ctx, item.auth); err != nil {
+				return fmt.Errorf("register CPA credential %q: %w", item.auth.ID, err)
+			}
 		}
 		r.authIDs[item.auth.ID] = struct{}{}
 		r.routes[item.auth.ID] = item.route
@@ -659,9 +675,22 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 			r.modelRoutes[key] = item.route
 			r.modelNames[key] = public
 		}
+		registry.GetGlobalRegistry().UnregisterClient(item.auth.ID)
 		registry.GetGlobalRegistry().RegisterClient(item.auth.ID, provider, item.models)
 	}
 	return nil
+}
+
+func credentialAffinityScopeEqual(left, right *coreauth.Auth) bool {
+	if left == nil || right == nil || left.Provider != right.Provider {
+		return false
+	}
+	for _, key := range []string{"base_url", "account_id", "project_id", "location", "region", "vendor"} {
+		if strings.TrimSpace(left.Attributes[key]) != strings.TrimSpace(right.Attributes[key]) {
+			return false
+		}
+	}
+	return true
 }
 
 // ApplySettings updates the runtime configuration used by handlers and the
@@ -687,18 +716,38 @@ func (r *Runtime) ApplySettings(ctx context.Context, settings Settings) error {
 	r.cfg.DisableCooling = settings.DisableCredentialCooling
 	r.cfg.TransientErrorCooldownSeconds = credentialCooldownSeconds(settings.DisableCredentialCooling)
 	r.globalProxy = strings.TrimSpace(settings.ProxyURL)
+	routingStrategy := normalizedRoutingStrategy(settings.RoutingStrategy)
+	strategyChanged := routingStrategy != r.routingStrategy
+	r.routingStrategy = routingStrategy
 	credentials := append([]Credential(nil), r.credentials...)
 	r.mu.Unlock()
-	if settings.RoutingStrategy == "fill-first" {
-		r.manager.SetSelector(&coreauth.FillFirstSelector{})
-	} else {
-		r.manager.SetSelector(&coreauth.RoundRobinSelector{})
+	if strategyChanged {
+		r.manager.SetSelector(newCredentialSelector(routingStrategy))
 	}
 	r.manager.SetRetryConfig(settings.RequestRetry, settings.MaxRetryInterval, settings.MaxRetryCredentials)
 	coreauth.SetQuotaCooldownDisabled(settings.DisableCredentialCooling)
 	coreauth.SetTransientErrorCooldownSeconds(credentialCooldownSeconds(settings.DisableCredentialCooling))
 	r.manager.SetConfig(r.cfg)
 	return r.ReplaceCredentials(ctx, credentials)
+}
+
+func normalizedRoutingStrategy(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "fill-first") {
+		return "fill-first"
+	}
+	return "round-robin"
+}
+
+func newCredentialSelector(strategy string) coreauth.Selector {
+	var fallback coreauth.Selector = &coreauth.RoundRobinSelector{}
+	if normalizedRoutingStrategy(strategy) == "fill-first" {
+		fallback = &coreauth.FillFirstSelector{}
+	}
+	return coreauth.NewSessionAffinitySelectorWithConfig(coreauth.SessionAffinityConfig{
+		Fallback:      fallback,
+		TTL:           credentialSessionAffinityTTL,
+		AuthAttribute: "session_affinity",
+	})
 }
 
 func credentialCooldownSeconds(disabled bool) int {
@@ -749,7 +798,7 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	for _, key := range []string{
 		"api_key", "base_url", "compat_name", "provider_key", "account_id", "project_id",
 		"location", "region", "priority", "prefix", "cloak_mode", "token_endpoint",
-		"plan_type", "auth_kind", "upstream_api",
+		"plan_type", "auth_kind", "upstream_api", "vendor", "cache_mode", "session_affinity",
 	} {
 		if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
 			attrs[key] = strings.TrimSpace(value)
@@ -760,7 +809,14 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 		attrs["provider_key"] = provider
 	}
 	if credentialProvider == "aliyun-bailian" {
-		attrs["upstream_api"] = "responses"
+		attrs["vendor"] = "aliyun-bailian"
+		attrs["session_affinity"] = "true"
+		if strings.TrimSpace(attrs["upstream_api"]) == "" {
+			attrs["upstream_api"] = "auto"
+		}
+		if strings.TrimSpace(attrs["cache_mode"]) == "" {
+			attrs["cache_mode"] = "auto"
+		}
 	}
 	proxyURL := stringValue(metadata, "proxy_url")
 	if proxyURL == "" {

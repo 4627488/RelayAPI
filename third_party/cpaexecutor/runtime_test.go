@@ -131,8 +131,14 @@ func TestRuntimeDiscoversOpenAICompatibleModelsThroughCPAExecutor(t *testing.T) 
 	if !ok {
 		t.Fatal("Bailian credential was not installed")
 	}
-	if auth.Attributes["upstream_api"] != "responses" {
-		t.Fatalf("Bailian upstream API = %q, want responses", auth.Attributes["upstream_api"])
+	if auth.Attributes["upstream_api"] != "auto" {
+		t.Fatalf("Bailian upstream API = %q, want auto", auth.Attributes["upstream_api"])
+	}
+	if auth.Attributes["vendor"] != "aliyun-bailian" || auth.Attributes["cache_mode"] != "auto" || auth.Attributes["session_affinity"] != "true" {
+		t.Fatalf("Bailian capabilities = vendor %q, cache %q, affinity %q", auth.Attributes["vendor"], auth.Attributes["cache_mode"], auth.Attributes["session_affinity"])
+	}
+	if _, ok := runtime.manager.Selector().(*coreauth.SessionAffinitySelector); !ok {
+		t.Fatalf("credential selector = %T, want session affinity", runtime.manager.Selector())
 	}
 
 	models, source, err := runtime.DiscoverCredentialModels(context.Background(), "bailian")
@@ -141,6 +147,34 @@ func TestRuntimeDiscoversOpenAICompatibleModelsThroughCPAExecutor(t *testing.T) 
 	}
 	if source != "cpa_upstream" || strings.Join(models, ",") != "qwen-max,qwen-plus" {
 		t.Fatalf("models = %v, source = %q", models, source)
+	}
+}
+
+func TestRuntimeCredentialRefreshPreservesBailianSessionAffinity(t *testing.T) {
+	credentials := []Credential{
+		{ID: "bailian-a", Provider: "aliyun-bailian", Enabled: true, Models: []string{"qwen-plus"}, Document: []byte(`{"type":"openai-compatibility","api_key":"key-a","base_url":"https://example.test/v1"}`)},
+		{ID: "bailian-b", Provider: "aliyun-bailian", Enabled: true, Models: []string{"qwen-plus"}, Document: []byte(`{"type":"openai-compatibility","api_key":"key-b","base_url":"https://example.test/v1"}`)},
+	}
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	opts := cliproxyexecutor.Options{OriginalRequest: []byte(`{"model":"qwen-plus","messages":[{"role":"user","content":"stable session"}]}`)}
+	first, errFirst := runtime.manager.SelectAuth(context.Background(), "openai-compatibility", "qwen-plus", opts)
+	if errFirst != nil {
+		t.Fatal(errFirst)
+	}
+	if errReplace := runtime.ReplaceCredentials(context.Background(), credentials); errReplace != nil {
+		t.Fatal(errReplace)
+	}
+	second, errSecond := runtime.manager.SelectAuth(context.Background(), "openai-compatibility", "qwen-plus", opts)
+	if errSecond != nil {
+		t.Fatal(errSecond)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("session moved from %q to %q after credential refresh", first.ID, second.ID)
 	}
 }
 

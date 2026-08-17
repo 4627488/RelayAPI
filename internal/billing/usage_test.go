@@ -20,6 +20,11 @@ func TestParseResponseProtocols(t *testing.T) {
 			want:    store.Usage{Prompt: 10, Completion: 4, Cached: 3, Reasoning: 2, Total: 14},
 		},
 		{
+			name:    "bailian chat cache details",
+			payload: `{"id":"chat_1","usage":{"prompt_tokens":1200,"completion_tokens":20,"total_tokens":1220,"prompt_tokens_details":{"cached_tokens":900}}}`,
+			want:    store.Usage{Prompt: 1200, Completion: 20, Cached: 900, Total: 1220},
+		},
+		{
 			name:    "anthropic messages SSE",
 			payload: "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":13,\"output_tokens\":1,\"cache_read_input_tokens\":5,\"cache_creation_input_tokens\":2}}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n",
 			want:    store.Usage{Prompt: 18, Completion: 7, Cached: 5, CacheWrite: 2, Total: 27},

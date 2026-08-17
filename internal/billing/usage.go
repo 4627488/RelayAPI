@@ -107,9 +107,12 @@ func readUsage(raw any, result *Result) {
 	cacheReadTokens := maxInt(
 		number(usage["cached_tokens"]), number(usage["cache_read_input_tokens"]),
 		nestedNumber(usage, "input_tokens_details", "cached_tokens"),
+		nestedNumber(usage, "prompt_tokens_details", "cached_tokens"),
 	)
 	cacheWriteTokens := maxInt(
 		number(usage["cache_creation_input_tokens"]), number(usage["cache_write_tokens"]),
+		nestedNumber(usage, "input_tokens_details", "cache_write_tokens"),
+		nestedNumber(usage, "prompt_tokens_details", "cache_write_tokens"),
 	)
 	// Anthropic Messages reports uncached input, cache reads, and cache writes as
 	// disjoint counters. Internally Prompt includes cache reads (CostNanoUSD
