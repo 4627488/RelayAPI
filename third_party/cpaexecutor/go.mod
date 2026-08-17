@@ -2,11 +2,11 @@ module github.com/router-for-me/CLIProxyAPI/v7/relaybridge
 
 go 1.26.0
 
-replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260813083436-82af90f73edc
+replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260817034450-ae28fe4d175d
 
 require (
 	github.com/gin-gonic/gin v1.10.1
-	github.com/router-for-me/CLIProxyAPI/v7 v7.2.130
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.134
 	golang.org/x/crypto v0.54.0
 )
 

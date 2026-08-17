@@ -5,10 +5,10 @@ go 1.26.0
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.10.9
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.134
 	github.com/router-for-me/CLIProxyAPI/v7/relaybridge v0.0.0
 	github.com/tidwall/gjson v1.18.0
 	golang.org/x/crypto v0.54.0
-	golang.org/x/net v0.57.0
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/postgres v1.6.0
@@ -17,7 +17,7 @@ require (
 
 replace github.com/router-for-me/CLIProxyAPI/v7/relaybridge => ./third_party/cpaexecutor
 
-replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260813083436-82af90f73edc
+replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260817034450-ae28fe4d175d
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
@@ -69,7 +69,6 @@ require (
 	github.com/pion/webrtc/v4 v4.2.17 // indirect
 	github.com/redis/go-redis/v9 v9.19.0 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
-	github.com/router-for-me/CLIProxyAPI/v7 v7.2.130 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
@@ -81,6 +80,7 @@ require (
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/arch v0.8.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect

@@ -1,7 +1,7 @@
 cloud.google.com/go/compute/metadata v0.3.0 h1:Tz+eQXMEqDIKRsmY3cHTL6FVaynIjX2QxYC4trgAKZc=
 cloud.google.com/go/compute/metadata v0.3.0/go.mod h1:zFmK7XCadkQkj6TtorcaGlCW1hT1fIilQDwofLpJ20k=
-github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260813083436-82af90f73edc h1:uZqS5UuKtDwttKH2TiNoVJ53Y7X4WzsTAhU4HngYJKg=
-github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260813083436-82af90f73edc/go.mod h1:lTHwMAGajc1wKGQiRtDvYbwV0FWsM7sy+N0ZU5/gxJQ=
+github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260817034450-ae28fe4d175d h1:flvL7xVtBv6PFEOis3Z6o+pcf6cg0K0LADvARRRrLoE=
+github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260817034450-ae28fe4d175d/go.mod h1:lTHwMAGajc1wKGQiRtDvYbwV0FWsM7sy+N0ZU5/gxJQ=
 github.com/andybalholm/brotli v1.0.6 h1:Yf9fFpf49Zrxb9NlQaluyE92/+X7UVHlhMNJN2sxfOI=
 github.com/andybalholm/brotli v1.0.6/go.mod h1:fO7iG3H7G2nSZ7m0zPUDn85XEX2GTukHGRSepvi9Eig=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
