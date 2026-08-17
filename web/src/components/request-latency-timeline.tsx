@@ -10,10 +10,18 @@ type LatencySegment = {
   id: string
   label: string
   owner: LatencyOwner
-  track: "critical" | "network"
+  track: "critical" | "cpa" | "attempt" | "network"
   start_ms: number
   duration_ms: number
   description?: string
+  attempt?: number
+  status?: string
+  provider?: string
+  model?: string
+  credential?: string
+  error?: string
+  reused?: boolean
+  remote_addr?: string
 }
 
 type LatencyMark = {
@@ -33,8 +41,8 @@ type LatencyTrace = {
 const ownerMeta: Record<LatencyOwner, { label: string; bar: string }> = {
   relay: { label: "Relay", bar: "bg-foreground" },
   queue: { label: "排队", bar: "bg-chart-2" },
-  cpa: { label: "CPA 链路", bar: "bg-chart-3" },
-  upstream: { label: "上游", bar: "bg-chart-4" },
+  cpa: { label: "CPA 内部", bar: "bg-chart-3" },
+  upstream: { label: "供应商", bar: "bg-chart-4" },
   downstream: { label: "响应传输", bar: "bg-chart-2" },
   billing: { label: "计费", bar: "bg-chart-5" },
 }
@@ -45,9 +53,14 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
 
   const total = Math.max(trace.total_ms, totalMS, 0.001)
   const critical = trace.segments.filter((segment) => segment.track === "critical")
+  const cpa = trace.segments.filter((segment) => segment.track === "cpa")
+  const attempts = trace.segments.filter((segment) => segment.track === "attempt" && segment.id.startsWith("cpa_attempt_"))
+  const retryWaits = trace.segments.filter((segment) => segment.track === "attempt" && segment.id.startsWith("cpa_retry_wait_"))
   const network = trace.segments.filter((segment) => segment.track === "network")
+  const providerNetwork = network.filter((segment) => segment.id.startsWith("cpa_attempt_"))
+  const relayNetwork = network.filter((segment) => !segment.id.startsWith("cpa_attempt_"))
   const attribution = ownerTotals(critical)
-  const diagnosis = diagnose(attribution, total, stream)
+  const diagnosis = diagnose(attribution, total, stream, attempts, retryWaits, cpa, providerNetwork)
 
   return (
     <section className="overflow-hidden rounded-lg border bg-card">
@@ -67,8 +80,8 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
         <div className="mt-4 grid grid-cols-2 border sm:grid-cols-4">
           <Metric icon={<ClockIcon />} label="端到端" value={formatMS(total)} />
           <Metric icon={<GaugeIcon />} label="首字节" value={ttftMS != null ? formatMS(ttftMS) : "未观测"} />
+          <Metric icon={<ActivityIcon />} label="上游尝试" value={attempts.length ? `${attempts.length} 次` : "未采集"} />
           <Metric icon={<NetworkIcon />} label="主要耗时" value={`${ownerMeta[diagnosis.owner].label} ${formatPercent(diagnosis.duration / total)}`} />
-          <Metric icon={<ActivityIcon />} label="关键阶段" value={`${critical.length} 个`} />
         </div>
 
         <div className="mt-4 flex h-2 overflow-hidden rounded-sm bg-muted">
@@ -92,21 +105,49 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
       </div>
 
       <div className="overflow-x-auto p-4 sm:p-5">
-        <div className="min-w-[600px]">
+        <div className="min-w-[680px]">
           <TimeRuler total={total} />
           <div className="mt-3 flex flex-col gap-2">
             {critical.map((segment, index) => <TimelineRow key={`${segment.id}-${index}`} segment={segment} total={total} />)}
           </div>
 
-          {network.length ? (
+          {cpa.length || attempts.length ? (
+            <div className="mt-5 border-t pt-4">
+              <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium">
+                <ActivityIcon className="size-3.5 text-muted-foreground" />
+                CPA 内部执行
+                <span className="font-normal text-muted-foreground">真实 executor 调用；多次尝试代表重试、凭据切换或模型池回退</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                {[...cpa, ...attempts, ...retryWaits].sort((a, b) => a.start_ms - b.start_ms).map((segment, index) => (
+                  <TimelineRow key={`${segment.id}-${index}`} segment={segment} total={total} compact detail />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {providerNetwork.length ? (
             <div className="mt-5 border-t pt-4">
               <div className="mb-3 flex items-center gap-2 text-xs font-medium">
                 <NetworkIcon className="size-3.5 text-muted-foreground" />
-                HTTP 网络细节
-                <span className="font-normal text-muted-foreground">可与关键路径重叠，不重复计入归因</span>
+                供应商网络细节
+                <span className="font-normal text-muted-foreground">每次尝试独立采集，可与关键路径重叠</span>
               </div>
               <div className="flex flex-col gap-2">
-                {network.map((segment, index) => <TimelineRow key={`${segment.id}-${index}`} segment={segment} total={total} compact />)}
+                {providerNetwork.map((segment, index) => <TimelineRow key={`${segment.id}-${index}`} segment={segment} total={total} compact />)}
+              </div>
+            </div>
+          ) : null}
+
+          {relayNetwork.length ? (
+            <div className="mt-5 border-t pt-4">
+              <div className="mb-3 flex items-center gap-2 text-xs font-medium">
+                <NetworkIcon className="size-3.5 text-muted-foreground" />
+                Relay → CPA 本地链路
+                <span className="font-normal text-muted-foreground">连接池与本机 HTTP 写入，不代表供应商网络</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                {relayNetwork.map((segment, index) => <TimelineRow key={`${segment.id}-${index}`} segment={segment} total={total} compact />)}
               </div>
             </div>
           ) : null}
@@ -117,7 +158,7 @@ export function RequestLatencyTimeline({ value, totalMS, ttftMS, stream }: { val
 
       {trace.boundary ? (
         <div className="border-t bg-muted/25 px-4 py-3 text-xs text-muted-foreground sm:px-5">
-          {trace.boundary}。供应商内部阶段不在观测范围内。
+          {trace.boundary}。
         </div>
       ) : null}
     </section>
@@ -135,7 +176,7 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value:
 
 function TimeRuler({ total }: { total: number }) {
   return (
-    <div className="grid grid-cols-[150px_1fr] items-end gap-3">
+    <div className="grid grid-cols-[180px_1fr] items-end gap-3">
       <span className="text-xs text-muted-foreground">阶段</span>
       <div className="relative h-5 border-b">
         {[0, 25, 50, 75, 100].map((percent) => (
@@ -149,22 +190,30 @@ function TimeRuler({ total }: { total: number }) {
   )
 }
 
-function TimelineRow({ segment, total, compact = false }: { segment: LatencySegment; total: number; compact?: boolean }) {
+function TimelineRow({ segment, total, compact = false, detail = false }: { segment: LatencySegment; total: number; compact?: boolean; detail?: boolean }) {
   const left = Math.min(100, Math.max(0, segment.start_ms / total * 100))
   const width = Math.min(100 - left, Math.max(0, segment.duration_ms / total * 100))
   const meta = ownerMeta[segment.owner]
   return (
-    <div className="group grid grid-cols-[150px_1fr] items-center gap-3" title={segment.description}>
+    <div className="group grid grid-cols-[180px_1fr] items-center gap-3" title={[segment.description, segment.error].filter(Boolean).join(" · ")}>
       <div className="min-w-0">
-        <div className="truncate text-xs font-medium">{segment.label}</div>
+        <div className="flex min-w-0 items-center gap-1.5">
+          {detail && segment.status ? <span className={cn("size-1.5 shrink-0 rounded-full", segment.status === "failed" ? "bg-destructive" : "bg-chart-2")} /> : null}
+          <div className="truncate text-xs font-medium">{segment.label}</div>
+        </div>
         <div className="text-[10px] tabular-nums text-muted-foreground">+{formatMS(segment.start_ms)} · {formatMS(segment.duration_ms)}</div>
+        {detail && (segment.provider || segment.model) ? (
+          <div className={cn("truncate text-[10px]", segment.error ? "text-destructive" : "text-muted-foreground")}>
+            {[segment.provider, segment.model].filter(Boolean).join(" · ")}{segment.error ? ` · ${segment.error}` : ""}
+          </div>
+        ) : null}
       </div>
       <div className={cn("relative overflow-hidden rounded-md bg-muted/70", compact ? "h-5" : "h-7")}>
         <div className="absolute inset-y-0 left-1/4 border-l border-dashed border-border/70" />
         <div className="absolute inset-y-0 left-1/2 border-l border-dashed border-border/70" />
         <div className="absolute inset-y-0 left-3/4 border-l border-dashed border-border/70" />
         <div
-          className={cn("absolute inset-y-1 min-w-[3px] rounded-sm transition-opacity duration-150 group-hover:opacity-75", meta.bar, compact && "opacity-75")}
+          className={cn("absolute inset-y-1 min-w-[3px] rounded-sm transition-opacity duration-150 group-hover:opacity-75", segment.status === "failed" ? "bg-destructive" : meta.bar, compact && "opacity-75")}
           style={{ left: `${left}%`, width: `max(${width}%, 3px)` }}
         />
         {!compact && width > 14 ? (
@@ -179,7 +228,7 @@ function TimelineRow({ segment, total, compact = false }: { segment: LatencySegm
 
 function TimelineMarks({ marks, total }: { marks: LatencyMark[]; total: number }) {
   return (
-    <div className="mt-4 grid grid-cols-[150px_1fr] gap-3 border-t pt-3">
+    <div className="mt-4 grid grid-cols-[180px_1fr] gap-3 border-t pt-3">
       <span className="text-xs text-muted-foreground">里程碑</span>
       <div className="relative h-9">
         {marks.map((mark) => {
@@ -200,16 +249,19 @@ function parseTrace(value?: string): LatencyTrace | null {
   if (!value) return null
   try {
     const parsed = JSON.parse(value) as Partial<LatencyTrace>
-    if (parsed.version !== 2 || !Array.isArray(parsed.segments) || typeof parsed.total_ms !== "number") return null
+    if ((parsed.version !== 2 && parsed.version !== 3) || !Array.isArray(parsed.segments) || typeof parsed.total_ms !== "number") return null
     const segments = parsed.segments.filter((segment): segment is LatencySegment => {
       if (!segment || typeof segment !== "object") return false
       const candidate = segment as Partial<LatencySegment>
       return typeof candidate.id === "string" && typeof candidate.label === "string" &&
         typeof candidate.start_ms === "number" && typeof candidate.duration_ms === "number" &&
-        (candidate.track === "critical" || candidate.track === "network") &&
+        (candidate.track === "critical" || candidate.track === "cpa" || candidate.track === "attempt" || candidate.track === "network") &&
         typeof candidate.owner === "string" && candidate.owner in ownerMeta
     })
-    return { version: 2, total_ms: parsed.total_ms, boundary: parsed.boundary, marks: parsed.marks, segments }
+    const marks = Array.isArray(parsed.marks) ? parsed.marks.filter((mark): mark is LatencyMark =>
+      Boolean(mark) && typeof mark.id === "string" && typeof mark.label === "string" && typeof mark.offset_ms === "number"
+    ) : undefined
+    return { version: parsed.version, total_ms: parsed.total_ms, boundary: parsed.boundary, marks, segments }
   } catch {
     return null
   }
@@ -221,13 +273,55 @@ function ownerTotals(segments: LatencySegment[]) {
   return result
 }
 
-function diagnose(totals: Record<LatencyOwner, number>, total: number, stream: boolean) {
+function diagnose(
+  totals: Record<LatencyOwner, number>,
+  total: number,
+  stream: boolean,
+  attempts: LatencySegment[],
+  retryWaits: LatencySegment[],
+  cpa: LatencySegment[],
+  network: LatencySegment[],
+) {
   let owner = (Object.keys(totals) as LatencyOwner[]).reduce((current, candidate) => totals[candidate] > totals[current] ? candidate : current, "relay")
+  const failedAttempts = attempts.filter((attempt) => attempt.status === "failed")
+  const retryWait = retryWaits.reduce((sum, segment) => sum + Math.max(0, segment.duration_ms), 0)
+  const providerWait = network.filter((segment) => segment.id.endsWith("_wait_first_byte")).reduce((sum, segment) => sum + Math.max(0, segment.duration_ms), 0)
+  const dispatch = cpa.reduce((sum, segment) => sum + Math.max(0, segment.duration_ms), 0)
+
+  if (attempts.length > 1) {
+    owner = retryWait > providerWait ? "queue" : "upstream"
+    const failed = failedAttempts.length ? `，其中 ${failedAttempts.length} 次失败` : ""
+    const waiting = retryWait > 0 ? `，重试等待 ${formatMS(retryWait)}` : ""
+    return {
+      owner,
+      duration: Math.max(retryWait, providerWait, attempts.reduce((sum, attempt) => sum + Math.max(0, attempt.duration_ms), 0)),
+      label: `${attempts.length} 次上游尝试`,
+      message: `CPA 实际发起了 ${attempts.length} 次供应商调用${failed}${waiting}。请按下方尝试顺序查看失败凭据、模型池回退和每次供应商首包等待。`,
+    }
+  }
+  if (providerWait > 0 && providerWait >= Math.max(dispatch, totals.relay, totals.billing)) {
+    owner = "upstream"
+    return {
+      owner,
+      duration: providerWait,
+      label: "供应商首包较慢",
+      message: `CPA 写完上游请求后等待供应商首个响应字节 ${formatMS(providerWait)}。连接、DNS 和 TLS 已单独列出，因此这里更接近供应商排队或模型启动时间。`,
+    }
+  }
+  if (dispatch > 0 && dispatch > Math.max(10, total * 0.15)) {
+    owner = "cpa"
+    return {
+      owner,
+      duration: dispatch,
+      label: "CPA 调度较慢",
+      message: `CPA 在协议路由、请求翻译与凭据选择上用了 ${formatMS(dispatch)}。如果该阶段持续偏高，应检查可用凭据规模、冷却状态和模型路由配置。`,
+    }
+  }
   if (stream && owner === "downstream") {
     return { owner, duration: totals[owner], label: "流式传输占主导", message: `响应建立后持续传输了 ${formatMS(totals.downstream)}。这是流式会话持续时间，不等同于首字节慢；请结合首字节指标判断模型是否启动缓慢。` }
   }
   if (owner === "upstream") {
-    return { owner, duration: totals[owner], label: "上游耗时占主导", message: `主要时间花在 CPA / 模型供应商返回响应上（${formatPercent(totals.upstream / total)}）。Relay 已完成鉴权、准入和转发，优先检查上游负载、凭据重试或模型生成速度。` }
+    return { owner, duration: totals[owner], label: "供应商耗时占主导", message: `主要时间花在供应商返回响应上（${formatPercent(totals.upstream / total)}）。可继续对照下方 CPA 尝试和网络阶段，区分连接、重试与模型生成。` }
   }
   if (owner === "queue") {
     return { owner, duration: totals[owner], label: "本地排队占主导", message: `请求主要等待 Relay 的 CPA 并发槽位（${formatMS(totals.queue)}）。这通常意味着本实例并发或请求体内存预算已接近上限。` }

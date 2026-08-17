@@ -102,6 +102,11 @@ const emptyPage: RequestLogPage = {
     cached_tokens: 0,
     cost_nano_usd: 0,
     average_latency_ms: 0,
+    latency_p50_ms: 0,
+    latency_p95_ms: 0,
+    ttft_p50_ms: 0,
+    ttft_p95_ms: 0,
+    ttft_samples: 0,
     request_bytes: 0,
     response_bytes: 0,
   },
@@ -197,13 +202,9 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
           value={data.summary.requests ? `${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%` : "0%"}
           hint="HTTP 错误或中断"
         />
+        <Stat label="总耗时" value={data.summary.requests ? `P50 ${formatMS(data.summary.latency_p50_ms)}` : "无数据"} hint={data.summary.requests ? `P95 ${formatMS(data.summary.latency_p95_ms)}` : "当前筛选范围"} />
+        <Stat label="首字节" value={data.summary.ttft_samples ? `P50 ${formatMS(data.summary.ttft_p50_ms)}` : "无数据"} hint={data.summary.ttft_samples ? `P95 ${formatMS(data.summary.ttft_p95_ms)}` : "当前筛选范围"} />
         <Stat label="Tokens" value={compactTokens(data.summary.tokens)} hint={`缓存命中 ${cacheRate}`} />
-        <Stat
-          label="负载"
-          value={bytes(data.summary.request_bytes + data.summary.response_bytes)}
-          hint={`${bytes(data.summary.request_bytes)} ↑ · ${bytes(data.summary.response_bytes)} ↓`}
-        />
-        <Stat label="平均耗时" value={`${Math.round(data.summary.average_latency_ms)} ms`} hint="当前筛选范围" />
         <Stat label="费用" value={money(data.summary.cost_nano_usd)} hint="当前筛选范围" />
       </dl>
 
@@ -728,6 +729,14 @@ function prettyJSON(value?: string) {
   }
 }
 
+function formatMS(value: number) {
+  if (!Number.isFinite(value)) return "—"
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 1 : 2)} s`
+  if (value >= 10) return `${value.toFixed(0)} ms`
+  if (value >= 1) return `${value.toFixed(1)} ms`
+  return `${Math.max(0, value).toFixed(3)} ms`
+}
+
 function hasJSONObject(value?: string) {
   if (!value) return false
   try {
@@ -743,7 +752,7 @@ function parseNumberRecord(value?: string) {
   if (!value) return {} as Record<string, number>
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>
-    if (parsed.version === 2 && Array.isArray(parsed.segments)) return {} as Record<string, number>
+    if ((parsed.version === 2 || parsed.version === 3) && Array.isArray(parsed.segments)) return {} as Record<string, number>
     return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === "number"))
   } catch {
     return {} as Record<string, number>

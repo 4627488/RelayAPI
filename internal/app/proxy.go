@@ -507,6 +507,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		logContext.detail.ErrorMessage = err.Error()
 		completed := time.Now()
 		timeline.Step(completed, "relay_transport_error", "处理传输错误", "relay", "归类 CPA 连接错误并释放预留")
+		a.addEmbeddedCPATrace(timeline, requestID)
 		logContext.detail.StageTimings = timeline.JSON(completed)
 		logContext.stageTimings = logContext.detail.StageTimings
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
@@ -655,6 +656,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	completed := time.Now()
 	timeline.Step(completed, "usage_and_settlement", "用量解析与结算", "billing", "解析 usage、计算费用并结算请求预留")
 	timeline.Mark(completed, "complete", "请求完成")
+	a.addEmbeddedCPATrace(timeline, requestID)
 	logContext.detail.StageTimings = timeline.JSON(completed)
 	logContext.stageTimings = logContext.detail.StageTimings
 	a.writeRequestLog(key, requestID, admission, meta, r, clientStatus, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)

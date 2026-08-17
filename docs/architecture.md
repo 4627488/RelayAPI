@@ -112,6 +112,31 @@ prewarm, replay, compaction, credential pinning and multi-turn state retain CPA
 semantics. Relay observes terminal response events only for accounting and
 does not translate protocol frames.
 
+## Request observability
+
+Every inference request has one Relay request ID across the public handler,
+loopback CPA handler and provider executor. Relay records a versioned trace in
+`stage_timings`; version 3 keeps four separate tracks so overlapping spans are
+never added together as if they were a serial critical path:
+
+- `critical` is the end-to-end path through Relay admission, CPA dispatch,
+  downstream transfer and settlement.
+- `cpa` measures protocol routing, translation and credential selection before
+  an executor begins. A CPA rejection with no provider attempt remains visible.
+- `attempt` records every real executor call plus the gaps between calls, making
+  credential rotation, model-pool fallback, OAuth replay and retry waits
+  distinguishable from model latency.
+- `network` uses Go HTTP trace callbacks for connection-pool wait, DNS, TCP,
+  TLS, request write and provider first-response-byte timing. Relay-to-CPA
+  loopback spans and CPA-to-provider spans retain separate identities.
+
+CPA traces stay in a bounded in-memory registry only until Relay finishes the
+request and merges them into the existing log row. No additional database write
+or synchronous export sits on the forwarding path. Trace errors contain only a
+classified code/status; credentials, headers, tokens and provider bodies are
+never copied into timing metadata. The UI reads both legacy version 2 traces and
+version 3 traces, so deployment does not require a data migration.
+
 Relay request logs have separate summary and detail retention. Sensitive
 headers are redacted; bodies carry original byte counts and truncation flags.
 Successful requests retain summaries only by default. Error bodies are capped
