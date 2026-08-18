@@ -696,7 +696,11 @@ export function UsageView({
         </CardHeader>
         <CardContent>
           {hasRows ? (
-            <DimensionTable report={report} dimension={dimension} />
+            <DimensionTable
+              key={dimension}
+              report={report}
+              dimension={dimension}
+            />
           ) : (
             <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
               当前范围内没有可归因的用量
