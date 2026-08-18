@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
 import {
   ActivityIcon,
@@ -8,7 +8,6 @@ import {
   DatabaseIcon,
   KeyRoundIcon,
   LoaderCircleIcon,
-  RefreshCwIcon,
   ShieldCheckIcon,
   UsersIcon,
   WalletCardsIcon,
@@ -559,47 +558,26 @@ export function UsageView({
   const [loading, setLoading] = useState(false)
   const requestID = useRef(0)
 
-  const load = useCallback(
-    async (nextDays: Period, nextUserID = userID, showLoading = true) => {
-      const currentRequest = ++requestID.current
-      setDays(nextDays)
-      setUserID(nextUserID)
-      if (nextUserID !== "all" && dimension === "users") setDimension("models")
-      if (showLoading) setLoading(true)
-      try {
-        const params = new URLSearchParams({ days: String(nextDays) })
-        if (admin && nextUserID !== "all") params.set("user_id", nextUserID)
-        const next = await api<UsageReport>(
-          `${admin ? "/api/admin/usage" : "/api/usage"}?${params}`,
-          { cache: "no-store" }
-        )
-        if (currentRequest === requestID.current) setReport(next)
-      } catch (cause) {
-        if (currentRequest === requestID.current && showLoading)
-          toast.error(cause instanceof Error ? cause.message : "读取用量失败")
-      } finally {
-        if (currentRequest === requestID.current) setLoading(false)
-      }
-    },
-    [admin, dimension, userID]
-  )
-
-  useEffect(() => {
-    setReport(initialReport)
-  }, [initialReport])
-
-  useEffect(() => {
-    const refresh = () => void load(days, userID, false)
-    const interval = window.setInterval(refresh, 15_000)
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") refresh()
+  async function load(nextDays: Period, nextUserID = userID) {
+    const currentRequest = ++requestID.current
+    setDays(nextDays)
+    setUserID(nextUserID)
+    if (nextUserID !== "all" && dimension === "users") setDimension("models")
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ days: String(nextDays) })
+      if (admin && nextUserID !== "all") params.set("user_id", nextUserID)
+      const next = await api<UsageReport>(
+        `${admin ? "/api/admin/usage" : "/api/usage"}?${params}`
+      )
+      if (currentRequest === requestID.current) setReport(next)
+    } catch (cause) {
+      if (currentRequest === requestID.current)
+        toast.error(cause instanceof Error ? cause.message : "读取用量失败")
+    } finally {
+      if (currentRequest === requestID.current) setLoading(false)
     }
-    document.addEventListener("visibilitychange", refreshWhenVisible)
-    return () => {
-      window.clearInterval(interval)
-      document.removeEventListener("visibilitychange", refreshWhenVisible)
-    }
-  }, [days, load, userID])
+  }
 
   const hasRows =
     dimension === "users"
@@ -635,16 +613,6 @@ export function UsageView({
               </SelectContent>
             </Select>
           ) : null}
-          <Button
-            size="icon-sm"
-            variant="outline"
-            aria-label="刷新用量"
-            title="刷新用量"
-            disabled={loading}
-            onClick={() => void load(days, userID)}
-          >
-            <RefreshCwIcon className={loading ? "animate-spin" : ""} />
-          </Button>
           <div className="flex rounded-lg border bg-background p-0.5">
             {periods.map((period) => (
               <Button
@@ -728,7 +696,11 @@ export function UsageView({
         </CardHeader>
         <CardContent>
           {hasRows ? (
-            <DimensionTable report={report} dimension={dimension} />
+            <DimensionTable
+              key={dimension}
+              report={report}
+              dimension={dimension}
+            />
           ) : (
             <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
               当前范围内没有可归因的用量
