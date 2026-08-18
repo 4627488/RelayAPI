@@ -206,6 +206,14 @@ export interface UsageReport {
     requests: number
     errors: number
     tokens: number
+    prompt_tokens: number
+    completion_tokens: number
+    cached_tokens: number
+    cache_write_tokens: number
+    reasoning_tokens: number
+    image_input_tokens: number
+    cached_image_input_tokens: number
+    image_output_tokens: number
     cost_nano_usd: number
     subscription_covered_nano_usd: number
     balance_charged_nano_usd: number
@@ -215,12 +223,19 @@ export interface UsageReport {
     requests: number
     errors: number
     tokens: number
+    prompt_tokens: number
+    completion_tokens: number
+    cached_tokens: number
     cost_nano_usd: number
   }>
   models: Array<{
     model: string
     requests: number
+    errors: number
     tokens: number
+    prompt_tokens: number
+    completion_tokens: number
+    cached_tokens: number
     cost_nano_usd: number
   }>
   api_keys: Array<{
@@ -228,6 +243,14 @@ export interface UsageReport {
     api_key_name: string
     api_key_prefix: string
     tenant_name?: string
+    requests: number
+    errors: number
+    tokens: number
+    cost_nano_usd: number
+  }>
+  users: Array<{
+    tenant_id: string
+    tenant_name: string
     requests: number
     errors: number
     tokens: number

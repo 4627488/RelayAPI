@@ -1180,17 +1180,29 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		base = base.Where("tenant_id = ?", tenantID)
 	}
 	type summary struct {
-		Requests            int64 `json:"requests"`
-		Errors              int64 `json:"errors"`
-		Tokens              int64 `json:"tokens"`
-		Cost                int64 `json:"cost_nano_usd"`
-		SubscriptionCovered int64 `json:"subscription_covered_nano_usd"`
-		BalanceCharged      int64 `json:"balance_charged_nano_usd"`
+		Requests               int64 `json:"requests"`
+		Errors                 int64 `json:"errors"`
+		Tokens                 int64 `json:"tokens"`
+		PromptTokens           int64 `json:"prompt_tokens"`
+		CompletionTokens       int64 `json:"completion_tokens"`
+		CachedTokens           int64 `json:"cached_tokens"`
+		CacheWriteTokens       int64 `json:"cache_write_tokens"`
+		ReasoningTokens        int64 `json:"reasoning_tokens"`
+		ImageInputTokens       int64 `json:"image_input_tokens"`
+		CachedImageInputTokens int64 `json:"cached_image_input_tokens"`
+		ImageOutputTokens      int64 `json:"image_output_tokens"`
+		Cost                   int64 `json:"cost_nano_usd"`
+		SubscriptionCovered    int64 `json:"subscription_covered_nano_usd"`
+		BalanceCharged         int64 `json:"balance_charged_nano_usd"`
 	}
 	var total summary
 	if err := base.Joins("LEFT JOIN parent_subscriptions ON parent_subscriptions.id = request_logs.parent_subscription_id").Select(
 		"count(*) AS requests, " +
 			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(request_logs.error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
+			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, " +
+			"COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, " +
+			"COALESCE(sum(reasoning_tokens),0) AS reasoning_tokens, COALESCE(sum(image_input_tokens),0) AS image_input_tokens, " +
+			"COALESCE(sum(cached_image_input_tokens),0) AS cached_image_input_tokens, COALESCE(sum(image_output_tokens),0) AS image_output_tokens, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
 			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode = 'observed' THEN cost_nano_usd ELSE 0 END),0) AS subscription_covered, " +
 			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode = 'observed' THEN 0 ELSE cost_nano_usd END),0) AS balance_charged",
@@ -1204,6 +1216,10 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	var rolledTotal summary
 	if err := rollupBase.Select(
 		"COALESCE(sum(requests),0) AS requests, COALESCE(sum(errors),0) AS errors, " +
+			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, " +
+			"COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, " +
+			"COALESCE(sum(reasoning_tokens),0) AS reasoning_tokens, COALESCE(sum(image_input_tokens),0) AS image_input_tokens, " +
+			"COALESCE(sum(cached_image_input_tokens),0) AS cached_image_input_tokens, COALESCE(sum(image_output_tokens),0) AS image_output_tokens, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
 			"COALESCE(sum(subscription_covered_nano_usd),0) AS subscription_covered, " +
 			"COALESCE(sum(balance_charged_nano_usd),0) AS balance_charged",
@@ -1213,22 +1229,35 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	total.Requests += rolledTotal.Requests
 	total.Errors += rolledTotal.Errors
 	total.Tokens += rolledTotal.Tokens
+	total.PromptTokens += rolledTotal.PromptTokens
+	total.CompletionTokens += rolledTotal.CompletionTokens
+	total.CachedTokens += rolledTotal.CachedTokens
+	total.CacheWriteTokens += rolledTotal.CacheWriteTokens
+	total.ReasoningTokens += rolledTotal.ReasoningTokens
+	total.ImageInputTokens += rolledTotal.ImageInputTokens
+	total.CachedImageInputTokens += rolledTotal.CachedImageInputTokens
+	total.ImageOutputTokens += rolledTotal.ImageOutputTokens
 	total.Cost += rolledTotal.Cost
 	total.SubscriptionCovered += rolledTotal.SubscriptionCovered
 	total.BalanceCharged += rolledTotal.BalanceCharged
 	type daily struct {
-		Date     string `json:"date"`
-		Requests int64  `json:"requests"`
-		Errors   int64  `json:"errors"`
-		Tokens   int64  `json:"tokens"`
-		Cost     int64  `json:"cost_nano_usd"`
+		Date             string `json:"date"`
+		Requests         int64  `json:"requests"`
+		Errors           int64  `json:"errors"`
+		Tokens           int64  `json:"tokens"`
+		PromptTokens     int64  `json:"prompt_tokens"`
+		CompletionTokens int64  `json:"completion_tokens"`
+		CachedTokens     int64  `json:"cached_tokens"`
+		Cost             int64  `json:"cost_nano_usd"`
 	}
 	dailyItems := make([]daily, 0)
 	dailyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
 			"to_char(started_at, 'YYYY-MM-DD') AS date, count(*) AS requests, "+
 				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
-				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
+				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
+				"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
+				"COALESCE(sum(cost_nano_usd),0) AS cost",
 		).Where("started_at >= ?", since)
 	if tenantID != "" {
 		dailyQuery = dailyQuery.Where("tenant_id = ?", tenantID)
@@ -1239,7 +1268,9 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	}
 	rolledDailyQuery := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).Select(
 		"to_char(day, 'YYYY-MM-DD') AS date, COALESCE(sum(requests),0) AS requests, "+
-			"COALESCE(sum(errors),0) AS errors, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
+			"COALESCE(sum(errors),0) AS errors, COALESCE(sum(total_tokens),0) AS tokens, "+
+			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, "+
+			"COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
 	).Where("day >= ?", since)
 	if tenantID != "" {
 		rolledDailyQuery = rolledDailyQuery.Where("tenant_id = ?", tenantID)
@@ -1255,6 +1286,9 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		value.Requests += item.Requests
 		value.Errors += item.Errors
 		value.Tokens += item.Tokens
+		value.PromptTokens += item.PromptTokens
+		value.CompletionTokens += item.CompletionTokens
+		value.CachedTokens += item.CachedTokens
 		value.Cost += item.Cost
 		dailyByDate[item.Date] = value
 	}
@@ -1264,15 +1298,22 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	}
 	sort.Slice(dailyItems, func(i, j int) bool { return dailyItems[i].Date < dailyItems[j].Date })
 	type modelTotal struct {
-		Model    string `json:"model"`
-		Requests int64  `json:"requests"`
-		Tokens   int64  `json:"tokens"`
-		Cost     int64  `json:"cost_nano_usd"`
+		Model            string `json:"model"`
+		Requests         int64  `json:"requests"`
+		Errors           int64  `json:"errors"`
+		Tokens           int64  `json:"tokens"`
+		PromptTokens     int64  `json:"prompt_tokens"`
+		CompletionTokens int64  `json:"completion_tokens"`
+		CachedTokens     int64  `json:"cached_tokens"`
+		Cost             int64  `json:"cost_nano_usd"`
 	}
 	models := make([]modelTotal, 0)
 	modelQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
-			"model, count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+
+			"model, count(*) AS requests, "+
+				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
+				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
+				"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
 				"COALESCE(sum(cost_nano_usd),0) AS cost",
 		).Where("started_at >= ?", since)
 	if tenantID != "" {
@@ -1282,7 +1323,10 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		return nil, err
 	}
 	rolledModelQuery := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).Select(
-		"model, COALESCE(sum(requests),0) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
+		"model, COALESCE(sum(requests),0) AS requests, COALESCE(sum(errors),0) AS errors, "+
+			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
+			"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
+			"COALESCE(sum(cost_nano_usd),0) AS cost",
 	).Where("day >= ?", since)
 	if tenantID != "" {
 		rolledModelQuery = rolledModelQuery.Where("tenant_id = ?", tenantID)
@@ -1296,7 +1340,11 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		value := modelsByName[item.Model]
 		value.Model = item.Model
 		value.Requests += item.Requests
+		value.Errors += item.Errors
 		value.Tokens += item.Tokens
+		value.PromptTokens += item.PromptTokens
+		value.CompletionTokens += item.CompletionTokens
+		value.CachedTokens += item.CachedTokens
 		value.Cost += item.Cost
 		modelsByName[item.Model] = value
 	}
@@ -1329,8 +1377,55 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		Order("tokens DESC, requests DESC").Scan(&apiKeys).Error; err != nil {
 		return nil, err
 	}
+	type userTotal struct {
+		TenantID   string `json:"tenant_id"`
+		TenantName string `json:"tenant_name"`
+		Requests   int64  `json:"requests"`
+		Errors     int64  `json:"errors"`
+		Tokens     int64  `json:"tokens"`
+		Cost       int64  `json:"cost_nano_usd"`
+	}
+	users := make([]userTotal, 0)
+	if tenantID == "" {
+		var liveUsers []userTotal
+		if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Select(
+			"tenant_id, tenant_name, count(*) AS requests, "+
+				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
+				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
+		).Where("started_at >= ?", since).Group("tenant_id, tenant_name").Scan(&liveUsers).Error; err != nil {
+			return nil, err
+		}
+		var rolledUsers []userTotal
+		if err := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).
+			Joins("LEFT JOIN tenants ON tenants.id = usage_daily_rollups.tenant_id").
+			Select(
+				"usage_daily_rollups.tenant_id, COALESCE(tenants.name, '') AS tenant_name, "+
+					"COALESCE(sum(usage_daily_rollups.requests),0) AS requests, COALESCE(sum(usage_daily_rollups.errors),0) AS errors, "+
+					"COALESCE(sum(usage_daily_rollups.total_tokens),0) AS tokens, COALESCE(sum(usage_daily_rollups.cost_nano_usd),0) AS cost",
+			).Where("usage_daily_rollups.day >= ?", since).
+			Group("usage_daily_rollups.tenant_id, tenants.name").Scan(&rolledUsers).Error; err != nil {
+			return nil, err
+		}
+		usersByID := make(map[string]userTotal, len(liveUsers)+len(rolledUsers))
+		for _, item := range append(liveUsers, rolledUsers...) {
+			value := usersByID[item.TenantID]
+			value.TenantID = item.TenantID
+			if item.TenantName != "" {
+				value.TenantName = item.TenantName
+			}
+			value.Requests += item.Requests
+			value.Errors += item.Errors
+			value.Tokens += item.Tokens
+			value.Cost += item.Cost
+			usersByID[item.TenantID] = value
+		}
+		for _, item := range usersByID {
+			users = append(users, item)
+		}
+		sort.Slice(users, func(i, j int) bool { return users[i].Tokens > users[j].Tokens })
+	}
 	return map[string]any{
 		"days": days, "user_id": tenantID, "summary": total,
-		"daily": dailyItems, "models": models, "api_keys": apiKeys,
+		"daily": dailyItems, "models": models, "api_keys": apiKeys, "users": users,
 	}, nil
 }

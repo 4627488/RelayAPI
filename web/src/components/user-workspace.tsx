@@ -64,13 +64,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  ApiKeyUsageTable,
-  LogsTable,
-  ModelTable,
-  UsageChart,
-  UsageMetrics,
-} from "@/components/data-views"
+import { LogsTable, UsageChart, UsageMetrics } from "@/components/data-views"
+import { UsageView } from "@/components/usage-view"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ModelSelector } from "@/components/model-selector"
@@ -162,14 +157,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
     )
   if (page === "subscriptions") return <TenantSubscriptionsView />
   if (page === "usage") {
-    return (
-      <div className="flex flex-col gap-4">
-        <UsageMetrics report={usage} />
-        <UsageChart report={usage} />
-        <ApiKeyUsageTable report={usage} />
-        <ModelTable report={usage} />
-      </div>
-    )
+    return <UsageView initialReport={usage} />
   }
 
   return (

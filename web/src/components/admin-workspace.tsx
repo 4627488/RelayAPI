@@ -17,14 +17,8 @@ import {
 import { toast } from "sonner"
 
 import type { Page } from "@/components/app-shell"
-import {
-  ApiKeyUsageTable,
-  LogsTable,
-  MetricGrid,
-  ModelTable,
-  UsageChart,
-  UsageMetrics,
-} from "@/components/data-views"
+import { LogsTable, MetricGrid, UsageChart } from "@/components/data-views"
+import { UsageView } from "@/components/usage-view"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
@@ -175,14 +169,7 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
   if (page === "logs") return <RequestLogsWorkbench admin />
   if (page === "pricing") return <PricingView />
   if (page === "usage") {
-    return (
-      <div className="flex flex-col gap-4">
-        <UsageMetrics report={usage} />
-        <UsageChart report={usage} />
-        <ApiKeyUsageTable report={usage} showTenant />
-        <ModelTable report={usage} />
-      </div>
-    )
+    return <UsageView initialReport={usage} admin users={users} />
   }
 
   return (
@@ -753,7 +740,9 @@ function InvitationsView({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold tracking-tight">邀请</h1>
-          <p className="text-sm text-muted-foreground">生成单次邀请并查看使用状态。</p>
+          <p className="text-sm text-muted-foreground">
+            生成单次邀请并查看使用状态。
+          </p>
         </div>
         <Button
           onClick={() => {

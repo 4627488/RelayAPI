@@ -27,7 +27,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sqlDB.Close()
-	if err := database.Exec(`TRUNCATE cpa_lifecycle_events, request_log_details, request_reservations,
+	if err := database.Exec(`TRUNCATE cpa_lifecycle_events, request_log_details, request_reservations, usage_daily_rollups,
 		child_quota_windows, child_subscriptions, parent_quota_observations, parent_quota_windows,
 		parent_subscriptions, billing_ledgers, request_logs, model_price_rules, model_aliases,
 		model_catalog_prices, model_prices, api_keys, invitations, tenants CASCADE`).Error; err != nil {
@@ -88,7 +88,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err := dataStore.WriteLog(ctx, LogInput{
 		ID: requestID, TenantID: tenantID, APIKeyID: keyID, Model: "alias-model",
 		RequestedModel: "alias-model", Method: "POST", Path: "/v1/responses", RequestType: "responses",
-		StatusCode: 200, Usage: Usage{Prompt: 10, Completion: 2, Total: 12},
+		StatusCode: 200, Usage: Usage{Prompt: 10, Completion: 2, Cached: 4, Reasoning: 1, Total: 12},
 		CostNanoUSD: &cost, Price: &resolved, PricingComplete: true, Settled: true,
 		StartedAt: started, CompletedAt: time.Now(), LatencyMS: 1000,
 		RequestBodyBytes: 128, ForwardedBodyBytes: 144, ResponseBodyBytes: 512,
@@ -165,6 +165,44 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}
 	if len(keyUsage) != 1 || keyUsage[0].APIKeyID != keyID || keyUsage[0].Requests != 2 || keyUsage[0].Tokens != 15 {
 		t.Fatalf("API key usage = %#v", report["api_keys"])
+	}
+	rawSummary, err := json.Marshal(report["summary"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usageSummary struct {
+		Requests         int64 `json:"requests"`
+		Tokens           int64 `json:"tokens"`
+		PromptTokens     int64 `json:"prompt_tokens"`
+		CompletionTokens int64 `json:"completion_tokens"`
+		CachedTokens     int64 `json:"cached_tokens"`
+		ReasoningTokens  int64 `json:"reasoning_tokens"`
+	}
+	if err := json.Unmarshal(rawSummary, &usageSummary); err != nil {
+		t.Fatal(err)
+	}
+	if usageSummary.Requests != 2 || usageSummary.Tokens != 15 || usageSummary.PromptTokens != 12 ||
+		usageSummary.CompletionTokens != 3 || usageSummary.CachedTokens != 4 || usageSummary.ReasoningTokens != 1 {
+		t.Fatalf("usage summary = %+v", usageSummary)
+	}
+	adminReport, err := dataStore.UsageReport(ctx, "", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawUsers, err := json.Marshal(adminReport["users"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var userUsage []struct {
+		TenantID string `json:"tenant_id"`
+		Requests int64  `json:"requests"`
+		Tokens   int64  `json:"tokens"`
+	}
+	if err := json.Unmarshal(rawUsers, &userUsage); err != nil {
+		t.Fatal(err)
+	}
+	if len(userUsage) != 1 || userUsage[0].TenantID != tenantID || userUsage[0].Requests != 2 || userUsage[0].Tokens != 15 {
+		t.Fatalf("user usage = %#v", adminReport["users"])
 	}
 	history, err := dataStore.HistoricalModelPrices(ctx)
 	if err != nil {
