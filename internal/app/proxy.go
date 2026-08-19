@@ -345,7 +345,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	bodyReadAt := time.Now()
 	timeline.Step(bodyReadAt, "read_request_body", "读取客户端请求", "downstream", "读取并缓存客户端请求体")
 	originalBody := body
-	logContext := requestLogContext{detail: baseRequestDetail(r, body), requestBytes: int64(len(body))}
+	logContext := requestLogContext{requestBytes: int64(len(body))}
 	meta := requestMetadata(body, r)
 	clientRequestedModel := meta.Model
 	resolved := resolveAPIKeyModel(resolveClaudeCatalogModel(meta.Model), key.ModelAliases)
@@ -476,9 +476,6 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
 		}
 		upstream.Host = targetCPA.BaseURL.Host
-		logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
-		captureForwardedRequest(logContext.detail, originalBody, body)
-		logContext.forwardedBytes = int64(len(body))
 		timeline.Step(time.Now(), "prepare_cpa_request", "准备 CPA 请求", "relay", "构造 CPA 请求、改写正文并准备安全转发头")
 		transportStarted = true
 		response, err = targetCPA.HTTP.Do(upstream)
@@ -489,6 +486,17 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if transportStarted {
 		timeline.AddHTTPTrace(clientTraceState, upstreamResultAt)
 	}
+	statusForDetail, errorForDetail := 0, ""
+	if err != nil {
+		errorForDetail = classifyCPATransportError(err, r.Context().Err(), "awaiting_headers").Code
+	} else if response != nil {
+		statusForDetail = response.StatusCode
+	}
+	var forwardedHeader http.Header
+	if upstream != nil {
+		forwardedHeader = upstream.Header
+	}
+	a.maybeCaptureForwardedRequest(&logContext, r, originalBody, body, forwardedHeader, requestID, statusForDetail, errorForDetail)
 	// The transport has completely sent the request by the time Do returns.
 	// Break the response -> request -> bytes.Reader retention chain before a
 	// potentially long SSE response keeps the full client payload alive.
@@ -503,13 +511,14 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		a.releaseReservation(requestID, billable)
 		classified := classifyCPATransportError(err, r.Context().Err(), "awaiting_headers")
 		logContext.errorCode = classified.Code
-		logContext.detail.ErrorName = "upstream_error"
-		logContext.detail.ErrorMessage = err.Error()
+		detail := logContext.ensureDetail()
+		detail.ErrorName = "upstream_error"
+		detail.ErrorMessage = err.Error()
 		completed := time.Now()
 		timeline.Step(completed, "relay_transport_error", "处理传输错误", "relay", "归类 CPA 连接错误并释放预留")
 		a.addEmbeddedCPATrace(timeline, requestID)
-		logContext.detail.StageTimings = timeline.JSON(completed)
-		logContext.stageTimings = logContext.detail.StageTimings
+		detail.StageTimings = timeline.JSON(completed)
+		logContext.stageTimings = detail.StageTimings
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
 		writeCPATransportError(w, r, err, "awaiting_headers", requestID)
 		return
@@ -611,16 +620,9 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	rawResponse, responseTruncated, responseBytes := capture.Info()
 	logContext.cpaTraceID = strings.TrimSpace(response.Header.Get("X-CPA-TRACE-ID"))
-	logContext.detail.UpstreamStatus = response.StatusCode
-	logContext.detail.UpstreamHeaders = sanitizedHeaders(response.Header)
-	logContext.detail.UpstreamBody, _, _ = boundedDetail(rawResponse)
-	logContext.detail.UpstreamBodyTruncated = responseTruncated || responseBytes > requestLogDetailLimit
-	logContext.detail.UpstreamBodyBytes = responseBytes
-	logContext.responseBytes = responseBytes
 	upstreamError := upstreamErrorInfo{}
 	if response.StatusCode >= http.StatusBadRequest {
 		upstreamError = describeUpstreamError(response.StatusCode, rawResponse)
-		logContext.detail.ErrorDetail = upstreamError.Summary
 		slog.Warn("upstream request failed",
 			"request_id", requestID,
 			"cpa_trace_id", logContext.cpaTraceID,
@@ -641,24 +643,38 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 CPA 响应并持续写回客户端")
 	if normalizedError != nil {
 		logContext.errorCode = normalizedError.Code
-		logContext.detail.ErrorName = logContext.errorCode
-		logContext.detail.ErrorMessage = normalizedError.Message
 		errorMessage = firstNonEmptyString(upstreamError.Summary, normalizedError.Message)
 	} else if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
 		logContext.errorCode = "upstream_http_error"
-		logContext.detail.ErrorName = logContext.errorCode
 		errorMessage = upstreamErrorMessage(response.StatusCode, rawResponse)
 	}
-	if copyErr != nil && normalizedError == nil {
-		logContext.detail.ErrorName = "stream_copy_error"
-		logContext.detail.ErrorMessage = copyErr.Error()
+	retainDetail := shouldRetainRequestDetail(requestID, clientStatus, logContext.errorCode, a.cfg.RequestSuccessSamplePPM)
+	logContext.maybeCaptureUpstream(response.StatusCode, response.Header, rawResponse, responseTruncated, responseBytes, retainDetail)
+	if retainDetail {
+		detail := logContext.ensureDetail()
+		if response.StatusCode >= http.StatusBadRequest {
+			detail.ErrorDetail = upstreamError.Summary
+		}
+		if normalizedError != nil {
+			detail.ErrorName = logContext.errorCode
+			detail.ErrorMessage = normalizedError.Message
+		} else if response.StatusCode >= http.StatusBadRequest && detail.ErrorName == "" {
+			detail.ErrorName = logContext.errorCode
+		}
+		if copyErr != nil && normalizedError == nil {
+			detail.ErrorName = "stream_copy_error"
+			detail.ErrorMessage = copyErr.Error()
+		}
 	}
 	completed := time.Now()
 	timeline.Step(completed, "usage_and_settlement", "用量解析与结算", "billing", "解析 usage、计算费用并结算请求预留")
 	timeline.Mark(completed, "complete", "请求完成")
 	a.addEmbeddedCPATrace(timeline, requestID)
-	logContext.detail.StageTimings = timeline.JSON(completed)
-	logContext.stageTimings = logContext.detail.StageTimings
+	stageTimings := timeline.JSON(completed)
+	if retainDetail {
+		logContext.ensureDetail().StageTimings = stageTimings
+	}
+	logContext.stageTimings = stageTimings
 	a.writeRequestLog(key, requestID, admission, meta, r, clientStatus, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
@@ -865,10 +881,7 @@ func (e *requestLimitError) Error() string { return e.Message }
 
 func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
 	if key.TenantTokenLimit != nil || key.TokenLimitDaily != nil {
-		tenantTokens, keyTokens, err := a.store.DailyTokens(ctx, key.TenantID, key.ID)
-		if err != nil {
-			return err
-		}
+		tenantTokens, keyTokens := key.DailyTokenUsage(time.Now())
 		if key.TenantTokenLimit != nil && tenantTokens >= *key.TenantTokenLimit {
 			return &requestLimitError{Code: "tenant_daily_token_limit_exceeded", Message: "租户今日 Token 使用额度已用尽，请等待次日重置"}
 		}

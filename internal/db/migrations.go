@@ -100,6 +100,36 @@ var migrations = []migration{
 			`ALTER TABLE upstream_credentials ADD CONSTRAINT upstream_credentials_proxy_fk FOREIGN KEY (proxy_id) REFERENCES outbound_proxies(id) ON DELETE RESTRICT`,
 		},
 	},
+	{
+		version: 8,
+		name:    "daily token counters on tenants and keys",
+		statements: []string{
+			`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS daily_tokens_used bigint NOT NULL DEFAULT 0`,
+			`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS daily_tokens_day date`,
+			`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS daily_tokens_used bigint NOT NULL DEFAULT 0`,
+			`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS daily_tokens_day date`,
+			`UPDATE tenants AS t SET
+				daily_tokens_used = s.tokens,
+				daily_tokens_day = CURRENT_DATE
+			 FROM (
+				SELECT tenant_id, COALESCE(SUM(total_tokens), 0) AS tokens
+				FROM request_logs
+				WHERE started_at >= date_trunc('day', now())
+				GROUP BY tenant_id
+			 ) AS s
+			 WHERE t.id = s.tenant_id`,
+			`UPDATE api_keys AS k SET
+				daily_tokens_used = s.tokens,
+				daily_tokens_day = CURRENT_DATE
+			 FROM (
+				SELECT api_key_id, COALESCE(SUM(total_tokens), 0) AS tokens
+				FROM request_logs
+				WHERE started_at >= date_trunc('day', now())
+				GROUP BY api_key_id
+			 ) AS s
+			 WHERE k.id = s.api_key_id`,
+		},
+	},
 }
 
 func runMigrations(ctx context.Context, database *gorm.DB) error {

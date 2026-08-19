@@ -99,7 +99,7 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	client, err := cpa.NewWithOptions("http://"+listener.Addr().String(), secret, "", cpa.Options{
+	client, err := cpa.NewWithOptions("http://"+listener.Addr().String(), secret, cpa.Options{
 		ResponseHeaderTimeout:   a.cfg.RequestTimeout,
 		MaxInFlight:             a.cfg.CPAMaxInFlight,
 		MaxQueue:                a.cfg.CPAMaxQueue,

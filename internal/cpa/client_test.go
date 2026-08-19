@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,7 +12,7 @@ import (
 )
 
 func TestAdmissionBoundsInFlightWithoutBufferingAQueue(t *testing.T) {
-	client, err := NewWithOptions("http://cpa.test", "api", "management", Options{
+	client, err := NewWithOptions("http://cpa.test", "api", Options{
 		MaxInFlight: 1, QueueTimeout: 0,
 	})
 	if err != nil {
@@ -38,7 +37,7 @@ func TestAdmissionBoundsInFlightWithoutBufferingAQueue(t *testing.T) {
 }
 
 func TestControlPlaneHasDedicatedConnectionPool(t *testing.T) {
-	client, err := NewWithOptions("http://cpa.test", "api", "management", Options{MaxInFlight: 7})
+	client, err := NewWithOptions("http://cpa.test", "api", Options{MaxInFlight: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +52,7 @@ func TestControlPlaneHasDedicatedConnectionPool(t *testing.T) {
 }
 
 func TestAdmissionBoundsRequestBodyBytes(t *testing.T) {
-	client, err := NewWithOptions("http://cpa.test", "api", "management", Options{
+	client, err := NewWithOptions("http://cpa.test", "api", Options{
 		MaxInFlight: 2, MaxRequestBytesInFlight: 10, QueueTimeout: 10 * time.Millisecond,
 	})
 	if err != nil {
@@ -73,7 +72,7 @@ func TestAdmissionBoundsRequestBodyBytes(t *testing.T) {
 }
 
 func TestAdmissionBoundsWaitingQueue(t *testing.T) {
-	client, err := NewWithOptions("http://cpa.test", "api", "management", Options{
+	client, err := NewWithOptions("http://cpa.test", "api", Options{
 		MaxInFlight: 1, MaxQueue: 1, QueueTimeout: time.Second,
 	})
 	if err != nil {
@@ -115,7 +114,7 @@ func TestAdmissionBoundsWaitingQueue(t *testing.T) {
 }
 
 func TestAdmissionLoadSheddingRemainsBoundedUnderBurst(t *testing.T) {
-	client, err := NewWithOptions("http://cpa.test", "api", "management", Options{
+	client, err := NewWithOptions("http://cpa.test", "api", Options{
 		MaxInFlight: 4, MaxQueue: 8, MaxRequestBytesInFlight: 16,
 		QueueTimeout: 20 * time.Millisecond,
 	})
@@ -151,7 +150,7 @@ func TestAdmissionLoadSheddingRemainsBoundedUnderBurst(t *testing.T) {
 }
 
 func TestCircuitBreakerAllowsOneRecoveryProbe(t *testing.T) {
-	client, err := NewWithOptions("http://cpa.test", "api", "management", Options{
+	client, err := NewWithOptions("http://cpa.test", "api", Options{
 		MaxInFlight: 2, QueueTimeout: 0, CircuitFailureThreshold: 2, CircuitOpenDuration: 10 * time.Millisecond,
 	})
 	if err != nil {
@@ -179,26 +178,6 @@ func TestCircuitBreakerAllowsOneRecoveryProbe(t *testing.T) {
 	lease.Release()
 }
 
-func TestControlPlaneReadinessDoesNotBypassDataPlaneCooldown(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"data":[]}`)
-	}))
-	defer server.Close()
-	client, err := NewWithOptions(server.URL, "api", "management", Options{
-		CircuitFailureThreshold: 1, CircuitOpenDuration: time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client.RecordTransportResult(errors.New("data plane failed"))
-	if err := client.Ready(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if status := client.AdmissionStatus(); status.Circuit != "open" {
-		t.Fatalf("readiness bypassed data-plane cooldown: %+v", status)
-	}
-}
-
 func TestResponseHeaderTimeoutDoesNotLimitStreamingBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -209,7 +188,7 @@ func TestResponseHeaderTimeoutDoesNotLimitStreamingBody(t *testing.T) {
 		_, _ = io.WriteString(w, "done")
 	}))
 	defer server.Close()
-	client, err := NewWithOptions(server.URL, "api", "management", Options{ResponseHeaderTimeout: 10 * time.Millisecond})
+	client, err := NewWithOptions(server.URL, "api", Options{ResponseHeaderTimeout: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,62 +200,5 @@ func TestResponseHeaderTimeoutDoesNotLimitStreamingBody(t *testing.T) {
 	payload, err := io.ReadAll(response.Body)
 	if err != nil || string(payload) != "done" {
 		t.Fatalf("stream payload/error = %q/%v", payload, err)
-	}
-}
-
-func TestModelsReturnsSortedUniqueCPAModels(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" {
-			t.Fatalf("path = %s", r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer api-secret" {
-			t.Fatal("missing API authorization")
-		}
-		_, _ = io.WriteString(w, `{"data":[{"id":"model-b"},{"id":" model-a "},{"id":"model-b"},{"id":""}]}`)
-	}))
-	defer server.Close()
-	client, err := New(server.URL, "api-secret", "management-secret", time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	models, err := client.Models(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"model-a", "model-b"}; !reflect.DeepEqual(models, want) {
-		t.Fatalf("models = %#v, want %#v", models, want)
-	}
-}
-
-func TestVersionAtLeast(t *testing.T) {
-	if !versionAtLeast("0.2.0", 0, 2, 0) || !versionAtLeast("1.0.0", 0, 2, 0) {
-		t.Fatal("expected compatible bridge versions")
-	}
-	if versionAtLeast("0.1.9", 0, 2, 0) || versionAtLeast("invalid", 0, 2, 0) {
-		t.Fatal("expected incompatible bridge version")
-	}
-}
-
-func TestQuotaReadyRequiresControlPlaneOnlyBridge(t *testing.T) {
-	version := "0.5.9"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v0/management/plugins" {
-			t.Fatalf("path = %s", r.URL.Path)
-		}
-		_, _ = w.Write([]byte(`{"plugins_enabled":true,"plugins":[{"id":"relayapi-bridge","effective_enabled":true,"metadata":{"version":"` + version + `"}}]}`))
-	}))
-	defer server.Close()
-	client, err := New(server.URL, "api", "management", time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ready, gotVersion, err := client.QuotaReady(t.Context())
-	if err != nil || ready || gotVersion != version {
-		t.Fatalf("quota ready/version/error = %v/%q/%v", ready, gotVersion, err)
-	}
-	version = "0.6.0"
-	ready, gotVersion, err = client.QuotaReady(t.Context())
-	if err != nil || !ready || gotVersion != version {
-		t.Fatalf("quota ready/version/error = %v/%q/%v", ready, gotVersion, err)
 	}
 }

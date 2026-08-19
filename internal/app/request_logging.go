@@ -122,6 +122,52 @@ func requestType(path string, websocket bool) string {
 	}
 }
 
+func (c *requestLogContext) ensureDetail() *store.LogDetailInput {
+	if c.detail == nil {
+		c.detail = &store.LogDetailInput{StageTimings: "{}"}
+	}
+	return c.detail
+}
+
+func (a *App) maybeCaptureForwardedRequest(logContext *requestLogContext, r *http.Request, original, forwarded []byte, upstreamHeader http.Header, requestID string, status int, errorCode string) {
+	if forwarded != nil {
+		logContext.forwardedBytes = int64(len(forwarded))
+	}
+	if !shouldRetainRequestDetail(requestID, status, errorCode, a.cfg.RequestSuccessSamplePPM) {
+		return
+	}
+	detail := logContext.ensureDetail()
+	if detail.RequestHeaders == "" {
+		base := baseRequestDetail(r, original)
+		detail.RequestHeaders = base.RequestHeaders
+		detail.RequestBody = base.RequestBody
+		detail.RequestBodyTruncated = base.RequestBodyTruncated
+		if detail.RequestBodyBytes == 0 {
+			detail.RequestBodyBytes = base.RequestBodyBytes
+		}
+		if detail.StageTimings == "" {
+			detail.StageTimings = base.StageTimings
+		}
+	}
+	if len(upstreamHeader) > 0 {
+		detail.ForwardedHeaders = sanitizedHeaders(upstreamHeader)
+	}
+	captureForwardedRequest(detail, original, forwarded)
+}
+
+func (c *requestLogContext) maybeCaptureUpstream(status int, header http.Header, raw []byte, truncated bool, bytes int64, retain bool) {
+	c.responseBytes = bytes
+	if !retain {
+		return
+	}
+	detail := c.ensureDetail()
+	detail.UpstreamStatus = status
+	detail.UpstreamHeaders = sanitizedHeaders(header)
+	detail.UpstreamBody, _, _ = boundedDetail(raw)
+	detail.UpstreamBodyTruncated = truncated || bytes > requestLogDetailLimit
+	detail.UpstreamBodyBytes = bytes
+}
+
 func captureWebSocketRequest(detail *store.LogDetailInput, payload []byte) {
 	if detail == nil {
 		return

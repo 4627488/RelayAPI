@@ -28,6 +28,7 @@ type Store struct {
 	pricingCatalog *pricing.Catalog
 	pricingMu      *sync.Mutex
 	secretBox      identity.SecretBox
+	keyTouches     *keyTouchState
 }
 type Tenant = db.Tenant
 type APIKey = db.APIKey
@@ -41,7 +42,7 @@ func New(database *gorm.DB, encryptionKey string) (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	s := Store{DB: database, pricingCatalog: pricing.NewCatalog(nil), pricingMu: &sync.Mutex{}, secretBox: secretBox}
+	s := Store{DB: database, pricingCatalog: pricing.NewCatalog(nil), pricingMu: &sync.Mutex{}, secretBox: secretBox, keyTouches: newKeyTouchState()}
 	if err := s.RefreshPricing(context.Background()); err != nil {
 		return Store{}, err
 	}
@@ -56,6 +57,8 @@ type KeyContext struct {
 	TenantRateLimit         *int
 	TenantTokenLimit        *int64
 	TenantModels            []string
+	TenantDailyTokens       int64
+	TenantDailyTokensDay    *time.Time
 	SubscriptionModelGrants []SubscriptionModelGrant
 	TenantExpiresAt         *time.Time
 }
@@ -403,86 +406,82 @@ func (s Store) DeleteKey(ctx context.Context, tenantID, id string) error {
 }
 
 func (s Store) ResolveKey(ctx context.Context, plain string) (KeyContext, error) {
-	var key APIKey
-	if err := scoped(ctx, s.DB).Preload("ModelAliases", func(database *gorm.DB) *gorm.DB {
-		return database.Order("alias")
-	}).Where("key_hash = ?", identity.HashKey(plain)).First(&key).Error; err != nil {
+	type joinedKey struct {
+		APIKey
+		TenantName           string         `gorm:"column:tenant_name"`
+		TenantEnabled        bool           `gorm:"column:tenant_enabled"`
+		TenantBalance        int64          `gorm:"column:tenant_balance"`
+		TenantRateLimit      *int           `gorm:"column:tenant_rate_limit"`
+		TenantTokenLimit     *int64         `gorm:"column:tenant_token_limit"`
+		TenantModels         pq.StringArray `gorm:"column:tenant_models"`
+		TenantExpiresAt      *time.Time     `gorm:"column:tenant_expires_at"`
+		TenantDailyTokens    int64          `gorm:"column:tenant_daily_tokens"`
+		TenantDailyTokensDay *time.Time     `gorm:"column:tenant_daily_tokens_day"`
+	}
+	var row joinedKey
+	if err := scoped(ctx, s.DB).
+		Table("api_keys").
+		Select(`api_keys.*,
+			tenants.name AS tenant_name,
+			tenants.enabled AS tenant_enabled,
+			tenants.balance_nano_usd AS tenant_balance,
+			tenants.rate_limit_per_minute AS tenant_rate_limit,
+			tenants.token_limit_daily AS tenant_token_limit,
+			tenants.model_allowlist AS tenant_models,
+			tenants.expires_at AS tenant_expires_at,
+			tenants.daily_tokens_used AS tenant_daily_tokens,
+			tenants.daily_tokens_day AS tenant_daily_tokens_day`).
+		Joins("JOIN tenants ON tenants.id = api_keys.tenant_id").
+		Where("api_keys.key_hash = ?", identity.HashKey(plain)).
+		Take(&row).Error; err != nil {
 		return KeyContext{}, notFound(err)
 	}
-	var tenant Tenant
-	if err := scoped(ctx, s.DB).First(&tenant, "id = ?", key.TenantID).Error; err != nil {
-		return KeyContext{}, notFound(err)
+	if err := scoped(ctx, s.DB).Where("api_key_id = ?", row.ID).Order("alias").Find(&row.ModelAliases).Error; err != nil {
+		return KeyContext{}, err
 	}
-	grants, err := s.ActiveSubscriptionModelGrants(ctx, key.TenantID, time.Now())
+	grants, err := s.ActiveSubscriptionModelGrants(ctx, row.TenantID, time.Now())
 	if err != nil {
 		return KeyContext{}, err
 	}
 	return KeyContext{
-		APIKey: key, TenantName: tenant.Name, TenantEnabled: tenant.Enabled,
-		TenantBalance: tenant.BalanceNanoUSD, TenantRateLimit: tenant.RateLimitPerMinute,
-		TenantTokenLimit: tenant.TokenLimitDaily, TenantModels: tenant.ModelAllowlist,
+		APIKey: row.APIKey, TenantName: row.TenantName, TenantEnabled: row.TenantEnabled,
+		TenantBalance: row.TenantBalance, TenantRateLimit: row.TenantRateLimit,
+		TenantTokenLimit: row.TenantTokenLimit, TenantModels: row.TenantModels,
+		TenantDailyTokens: row.TenantDailyTokens, TenantDailyTokensDay: row.TenantDailyTokensDay,
 		SubscriptionModelGrants: grants,
-		TenantExpiresAt:         tenant.ExpiresAt,
+		TenantExpiresAt:         row.TenantExpiresAt,
 	}, nil
 }
 
 func (s Store) TouchKey(ctx context.Context, id string) {
 	now := time.Now()
+	if !s.keyTouches.ShouldWrite(id, now) {
+		return
+	}
 	_ = scoped(ctx, s.DB).Model(&APIKey{}).Where("id = ?", id).Update("last_used_at", &now).Error
 }
 
 func (s Store) DailyTokens(ctx context.Context, tenantID, keyID string) (tenant, key int64, err error) {
-	type totals struct{ Tenant, Key int64 }
-	var value totals
 	now := time.Now()
-	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	err = scoped(ctx, s.DB).Model(&db.RequestLog{}).
-		Select("COALESCE(sum(total_tokens),0) AS tenant, COALESCE(sum(CASE WHEN api_key_id = ? THEN total_tokens ELSE 0 END),0) AS key", keyID).
-		Where("tenant_id = ? AND started_at >= ?", tenantID, dayStart).Scan(&value).Error
-	return value.Tenant, value.Key, err
-}
-
-func (s Store) Reserve(ctx context.Context, tenantID, requestID string, amount int64) error {
-	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		var tenant Tenant
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", tenantID).Error; err != nil {
-			return err
-		}
-		if !tenant.Enabled || tenant.BalanceNanoUSD < amount {
-			return errors.New("insufficient balance")
-		}
-		tenant.BalanceNanoUSD -= amount
-		if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
-			return err
-		}
-		return tx.Create(&db.BillingLedger{
-			ID: identity.NewID(), TenantID: tenantID, RequestID: &requestID, Kind: "reservation",
-			AmountNanoUSD: -amount, BalanceAfterNanoUSD: tenant.BalanceNanoUSD, Note: "request reserve",
-		}).Error
-	})
-}
-
-func (s Store) Settle(ctx context.Context, tenantID, requestID string, reserved, actual int64) error {
-	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		var tenant Tenant
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", tenantID).Error; err != nil {
-			return err
-		}
-		delta := reserved - actual
-		tenant.BalanceNanoUSD += delta
-		if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
-			return err
-		}
-		kind := "settlement"
-		if actual == 0 {
-			kind = "refund"
-		}
-		return tx.Create(&db.BillingLedger{
-			ID: identity.NewID(), TenantID: tenantID, RequestID: &requestID, Kind: kind,
-			AmountNanoUSD: delta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
-			Note: fmt.Sprintf("reserve=%d actual=%d", reserved, actual),
-		}).Error
-	})
+	var tenantRow struct {
+		Used int64
+		Day  *time.Time
+	}
+	if err = scoped(ctx, s.DB).Model(&Tenant{}).
+		Select("daily_tokens_used AS used, daily_tokens_day AS day").
+		Where("id = ?", tenantID).Scan(&tenantRow).Error; err != nil {
+		return 0, 0, err
+	}
+	var keyRow struct {
+		Used int64
+		Day  *time.Time
+	}
+	if err = scoped(ctx, s.DB).Model(&APIKey{}).
+		Select("daily_tokens_used AS used, daily_tokens_day AS day").
+		Where("id = ?", keyID).Scan(&keyRow).Error; err != nil {
+		return 0, 0, err
+	}
+	return dailyTokensForDay(tenantRow.Used, tenantRow.Day, now), dailyTokensForDay(keyRow.Used, keyRow.Day, now), nil
 }
 
 func (s Store) Credit(ctx context.Context, tenantID string, amount int64, note string) error {
@@ -821,6 +820,12 @@ func (s Store) writeLog(ctx context.Context, l LogInput, upsert bool) error {
 
 func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 	item := requestLogItem(l)
+	previousTokens := int64(0)
+	if upsert {
+		if err := tx.Model(&db.RequestLog{}).Select("total_tokens").Where("id = ?", item.ID).Scan(&previousTokens).Error; err != nil {
+			return err
+		}
+	}
 	if item.ParentSubscriptionID != nil {
 		var parent db.ParentSubscription
 		if err := tx.First(&parent, "id = ?", *item.ParentSubscriptionID).Error; err == nil {
@@ -868,6 +873,9 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 	if err := create.Create(&item).Error; err != nil {
 		return err
 	}
+	if err := applyDailyTokenDelta(tx, item.TenantID, item.APIKeyID, item.StartedAt, previousTokens, item.TotalTokens); err != nil {
+		return err
+	}
 	if l.Detail != nil {
 		detail := db.RequestLogDetail{
 			RequestLogID: l.ID, RequestHeaders: l.Detail.RequestHeaders, RequestBody: l.Detail.RequestBody,
@@ -888,7 +896,9 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 			return err
 		}
 	}
-	return applyPendingCPALifecycleEvents(tx, l.ID)
+	// New traffic no longer inserts cpa_lifecycle_events. Retention still
+	// deletes upgrade leftovers; do not SELECT them on every request write.
+	return nil
 }
 
 func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, error) {
@@ -896,14 +906,24 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 	if err := scoped(ctx, s.DB).First(&tenant, "id = ?", tenantID).Error; err != nil {
 		return nil, notFound(err)
 	}
+	since := time.Now().AddDate(0, 0, -30)
 	type totals struct{ Requests, Tokens, Cost int64 }
 	var total totals
 	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select("count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
-		Where("tenant_id = ? AND started_at >= ?", tenantID, time.Now().AddDate(0, 0, -30)).Scan(&total).Error
+		Where("tenant_id = ? AND started_at >= ?", tenantID, since).Scan(&total).Error
 	if err != nil {
 		return nil, err
 	}
+	var rolled totals
+	if err := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).
+		Select("COALESCE(sum(requests),0) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
+		Where("tenant_id = ? AND day >= ?", tenantID, since).Scan(&rolled).Error; err != nil {
+		return nil, err
+	}
+	total.Requests += rolled.Requests
+	total.Tokens += rolled.Tokens
+	total.Cost += rolled.Cost
 	return map[string]any{"tenant": tenant, "requests_30d": total.Requests, "tokens_30d": total.Tokens, "cost_nano_usd_30d": total.Cost}, nil
 }
 
@@ -994,13 +1014,8 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if input.MinLatencyMS > 0 {
 		query = query.Where("latency_ms >= ?", input.MinLatencyMS)
 	}
-	countQuery := query.Session(&gorm.Session{})
 	summaryQuery := query.Session(&gorm.Session{})
 	itemsQuery := query.Session(&gorm.Session{})
-	var total int64
-	if err := countQuery.Count(&total).Error; err != nil {
-		return LogPage{}, err
-	}
 	var summary LogSummary
 	if err := summaryQuery.Select(
 		"count(*) AS requests, COALESCE(sum(CASE WHEN status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
@@ -1019,7 +1034,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if err := itemsQuery.Order("started_at DESC").Offset((input.Page - 1) * input.PageSize).Limit(input.PageSize).Find(&items).Error; err != nil {
 		return LogPage{}, err
 	}
-	return LogPage{Items: items, Page: input.Page, PageSize: input.PageSize, Total: total, Summary: summary}, nil
+	return LogPage{Items: items, Page: input.Page, PageSize: input.PageSize, Total: summary.Requests, Summary: summary}, nil
 }
 
 type LogWithDetail struct {

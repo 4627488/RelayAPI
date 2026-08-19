@@ -11,8 +11,8 @@ The backend also owns the product-facing user lifecycle: first-user setup,
 single-use invitations, invited registration, user sessions, user-created API
 keys, administrator capabilities, and administrator/user usage reports. An
 administrator is a normal user with an additional permission flag, not a
-separate account or access-key session. It intentionally contains no frontend
-assets.
+separate account or access-key session. The Go process serves the Vite SPA from
+`RELAY_WEB_DIST_DIR` (the production image embeds `web/dist`).
 
 ## Request flow
 
@@ -75,8 +75,8 @@ CLIProxyAPI without silently inventing prices.
 - CPA transport failures feed a circuit breaker. After repeated failures the
   circuit rejects traffic for a cooldown period and permits only one recovery
   probe, so an OOM-restarting CPA is not flooded as soon as its port reopens.
-- Request bodies default to 1 GiB (configurable up to 64 GiB), aggregate
-  in-flight request bodies have a separate 8 GiB budget (configurable up to
+- Request bodies default to 32 MiB (configurable up to 64 GiB), aggregate
+  in-flight request bodies have a separate 32 MiB budget (configurable up to
   256 GiB), response-log captures
   remain bounded, and the CPA connection pool cannot exceed the inference
   concurrency limit.

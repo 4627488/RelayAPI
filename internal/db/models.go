@@ -18,6 +18,8 @@ type Tenant struct {
 	BalanceNanoUSD     int64          `gorm:"not null;default:0" json:"balance_nano_usd"`
 	RateLimitPerMinute *int           `json:"rate_limit_per_minute"`
 	TokenLimitDaily    *int64         `json:"token_limit_daily"`
+	TokensUsedToday    int64          `gorm:"column:daily_tokens_used;not null;default:0" json:"-"`
+	TokensUsedOn       *time.Time     `gorm:"column:daily_tokens_day;type:date" json:"-"`
 	ModelAllowlist     pq.StringArray `gorm:"type:text[];not null;default:'{}'" json:"model_allowlist"`
 	ExpiresAt          *time.Time     `json:"expires_at"`
 	CreatedAt          time.Time      `json:"created_at"`
@@ -36,6 +38,8 @@ type APIKey struct {
 	Enabled            bool               `gorm:"not null;default:true" json:"enabled"`
 	RateLimitPerMinute *int               `json:"rate_limit_per_minute"`
 	TokenLimitDaily    *int64             `json:"token_limit_daily"`
+	TokensUsedToday    int64              `gorm:"column:daily_tokens_used;not null;default:0" json:"-"`
+	TokensUsedOn       *time.Time         `gorm:"column:daily_tokens_day;type:date" json:"-"`
 	ModelAllowlist     pq.StringArray     `gorm:"type:text[];not null;default:'{}'" json:"model_allowlist"`
 	ModelAliases       []APIKeyModelAlias `gorm:"foreignKey:APIKeyID;constraint:OnDelete:CASCADE" json:"model_aliases"`
 	ExpiresAt          *time.Time         `json:"expires_at"`
