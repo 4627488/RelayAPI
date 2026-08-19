@@ -613,7 +613,7 @@ func newNativeRuntimeTestApp(t *testing.T, credential upstreamruntime.Credential
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
-	return &App{cfg: config.Config{MaxRequestBytes: 1 << 20}, nativeRuntime: runtime}
+	return &App{cfg: config.Config{MaxRequestBytes: 1 << 20, UpstreamWebSockets: true}, nativeRuntime: runtime}
 }
 
 func TestNativeWebSocketAdmissionErrorUsesPaymentRequiredForExhaustedQuota(t *testing.T) {

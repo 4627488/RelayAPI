@@ -127,6 +127,41 @@ func TestProbeNativeAccountReturnsProviderError(t *testing.T) {
 	}
 }
 
+func TestProbeNativeAccountRewritesCodexWebsiteConstraints(t *testing.T) {
+	var seen map[string]any
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&seen)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"type":"response.completed","response":{"id":"resp_1","object":"response","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"pong"}]}]}}`+"\n\n")
+	}))
+	t.Cleanup(provider.Close)
+
+	runtime, err := upstream.NewRuntime(upstream.Options{}, []upstream.Credential{{
+		ID: "codex-1", Provider: "codex", Enabled: true, Models: []string{"gpt-5.4"},
+		Document: json.RawMessage(`{"type":"codex","access_token":"token","base_url":"` + provider.URL + `"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
+
+	result := probeNativeAccount(t.Context(), runtime, store.UpstreamCredentialSnapshot{
+		ID: "codex-1", Provider: "codex", Enabled: true, Models: []string{"gpt-5.4"},
+	}, "gpt-5.4")
+	if !result.OK || result.Preview != "pong" {
+		t.Fatalf("probe result = %+v", result)
+	}
+	if seen["store"] != false || seen["stream"] != true {
+		t.Fatalf("upstream body = %#v", seen)
+	}
+	if _, ok := seen["max_output_tokens"]; ok {
+		t.Fatalf("max_output_tokens forwarded: %#v", seen)
+	}
+}
+
 func TestProbeNativeAccountPinsAwayFromOtherCredential(t *testing.T) {
 	var hitOther, hitTarget int
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

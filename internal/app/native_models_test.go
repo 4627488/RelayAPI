@@ -408,4 +408,60 @@ func TestServeModelCatalogReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 	if recorder.Header().Get("ETag") == "" {
 		t.Fatal("Codex model catalog did not include an ETag")
 	}
+	if got["grok-4.5"]["prefer_websockets"] != true {
+		t.Fatalf("default catalog should keep websockets when the runtime allows them: %#v", got["grok-4.5"]["prefer_websockets"])
+	}
+}
+
+func TestApplyCodexCatalogWebSocketPolicyDisablesTransport(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"models":[{"slug":"gpt-5.4","prefer_websockets":true},{"slug":"kimi-k3","prefer_websockets":false}]}`)
+	unchanged, err := applyCodexCatalogWebSocketPolicy(payload, true)
+	if err != nil || string(unchanged) != string(payload) {
+		t.Fatalf("enabled policy mutated catalog: %s %v", unchanged, err)
+	}
+	disabled, err := applyCodexCatalogWebSocketPolicy(payload, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(disabled, &document); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range document["models"].([]any) {
+		item := raw.(map[string]any)
+		if item["prefer_websockets"] != false {
+			t.Fatalf("item = %#v", item)
+		}
+	}
+}
+
+func TestServeModelCatalogDisablesWebSocketsWhenRuntimePolicyIsOff(t *testing.T) {
+	app := newNativeRuntimeTestApp(t, upstream.Credential{
+		ID: "codex-catalog", Provider: "codex", Enabled: true,
+		Models:   []string{"gpt-5.4"},
+		Document: []byte(`{"type":"codex","access_token":"test-token"}`),
+	})
+	app.cfg.UpstreamWebSockets = false
+	request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.147.0", nil)
+	recorder := httptest.NewRecorder()
+	app.serveModelCatalog(recorder, request, store.KeyContext{TenantModels: []string{"gpt-5.4"}})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", recorder.Code, recorder.Body.String())
+	}
+	var document map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	var item map[string]any
+	for _, raw := range document["models"].([]any) {
+		candidate, _ := raw.(map[string]any)
+		if catalogModelID(candidate) == "gpt-5.4" {
+			item = candidate
+			break
+		}
+	}
+	if item == nil || item["prefer_websockets"] != false {
+		t.Fatalf("gpt-5.4 = %#v", item)
+	}
 }

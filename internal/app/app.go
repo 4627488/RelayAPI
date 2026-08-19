@@ -100,6 +100,9 @@ func (a *App) capabilityIndex() *pricing.CapabilityIndex {
 
 func (a *App) codexCatalogRevisionToken() string {
 	token := codexCatalogRevisionToken
+	if a != nil && !a.cfg.UpstreamWebSockets {
+		token += "|http"
+	}
 	if version := a.capabilityIndex().Version(); version != "" {
 		return token + "|" + version
 	}

@@ -134,8 +134,11 @@ func TestCodexChatTranslationPreservesBetaAndModelRoute(t *testing.T) {
 		}
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body["model"] != "gpt-upstream" || len(asAnySlice(body["input"])) != 1 {
+		if body["model"] != "gpt-upstream" || len(asAnySlice(body["input"])) != 1 || body["store"] != false || body["stream"] != true {
 			t.Errorf("body = %#v", body)
+		}
+		if _, ok := body["max_output_tokens"]; ok {
+			t.Errorf("max_output_tokens leaked: %#v", body)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "resp_1", "model": "gpt-upstream", "created_at": 42, "status": "completed", "output": []any{map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "ok"}}}}, "usage": map[string]any{"input_tokens": 2, "output_tokens": 1, "total_tokens": 3}})
 	}))

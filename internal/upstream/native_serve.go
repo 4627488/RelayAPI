@@ -76,6 +76,8 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		upstreamModel = model
 	}
 	body = rewriteJSONModel(body, upstreamModel)
+	clientStream := jsonBool(body, "stream")
+	collectStream := false
 	responseMode := "passthrough"
 	var err error
 	var toolRestorer *toolResponseRestorer
@@ -94,6 +96,15 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	if err != nil {
 		writeRuntimeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
+	}
+	if credential.Provider == "codex" && isResponsesPath(requestPath) {
+		adapted, adaptErr := prepareCodexWebsiteRequest(body)
+		if adaptErr != nil {
+			writeRuntimeError(w, http.StatusBadRequest, "invalid_request", adaptErr.Error())
+			return
+		}
+		body = adapted.Body
+		collectStream = adapted.CollectStream
 	}
 	trace.setSelection(credential, model, responseMode)
 	if credential.Provider == "xai" && !isImagesPath(requestPath) {
@@ -121,9 +132,35 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	} else {
 		credential.releaseProbe()
 	}
+	if collectStream && response.StatusCode < 400 {
+		payload, collectErr := collectResponsesSSE(response.Body)
+		if collectErr != nil {
+			if len(payload) > 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write(payload)
+				return
+			}
+			writeRuntimeError(w, http.StatusBadGateway, "upstream_response_invalid", collectErr.Error())
+			return
+		}
+		switch responseMode {
+		case "chat-to-responses":
+			payload = chatToResponsesResponse(payload, model)
+		case "responses-to-chat":
+			payload = responsesToChatResponse(payload, model)
+		}
+		if toolRestorer != nil {
+			payload = toolRestorer.restore(payload)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(response.StatusCode)
+		_, _ = w.Write(payload)
+		return
+	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
-	stream := jsonBool(body, "stream")
+	stream := clientStream
 	streamWriter := io.Writer(w)
 	if stream && response.StatusCode < http.StatusBadRequest {
 		// net/http buffers small writes. Provider SSE events are often only a few

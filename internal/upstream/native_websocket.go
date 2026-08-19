@@ -79,6 +79,11 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 			return errors.New("upstream WebSocket is disabled for this credential")
 		}
 		payload = rewriteJSONModel(payload, credential.ModelRoutes[strings.ToLower(model)])
+		if credential.Provider == "codex" {
+			if adapted, adaptErr := prepareCodexWebsiteRequest(payload); adaptErr == nil {
+				payload = adapted.Body
+			}
+		}
 		if credential.Provider == "xai" {
 			var current *toolResponseRestorer
 			payload, current = lowerCodexTools(payload)

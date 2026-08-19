@@ -20,7 +20,7 @@ const maxModelCatalogBytes int64 = 256 << 20
 
 // Bump this when the Codex ModelInfo shape changes so clients refresh
 // GET /v1/models and honor X-Models-Etag on subsequent Responses calls.
-const codexCatalogRevisionToken = "codex-modelinfo-v2"
+const codexCatalogRevisionToken = "codex-modelinfo-v3"
 
 func isNativeModelCatalogRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodGet {
@@ -76,6 +76,14 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 				writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型列表格式无效: %v", expandErr))
 				return
 			}
+			if !a.cfg.UpstreamWebSockets {
+				disabled, policyErr := applyCodexCatalogWebSocketPolicy(payload, false)
+				if policyErr != nil {
+					writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型传输策略无效: %v", policyErr))
+					return
+				}
+				payload = disabled
+			}
 		}
 	}
 	copyHeaders(w.Header(), response.Header)
@@ -129,6 +137,28 @@ func promoteCodexCatalogCapabilities(payload []byte, index *pricing.CapabilityIn
 		}
 		visible++
 		item["priority"] = 100 + visible*10
+	}
+	return json.Marshal(document)
+}
+
+func applyCodexCatalogWebSocketPolicy(payload []byte, enabled bool) ([]byte, error) {
+	if enabled {
+		return payload, nil
+	}
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		return nil, err
+	}
+	items, ok := document["models"].([]any)
+	if !ok {
+		return nil, fmt.Errorf("missing models array")
+	}
+	for _, raw := range items {
+		item, itemOK := raw.(map[string]any)
+		if !itemOK {
+			continue
+		}
+		item["prefer_websockets"] = false
 	}
 	return json.Marshal(document)
 }
