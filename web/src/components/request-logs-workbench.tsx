@@ -1200,10 +1200,7 @@ function parseNumberRecord(value?: string) {
   if (!value) return {} as Record<string, number>
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>
-    if (
-      (parsed.version === 2 || parsed.version === 3) &&
-      Array.isArray(parsed.segments)
-    )
+    if (typeof parsed.version === "number" && Array.isArray(parsed.segments))
       return {} as Record<string, number>
     return Object.fromEntries(
       Object.entries(parsed).filter(
