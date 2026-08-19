@@ -11,7 +11,7 @@ import {
   MoonIcon,
   NetworkIcon,
   PackageOpenIcon,
-  CircleDollarSignIcon,
+  Settings2Icon,
   PlugIcon,
   SendIcon,
   ShieldCheckIcon,
@@ -138,7 +138,7 @@ const adminItems: NavigationItem[] = [
   { id: "settings", label: "系统设置", icon: SlidersHorizontalIcon },
   { id: "subscriptions", label: "订阅分配", icon: PackageOpenIcon },
   { id: "usage", label: "全局用量", icon: BarChart3Icon },
-  { id: "pricing", label: "模型定价", icon: CircleDollarSignIcon },
+  { id: "pricing", label: "模型设置", icon: Settings2Icon },
   { id: "logs", label: "请求日志", icon: ListIcon },
 ]
 

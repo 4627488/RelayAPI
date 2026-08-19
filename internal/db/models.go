@@ -98,6 +98,21 @@ type ModelAlias struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ModelSetting is an administrator overlay for Codex catalog metadata.
+// It wins over models.dev when both describe the same slug.
+type ModelSetting struct {
+	Model                 string         `gorm:"primaryKey" json:"model"`
+	DisplayName           string         `gorm:"not null;default:''" json:"display_name"`
+	ContextWindow         int            `gorm:"not null;default:0" json:"context_window"`
+	MaxOutputTokens       int            `gorm:"not null;default:0" json:"max_output_tokens"`
+	ReasoningEfforts      pq.StringArray `gorm:"type:text[];not null;default:'{}'" json:"reasoning_efforts"`
+	DefaultReasoningLevel string         `gorm:"not null;default:''" json:"default_reasoning_level"`
+	InputModalities       pq.StringArray `gorm:"type:text[];not null;default:'{}'" json:"input_modalities"`
+	PreferWebSockets      *bool          `json:"prefer_websockets,omitempty"`
+	Provider              string         `gorm:"not null;default:''" json:"provider"`
+	UpdatedAt             time.Time      `json:"updated_at"`
+}
+
 type ModelPriceRule struct {
 	ID         string    `gorm:"type:uuid;primaryKey" json:"id"`
 	Model      string    `gorm:"not null;uniqueIndex:model_price_rule_identity,priority:1" json:"model"`

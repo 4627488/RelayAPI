@@ -138,7 +138,10 @@ func applyModelsDevCapability(item map[string]any, slug string, index *pricing.C
 		return
 	}
 	capability, ok := index.Lookup(slug)
-	if !ok || skipModelsDevOverlay(slug, capability) {
+	if !ok {
+		return
+	}
+	if capability.Source != pricing.SourceAdmin && skipModelsDevOverlay(slug, capability) {
 		return
 	}
 	if capability.Name != "" {
@@ -170,11 +173,19 @@ func applyModelsDevCapability(item map[string]any, slug string, index *pricing.C
 		item["supported_reasoning_levels"] = levels
 		item["default_reasoning_level"] = defaultLevel
 	}
-	switch strings.ToLower(capability.Provider) {
-	case "moonshotai", "moonshotai-cn", "deepseek":
-		item["prefer_websockets"] = false
-		item["support_verbosity"] = false
-		delete(item, "multi_agent_version")
+	if capability.PreferWebSockets != nil {
+		item["prefer_websockets"] = *capability.PreferWebSockets
+		if !*capability.PreferWebSockets {
+			item["support_verbosity"] = false
+			delete(item, "multi_agent_version")
+		}
+	} else {
+		switch strings.ToLower(capability.Provider) {
+		case "moonshotai", "moonshotai-cn", "deepseek":
+			item["prefer_websockets"] = false
+			item["support_verbosity"] = false
+			delete(item, "multi_agent_version")
+		}
 	}
 }
 
@@ -205,7 +216,16 @@ func modelsDevReasoningLevels(capability pricing.Capability) ([]any, string) {
 		}
 	}
 	if len(effort) > 0 {
-		return reasoningLevelObjects(effort), pickDefaultReasoningLevel(effort, false)
+		defaultLevel := pickDefaultReasoningLevel(effort, false)
+		if wanted := strings.ToLower(strings.TrimSpace(capability.DefaultLevel)); wanted != "" {
+			for _, value := range effort {
+				if strings.EqualFold(value, wanted) {
+					defaultLevel = wanted
+					break
+				}
+			}
+		}
+		return reasoningLevelObjects(effort), defaultLevel
 	}
 	if toggle {
 		return reasoningLevelObjects([]string{"none", "high"}), "high"

@@ -111,22 +111,45 @@ func (a *App) loadCapabilitiesFromStore(ctx context.Context) {
 		return
 	}
 	rows, err := a.store.ListCatalogPrices(ctx)
-	if err != nil || len(rows) == 0 {
-		return
+	if err != nil {
+		rows = nil
 	}
-	models := make([]string, len(rows))
-	sourceIDs := make([]string, len(rows))
-	raw := make([]string, len(rows))
+	capabilities := make([]pricing.Capability, 0, len(rows))
 	version := ""
-	for i, row := range rows {
-		models[i] = row.Model
-		sourceIDs[i] = row.SourceModelID
-		raw[i] = row.RawJSON
+	for _, row := range rows {
 		if version == "" {
 			version = row.Version
 		}
+		if capability, ok := pricing.CapabilityFromRawJSON(row.SourceModelID, row.RawJSON); ok {
+			capabilities = append(capabilities, capability)
+		}
 	}
-	a.setCapabilities(pricing.IndexFromCatalogPrices(version, models, sourceIDs, raw))
+	a.setCapabilities(a.mergeCapabilityIndex(ctx, version, capabilities))
+}
+
+func (a *App) mergeCapabilityIndex(ctx context.Context, version string, fetched []pricing.Capability) *pricing.CapabilityIndex {
+	settings, err := a.store.ListModelSettings(ctx)
+	if err != nil {
+		settings = nil
+	}
+	capabilities := append([]pricing.Capability(nil), fetched...)
+	latest := ""
+	for _, item := range settings {
+		capabilities = append(capabilities, store.ModelSettingCapability(item))
+		if stamp := item.UpdatedAt.UTC().Format(time.RFC3339Nano); stamp > latest {
+			latest = stamp
+		}
+	}
+	if latest != "" {
+		if version == "" {
+			version = "admin"
+		}
+		version = version + "|admin:" + latest
+	}
+	if len(capabilities) == 0 && version == "" {
+		return pricing.NewCapabilityIndex("", nil)
+	}
+	return pricing.NewCapabilityIndex(version, capabilities)
 }
 
 func (a *App) Close() {
@@ -271,7 +294,7 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	if err := a.store.ApplyCatalog(ctx, result); err != nil {
 		return err
 	}
-	a.setCapabilities(pricing.NewCapabilityIndex(result.Version, result.Capabilities))
+	a.setCapabilities(a.mergeCapabilityIndex(ctx, result.Version, result.Capabilities))
 	return nil
 }
 
@@ -316,6 +339,8 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/prices", a.withAdmin(http.HandlerFunc(a.adminPrices)))
 	a.mux.Handle("PUT /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceUpdate)))
 	a.mux.Handle("DELETE /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceDelete)))
+	a.mux.Handle("PUT /api/admin/model-settings/{model}", a.withAdmin(http.HandlerFunc(a.adminModelSettingUpdate)))
+	a.mux.Handle("DELETE /api/admin/model-settings/{model}", a.withAdmin(http.HandlerFunc(a.adminModelSettingDelete)))
 	a.mux.Handle("GET /api/admin/pricing/aliases", a.withAdmin(http.HandlerFunc(a.adminPricingAliases)))
 	a.mux.Handle("PUT /api/admin/pricing/aliases", a.withAdmin(http.HandlerFunc(a.adminPricingAliases)))
 	a.mux.Handle("GET /api/admin/pricing/rules", a.withAdmin(http.HandlerFunc(a.adminPricingRules)))

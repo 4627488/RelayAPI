@@ -16,6 +16,17 @@ func TestCapabilityIndexPrefersFirstPartyAndLooksUpBareSlug(t *testing.T) {
 	}
 }
 
+func TestCapabilityIndexPrefersAdminOverride(t *testing.T) {
+	index := NewCapabilityIndex("v1", []Capability{
+		{ID: "moonshotai/kimi-k3-256k", Provider: "moonshotai", Source: "models.dev", Context: 1048576},
+		{ID: "kimi-k3-256k", Name: "Kimi K3 256k", Provider: "moonshotai", Source: SourceAdmin, Context: 262144, MaxOutput: 131072, Reasoning: true, ReasoningOptions: []ReasoningOption{{Type: "effort", Values: []string{"low", "high", "max"}}}, DefaultLevel: "max"},
+	})
+	got, ok := index.Lookup("kimi-k3-256k")
+	if !ok || got.Source != SourceAdmin || got.Context != 262144 || got.DefaultLevel != "max" {
+		t.Fatalf("admin overlay = %#v ok=%v", got, ok)
+	}
+}
+
 func TestCapabilityFromRawJSONReadsLimitAndReasoning(t *testing.T) {
 	raw := `{"id":"kimi-k2.5","name":"Kimi K2.5","reasoning":true,"reasoning_options":[{"type":"toggle"}],"limit":{"context":262144,"output":32768},"modalities":{"input":["text","image"]}}`
 	got, ok := CapabilityFromRawJSON("moonshotai/kimi-k2.5", raw)

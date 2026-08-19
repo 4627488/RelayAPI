@@ -43,7 +43,7 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("prepare native schema: %w", err)
 	}
 	if err := database.WithContext(ctx).AutoMigrate(
-		&Tenant{}, &APIKey{}, &APIKeyModelAlias{}, &ModelPrice{}, &ModelCatalogPrice{}, &ModelAlias{}, &ModelPriceRule{},
+		&Tenant{}, &APIKey{}, &APIKeyModelAlias{}, &ModelPrice{}, &ModelCatalogPrice{}, &ModelSetting{}, &ModelAlias{}, &ModelPriceRule{},
 		&BillingLedger{}, &UsageDailyRollup{}, &RequestLog{}, &RequestLogDetail{}, &UpstreamLifecycleEvent{}, &Invitation{}, &AgentSetup{},
 		&ParentSubscription{}, &ParentQuotaWindow{}, &ParentQuotaObservation{},
 		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{}, &WebSocketTurn{},

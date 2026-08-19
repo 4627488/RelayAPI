@@ -653,10 +653,34 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 	if availableModelsError != nil {
 		availableError = availableModelsError.Error()
 	}
+	for i := range available {
+		attachModelCapability(&available[i], a.capabilityIndex())
+	}
 	writeJSON(w, 200, map[string]any{
 		"available_models": available, "available_models_error": availableError,
 		"catalog_sync_error": catalogSyncError,
 	})
+}
+
+func attachModelCapability(item *store.AvailableModelPrice, index *pricing.CapabilityIndex) {
+	if item == nil || index == nil {
+		return
+	}
+	capability, ok := index.Lookup(item.Model)
+	if !ok {
+		return
+	}
+	item.DisplayName = capability.Name
+	item.ContextWindow = capability.Context
+	item.MaxOutputTokens = capability.MaxOutput
+	item.ReasoningEfforts = capability.EffortValues()
+	item.DefaultReasoningLevel = capability.DefaultLevel
+	item.InputModalities = append([]string(nil), capability.InputModalities...)
+	item.PreferWebSockets = capability.PreferWebSockets
+	item.CapabilitySource = capability.Source
+	if item.DefaultReasoningLevel == "" && len(item.ReasoningEfforts) > 0 {
+		item.DefaultReasoningLevel = item.ReasoningEfforts[0]
+	}
 }
 
 func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
@@ -709,6 +733,40 @@ func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, stored)
+}
+
+func (a *App) adminModelSettingUpdate(w http.ResponseWriter, r *http.Request) {
+	model, err := url.PathUnescape(r.PathValue("model"))
+	if err != nil || strings.TrimSpace(model) == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "模型名无效")
+		return
+	}
+	var input db.ModelSetting
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.Model = model
+	item, err := a.store.UpsertModelSetting(r.Context(), input)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	a.loadCapabilitiesFromStore(r.Context())
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (a *App) adminModelSettingDelete(w http.ResponseWriter, r *http.Request) {
+	model, err := url.PathUnescape(r.PathValue("model"))
+	if err != nil || strings.TrimSpace(model) == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "模型名无效")
+		return
+	}
+	if err := a.store.DeleteModelSetting(r.Context(), model); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "模型能力覆盖不存在")
+		return
+	}
+	a.loadCapabilitiesFromStore(r.Context())
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *App) adminPriceDelete(w http.ResponseWriter, r *http.Request) {
@@ -797,7 +855,7 @@ func (a *App) adminPricingSync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	a.setCapabilities(pricing.NewCapabilityIndex(result.Version, result.Capabilities))
+	a.setCapabilities(a.mergeCapabilityIndex(r.Context(), result.Version, result.Capabilities))
 	samples := result.Entries
 	if len(samples) > 20 {
 		samples = samples[:20]

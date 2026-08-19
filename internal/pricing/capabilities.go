@@ -11,11 +11,14 @@ type Capability struct {
 	ID               string
 	Name             string
 	Provider         string
+	Source           string
 	Context          int
 	MaxOutput        int
 	Reasoning        bool
 	ReasoningOptions []ReasoningOption
+	DefaultLevel     string
 	InputModalities  []string
+	PreferWebSockets *bool
 }
 
 type ReasoningOption struct {
@@ -70,6 +73,16 @@ func (idx *CapabilityIndex) Lookup(slug string) (Capability, bool) {
 		}
 	}
 	return Capability{}, false
+}
+
+func (c Capability) EffortValues() []string {
+	var effort []string
+	for _, option := range c.ReasoningOptions {
+		if option.Type == "effort" {
+			effort = append(effort, option.Values...)
+		}
+	}
+	return effort
 }
 
 func (idx *CapabilityIndex) add(capability Capability) {
@@ -128,6 +141,7 @@ func capabilityFromModelsDev(providerID, modelID string, model modelsDevModel) C
 		ID:               id,
 		Name:             strings.TrimSpace(model.Name),
 		Provider:         strings.TrimSpace(providerID),
+		Source:           SourceCatalog,
 		Context:          model.Limit.Context,
 		MaxOutput:        model.Limit.Output,
 		Reasoning:        model.Reasoning,
@@ -137,6 +151,9 @@ func capabilityFromModelsDev(providerID, modelID string, model modelsDevModel) C
 }
 
 func preferCapability(candidate, current Capability) bool {
+	if candidateRank, currentRank := capabilitySourceRank(candidate.Source), capabilitySourceRank(current.Source); candidateRank != currentRank {
+		return candidateRank < currentRank
+	}
 	candidateRank, currentRank := capabilityProviderRank(candidate.Provider), capabilityProviderRank(current.Provider)
 	if candidateRank != currentRank {
 		return candidateRank < currentRank
@@ -150,6 +167,13 @@ func preferCapability(candidate, current Capability) bool {
 		return candidate.Provider < current.Provider
 	}
 	return candidate.ID < current.ID
+}
+
+func capabilitySourceRank(source string) int {
+	if strings.EqualFold(strings.TrimSpace(source), SourceAdmin) {
+		return -1
+	}
+	return 0
 }
 
 func capabilityProviderRank(provider string) int {

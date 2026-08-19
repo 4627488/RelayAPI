@@ -196,6 +196,37 @@ func TestPromoteOverlaysModelsDevCapabilities(t *testing.T) {
 	assertReasoningEfforts(t, gpt, []string{"none", "low", "medium", "high"}, "medium")
 }
 
+func TestPromoteOverlaysAdminKimiK3256k(t *testing.T) {
+	payload := []byte(`{"models":[{"slug":"kimi-k3-256k","visibility":"list"}]}`)
+	preferWS := false
+	index := pricing.NewCapabilityIndex("admin", []pricing.Capability{{
+		ID: "kimi-k3-256k", Name: "Kimi K3 256k", Provider: "moonshotai", Source: pricing.SourceAdmin,
+		Context: 262144, MaxOutput: 131072, Reasoning: true, DefaultLevel: "max",
+		ReasoningOptions: []pricing.ReasoningOption{{Type: "effort", Values: []string{"low", "high", "max"}}},
+		InputModalities:  []string{"text", "image"}, PreferWebSockets: &preferWS,
+	}})
+	promoted, err := promoteCodexCatalogCapabilities(payload, index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(promoted, &document); err != nil {
+		t.Fatal(err)
+	}
+	item := document["models"].([]any)[0].(map[string]any)
+	assertCodexModelInfoComplete(t, item)
+	if item["display_name"] != "Kimi K3 256k" {
+		t.Fatalf("display_name = %#v", item["display_name"])
+	}
+	if item["context_window"] != float64(262144) || item["max_output_tokens"] != float64(131072) {
+		t.Fatalf("windows = %#v", item)
+	}
+	if item["prefer_websockets"] != false {
+		t.Fatalf("prefer_websockets = %#v", item["prefer_websockets"])
+	}
+	assertReasoningEfforts(t, item, []string{"low", "high", "max"}, "max")
+}
+
 func assertReasoningEfforts(t *testing.T, model map[string]any, want []string, defaultLevel string) {
 	t.Helper()
 	if model["default_reasoning_level"] != defaultLevel {

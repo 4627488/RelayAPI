@@ -181,6 +181,24 @@ var migrations = []migration{
 			 WHERE k.id = s.api_key_id`,
 		},
 	},
+	{
+		version: 10,
+		name:    "seed kimi-k3-256k catalog settings",
+		statements: []string{
+			`INSERT INTO model_settings (
+				model, display_name, context_window, max_output_tokens,
+				reasoning_efforts, default_reasoning_level, input_modalities,
+				prefer_websockets, provider, updated_at
+			) VALUES (
+				'kimi-k3-256k', 'Kimi K3 256k', 262144, 131072,
+				'{low,high,max}', 'max', '{text,image}',
+				FALSE, 'moonshotai', NOW()
+			) ON CONFLICT (model) DO NOTHING`,
+			`INSERT INTO model_aliases (alias, model, updated_at)
+			 VALUES ('kimi-k3-256k', 'kimi-k3', NOW())
+			 ON CONFLICT (alias) DO NOTHING`,
+		},
+	},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this

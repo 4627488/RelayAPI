@@ -44,7 +44,11 @@ turn off `prefer_websockets` (Relay's WebSocket path is Responses-native and
 those providers are Chat-only) plus verbosity and multi-agent flags those
 APIs do not have. `apply_patch` stays freeform; adapters still lower it for
 Chat. models.dev is not a permission source, and Relay does not fetch CPA's
-`models.json` or embed the official Codex catalog.
+`models.json` or embed the official Codex catalog. Administrators can
+correct or fill gaps on the 模型设置 page; those rows win over
+models.dev. `kimi-k3-256k` is seeded that way: it is the Kimi Coding
+Plan 256k window of the same always-on K3 family (`low`/`high`/`max`),
+which models.dev does not publish.
 
 Provider adapters preserve that client contract. For example, xAI and generic
 Chat Completions backends receive a JSON-schema string-input function when

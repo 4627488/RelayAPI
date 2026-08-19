@@ -184,6 +184,14 @@ export interface ModelPrice {
   version: string
   price_multiplier: number
   updated_at?: string
+  display_name?: string
+  context_window?: number
+  max_output_tokens?: number
+  reasoning_efforts?: string[]
+  default_reasoning_level?: string
+  input_modalities?: string[]
+  prefer_websockets?: boolean | null
+  capability_source?: string
 }
 
 export interface ModelAlias {

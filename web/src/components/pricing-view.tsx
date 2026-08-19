@@ -33,7 +33,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field"
 import {
   Empty,
   EmptyDescription,
@@ -120,7 +127,7 @@ export function PricingView() {
         )
       )
     } catch (cause) {
-      setLoadError(cause instanceof Error ? cause.message : "读取定价失败")
+      setLoadError(cause instanceof Error ? cause.message : "读取模型设置失败")
       throw cause
     } finally {
       setLoading(false)
@@ -129,7 +136,7 @@ export function PricingView() {
 
   useEffect(() => {
     void load().catch((cause) =>
-      toast.error(cause instanceof Error ? cause.message : "读取定价失败")
+      toast.error(cause instanceof Error ? cause.message : "读取模型设置失败")
     )
   }, [load])
 
@@ -165,9 +172,29 @@ export function PricingView() {
       })
       setEditingPrice(null)
       await load()
-      toast.success("管理员价格覆盖已保存")
+      const efforts = data.getAll("reasoning_effort").map(String)
+      const modalities = data.getAll("input_modality").map(String)
+      const websocket = String(data.get("prefer_websockets") ?? "")
+      await api(`/api/admin/model-settings/${encodeURIComponent(model)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          display_name: String(data.get("display_name") ?? "").trim(),
+          context_window: Number(data.get("context_window") || 0),
+          max_output_tokens: Number(data.get("max_output_tokens") || 0),
+          reasoning_efforts: efforts,
+          default_reasoning_level: String(
+            data.get("default_reasoning_level") ?? ""
+          ).trim(),
+          input_modalities: modalities,
+          prefer_websockets:
+            websocket === "true" ? true : websocket === "false" ? false : null,
+          provider: String(data.get("provider") ?? "").trim(),
+        }),
+      })
+      toast.success("模型设置已保存")
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存价格失败")
+      toast.error(cause instanceof Error ? cause.message : "保存模型设置失败")
     } finally {
       setPending(false)
     }
@@ -211,12 +238,25 @@ export function PricingView() {
     }
   }
 
+  async function removeCapability(model: string) {
+    try {
+      await deleteRequest(
+        `/api/admin/model-settings/${encodeURIComponent(model)}`
+      )
+      setEditingPrice(null)
+      await load()
+      toast.success("已移除能力覆盖，将回退到 Models.dev 或模板")
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "删除能力覆盖失败")
+    }
+  }
+
   async function remove(model: string) {
     try {
       await deleteRequest(`/api/admin/prices/${encodeURIComponent(model)}`)
       setEditingPrice(null)
       await load()
-      toast.success("已移除管理员覆盖，将回退到目录价格")
+      toast.success("已移除管理员价格覆盖，将回退到目录价格")
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "删除失败")
     }
@@ -225,7 +265,7 @@ export function PricingView() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="模型定价"
+        title="模型设置"
         actions={
           <>
             <Button
@@ -291,10 +331,12 @@ export function PricingView() {
       ) : null}
       <Card>
         <CardHeader>
-          <CardTitle>已接入模型价目表</CardTitle>
+          <CardTitle>已接入模型</CardTitle>
           <CardDescription>
-            模型来自 native 运行时目录。文本与图片 token 分模态计价，单位为 USD
-            / 1M tokens。
+            计价仍按 USD / 1M
+            tokens。能力元数据优先用本页覆盖，其次 Models.dev，最后才是 Codex
+            模板。用来补 models.dev 没有或不对的条目，例如 Kimi Coding Plan 的
+            kimi-k3-256k。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -319,6 +361,9 @@ export function PricingView() {
               <TableHeader>
                 <TableRow>
                   <TableHead>模型</TableHead>
+                  <TableHead>能力</TableHead>
+                  <TableHead className="text-right">上下文</TableHead>
+                  <TableHead>推理</TableHead>
                   <TableHead>来源</TableHead>
                   <TableHead className="text-right">文本输入</TableHead>
                   <TableHead className="text-right">文本缓存</TableHead>
@@ -342,6 +387,21 @@ export function PricingView() {
                           按 {price.priced_model} 计价
                         </p>
                       ) : null}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">
+                        {capabilitySourceLabel(price.capability_source)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {price.context_window
+                        ? price.context_window.toLocaleString("en-US")
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {price.reasoning_efforts?.length
+                        ? price.reasoning_efforts.join("/")
+                        : "—"}
                     </TableCell>
                     <TableCell>
                       {price.priced ? (
@@ -377,7 +437,7 @@ export function PricingView() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          aria-label={`配置 ${price.model} 的价格`}
+                          aria-label={`配置 ${price.model}`}
                           onClick={() => setEditingPrice(price)}
                         >
                           <PencilIcon />
@@ -463,9 +523,9 @@ export function PricingView() {
       >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>配置模型价格</DialogTitle>
+            <DialogTitle>配置模型设置</DialogTitle>
             <DialogDescription>
-              保存后将创建本站管理员价格覆盖。文本和图片 token 独立计价，单位为
+              能力覆盖会写进 Codex 目录，优先于 Models.dev。价格覆盖只影响本站计费，单位为
               USD / 1M tokens。
             </DialogDescription>
           </DialogHeader>
@@ -479,6 +539,130 @@ export function PricingView() {
                   readOnly
                 />
               </Field>
+              <FieldSet>
+                <FieldLegend>能力元数据</FieldLegend>
+                <FieldGroup className="grid gap-3 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel>显示名</FieldLabel>
+                    <Input
+                      name="display_name"
+                      defaultValue={editingPrice?.display_name ?? ""}
+                      placeholder="Kimi K3 256k"
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel>提供商</FieldLabel>
+                    <Input
+                      name="provider"
+                      defaultValue={inferredProvider(editingPrice?.model)}
+                      placeholder="moonshotai"
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel>上下文窗口</FieldLabel>
+                    <Input
+                      name="context_window"
+                      type="number"
+                      min="0"
+                      step="1"
+                      defaultValue={editingPrice?.context_window ?? 0}
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel>最大输出</FieldLabel>
+                    <Input
+                      name="max_output_tokens"
+                      type="number"
+                      min="0"
+                      step="1"
+                      defaultValue={editingPrice?.max_output_tokens ?? 0}
+                    />
+                  </Field>
+                </FieldGroup>
+                <Field>
+                  <FieldLabel>推理档位</FieldLabel>
+                  <div className="flex flex-wrap gap-3">
+                    {reasoningEffortOptions.map((effort) => (
+                      <Field
+                        key={effort}
+                        orientation="horizontal"
+                        className="w-auto items-center"
+                      >
+                        <Checkbox
+                          name="reasoning_effort"
+                          value={effort}
+                          defaultChecked={editingPrice?.reasoning_efforts?.includes(
+                            effort
+                          )}
+                        />
+                        <FieldLabel>{effort}</FieldLabel>
+                      </Field>
+                    ))}
+                  </div>
+                </Field>
+                <FieldGroup className="grid gap-3 sm:grid-cols-2">
+                  <Field>
+                    <FieldLabel>默认推理</FieldLabel>
+                    <select
+                      name="default_reasoning_level"
+                      defaultValue={
+                        editingPrice?.default_reasoning_level ?? ""
+                      }
+                      className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                    >
+                      <option value="">自动</option>
+                      {reasoningEffortOptions.map((effort) => (
+                        <option key={effort} value={effort}>
+                          {effort}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field>
+                    <FieldLabel>WebSocket</FieldLabel>
+                    <select
+                      name="prefer_websockets"
+                      defaultValue={
+                        editingPrice?.prefer_websockets === true
+                          ? "true"
+                          : editingPrice?.prefer_websockets === false
+                            ? "false"
+                            : ""
+                      }
+                      className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                    >
+                      <option value="">跟随提供商</option>
+                      <option value="false">关闭</option>
+                      <option value="true">开启</option>
+                    </select>
+                  </Field>
+                </FieldGroup>
+                <Field>
+                  <FieldLabel>输入模态</FieldLabel>
+                  <div className="flex flex-wrap gap-3">
+                    {["text", "image"].map((modality) => (
+                      <Field
+                        key={modality}
+                        orientation="horizontal"
+                        className="w-auto items-center"
+                      >
+                        <Checkbox
+                          name="input_modality"
+                          value={modality}
+                          defaultChecked={
+                            editingPrice?.input_modalities?.includes(
+                              modality
+                            ) ?? modality === "text"
+                          }
+                        />
+                        <FieldLabel>{modality}</FieldLabel>
+                      </Field>
+                    ))}
+                  </div>
+                </Field>
+              </FieldSet>
+              <FieldSet>
+                <FieldLegend>计价</FieldLegend>
               <FieldGroup className="grid gap-3 sm:grid-cols-3">
                 {[
                   ["input", "普通输入", editingPrice?.input_nano_usd_per_token],
@@ -536,9 +720,18 @@ export function PricingView() {
                   </Field>
                 ))}
               </FieldGroup>
+              </FieldSet>
             </FieldGroup>
           </form>
           <DialogFooter>
+            {editingPrice?.capability_source === "admin" ? (
+              <Button
+                variant="outline"
+                onClick={() => void removeCapability(editingPrice.model)}
+              >
+                清除能力覆盖
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => setEditingPrice(null)}>
               取消
             </Button>
@@ -566,4 +759,36 @@ function priceSourceLabel(source: string) {
   if (source === "models.dev") return "Models.dev"
   if (source === "bundled") return "内置兜底"
   return source || "未知"
+}
+
+function capabilitySourceLabel(source?: string) {
+  if (source === "admin") return "管理员覆盖"
+  if (source === "models.dev") return "Models.dev"
+  return "模板"
+}
+
+const reasoningEffortOptions = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]
+
+function inferredProvider(model?: string) {
+  const value = model?.toLowerCase() ?? ""
+  if (value.startsWith("kimi-")) return "moonshotai"
+  if (value.startsWith("deepseek-")) return "deepseek"
+  if (value.startsWith("grok-")) return "xai"
+  if (
+    value.startsWith("gpt-") ||
+    value.startsWith("o1-") ||
+    value.startsWith("o3-") ||
+    value.startsWith("o4-") ||
+    value.startsWith("codex-")
+  ) {
+    return "openai"
+  }
+  return ""
 }
