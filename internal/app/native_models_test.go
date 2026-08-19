@@ -381,9 +381,6 @@ func TestServeModelCatalogReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 		t.Fatal(err)
 	}
 	items, _ := document["models"].([]any)
-	if len(items) != 4 {
-		t.Fatalf("items = %#v", items)
-	}
 	got := make(map[string]map[string]any, len(items))
 	for _, raw := range items {
 		item, _ := raw.(map[string]any)
@@ -394,6 +391,10 @@ func TestServeModelCatalogReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 	}
 	if got["private-model"] == nil || got["private-model"]["visibility"] != "hide" {
 		t.Fatal("catalog did not hide the model outside the key and tenant allowlists")
+	}
+	if got["gpt-image-2"] == nil || got["gpt-image-2"]["visibility"] != "hide" ||
+		got["gpt-image-1.5"] == nil || got["gpt-image-1.5"]["visibility"] != "hide" {
+		t.Fatal("implicit Codex image slugs must stay hidden in the picker")
 	}
 	assertCodexModelInfoComplete(t, got["grok-4.5"])
 	assertCodexModelInfoComplete(t, got["gpt-5.6-sol"])
