@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nativeCredential, target string, body []byte, trace *RequestTrace) (*http.Response, error) {
+func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nativeCredential, target, requestPath string, body []byte, trace *RequestTrace) (*http.Response, error) {
 	if credential.tokenNeedsRefresh() {
 		_ = r.refreshCredential(source.Context(), credential)
 	}
@@ -22,7 +22,7 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 		return nil, err
 	}
 	copyProviderHeaders(request.Header, source.Header)
-	credential.authorize(request.Header)
+	credential.authorize(request.Header, requestPath)
 	clientTraceState, clientTrace := providerClientTrace()
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
 	attemptStarted := time.Now()

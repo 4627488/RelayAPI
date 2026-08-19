@@ -70,8 +70,15 @@ func (r *nativeRuntime) rebuildRoutesLocked() {
 				continue
 			}
 			key := strings.ToLower(public)
-			r.modelRoutes[key] = append(r.modelRoutes[key], id)
+			r.modelRoutes[key] = appendUniqueRoute(r.modelRoutes[key], id)
 			modelSet[key] = public
+		}
+		for _, model := range implicitProviderImageModels(credential.Provider) {
+			key := strings.ToLower(model)
+			r.modelRoutes[key] = appendUniqueRoute(r.modelRoutes[key], id)
+			if _, exists := modelSet[key]; !exists {
+				modelSet[key] = model
+			}
 		}
 	}
 	r.models = make([]string, 0, len(modelSet))
@@ -274,7 +281,7 @@ func (c *nativeCredential) discoverModels(ctx context.Context) ([]string, error)
 	if err != nil {
 		return nil, err
 	}
-	c.authorize(request.Header)
+	c.authorize(request.Header, "")
 	response, err := c.client.Do(request)
 	if err != nil {
 		return nil, err
@@ -306,7 +313,7 @@ func (c *nativeCredential) discoverModels(ctx context.Context) ([]string, error)
 	return normalizedModelList(models), nil
 }
 
-func (c *nativeCredential) authorize(header http.Header) {
+func (c *nativeCredential) authorize(header http.Header, path string) {
 	c.tokenMu.Lock()
 	defer c.tokenMu.Unlock()
 	for name, values := range c.Headers {
@@ -322,7 +329,7 @@ func (c *nativeCredential) authorize(header http.Header) {
 		header.Set("Authorization", "Bearer "+token)
 	}
 	if c.Provider == "codex" {
-		if header.Get("OpenAI-Beta") == "" {
+		if header.Get("OpenAI-Beta") == "" && !isImagesPath(path) {
 			header.Set("OpenAI-Beta", "responses=experimental")
 		}
 		if c.AccountID != "" {
@@ -372,7 +379,7 @@ func (c *nativeCredential) upstreamURL(path string) string {
 	base := strings.TrimRight(c.BaseURL, "/")
 	if c.Provider == "codex" {
 		switch path {
-		case "/responses", "/responses/compact", "/alpha/search":
+		case "/responses", "/responses/compact", "/alpha/search", "/images/generations", "/images/edits":
 			return base + path
 		default:
 			return base + "/responses"

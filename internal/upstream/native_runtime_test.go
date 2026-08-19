@@ -272,7 +272,17 @@ func TestCodexCatalogAdvertisesFullAgentSurfaceByDefault(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &root); err != nil {
 		t.Fatal(err)
 	}
-	model := asAnySlice(root["models"])[0].(map[string]any)
+	var model map[string]any
+	for _, raw := range asAnySlice(root["models"]) {
+		item, _ := raw.(map[string]any)
+		if item["slug"] == "gpt-test" {
+			model = item
+			break
+		}
+	}
+	if model == nil {
+		t.Fatalf("gpt-test missing from catalog: %s", response.Body.String())
+	}
 	for _, key := range []string{"apply_patch_tool_type", "web_search_tool_type", "multi_agent_version", "supports_parallel_tool_calls", "supports_search_tool", "prefer_websockets"} {
 		if model[key] == nil || model[key] == false {
 			t.Fatalf("%s = %#v; model = %#v", key, model[key], model)

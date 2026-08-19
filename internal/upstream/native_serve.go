@@ -55,7 +55,14 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	requestID := strings.TrimSpace(request.Header.Get("X-Relay-Request-ID"))
 	trace := r.beginTrace(requestID)
 	defer r.finishTrace(requestID)
-	model := jsonString(body, "model")
+	requestPath := canonicalInferencePath(request.URL.Path)
+	model := requestInferenceModel(body, request.Header.Get("Content-Type"))
+	if isImagesPath(requestPath) && model == "" {
+		model = defaultImagesModel
+	}
+	if canonical := canonicalImageModel(model); canonical != "" {
+		model = canonical
+	}
 	pinned := strings.TrimSpace(request.Header.Get("X-Relay-Upstream-Credential-ID"))
 	affinityKey := sessionAffinityKey(body, request.Header)
 	credential, ok := r.selectCredential(model, pinned, affinityKey)
@@ -69,11 +76,12 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		upstreamModel = model
 	}
 	body = rewriteJSONModel(body, upstreamModel)
-	requestPath := canonicalInferencePath(request.URL.Path)
 	responseMode := "passthrough"
 	var err error
 	var toolRestorer *toolResponseRestorer
-	if credential.Provider == "kimi" && isResponsesPath(requestPath) {
+	if isImagesPath(requestPath) {
+		body, err = prepareImagesProviderRequest(request, credential, requestPath, body, upstreamModel)
+	} else if credential.Provider == "kimi" && isResponsesPath(requestPath) {
 		toolRestorer = newToolResponseRestorer(customToolRefsFromResponses(body))
 		body, err = responsesToChatRequest(body)
 		requestPath = "/chat/completions"
@@ -88,11 +96,11 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		return
 	}
 	trace.setSelection(credential, model, responseMode)
-	if credential.Provider == "xai" {
+	if credential.Provider == "xai" && !isImagesPath(requestPath) {
 		body, toolRestorer = lowerCodexTools(body)
 	}
 	target := credential.upstreamURL(requestPath)
-	response, err := r.doProviderRequest(request, credential, target, body, trace)
+	response, err := r.doProviderRequest(request, credential, target, requestPath, body, trace)
 	if err != nil {
 		r.mu.RLock()
 		threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown

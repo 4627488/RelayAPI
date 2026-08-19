@@ -173,7 +173,7 @@ func (c *nativeCredential) dialWebSocket(ctx context.Context, path string, sourc
 	}
 	header := make(http.Header)
 	copyProviderHeaders(header, source)
-	c.authorize(header)
+	c.authorize(header, canonicalInferencePath(path))
 	dialer := websocket.Dialer{EnableCompression: true}
 	if transport, ok := c.client.Transport.(*http.Transport); ok {
 		dialer.Proxy = transport.Proxy

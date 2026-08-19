@@ -14,9 +14,18 @@ wire protocol when needed, lowers unsupported tool declarations, performs
 OAuth refresh and sends the provider request. Terminal usage is persisted and
 settled before the response is considered complete.
 
-Supported public protocols are Responses, Chat Completions, the OpenAI model
+Supported public protocols are Responses, Chat Completions, the OpenAI Images
+API (`/v1/images/generations` and `/v1/images/edits`), the OpenAI model
 catalog, Codex-compatible paths and Responses WebSocket. Anthropic Messages and
 Gemini-native `/v1beta/*` remain intentionally unsupported.
+
+Images follow the current CPA split: Codex `gpt-image-1.5` and `gpt-image-2`
+proxy the ChatGPT backend `/images/*` endpoints instead of wrapping Responses;
+xAI `grok-imagine-*` maps OpenAI `size`/`quality` onto `aspect_ratio` and
+`resolution`; OpenAI-compatible credentials pass Images through unchanged.
+Image-only slugs stay hidden in the Codex picker and are still callable on
+the Images API. The Responses wrap that older CPA builds used for
+`gpt-image-2` is not implemented.
 
 ## Codex interoperability
 
