@@ -45,7 +45,7 @@ func (s Store) UpsertModelSetting(ctx context.Context, item db.ModelSetting) (db
 		Columns: []clause.Column{{Name: "model"}},
 		DoUpdates: clause.AssignmentColumns([]string{
 			"display_name", "context_window", "max_output_tokens", "reasoning_efforts",
-			"default_reasoning_level", "input_modalities", "prefer_websockets", "provider", "updated_at",
+			"default_reasoning_level", "input_modalities", "prefer_web_sockets", "provider", "updated_at",
 		}),
 	}).Create(&item).Error
 	if err != nil {

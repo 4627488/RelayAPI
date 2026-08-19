@@ -108,7 +108,7 @@ type ModelSetting struct {
 	ReasoningEfforts      pq.StringArray `gorm:"type:text[];not null;default:'{}'" json:"reasoning_efforts"`
 	DefaultReasoningLevel string         `gorm:"not null;default:''" json:"default_reasoning_level"`
 	InputModalities       pq.StringArray `gorm:"type:text[];not null;default:'{}'" json:"input_modalities"`
-	PreferWebSockets      *bool          `json:"prefer_websockets,omitempty"`
+	PreferWebSockets      *bool          `gorm:"column:prefer_web_sockets" json:"prefer_websockets,omitempty"`
 	Provider              string         `gorm:"not null;default:''" json:"provider"`
 	UpdatedAt             time.Time      `json:"updated_at"`
 }
