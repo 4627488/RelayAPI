@@ -8,6 +8,20 @@ import (
 	"strings"
 )
 
+type toolRestoreWriter struct {
+	io.Writer
+	restorer *toolResponseRestorer
+}
+
+func (w toolRestoreWriter) Write(payload []byte) (int, error) {
+	restored := w.restorer.restore(payload)
+	if len(restored) == 0 {
+		return len(payload), nil
+	}
+	_, err := w.Writer.Write(restored)
+	return len(payload), err
+}
+
 func restoreToolStream(w io.Writer, source io.Reader, restorer *toolResponseRestorer) error {
 	reader := bufio.NewReader(source)
 	for {
@@ -175,6 +189,9 @@ func (r *toolResponseRestorer) restore(payload []byte) []byte {
 	if err != nil {
 		return payload
 	}
+	if next, _ := root["type"].(string); next != "" && eventType != "" && next != eventType {
+		prefix = bytes.Replace(prefix, []byte("event: "+eventType), []byte("event: "+next), 1)
+	}
 	return append(append(prefix, encoded...), suffix...)
 }
 
@@ -236,11 +253,10 @@ func unwrapStringInput(value any) any {
 }
 
 func splitSSE(payload []byte) (prefix, data, suffix []byte) {
-	trimmed := bytes.TrimSpace(payload)
-	if !bytes.HasPrefix(trimmed, []byte("data:")) {
+	index := bytes.Index(payload, []byte("data:"))
+	if index < 0 {
 		return nil, payload, nil
 	}
-	index := bytes.Index(payload, []byte("data:"))
 	start := index + len("data:")
 	for start < len(payload) && (payload[start] == ' ' || payload[start] == '\t') {
 		start++

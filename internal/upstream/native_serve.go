@@ -80,6 +80,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	var err error
 	var toolRestorer *toolResponseRestorer
 	if credential.Provider == "kimi" && isResponsesPath(requestPath) {
+		toolRestorer = newToolResponseRestorer(customToolRefsFromResponses(body))
 		body, err = responsesToChatRequest(body)
 		requestPath = "/chat/completions"
 		responseMode = "chat-to-responses"
@@ -136,23 +137,31 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		return
 	}
 	if stream {
-		if toolRestorer != nil && responseMode == "passthrough" {
-			_ = restoreToolStream(streamWriter, response.Body, toolRestorer)
-		} else {
-			_ = translateStream(streamWriter, response.Body, responseMode, model)
+		if responseMode == "passthrough" {
+			if toolRestorer != nil {
+				_ = restoreToolStream(streamWriter, response.Body, toolRestorer)
+			}
+			return
 		}
+		destination := streamWriter
+		if toolRestorer != nil {
+			destination = toolRestoreWriter{Writer: streamWriter, restorer: toolRestorer}
+		}
+		_ = translateStream(destination, response.Body, responseMode, model)
 		return
 	}
 	payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxProviderResponseBytes))
 	if readErr != nil {
 		return
 	}
+	switch responseMode {
+	case "chat-to-responses":
+		payload = chatToResponsesResponse(payload, model)
+	case "responses-to-chat":
+		payload = responsesToChatResponse(payload, model)
+	}
 	if toolRestorer != nil {
 		payload = toolRestorer.restore(payload)
-	} else if responseMode == "chat-to-responses" {
-		payload = chatToResponsesResponse(payload, model)
-	} else {
-		payload = responsesToChatResponse(payload, model)
 	}
 	_, _ = w.Write(payload)
 }

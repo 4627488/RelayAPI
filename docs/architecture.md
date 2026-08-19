@@ -31,7 +31,11 @@ Chat Completions backends receive a JSON-schema string-input function when
 Codex sends a freeform custom tool. Relay restores the provider's function call
 to the original `custom_tool_call`, including call IDs and namespaces. Kimi and
 other Chat-only endpoints are translated bidirectionally between Responses and
-Chat Completions, including streaming events and usage.
+Chat Completions: parallel tool calls stay on one assistant message, reasoning
+summary maps to `reasoning_content`, structured `text.format` maps to
+`response_format`, missing `call_id`s are synthesized, and streams still emit
+`response.completed` when upstream only sends `[DONE]`. Custom tools lowered
+for Chat are restored on the way back.
 
 WebSocket sessions support multiple turns. A completed turn may release its
 upstream connection while retaining the downstream session; the next complete
