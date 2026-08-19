@@ -86,3 +86,15 @@ func TestCircuitBreakerAllowsSingleRecoveryProbe(t *testing.T) {
 	}
 	lease.Release()
 }
+
+func TestCircuitBreakerDisabledNeverOpens(t *testing.T) {
+	client := New(Options{MaxInFlight: 2, CircuitFailureThreshold: 0})
+	for range 8 {
+		client.RecordOutcome(errors.New("reset"))
+	}
+	lease, err := client.Acquire(t.Context(), 1)
+	if err != nil {
+		t.Fatalf("disabled circuit rejected traffic: %v", err)
+	}
+	lease.Release()
+}

@@ -89,7 +89,8 @@ added twice into the critical path.
 
 - Admission bounds concurrency, queue depth and aggregate buffered request
   bytes before the body is read.
-- Repeated transport failures open a circuit breaker with one recovery probe.
+- Process-wide circuit breaking is off by default. Consecutive credential
+  failures can still isolate one account without taking the whole process down.
 - Provider errors and Relay errors are returned as written and recorded on the
   request log. There is no transparent retry of 408/429/502/503/504.
 - OAuth tokens refresh proactively near expiry. A 401 still refreshes the

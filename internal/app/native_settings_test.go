@@ -2,6 +2,7 @@ package app
 
 import (
 	"testing"
+	"time"
 )
 
 func TestDefaultNativeRuntimeSettingsExposeOnlyEffectiveControls(t *testing.T) {
@@ -9,8 +10,15 @@ func TestDefaultNativeRuntimeSettingsExposeOnlyEffectiveControls(t *testing.T) {
 	if message := validateNativeRuntimeSettings(settings); message != "" {
 		t.Fatalf("default settings are invalid: %s", message)
 	}
+	if settings.RequestTimeoutSeconds != 86400 || settings.MaxRequestMiB != 1024 ||
+		settings.RequestBytesInFlightMiB != 8192 || settings.MemoryReclaimThresholdMiB != 8192 {
+		t.Fatalf("process bounds = %#v", settings)
+	}
+	if settings.UnpricedModelPolicy != "allow" || !settings.UpstreamWebSockets {
+		t.Fatalf("policy defaults = %#v", settings)
+	}
 	compiled := runtimeSettings(settings, "direct")
-	if compiled.FailureThreshold != 3 || compiled.FailureCooldown != 0 {
+	if compiled.FailureThreshold != 3 || compiled.FailureCooldown != 0 || compiled.ResponseHeaderTimeout != 24*time.Hour {
 		t.Fatalf("isolation settings = %#v", compiled)
 	}
 }
@@ -24,6 +32,11 @@ func TestNativeRuntimeSettingsValidation(t *testing.T) {
 		{"threshold", func(value *nativeRuntimeSettings) { value.CredentialFailureThreshold = 0 }},
 		{"cooldown", func(value *nativeRuntimeSettings) { value.CredentialCooldownSeconds = -1 }},
 		{"cooldown_high", func(value *nativeRuntimeSettings) { value.CredentialCooldownSeconds = 3601 }},
+		{"timeout", func(value *nativeRuntimeSettings) { value.RequestTimeoutSeconds = 0 }},
+		{"request_body", func(value *nativeRuntimeSettings) { value.MaxRequestMiB = 0 }},
+		{"in_flight", func(value *nativeRuntimeSettings) { value.RequestBytesInFlightMiB = 8 }},
+		{"reclaim", func(value *nativeRuntimeSettings) { value.MemoryReclaimThresholdMiB = 8 }},
+		{"unpriced", func(value *nativeRuntimeSettings) { value.UnpricedModelPolicy = "maybe" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -33,5 +46,30 @@ func TestNativeRuntimeSettingsValidation(t *testing.T) {
 				t.Fatalf("invalid settings accepted: %#v", value)
 			}
 		})
+	}
+}
+
+func TestNormalizeNativeRuntimeSettingsFillsMissingBounds(t *testing.T) {
+	value := nativeRuntimeSettings{RoutingStrategy: "round-robin", CredentialFailureThreshold: 3}
+	changed := normalizeNativeRuntimeSettings(&value, []byte(`{"routing_strategy":"round-robin"}`), false, "deny")
+	if !changed {
+		t.Fatal("missing bounds were not filled")
+	}
+	if value.RequestTimeoutSeconds != 86400 || value.MaxRequestMiB != 1024 || value.UnpricedModelPolicy != "deny" || value.UpstreamWebSockets {
+		t.Fatalf("normalized = %#v", value)
+	}
+}
+
+func TestNormalizeNativeRuntimeSettingsKeepsStoredWebSocketPolicy(t *testing.T) {
+	value := defaultNativeRuntimeSettings()
+	value.UpstreamWebSockets = false
+	value.UnpricedModelPolicy = "allow"
+	value.RequestTimeoutSeconds = 120
+	raw := []byte(`{"upstream_websockets":false,"unpriced_model_policy":"allow","request_timeout_seconds":120,"max_request_mib":1024,"request_bytes_in_flight_mib":8192,"memory_reclaim_threshold_mib":8192}`)
+	if normalizeNativeRuntimeSettings(&value, raw, true, "deny") {
+		t.Fatalf("explicit values were rewritten: %#v", value)
+	}
+	if value.UpstreamWebSockets || value.UnpricedModelPolicy != "allow" || value.RequestTimeoutSeconds != 120 {
+		t.Fatalf("normalized = %#v", value)
 	}
 }

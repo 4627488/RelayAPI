@@ -39,13 +39,13 @@ type nativeCredential struct {
 	Vendor              string
 }
 
-func compileNativeCredentials(credentials []Credential, globalProxy string) (map[string]*nativeCredential, error) {
+func compileNativeCredentials(credentials []Credential, globalProxy string, headerTimeout time.Duration) (map[string]*nativeCredential, error) {
 	compiled := make(map[string]*nativeCredential, len(credentials))
 	for _, source := range credentials {
 		if !source.Enabled {
 			continue
 		}
-		credential, err := compileNativeCredential(source, globalProxy)
+		credential, err := compileNativeCredential(source, globalProxy, headerTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +122,7 @@ func (r *nativeRuntime) selectCredential(model, pinnedID, affinityKey string) (*
 	return credential, credential != nil
 }
 
-func compileNativeCredential(source Credential, globalProxy string) (*nativeCredential, error) {
+func compileNativeCredential(source Credential, globalProxy string, headerTimeout time.Duration) (*nativeCredential, error) {
 	if strings.TrimSpace(source.ID) == "" {
 		return nil, errors.New("upstream credential requires an ID")
 	}
@@ -188,7 +188,7 @@ func compileNativeCredential(source Credential, globalProxy string) (*nativeCred
 	if len(credential.Models) == 0 {
 		credential.Models = defaultModels(provider)
 	}
-	client, err := providerHTTPClient(credential.ProxyURL)
+	client, err := providerHTTPClient(credential.ProxyURL, headerTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("credential %q proxy: %w", source.ID, err)
 	}
@@ -272,8 +272,8 @@ func validHeader(name, value string) bool {
 	return strings.TrimSpace(name) != "" && !strings.ContainsAny(name, "\r\n:") && !strings.ContainsAny(value, "\r\n")
 }
 
-func providerHTTPClient(proxyURL string) (*http.Client, error) {
-	return egress.OutboundHTTPClient(proxyURL, 0)
+func providerHTTPClient(proxyURL string, headerTimeout time.Duration) (*http.Client, error) {
+	return egress.OutboundHTTPClient(proxyURL, headerTimeout)
 }
 
 func (c *nativeCredential) discoverModels(ctx context.Context) ([]string, error) {

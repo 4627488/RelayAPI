@@ -34,23 +34,20 @@ type RuntimeSettings = {
   credential_failure_threshold: number
   credential_cooldown_seconds: number
   system_proxy_id: string
+  request_timeout_seconds: number
+  max_request_mib: number
+  request_bytes_in_flight_mib: number
+  memory_reclaim_threshold_mib: number
+  unpriced_model_policy: "allow" | "deny"
+  upstream_websockets: boolean
 }
 
 type RuntimeInfo = {
   ready: boolean
   credentials: number
   models: number
-  upstream_websockets: boolean
-  request_timeout_seconds: number
   max_in_flight: number
   max_queue: number
-  queue_timeout_seconds: number
-  max_request_bytes: number
-  request_bytes_in_flight: number
-  circuit_failure_threshold: number
-  circuit_open_seconds: number
-  memory_reclaim_threshold_bytes: number
-  unpriced_model_policy: string
 }
 
 type SettingsResponse = {
@@ -98,10 +95,6 @@ function NumberField({
       <FieldDescription>{description}</FieldDescription>
     </Field>
   )
-}
-
-function formatMiB(value: number) {
-  return `${Math.round(value / 1024 / 1024)} MiB`
 }
 
 export function RuntimeSettingsView() {
@@ -179,19 +172,6 @@ export function RuntimeSettingsView() {
       </div>
     )
   }
-
-  const runtimeFacts: [string, string | number][] = [
-    ["响应头超时", `${runtime.request_timeout_seconds}s`],
-    ["请求体上限", formatMiB(runtime.max_request_bytes)],
-    ["在途内存预算", formatMiB(runtime.request_bytes_in_flight)],
-    ["内存回收阈值", formatMiB(runtime.memory_reclaim_threshold_bytes)],
-    [
-      "全局熔断",
-      `${runtime.circuit_failure_threshold} 次 / ${runtime.circuit_open_seconds}s`,
-    ],
-    ["未定价模型", runtime.unpriced_model_policy === "allow" ? "允许" : "拒绝"],
-    ["上游 WebSocket", runtime.upstream_websockets ? "已启用" : "已关闭"],
-  ]
 
   return (
     <div className="flex flex-col gap-5">
@@ -346,20 +326,110 @@ export function RuntimeSettingsView() {
 
           <Card>
             <CardHeader>
-              <CardTitle>当前部署边界</CardTitle>
+              <CardTitle>进程边界</CardTitle>
               <CardDescription>
-                这些值影响进程资源，需要修改环境变量并重启。
+                保存后立即生效，不必改环境变量或重启。默认按宽松上限运行。
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <dl className="grid gap-x-5 gap-y-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                {runtimeFacts.map(([label, item]) => (
-                  <div key={label}>
-                    <dt className="text-xs text-muted-foreground">{label}</dt>
-                    <dd className="mt-1 font-medium tabular-nums">{item}</dd>
-                  </div>
-                ))}
-              </dl>
+              <FieldGroup>
+                <NumberField
+                  id="request-timeout"
+                  label="响应头超时"
+                  suffix="秒"
+                  description="只限制等待上游响应头，不会打断已经开始的 SSE 或 WebSocket。"
+                  value={value.request_timeout_seconds}
+                  min={1}
+                  max={86400}
+                  onChange={(next) => patch("request_timeout_seconds", next)}
+                />
+                <NumberField
+                  id="max-request-mib"
+                  label="请求体上限"
+                  suffix="MiB"
+                  description="单个推理请求体的上限。"
+                  value={value.max_request_mib}
+                  min={1}
+                  max={65536}
+                  onChange={(next) => patch("max_request_mib", next)}
+                />
+                <NumberField
+                  id="in-flight-mib"
+                  label="在途内存预算"
+                  suffix="MiB"
+                  description="所有在途请求体合计上限，必须不小于请求体上限。"
+                  value={value.request_bytes_in_flight_mib}
+                  min={value.max_request_mib}
+                  max={262144}
+                  onChange={(next) =>
+                    patch("request_bytes_in_flight_mib", next)
+                  }
+                />
+                <NumberField
+                  id="reclaim-mib"
+                  label="内存回收阈值"
+                  suffix="MiB"
+                  description="堆占用超过该值时才主动回收。调高可减少回收打扰。"
+                  value={value.memory_reclaim_threshold_mib}
+                  min={64}
+                  max={524288}
+                  onChange={(next) =>
+                    patch("memory_reclaim_threshold_mib", next)
+                  }
+                />
+                <Field>
+                  <FieldLabel>未定价模型</FieldLabel>
+                  <Select
+                    items={{ allow: "允许", deny: "拒绝" }}
+                    value={value.unpriced_model_policy}
+                    onValueChange={(next) =>
+                      next &&
+                      patch(
+                        "unpriced_model_policy",
+                        next as RuntimeSettings["unpriced_model_policy"]
+                      )
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="allow">允许</SelectItem>
+                        <SelectItem value="deny">拒绝</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    允许时，尚未配置价格的模型仍可调用，只是不预留余额。
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel>上游 WebSocket</FieldLabel>
+                  <Select
+                    items={{ enabled: "已启用", disabled: "已关闭" }}
+                    value={
+                      value.upstream_websockets ? "enabled" : "disabled"
+                    }
+                    onValueChange={(next) =>
+                      next && patch("upstream_websockets", next === "enabled")
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">已启用</SelectItem>
+                        <SelectItem value="disabled">已关闭</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    关闭后目录不再推荐 WebSocket，客户端改走 HTTP 流式。
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
             </CardContent>
           </Card>
         </div>

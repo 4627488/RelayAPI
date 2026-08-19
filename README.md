@@ -61,11 +61,10 @@ Codex/xAI WebSocket 支持连接内多轮 `response.create`。收到一轮终态
 客户端连接仍会保留，下一次完整请求会自动重连；`generate:false` 预热由本地直接完成。
 `RELAY_UPSTREAM_WEBSOCKETS=true` 默认启用这条链路，关闭后可统一使用 HTTP 流式接口。
 
-原生执行器由 RelayAPI 的准入控制保护：推理请求默认最多 8 个并发、16 个等待者，排队最多 2 秒；单请求体默认最多
-32 MiB，所有在途请求体合计最多 32 MiB。单请求可配置到 64 GiB，在途预算可配置到 256 GiB。连续 3 次
-上游传输故障后熔断 15 秒，恢复时只允许一个探针。`RELAY_REQUEST_TIMEOUT_SECONDS`
-只限制等待响应头，不会中断已经开始的 SSE/WebSocket。上述值均可用 `.env.example`
-中的 `RELAY_*` 参数调整。提高并发或请求体上限时应同步提高 RelayAPI 内存预算。
+原生执行器由 RelayAPI 的准入控制保护：推理请求默认最多 8 个并发、16 个等待者，排队最多 2 秒。
+进程边界（响应头超时、请求体上限、在途内存、内存回收、未定价模型、上游 WebSocket）在管理端「运行策略」里热更新，默认按宽松上限运行：响应头等待 24 小时、单请求 1 GiB、在途合计 8 GiB。
+这些值不再依赖重启。凭据级故障隔离仍然生效；进程级全局熔断默认关闭，避免几次传输失败就把整站拦掉。
+提高并发或请求体上限时，请同步提高主机内存预算。
 
 ## 客户端兼容
 
@@ -172,7 +171,7 @@ Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段�
 - `GET|POST /api/admin/providers/accounts`：管理数据库加密保存的原生凭据
 - `GET|POST /api/admin/proxies`、`PATCH|DELETE /api/admin/proxies/{id}`：管理可复用的加密代理条目
 - `POST /api/admin/proxies/{id}/test`：测试代理并返回落地 IP、归属、ASN/运营商和延迟
-- `GET|PATCH /api/admin/runtime/settings`：系统代理、重试与凭据调度策略
+- `GET|PATCH /api/admin/runtime/settings`：凭据调度、隔离、系统代理，以及可热更新的进程边界
 - `GET /api/admin/usage?days=30&user_id=...`：全局或指定用户用量
 - `GET /api/admin/logs?tenant_id=...&page=1&page_size=50`：可搜索、筛选和分页的请求日志
 - `GET /api/admin/logs/{id}`：脱敏请求、Relay 原生运行时 转发、上游响应、耗时与历史计费详情

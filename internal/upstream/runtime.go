@@ -68,19 +68,21 @@ type Credential struct {
 }
 
 type Options struct {
-	RoutingStrategy     string
-	ProxyURL            string
-	FailureThreshold    int
-	FailureCooldown     time.Duration
-	OnCredentialUpdated func(context.Context, string, []byte)
-	OnOAuthCredential   func(context.Context, string, string, string, []byte) error
+	RoutingStrategy       string
+	ProxyURL              string
+	FailureThreshold      int
+	FailureCooldown       time.Duration
+	ResponseHeaderTimeout time.Duration
+	OnCredentialUpdated   func(context.Context, string, []byte)
+	OnOAuthCredential     func(context.Context, string, string, string, []byte) error
 }
 
 type Settings struct {
-	RoutingStrategy  string
-	ProxyURL         string
-	FailureThreshold int
-	FailureCooldown  time.Duration
+	RoutingStrategy       string
+	ProxyURL              string
+	FailureThreshold      int
+	FailureCooldown       time.Duration
+	ResponseHeaderTimeout time.Duration
 }
 
 type CredentialStatus struct {

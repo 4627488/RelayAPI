@@ -56,7 +56,10 @@ func OutboundHTTPClient(rawProxy string, timeout time.Duration) (*http.Client, e
 			}
 		}
 	}
-	return &http.Client{Transport: transport, Timeout: timeout}, nil
+	if timeout > 0 {
+		transport.ResponseHeaderTimeout = timeout
+	}
+	return &http.Client{Transport: transport}, nil
 }
 
 func RedactProxyURL(raw string) string {

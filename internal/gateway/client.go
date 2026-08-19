@@ -33,8 +33,8 @@ func New(options Options) *Client {
 	if options.QueueTimeout < 0 {
 		options.QueueTimeout = 0
 	}
-	if options.CircuitFailureThreshold <= 0 {
-		options.CircuitFailureThreshold = 3
+	if options.CircuitFailureThreshold < 0 {
+		options.CircuitFailureThreshold = 0
 	}
 	if options.CircuitOpenDuration <= 0 {
 		options.CircuitOpenDuration = 15 * time.Second

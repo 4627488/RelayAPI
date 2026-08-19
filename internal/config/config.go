@@ -56,14 +56,14 @@ func Load() (Config, error) {
 		SecureCookies:                  envBool("RELAY_SECURE_COOKIES", false),
 		ReservationNanoUSD:             envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
 		ImageReservationNanoUSD:        envInt64("BILLING_IMAGE_RESERVE_NANO_USD", 500_000_000),
-		RequestTimeout:                 time.Duration(envInt64("RELAY_REQUEST_TIMEOUT_SECONDS", 600)) * time.Second,
+		RequestTimeout:                 time.Duration(envInt64("RELAY_REQUEST_TIMEOUT_SECONDS", 86400)) * time.Second,
 		GatewayMaxInFlight:             int(envInt64("RELAY_MAX_IN_FLIGHT", 8)),
 		GatewayMaxQueue:                int(envInt64("RELAY_MAX_QUEUE", 16)),
 		GatewayQueueTimeout:            time.Duration(envInt64("RELAY_QUEUE_TIMEOUT_MILLISECONDS", 2_000)) * time.Millisecond,
-		MaxRequestBytes:                envInt64("RELAY_MAX_REQUEST_MIB", 32) << 20,
-		RequestBytesInFlight:           envInt64("RELAY_REQUEST_BYTES_IN_FLIGHT_MIB", 32) << 20,
-		MemoryReclaimThresholdBytes:    uint64(envInt64("RELAY_MEMORY_RECLAIM_THRESHOLD_MIB", 256)) << 20,
-		GatewayCircuitFailureThreshold: int(envInt64("RELAY_CIRCUIT_FAILURE_THRESHOLD", 3)),
+		MaxRequestBytes:                envInt64("RELAY_MAX_REQUEST_MIB", 1024) << 20,
+		RequestBytesInFlight:           envInt64("RELAY_REQUEST_BYTES_IN_FLIGHT_MIB", 8192) << 20,
+		MemoryReclaimThresholdBytes:    uint64(envInt64("RELAY_MEMORY_RECLAIM_THRESHOLD_MIB", 8192)) << 20,
+		GatewayCircuitFailureThreshold: int(envInt64("RELAY_CIRCUIT_FAILURE_THRESHOLD", 0)),
 		GatewayCircuitOpenDuration:     time.Duration(envInt64("RELAY_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
 		QuotaSyncInterval:              time.Duration(envInt64("RELAY_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
 		UpstreamWebSockets:             envBool("RELAY_UPSTREAM_WEBSOCKETS", true),
@@ -100,8 +100,8 @@ func Load() (Config, error) {
 	if cfg.ImageReservationNanoUSD < 0 {
 		return Config{}, errors.New("BILLING_IMAGE_RESERVE_NANO_USD cannot be negative")
 	}
-	if cfg.RequestTimeout < time.Second || cfg.RequestTimeout > time.Hour {
-		return Config{}, errors.New("RELAY_REQUEST_TIMEOUT_SECONDS must be between 1 and 3600")
+	if cfg.RequestTimeout < time.Second || cfg.RequestTimeout > 24*time.Hour {
+		return Config{}, errors.New("RELAY_REQUEST_TIMEOUT_SECONDS must be between 1 and 86400")
 	}
 	if cfg.GatewayMaxInFlight < 1 || cfg.GatewayMaxInFlight > 1024 {
 		return Config{}, errors.New("RELAY_MAX_IN_FLIGHT must be between 1 and 1024")
@@ -121,8 +121,8 @@ func Load() (Config, error) {
 	if cfg.MemoryReclaimThresholdBytes < 64<<20 || cfg.MemoryReclaimThresholdBytes > 512<<30 {
 		return Config{}, errors.New("RELAY_MEMORY_RECLAIM_THRESHOLD_MIB must be between 64 and 524288")
 	}
-	if cfg.GatewayCircuitFailureThreshold < 1 || cfg.GatewayCircuitFailureThreshold > 100 {
-		return Config{}, errors.New("RELAY_CIRCUIT_FAILURE_THRESHOLD must be between 1 and 100")
+	if cfg.GatewayCircuitFailureThreshold < 0 || cfg.GatewayCircuitFailureThreshold > 100 {
+		return Config{}, errors.New("RELAY_CIRCUIT_FAILURE_THRESHOLD must be between 0 and 100")
 	}
 	if cfg.GatewayCircuitOpenDuration < time.Second || cfg.GatewayCircuitOpenDuration > 10*time.Minute {
 		return Config{}, errors.New("RELAY_CIRCUIT_OPEN_SECONDS must be between 1 and 600")

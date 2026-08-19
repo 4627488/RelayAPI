@@ -46,7 +46,7 @@ func NewRuntime(options Options, credentials []Credential) (Runtime, error) {
 	r.settings = Settings{
 		RoutingStrategy: options.RoutingStrategy,
 		ProxyURL:        options.ProxyURL, FailureThreshold: options.FailureThreshold,
-		FailureCooldown: options.FailureCooldown,
+		FailureCooldown: options.FailureCooldown, ResponseHeaderTimeout: options.ResponseHeaderTimeout,
 	}
 	r.oauth = newOAuthManager(options)
 	r.handler = http.HandlerFunc(r.serveHTTP)
@@ -128,7 +128,7 @@ func (r *nativeRuntime) ReplaceCredentials(_ context.Context, credentials []Cred
 	r.mu.RLock()
 	globalProxy := r.settings.ProxyURL
 	r.mu.RUnlock()
-	compiled, err := compileNativeCredentials(credentials, globalProxy)
+	compiled, err := compileNativeCredentials(credentials, globalProxy, r.settings.ResponseHeaderTimeout)
 	if err != nil {
 		return err
 	}
@@ -158,7 +158,7 @@ func (r *nativeRuntime) ApplySettings(_ context.Context, settings Settings) erro
 		previous[credential.ID] = credential
 	}
 	r.mu.RUnlock()
-	compiled, err := compileNativeCredentials(credentials, settings.ProxyURL)
+	compiled, err := compileNativeCredentials(credentials, settings.ProxyURL, settings.ResponseHeaderTimeout)
 	if err != nil {
 		return err
 	}

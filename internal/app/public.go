@@ -69,8 +69,8 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Relay-Request-ID", requestID)
 	admission := store.Admission{RequestID: requestID}
 	expectedBodyBytes := r.ContentLength
-	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.MaxRequestBytes {
-		expectedBodyBytes = a.cfg.MaxRequestBytes
+	if expectedBodyBytes < 0 || expectedBodyBytes > a.maxRequestBytes() {
+		expectedBodyBytes = a.maxRequestBytes()
 	}
 	targetAdmission := a.admission()
 	if targetAdmission == nil || a.nativeRuntime == nil {
@@ -87,10 +87,10 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	defer lease.Release()
 	timeline.Step(time.Now(), "runtime_admission_queue", "运行时准入排队", "queue", "等待并发槽位与请求体内存预算")
 
-	body, err := readBoundedRequestBody(w, r, a.cfg.MaxRequestBytes)
+	body, err := readBoundedRequestBody(w, r, a.maxRequestBytes())
 	if err != nil {
 		a.rejectPublic(w, r, key, requestID, admission, requestMetadata(body, r), body, started, timeline,
-			publicError(http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("请求体超过 %d MiB", a.cfg.MaxRequestBytes>>20)))
+			publicError(http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("请求体超过 %d MiB", a.maxRequestBytes()>>20)))
 		return
 	}
 	if len(body) >= largeRequestMemoryReleaseBytes {
@@ -156,7 +156,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		lookup := <-basePriceResult
 		price, err = lookup.price, lookup.err
 		if err != nil {
-			if a.cfg.UnpricedModelPolicy == "deny" {
+			if a.unpricedModelPolicy() == "deny" {
 				a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
 					publicError(http.StatusServiceUnavailable, "pricing_unavailable", "该模型尚未配置价格，请联系管理员完善计费配置"))
 				return
@@ -176,7 +176,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 				reserve = max64(reserve, saturatingMultiply64(a.cfg.ImageReservationNanoUSD, imageCount))
 			}
 		}
-		reservationTTL := maxDuration(30*time.Minute, a.cfg.RequestTimeout+5*time.Minute)
+		reservationTTL := maxDuration(30*time.Minute, a.requestTimeout()+5*time.Minute)
 		if websocket {
 			reservationTTL = 24 * time.Hour
 		}

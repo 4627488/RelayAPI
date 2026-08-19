@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func validEnvironment(t *testing.T) {
 	t.Helper()
@@ -27,14 +30,20 @@ func TestLoadUsesMemoryBoundedRequestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MaxRequestBytes != 32<<20 {
-		t.Fatalf("max request bytes = %d, want %d", cfg.MaxRequestBytes, int64(32<<20))
+	if cfg.MaxRequestBytes != 1024<<20 {
+		t.Fatalf("max request bytes = %d, want %d", cfg.MaxRequestBytes, int64(1024<<20))
 	}
-	if cfg.RequestBytesInFlight != 32<<20 {
-		t.Fatalf("in-flight request bytes = %d, want %d", cfg.RequestBytesInFlight, int64(32<<20))
+	if cfg.RequestBytesInFlight != 8192<<20 {
+		t.Fatalf("in-flight request bytes = %d, want %d", cfg.RequestBytesInFlight, int64(8192<<20))
 	}
-	if cfg.MemoryReclaimThresholdBytes != 256<<20 {
-		t.Fatalf("memory reclaim threshold = %d, want %d", cfg.MemoryReclaimThresholdBytes, uint64(256<<20))
+	if cfg.MemoryReclaimThresholdBytes != 8192<<20 {
+		t.Fatalf("memory reclaim threshold = %d, want %d", cfg.MemoryReclaimThresholdBytes, uint64(8192<<20))
+	}
+	if cfg.RequestTimeout != 24*time.Hour {
+		t.Fatalf("request timeout = %s, want 24h", cfg.RequestTimeout)
+	}
+	if cfg.GatewayCircuitFailureThreshold != 0 {
+		t.Fatalf("circuit threshold = %d, want disabled", cfg.GatewayCircuitFailureThreshold)
 	}
 }
 

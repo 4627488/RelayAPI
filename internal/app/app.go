@@ -35,7 +35,7 @@ type App struct {
 	wg                sync.WaitGroup
 	pricingSyncMu     sync.Mutex
 	setupBox          identity.SecretBox
-	nativeAdmission   *gateway.Client
+	nativeAdmission   atomic.Pointer[gateway.Client]
 	nativeRuntime     upstream.Runtime
 	providerOAuth     providerOAuthSessions
 	nativeSettings    settingsState
@@ -100,7 +100,7 @@ func (a *App) capabilityIndex() *pricing.CapabilityIndex {
 
 func (a *App) codexCatalogRevisionToken() string {
 	token := codexCatalogRevisionToken
-	if a != nil && !a.cfg.UpstreamWebSockets {
+	if a != nil && !a.upstreamWebSockets() {
 		token += "|http"
 	}
 	if version := a.capabilityIndex().Version(); version != "" {
@@ -218,12 +218,13 @@ func (a *App) maintenance() {
 const largeRequestMemoryReleaseBytes = 8 << 20
 
 func (a *App) reclaimRuntimeMemoryUnderPressure() {
-	if a == nil || a.cfg.MemoryReclaimThresholdBytes == 0 {
+	threshold := a.memoryReclaimThreshold()
+	if a == nil || threshold == 0 {
 		return
 	}
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	if stats.HeapAlloc < a.cfg.MemoryReclaimThresholdBytes {
+	if stats.HeapAlloc < threshold {
 		return
 	}
 	a.reclaimRuntimeMemory("heap_pressure", stats.HeapAlloc)

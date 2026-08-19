@@ -161,6 +161,9 @@ func (l *Lease) Release() {
 func (a *admissionController) allow(now time.Time) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.failureThreshold <= 0 {
+		return false, nil
+	}
 	if a.openUntil.After(now) {
 		return false, ErrCircuitOpen
 	}
@@ -186,6 +189,9 @@ func (a *admissionController) cancelProbe(probe bool) {
 func (a *admissionController) recordOutcome(err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.failureThreshold <= 0 {
+		return
+	}
 	a.probeActive = false
 	if err == nil {
 		a.consecutiveFailures = 0

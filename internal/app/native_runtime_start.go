@@ -18,7 +18,7 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	settings, settingsFound, legacyProxy, err := a.loadNativeRuntimeSettings(ctx)
+	settings, settingsFound, legacyProxy, boundsFilled, err := a.loadNativeRuntimeSettings(ctx)
 	if err != nil {
 		return fmt.Errorf("load native runtime settings: %w", err)
 	}
@@ -26,7 +26,7 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("migrate proxy configuration: %w", err)
 	}
-	if !settingsFound || migrated || legacyProxy != "" {
+	if !settingsFound || migrated || legacyProxy != "" || boundsFilled {
 		if err = a.store.PutRuntimeSetting(ctx, nativeRuntimeSettingsKey, settings); err != nil {
 			return fmt.Errorf("initialize native runtime settings: %w", err)
 		}
@@ -45,7 +45,7 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	credentials := runtimeCredentials(rows, a.cfg.UpstreamWebSockets, proxyURLs)
+	credentials := runtimeCredentials(rows, settings.UpstreamWebSockets, proxyURLs)
 	webSocketCredentials := 0
 	for _, credential := range credentials {
 		provider := strings.ToLower(strings.TrimSpace(credential.Provider))
@@ -53,7 +53,7 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 			webSocketCredentials++
 		}
 	}
-	slog.Info("native runtime upstream websocket policy", "enabled", a.cfg.UpstreamWebSockets, "eligible_credentials", webSocketCredentials)
+	slog.Info("native runtime upstream websocket policy", "enabled", settings.UpstreamWebSockets, "eligible_credentials", webSocketCredentials)
 	if message := validateNativeRuntimeSettings(settings); message != "" {
 		return fmt.Errorf("stored native runtime settings are invalid: %s", message)
 	}
@@ -61,7 +61,8 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	runtime, err := upstream.NewRuntime(upstream.Options{
 		RoutingStrategy: settings.RoutingStrategy,
 		ProxyURL:        firstNonEmptyString(systemProxyURL, "direct"), FailureThreshold: settings.CredentialFailureThreshold,
-		FailureCooldown: time.Duration(settings.CredentialCooldownSeconds) * time.Second,
+		FailureCooldown:       time.Duration(settings.CredentialCooldownSeconds) * time.Second,
+		ResponseHeaderTimeout: time.Duration(settings.RequestTimeoutSeconds) * time.Second,
 		OnCredentialUpdated: func(updateCtx context.Context, id string, document []byte) {
 			if persistErr := a.persistEmbeddedCredential(updateCtx, id, document); persistErr != nil {
 				slog.Warn("persist native runtime credential refresh", "credential_id", id, "error", persistErr)
@@ -72,14 +73,7 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build native runtime: %w", err)
 	}
-	a.nativeAdmission = gateway.New(gateway.Options{
-		MaxInFlight:             a.cfg.GatewayMaxInFlight,
-		MaxQueue:                a.cfg.GatewayMaxQueue,
-		MaxRequestBytesInFlight: a.cfg.RequestBytesInFlight,
-		QueueTimeout:            a.cfg.GatewayQueueTimeout,
-		CircuitFailureThreshold: a.cfg.GatewayCircuitFailureThreshold,
-		CircuitOpenDuration:     a.cfg.GatewayCircuitOpenDuration,
-	})
+	a.replaceAdmission(settings)
 	a.nativeRuntime = runtime
 	return nil
 }
@@ -127,7 +121,7 @@ func (a *App) reloadNativeCredentials(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return a.nativeRuntime.ReplaceCredentials(ctx, runtimeCredentials(rows, a.cfg.UpstreamWebSockets, proxyURLs))
+	return a.nativeRuntime.ReplaceCredentials(ctx, runtimeCredentials(rows, a.upstreamWebSockets(), proxyURLs))
 }
 
 func (a *App) persistEmbeddedCredential(ctx context.Context, id string, document []byte) error {
@@ -163,8 +157,8 @@ func stripCredentialProxyFields(document []byte) []byte {
 }
 
 func (a *App) admission() *gateway.Client {
-	if a != nil && a.nativeAdmission != nil {
-		return a.nativeAdmission
+	if a == nil {
+		return nil
 	}
-	return nil
+	return a.nativeAdmission.Load()
 }

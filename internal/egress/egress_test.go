@@ -3,6 +3,7 @@ package egress
 import (
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestValidateProxyURL(t *testing.T) {
@@ -29,5 +30,16 @@ func TestOutboundHTTPClientWithoutProxyIsDirect(t *testing.T) {
 	}
 	if transport.MaxIdleConnsPerHost < 16 || !transport.DisableCompression {
 		t.Fatalf("transport is not tuned for low-latency reuse: %#v", transport)
+	}
+}
+
+func TestOutboundHTTPClientAppliesResponseHeaderTimeout(t *testing.T) {
+	client, err := OutboundHTTPClient("direct", 45*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.ResponseHeaderTimeout != 45*time.Second || client.Timeout != 0 {
+		t.Fatalf("header timeout = %#v client timeout = %s", transport, client.Timeout)
 	}
 }

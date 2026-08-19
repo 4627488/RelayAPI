@@ -249,7 +249,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	session.upgraded = true
 	defer downstream.Close()
-	downstream.SetReadLimit(a.cfg.MaxRequestBytes)
+	downstream.SetReadLimit(a.maxRequestBytes())
 	_ = downstream.SetReadDeadline(time.Now().Add(30 * time.Second))
 	messageType, firstFrame, err := downstream.ReadMessage()
 	_ = downstream.SetReadDeadline(time.Time{})
@@ -336,7 +336,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		_ = response.Body.Close()
 	}
 	defer upstream.Close()
-	upstream.SetReadLimit(a.cfg.MaxRequestBytes)
+	upstream.SetReadLimit(a.maxRequestBytes())
 	if err = upstream.WriteMessage(messageType, firstFrame); err != nil {
 		return session, meta, err
 	}
@@ -666,7 +666,7 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 		ReasoningEffort: meta.ReasoningEffort, Endpoint: endpoint}
 	price, priceErr := a.store.ResolvePrice(ctx, dimensions)
 	priceConfigured := priceErr == nil
-	if !priceConfigured && a.cfg.UnpricedModelPolicy == "deny" {
+	if !priceConfigured && a.unpricedModelPolicy() == "deny" {
 		return store.Admission{}, nil, "pricing_unavailable", fmt.Errorf("该模型尚未配置价格，请联系管理员完善计费配置")
 	}
 	reserve := int64(0)

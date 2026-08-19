@@ -76,7 +76,7 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 				writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型列表格式无效: %v", expandErr))
 				return
 			}
-			if !a.cfg.UpstreamWebSockets {
+			if !a.upstreamWebSockets() {
 				disabled, policyErr := applyCodexCatalogWebSocketPolicy(payload, false)
 				if policyErr != nil {
 					writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型传输策略无效: %v", policyErr))
