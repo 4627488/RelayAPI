@@ -345,6 +345,16 @@ export interface ProxyTestResult {
   error?: string
 }
 
+export interface ProviderAccountTestResult {
+  ok: boolean
+  model: string
+  provider: string
+  status_code: number
+  latency_ms: number
+  preview?: string
+  error?: string
+}
+
 type ApiErrorBody = {
   error?: { code?: string; message?: string } | string
   message?: string

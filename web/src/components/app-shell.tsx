@@ -133,7 +133,7 @@ const adminItems: NavigationItem[] = [
   { id: "overview", label: "管理总览", icon: GaugeIcon },
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "invitations", label: "邀请", icon: SendIcon },
-  { id: "providers", label: "模型账户", icon: PlugIcon },
+  { id: "providers", label: "模型管理", icon: PlugIcon },
   { id: "proxies", label: "代理", icon: NetworkIcon },
   { id: "settings", label: "系统设置", icon: SlidersHorizontalIcon },
   { id: "subscriptions", label: "订阅分配", icon: PackageOpenIcon },
