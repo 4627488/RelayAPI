@@ -569,7 +569,16 @@ func (r *nativeRuntime) serveHTTP(w http.ResponseWriter, request *http.Request) 
 		r.serveWebSocket(w, request)
 		return
 	}
-	r.serveInference(w, request)
+	body, err := io.ReadAll(io.LimitReader(request.Body, 1<<30))
+	if err != nil {
+		writeRuntimeError(w, http.StatusBadRequest, "invalid_request", "unable to read request")
+		return
+	}
+	r.Serve(w, request, body)
+}
+
+func (r *nativeRuntime) Serve(w http.ResponseWriter, request *http.Request, body []byte) {
+	r.serveInference(w, request, body)
 }
 
 func (r *nativeRuntime) serveModels(w http.ResponseWriter, request *http.Request) {
@@ -599,15 +608,10 @@ func (r *nativeRuntime) serveModels(w http.ResponseWriter, request *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": items})
 }
 
-func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Request) {
+func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Request, body []byte) {
 	requestID := strings.TrimSpace(request.Header.Get("X-Relay-Request-ID"))
 	trace := r.beginTrace(requestID)
 	defer r.finishTrace(requestID)
-	body, err := io.ReadAll(io.LimitReader(request.Body, 1<<30))
-	if err != nil {
-		writeRuntimeError(w, http.StatusBadRequest, "invalid_request", "unable to read request")
-		return
-	}
 	model := jsonString(body, "model")
 	pinned := strings.TrimSpace(request.Header.Get("X-Relay-Upstream-Credential-ID"))
 	affinityKey := sessionAffinityKey(body, request.Header)
@@ -624,6 +628,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	body = rewriteJSONModel(body, upstreamModel)
 	requestPath := canonicalInferencePath(request.URL.Path)
 	responseMode := "passthrough"
+	var err error
 	var toolRestorer *toolResponseRestorer
 	if credential.Provider == "kimi" && isResponsesPath(requestPath) {
 		body, err = responsesToChatRequest(body)
@@ -1020,8 +1025,11 @@ func jsonBool(payload []byte, key string) bool {
 }
 
 func rewriteJSONModel(payload []byte, model string) []byte {
+	if model == "" || jsonString(payload, "model") == model {
+		return payload
+	}
 	var root map[string]any
-	if json.Unmarshal(payload, &root) != nil || model == "" {
+	if json.Unmarshal(payload, &root) != nil {
 		return payload
 	}
 	root["model"] = model

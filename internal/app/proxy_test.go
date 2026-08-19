@@ -58,6 +58,33 @@ func TestRoutesCoverSupportedClientProtocols(t *testing.T) {
 	}
 }
 
+func TestRuntimeWriterStreamsSuccessAndBuffersErrors(t *testing.T) {
+	success := httptest.NewRecorder()
+	out := &runtimeWriter{client: success, stream: true, capture: &rollingCapture{max: 64}}
+	out.Header().Set("Content-Type", "text/event-stream")
+	out.WriteHeader(http.StatusOK)
+	if _, err := out.Write([]byte("data: ok\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if success.Code != http.StatusOK || success.Body.String() != "data: ok\n\n" {
+		t.Fatalf("streamed = %d %q", success.Code, success.Body.String())
+	}
+
+	errorClient := httptest.NewRecorder()
+	failed := &runtimeWriter{client: errorClient, capture: &rollingCapture{max: 64}}
+	failed.Header().Set("Content-Type", "application/json")
+	failed.WriteHeader(http.StatusTooManyRequests)
+	if _, err := failed.Write([]byte(`{"error":"busy"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if errorClient.Code != http.StatusOK || errorClient.Body.Len() != 0 {
+		t.Fatalf("error was committed early: %d %q", errorClient.Code, errorClient.Body.String())
+	}
+	if failed.status != http.StatusTooManyRequests || string(failed.errorBody) != `{"error":"busy"}` {
+		t.Fatalf("buffered error = %d %q", failed.status, failed.errorBody)
+	}
+}
+
 func TestCopyStreamingClassifiesOnlyUpstreamReadFailures(t *testing.T) {
 	if err := copyStreaming(httptest.NewRecorder(), failingStreamReader{}, nil); !isUpstreamStreamError(err) {
 		t.Fatalf("upstream read error was not classified: %v", err)

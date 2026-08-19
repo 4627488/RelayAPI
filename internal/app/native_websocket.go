@@ -21,6 +21,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
+	nativeruntime "github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/gorilla/websocket"
 )
 
@@ -488,33 +489,15 @@ func nativeWebSocketAdmissionError(code string) (int, string) {
 
 func (a *App) dialNativeRuntimeWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (
 	*websocket.Conn, *http.Response, error) {
-	if a.nativeGateway == nil || a.nativeGateway.BaseURL == nil {
-		return nil, nil, fmt.Errorf("native runtime runtime is not available")
-	}
-	target, err := url.Parse(a.nativeGateway.URL(nativeRuntimeWebSocketPath(r.URL)))
-	if err != nil {
-		return nil, nil, err
-	}
-	switch target.Scheme {
-	case "http":
-		target.Scheme = "ws"
-	case "https":
-		target.Scheme = "wss"
-	default:
-		return nil, nil, fmt.Errorf("native runtime URL uses unsupported scheme %q", target.Scheme)
+	if a.nativeRuntime == nil {
+		return nil, nil, fmt.Errorf("native runtime is not available")
 	}
 	header := nativeRuntimeWebSocketHeaders(r.Header)
-	header.Set("Authorization", "Bearer "+a.nativeGateway.APIKey)
 	header.Set("X-Relay-Request-ID", requestID)
 	if admission.UpstreamCredentialID != "" {
 		header.Set("X-Relay-Upstream-Credential-ID", admission.UpstreamCredentialID)
 	}
-	dialer := websocket.Dialer{
-		HandshakeTimeout:  30 * time.Second,
-		EnableCompression: true,
-		Subprotocols:      websocket.Subprotocols(r),
-	}
-	return dialer.DialContext(ctx, target.String(), header)
+	return nativeruntime.DialWebSocket(ctx, a.nativeRuntime.Handler(), nativeRuntimeWebSocketPath(r.URL), header, websocket.Subprotocols(r))
 }
 
 func nativeRuntimeWebSocketPath(requestURL *url.URL) string {

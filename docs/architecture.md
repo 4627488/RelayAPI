@@ -44,9 +44,9 @@ DashScope Responses path so prefix cache can attach, and requests that share
 credential for an hour.
 
 Request logs keep a version-3 latency trace. Relay records admission and
-loopback timing; the native runtime overlays routing, each provider attempt,
-and provider DNS/TCP/TLS spans on parallel tracks so they are not added twice
-into the critical path.
+in-process runtime timing; the native runtime overlays routing, each provider
+attempt, and provider DNS/TCP/TLS spans on parallel tracks so they are not
+added twice into the critical path.
 
 ## Reliability and security
 
@@ -58,8 +58,8 @@ into the critical path.
   encrypted documents are written back through the credential store.
 - HTTP, HTTPS, SOCKS5 and SOCKS5H proxies are implemented in Relay and apply to
   inference, WebSocket, discovery, OAuth, quota and system requests.
-- Provider credentials remain encrypted in PostgreSQL. The loopback runtime
-  endpoint uses a random process-local bearer key.
+- Provider credentials remain encrypted in PostgreSQL. The native runtime
+  is called in-process; there is no loopback HTTP hop or process-local API key.
 - PostgreSQL row locks make reservation and settlement idempotent and atomic.
 
 ## Models and pricing

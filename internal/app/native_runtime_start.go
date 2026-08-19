@@ -2,13 +2,9 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
 	"strings"
 	"time"
 
@@ -62,13 +58,8 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 		return fmt.Errorf("stored native runtime settings are invalid: %s", message)
 	}
 	a.nativeSettings.value = settings
-	secretBytes := make([]byte, 32)
-	if _, err = rand.Read(secretBytes); err != nil {
-		return fmt.Errorf("generate native runtime key: %w", err)
-	}
-	secret := hex.EncodeToString(secretBytes)
 	runtime, err := upstream.NewRuntime(upstream.Options{
-		APIKey: secret, RequestRetry: settings.RequestRetry,
+		RequestRetry:    settings.RequestRetry,
 		RetryMaxBackoff: time.Duration(settings.RetryMaxBackoffMS) * time.Millisecond, RoutingStrategy: settings.RoutingStrategy,
 		ProxyURL: firstNonEmptyString(systemProxyURL, "direct"), FailureThreshold: settings.CredentialFailureThreshold,
 		FailureCooldown: time.Duration(settings.CredentialCooldownSeconds) * time.Second,
@@ -82,18 +73,7 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build native runtime runtime: %w", err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		_ = runtime.Close(context.Background())
-		return fmt.Errorf("listen for native runtime: %w", err)
-	}
-	server := &http.Server{
-		Handler:           runtime.Handler(),
-		ReadHeaderTimeout: 15 * time.Second,
-		IdleTimeout:       90 * time.Second,
-	}
-	client, err := gateway.NewWithOptions("http://"+listener.Addr().String(), secret, gateway.Options{
-		ResponseHeaderTimeout:   a.cfg.RequestTimeout,
+	a.nativeAdmission = gateway.New(gateway.Options{
 		MaxInFlight:             a.cfg.GatewayMaxInFlight,
 		MaxQueue:                a.cfg.GatewayMaxQueue,
 		MaxRequestBytesInFlight: a.cfg.RequestBytesInFlight,
@@ -101,22 +81,7 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 		CircuitFailureThreshold: a.cfg.GatewayCircuitFailureThreshold,
 		CircuitOpenDuration:     a.cfg.GatewayCircuitOpenDuration,
 	})
-	if err != nil {
-		_ = listener.Close()
-		_ = runtime.Close(context.Background())
-		return err
-	}
-	a.nativeGateway = client
 	a.nativeRuntime = runtime
-	a.nativeGatewayServer = server
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			// The public server remains alive so health checks can expose the failure.
-			a.nativeGatewayServeErr.Store(serveErr)
-		}
-	}()
 	return nil
 }
 
@@ -206,9 +171,9 @@ func stripCredentialProxyFields(document []byte) []byte {
 	return encoded
 }
 
-func (a *App) inferenceGateway() *gateway.Client {
-	if a != nil && a.nativeGateway != nil {
-		return a.nativeGateway
+func (a *App) admission() *gateway.Client {
+	if a != nil && a.nativeAdmission != nil {
+		return a.nativeAdmission
 	}
 	return nil
 }

@@ -28,21 +28,19 @@ import (
 )
 
 type App struct {
-	cfg                   config.Config
-	store                 store.Store
-	mux                   *http.ServeMux
-	stop                  chan struct{}
-	wg                    sync.WaitGroup
-	pricingSyncMu         sync.Mutex
-	setupBox              identity.SecretBox
-	nativeGateway         *gateway.Client
-	nativeRuntime         upstream.Runtime
-	nativeGatewayServer   *http.Server
-	nativeGatewayServeErr atomic.Value
-	providerOAuth         providerOAuthSessions
-	nativeSettings        settingsState
-	memoryReclaiming      atomic.Bool
-	finalizationSlots     chan struct{}
+	cfg               config.Config
+	store             store.Store
+	mux               *http.ServeMux
+	stop              chan struct{}
+	wg                sync.WaitGroup
+	pricingSyncMu     sync.Mutex
+	setupBox          identity.SecretBox
+	nativeAdmission   *gateway.Client
+	nativeRuntime     upstream.Runtime
+	providerOAuth     providerOAuthSessions
+	nativeSettings    settingsState
+	memoryReclaiming  atomic.Bool
+	finalizationSlots chan struct{}
 }
 
 type contextKey string
@@ -85,11 +83,6 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 }
 
 func (a *App) Close() {
-	if a.nativeGatewayServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = a.nativeGatewayServer.Shutdown(ctx)
-		cancel()
-	}
 	if a.nativeRuntime != nil {
 		_ = a.nativeRuntime.Close(context.Background())
 	}
@@ -372,16 +365,20 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	if a.nativeRuntime == nil || a.nativeRuntime.CredentialCount() == 0 {
 		credentialErr = errors.New("no enabled upstream credentials")
 	}
-	if serveErr := a.nativeGatewayServeErr.Load(); serveErr != nil {
-		runtimeErr, _ = serveErr.(error)
+	if a.nativeRuntime == nil {
+		runtimeErr = errors.New("native runtime is not available")
 	}
 	status := http.StatusOK
 	if err != nil || runtimeErr != nil || credentialErr != nil || subscriptionErr != nil {
 		status = http.StatusServiceUnavailable
 	}
+	admissionStatus := gateway.AdmissionStatus{}
+	if admission := a.admission(); admission != nil {
+		admissionStatus = admission.AdmissionStatus()
+	}
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "data_plane": "native_runtime", "upstream_credentials": errorText(credentialErr), "gateway": errorText(runtimeErr),
-		"upstream_admission": a.inferenceGateway().AdmissionStatus(), "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
+		"database": errorText(err), "data_plane": "native_runtime", "upstream_credentials": errorText(credentialErr), "runtime": errorText(runtimeErr),
+		"upstream_admission": admissionStatus, "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
 }
 
 func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {

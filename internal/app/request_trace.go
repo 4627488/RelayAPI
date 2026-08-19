@@ -1,14 +1,10 @@
 package app
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"io"
-	"net/http/httptrace"
-	"net/textproto"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/upstream"
@@ -94,7 +90,7 @@ func (t *latencyTimeline) JSON(completed time.Time) string {
 	}
 	payload := latencyTrace{
 		Version: latencyTraceVersion, TotalMS: elapsedMilliseconds(t.started, completed),
-		Boundary: "Relay 与原生运行时使用进程内实测时间戳；供应商服务端内部阶段止于响应首包",
+		Boundary: "Relay 与原生运行时在同一进程内记录时间戳；供应商服务端内部阶段止于响应首包",
 		Segments: append([]latencySegment(nil), t.segments...), Marks: append([]latencyMark(nil), t.marks...),
 	}
 	raw, _ := json.Marshal(payload)
@@ -114,109 +110,6 @@ func (t *latencyTimeline) addSegment(start, end time.Time, id, label, owner, tra
 
 func elapsedMilliseconds(start, end time.Time) float64 {
 	return float64(end.Sub(start).Microseconds()) / 1000
-}
-
-type clientHTTPTrace struct {
-	mu sync.Mutex
-
-	getConn, gotConn, wroteHeaders, wroteRequest, firstResponseByte time.Time
-	dnsStart, dnsDone, connectStart, connectDone                    time.Time
-	tlsStart, tlsDone                                               time.Time
-	reused                                                          bool
-	remoteAddr                                                      string
-}
-
-func newClientHTTPTrace() (*clientHTTPTrace, *httptrace.ClientTrace) {
-	state := &clientHTTPTrace{}
-	trace := &httptrace.ClientTrace{
-		GetConn: func(string) { state.setTime(&state.getConn, time.Now()) },
-		GotConn: func(info httptrace.GotConnInfo) {
-			state.mu.Lock()
-			state.gotConn = time.Now()
-			state.reused = info.Reused
-			if info.Conn != nil && info.Conn.RemoteAddr() != nil {
-				state.remoteAddr = info.Conn.RemoteAddr().String()
-			}
-			state.mu.Unlock()
-		},
-		DNSStart: func(httptrace.DNSStartInfo) { state.setTime(&state.dnsStart, time.Now()) },
-		DNSDone:  func(httptrace.DNSDoneInfo) { state.setTime(&state.dnsDone, time.Now()) },
-		ConnectStart: func(_, _ string) {
-			state.setTime(&state.connectStart, time.Now())
-		},
-		ConnectDone:       func(_, _ string, _ error) { state.setTime(&state.connectDone, time.Now()) },
-		TLSHandshakeStart: func() { state.setTime(&state.tlsStart, time.Now()) },
-		TLSHandshakeDone: func(tls.ConnectionState, error) {
-			state.setTime(&state.tlsDone, time.Now())
-		},
-		WroteHeaders: func() { state.setTime(&state.wroteHeaders, time.Now()) },
-		WroteRequest: func(httptrace.WroteRequestInfo) {
-			state.setTime(&state.wroteRequest, time.Now())
-		},
-		GotFirstResponseByte: func() { state.setTime(&state.firstResponseByte, time.Now()) },
-		Got1xxResponse:       func(int, textproto.MIMEHeader) error { return nil },
-	}
-	return state, trace
-}
-
-func (t *clientHTTPTrace) setTime(target *time.Time, value time.Time) {
-	t.mu.Lock()
-	if target.IsZero() {
-		*target = value
-	}
-	t.mu.Unlock()
-}
-
-type clientHTTPTraceSnapshot struct {
-	getConn, gotConn, wroteHeaders, wroteRequest, firstResponseByte time.Time
-	dnsStart, dnsDone, connectStart, connectDone                    time.Time
-	tlsStart, tlsDone                                               time.Time
-	reused                                                          bool
-	remoteAddr                                                      string
-}
-
-func (t *clientHTTPTrace) snapshot() clientHTTPTraceSnapshot {
-	if t == nil {
-		return clientHTTPTraceSnapshot{}
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return clientHTTPTraceSnapshot{
-		getConn: t.getConn, gotConn: t.gotConn, wroteHeaders: t.wroteHeaders, wroteRequest: t.wroteRequest,
-		firstResponseByte: t.firstResponseByte, dnsStart: t.dnsStart, dnsDone: t.dnsDone,
-		connectStart: t.connectStart, connectDone: t.connectDone, tlsStart: t.tlsStart, tlsDone: t.tlsDone,
-		reused: t.reused, remoteAddr: t.remoteAddr,
-	}
-}
-
-func (t *latencyTimeline) AddHTTPTrace(state *clientHTTPTrace, completed time.Time) {
-	if t == nil {
-		return
-	}
-	snapshot := state.snapshot()
-	connectionEnd := snapshot.gotConn
-	if connectionEnd.IsZero() {
-		connectionEnd = firstNonZeroTime(snapshot.wroteRequest, completed)
-	}
-	detail := "获取 Relay 到原生运行时 的 HTTP 连接"
-	if snapshot.reused {
-		detail = "复用 Relay 到原生运行时 的空闲连接"
-	}
-	if snapshot.remoteAddr != "" {
-		detail += " · " + snapshot.remoteAddr
-	}
-	t.Step(connectionEnd, "upstream_connection", "连接原生运行时", "upstream", detail)
-	requestWritten := firstNonZeroTime(snapshot.wroteRequest, snapshot.wroteHeaders, connectionEnd)
-	t.Step(requestWritten, "upstream_request_write", "写入 Upstream 请求", "upstream", "请求头与正文已写入 Upstream")
-	firstHeader := firstNonZeroTime(snapshot.firstResponseByte, completed)
-	t.Step(firstHeader, "upstream_wait_headers", "原生运行时 / 上游处理", "upstream", "包含凭据路由、凭据选择、重试，以及供应商生成响应头前的内部耗时")
-	t.Step(completed, "upstream_response_headers", "读取响应头", "upstream", "Relay 已收到 上游响应头")
-
-	t.Span(snapshot.getConn, snapshot.gotConn, "http_connection_pool", "连接池等待", "upstream", detail)
-	t.Span(snapshot.dnsStart, snapshot.dnsDone, "http_dns", "DNS 查询", "upstream", "Relay 到原生运行时 的域名解析")
-	t.Span(snapshot.connectStart, snapshot.connectDone, "http_tcp", "TCP 连接", "upstream", "Relay 到原生运行时 的 TCP 建连")
-	t.Span(snapshot.tlsStart, snapshot.tlsDone, "http_tls", "TLS 握手", "upstream", "Relay 到原生运行时 的 TLS 握手")
-	t.Span(snapshot.gotConn, snapshot.wroteRequest, "http_request_write", "HTTP 请求写入", "upstream", "底层 Transport 写入请求")
 }
 
 func (t *latencyTimeline) AddUpstreamTrace(trace upstream.RequestTrace) {

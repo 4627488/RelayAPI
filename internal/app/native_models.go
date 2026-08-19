@@ -37,9 +37,7 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 		return
 	}
 	copyHeaders(request.Header, r.Header)
-	if gateway := a.inferenceGateway(); gateway != nil && gateway.APIKey != "" {
-		request.Header.Set("Authorization", "Bearer "+gateway.APIKey)
-	}
+	request.Header.Del("Authorization")
 	request.Header.Del("X-API-Key")
 	request.Header.Del("X-Goog-API-Key")
 	recorder := httptest.NewRecorder()

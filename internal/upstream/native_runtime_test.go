@@ -432,6 +432,28 @@ func TestDisabledCredentialCoolingKeepsFailedRoutesEligible(t *testing.T) {
 	}
 }
 
+func TestRuntimeServeUsesPreparedBodyWithoutRereading(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"model":"gpt"`) {
+			t.Errorf("provider body = %s", body)
+		}
+		_, _ = io.WriteString(w, `{"id":"resp_ok","output":[]}`)
+	}))
+	defer provider.Close()
+	runtime := newTestRuntime(t, Credential{
+		ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"},
+		Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL}),
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("must-not-read"))
+	request.Header.Set("X-Relay-Request-ID", "prepared-1")
+	recorder := httptest.NewRecorder()
+	runtime.Serve(recorder, request, []byte(`{"model":"gpt","input":"hi"}`))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestRuntimeTraceCapturesProviderAttempts(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"id":"resp_ok","output":[]}`)

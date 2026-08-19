@@ -12,7 +12,6 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
@@ -235,6 +234,108 @@ func (c *rollingCapture) Info() ([]byte, bool, int64) {
 	return append([]byte(nil), c.detail...), c.total > int64(len(c.detail)), c.total
 }
 
+// runtimeWriter lets the in-process runtime write success streams straight to
+// the client. Error statuses stay buffered so Relay can still rewrite them.
+type runtimeWriter struct {
+	client    http.ResponseWriter
+	header    http.Header
+	status    int
+	stream    bool
+	capture   *rollingCapture
+	errorBody []byte
+	committed bool
+	writeErr  error
+	firstByte func()
+	onHeader  func()
+}
+
+func (w *runtimeWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *runtimeWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.status = status
+	if w.onHeader != nil {
+		w.onHeader()
+	}
+	if status < http.StatusBadRequest {
+		w.commit()
+	}
+}
+
+func (w *runtimeWriter) Write(payload []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.firstByte != nil {
+		w.firstByte()
+		w.firstByte = nil
+	}
+	if w.capture != nil {
+		_, _ = w.capture.Write(payload)
+	}
+	if w.status >= http.StatusBadRequest {
+		const limit = 2<<20 + 1
+		if remaining := limit - len(w.errorBody); remaining > 0 {
+			if remaining > len(payload) {
+				remaining = len(payload)
+			}
+			w.errorBody = append(w.errorBody, payload[:remaining]...)
+		}
+		return len(payload), nil
+	}
+	if !w.committed {
+		w.commit()
+	}
+	written, err := w.client.Write(payload)
+	if err != nil {
+		w.writeErr = &streamCopyError{operation: "write_downstream", err: err}
+	}
+	return written, err
+}
+
+func (w *runtimeWriter) Flush() {
+	if w.status == 0 || w.status >= http.StatusBadRequest {
+		return
+	}
+	if !w.committed {
+		w.commit()
+	}
+	if flusher, ok := w.client.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *runtimeWriter) commit() {
+	if w.committed || w.client == nil {
+		return
+	}
+	copyHeaders(w.client.Header(), w.Header())
+	if w.stream {
+		setStreamingHeaders(w.client.Header(), true)
+	}
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.client.WriteHeader(status)
+	if w.stream {
+		if flusher, ok := w.client.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	w.committed = true
+}
+
 type requestLogContext struct {
 	price           *store.ResolvedPrice
 	detail          *store.LogDetailInput
@@ -311,10 +412,17 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.MaxRequestBytes {
 		expectedBodyBytes = a.cfg.MaxRequestBytes
 	}
-	targetUpstream := a.inferenceGateway()
-	lease, err := targetUpstream.Acquire(r.Context(), expectedBodyBytes)
+	targetAdmission := a.admission()
+	if targetAdmission == nil || a.nativeRuntime == nil {
+		writeError(w, http.StatusServiceUnavailable, "runtime_unavailable", "模型运行时不可用")
+		meta := requestMetadata(nil, r)
+		detail := rejectedRequestDetail(r, nil, false, "runtime_unavailable", "模型运行时不可用", started, timeline)
+		a.writeRejectedRequestLog(key, requestID, admission, meta, r, http.StatusServiceUnavailable, started, "runtime_unavailable", "模型运行时不可用", detail)
+		return
+	}
+	lease, err := targetAdmission.Acquire(r.Context(), expectedBodyBytes)
 	if err != nil {
-		classified := writeGatewayAdmissionError(w, err, targetUpstream.AdmissionStatus())
+		classified := writeGatewayAdmissionError(w, err, targetAdmission.AdmissionStatus())
 		meta := requestMetadata(nil, r)
 		detail := rejectedRequestDetail(r, nil, false, classified.Code, classified.Message, started, timeline)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
@@ -494,102 +602,59 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var response *http.Response
-	target := targetUpstream.URL(r.URL.RequestURI())
-	var upstream *http.Request
-	clientTraceState, clientTrace := newClientHTTPTrace()
-	transportStarted := false
-	upstream, err = http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(body))
-	if err == nil {
-		upstream = upstream.WithContext(httptrace.WithClientTrace(upstream.Context(), clientTrace))
-		copyHeaders(upstream.Header, r.Header)
-		upstream.Header.Set("Authorization", "Bearer "+targetUpstream.APIKey)
-		upstream.Header.Del("X-API-Key")
-		upstream.Header.Del("X-Goog-API-Key")
-		upstream.Header.Set("X-Relay-Request-ID", requestID)
-		if admission.UpstreamCredentialID != "" {
-			upstream.Header.Set("X-Relay-Upstream-Credential-ID", admission.UpstreamCredentialID)
-		}
-		upstream.Host = targetUpstream.BaseURL.Host
-		timeline.Step(time.Now(), "prepare_upstream_request", "准备 Upstream 请求", "relay", "构造 Upstream 请求、改写正文并准备安全转发头")
-		transportStarted = true
-		response, err = targetUpstream.HTTP.Do(upstream)
-	} else {
-		timeline.Step(time.Now(), "prepare_upstream_request", "准备 Upstream 请求", "relay", "构造 Upstream 请求失败")
+	r.Header.Del("Authorization")
+	r.Header.Del("X-API-Key")
+	r.Header.Del("X-Goog-API-Key")
+	r.Header.Set("X-Relay-Request-ID", requestID)
+	if admission.UpstreamCredentialID != "" {
+		r.Header.Set("X-Relay-Upstream-Credential-ID", admission.UpstreamCredentialID)
 	}
-	upstreamResultAt := time.Now()
-	if transportStarted {
-		timeline.AddHTTPTrace(clientTraceState, upstreamResultAt)
-	}
-	statusForDetail, errorForDetail := 0, ""
-	if err != nil {
-		errorForDetail = classifyUpstreamTransportError(err, r.Context().Err(), "awaiting_headers").Code
-	} else if response != nil {
-		statusForDetail = response.StatusCode
-	}
-	var forwardedHeader http.Header
-	if upstream != nil {
-		forwardedHeader = upstream.Header
-	}
-	a.maybeCaptureForwardedRequest(&logContext, r, originalBody, body, forwardedHeader, requestID, statusForDetail, errorForDetail)
-	// The transport has completely sent the request by the time Do returns.
-	// Break the response -> request -> bytes.Reader retention chain before a
-	// potentially long SSE response keeps the full client payload alive.
-	releaseBufferedRequest(upstream, response)
-	body = nil
-	originalBody = nil
-	upstream = nil
-	if err != nil {
-		if r.Context().Err() == nil {
-			targetUpstream.RecordTransportResult(err)
-		}
-		a.releaseReservation(requestID, billable)
-		classified := classifyUpstreamTransportError(err, r.Context().Err(), "awaiting_headers")
-		logContext.errorCode = classified.Code
-		detail := logContext.ensureDetail()
-		detail.ErrorName = "upstream_error"
-		detail.ErrorMessage = err.Error()
-		completed := time.Now()
-		timeline.Step(completed, "relay_transport_error", "处理传输错误", "relay", "归类 Upstream 连接错误并释放预留")
-		a.addNativeRuntimeTrace(timeline, requestID)
-		detail.StageTimings = timeline.JSON(completed)
-		logContext.stageTimings = detail.StageTimings
-		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
-		writeUpstreamTransportError(w, r, err, "awaiting_headers", requestID)
-		return
-	}
-	targetUpstream.RecordTransportResult(nil)
-	defer response.Body.Close()
-	clientStatus := response.StatusCode
-	var normalizedError *userFacingError
-	capture := &rollingCapture{max: 2 << 20}
-	var firstByteAt time.Time
-	firstByte := func() {
-		if firstByteAt.IsZero() {
-			firstByteAt = time.Now()
-		}
-	}
-	var copyErr error
-
-	copyHeaders(w.Header(), response.Header)
-	w.Header().Set("X-Relay-Request-ID", requestID)
-	if isCodexResponsesPath(r.URL.Path) && a.nativeRuntime != nil {
+	if isCodexResponsesPath(r.URL.Path) {
 		w.Header().Set("X-Models-Etag", modelCatalogRevision(key, a.nativeRuntime.Models(), "codex-capabilities=full-v1"))
 	}
 	if admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)
 	}
-	if response.StatusCode >= http.StatusBadRequest {
-		// Upstream and providers sometimes use 429 for scheduler/auth failures. Read
-		// the small error body before committing headers so Relay can report the
-		// actual user-facing cause. Successful streaming responses remain direct.
-		payload, readErr := io.ReadAll(io.LimitReader(&observedReader{Reader: response.Body, onFirstByte: firstByte}, int64(capture.max+1)))
-		_, _ = capture.Write(payload)
-		classified := a.classifyUpstreamError(response.StatusCode, payload, admission)
-		if readErr != nil {
-			copyErr = &streamCopyError{operation: "read_upstream", err: readErr}
-			classified = userFacingError{Status: http.StatusBadGateway, Code: "upstream_connection_lost", Message: "读取模型服务错误响应时连接中断，请稍后重试", Retryable: true, UpstreamStatus: response.StatusCode}
+	timeline.Step(time.Now(), "prepare_runtime_request", "准备运行时请求", "relay", "去掉客户端凭据头并钉住上游账户")
+	capture := &rollingCapture{max: 2 << 20}
+	var firstByteAt, headerAt time.Time
+	out := &runtimeWriter{client: w, stream: meta.Stream, capture: capture, firstByte: func() {
+		if firstByteAt.IsZero() {
+			firstByteAt = time.Now()
 		}
+	}, onHeader: func() {
+		if headerAt.IsZero() {
+			headerAt = time.Now()
+		}
+	}}
+	a.nativeRuntime.Serve(out, r, body)
+	if !headerAt.IsZero() {
+		timeline.Step(headerAt, "runtime_response_headers", "运行时返回响应头", "runtime", "进程内调用原生运行时，包含凭据路由与供应商等待")
+	}
+	statusForDetail, errorForDetail := out.status, ""
+	if out.status >= http.StatusBadRequest {
+		errorForDetail = "upstream_http_error"
+	}
+	a.maybeCaptureForwardedRequest(&logContext, r, originalBody, body, r.Header, requestID, statusForDetail, errorForDetail)
+	body = nil
+	originalBody = nil
+	targetAdmission.RecordTransportResult(out.writeErr)
+	clientStatus := out.status
+	if clientStatus == 0 {
+		clientStatus = http.StatusOK
+	}
+	var normalizedError *userFacingError
+	var copyErr error
+	if out.writeErr != nil {
+		copyErr = out.writeErr
+	}
+	upstreamStatus := out.status
+	if upstreamStatus == 0 {
+		upstreamStatus = http.StatusOK
+	}
+	upstreamHeaders := out.Header().Clone()
+	if upstreamStatus >= http.StatusBadRequest {
+		classified := a.classifyUpstreamError(upstreamStatus, out.errorBody, admission)
 		normalizedError = &classified
 		clientStatus = classified.Status
 		for _, header := range []string{"Content-Length", "Content-Encoding", "Content-Range", "ETag"} {
@@ -598,27 +663,18 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		if !classified.Retryable {
 			w.Header().Del("Retry-After")
 		}
-		firstByte()
-		writeUserFacingError(w, classified)
-	} else {
-		setStreamingHeaders(w.Header(), meta.Stream)
-		w.WriteHeader(response.StatusCode)
-		if meta.Stream {
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
+		if firstByteAt.IsZero() {
+			firstByteAt = time.Now()
 		}
-		copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
+		writeUserFacingError(w, classified)
 	}
 	responseReadAt := time.Now()
 	logContext.completedAt = responseReadAt
 	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
-		targetUpstream.RecordTransportResult(copyErr)
+		targetAdmission.RecordTransportResult(copyErr)
 	}
 
 	finalizeCtx := context.WithoutCancel(r.Context())
-	upstreamStatus := response.StatusCode
-	upstreamHeaders := response.Header.Clone()
 	a.finalizeResponse(func() {
 		if deferredAdmissionPrice != nil {
 			lookup := <-deferredAdmissionPrice
@@ -677,7 +733,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			timeline.Step(firstByteAt, "upstream_first_body", "等待首个响应数据", "upstream", "Upstream 已返回响应头，继续等待首个响应正文数据")
 			timeline.Mark(firstByteAt, "first_byte", "首字节")
 		}
-		timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 上游响应并持续写回客户端")
+		timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "运行时直接写入客户端响应")
 		if normalizedError != nil {
 			logContext.errorCode = normalizedError.Code
 			errorMessage = normalizedError.Message

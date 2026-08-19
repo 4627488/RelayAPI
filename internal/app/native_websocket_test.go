@@ -15,7 +15,6 @@ import (
 	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/config"
 	"github.com/4627488/RelayAPI/internal/db"
-	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/store"
 	upstreamruntime "github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/gorilla/websocket"
@@ -609,22 +608,12 @@ func TestPrepareNativeWebSocketRequestTracksChangedModel(t *testing.T) {
 
 func newNativeRuntimeTestApp(t *testing.T, credential upstreamruntime.Credential) *App {
 	t.Helper()
-	runtime, err := upstreamruntime.NewRuntime(upstreamruntime.Options{APIKey: "runtime-test-key"}, []upstreamruntime.Credential{credential})
+	runtime, err := upstreamruntime.NewRuntime(upstreamruntime.Options{}, []upstreamruntime.Credential{credential})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(runtime.Handler())
-	client, err := gateway.NewWithOptions(server.URL, "runtime-test-key", gateway.Options{ResponseHeaderTimeout: time.Minute})
-	if err != nil {
-		server.Close()
-		_ = runtime.Close(context.Background())
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		server.Close()
-		_ = runtime.Close(context.Background())
-	})
-	return &App{cfg: config.Config{MaxRequestBytes: 1 << 20}, nativeGateway: client, nativeRuntime: runtime}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+	return &App{cfg: config.Config{MaxRequestBytes: 1 << 20}, nativeRuntime: runtime}
 }
 
 func TestNativeWebSocketAdmissionErrorUsesPaymentRequiredForExhaustedQuota(t *testing.T) {

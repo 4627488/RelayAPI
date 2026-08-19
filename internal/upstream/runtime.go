@@ -11,6 +11,7 @@ import (
 // into policy, billing, or public HTTP layers.
 type Runtime interface {
 	Handler() http.Handler
+	Serve(http.ResponseWriter, *http.Request, []byte)
 	CredentialCount() int
 	Models() []string
 	ModelProvider(string) (string, bool)

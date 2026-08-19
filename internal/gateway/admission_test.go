@@ -9,10 +9,7 @@ import (
 )
 
 func TestAdmissionBoundsConcurrencyQueueAndBodyMemory(t *testing.T) {
-	client, err := NewWithOptions("http://runtime.test", "key", Options{MaxInFlight: 1, MaxQueue: 1, MaxRequestBytesInFlight: 10, QueueTimeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := New(Options{MaxInFlight: 1, MaxQueue: 1, MaxRequestBytesInFlight: 10, QueueTimeout: time.Second})
 	active, err := client.Acquire(t.Context(), 10)
 	if err != nil {
 		t.Fatal(err)
@@ -40,10 +37,7 @@ func TestAdmissionBoundsConcurrencyQueueAndBodyMemory(t *testing.T) {
 }
 
 func TestAdmissionLoadSheddingReleasesAllResources(t *testing.T) {
-	client, err := NewWithOptions("http://runtime.test", "key", Options{MaxInFlight: 4, MaxQueue: 8, MaxRequestBytesInFlight: 16, QueueTimeout: 20 * time.Millisecond})
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := New(Options{MaxInFlight: 4, MaxQueue: 8, MaxRequestBytesInFlight: 16, QueueTimeout: 20 * time.Millisecond})
 	var workers sync.WaitGroup
 	var accepted atomic.Int64
 	start := make(chan struct{})
@@ -70,13 +64,10 @@ func TestAdmissionLoadSheddingReleasesAllResources(t *testing.T) {
 }
 
 func TestCircuitBreakerAllowsSingleRecoveryProbe(t *testing.T) {
-	client, err := NewWithOptions("http://runtime.test", "key", Options{MaxInFlight: 2, CircuitFailureThreshold: 2, CircuitOpenDuration: 10 * time.Millisecond})
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := New(Options{MaxInFlight: 2, CircuitFailureThreshold: 2, CircuitOpenDuration: 10 * time.Millisecond})
 	client.RecordTransportResult(errors.New("reset"))
 	client.RecordTransportResult(errors.New("refused"))
-	if _, err = client.Acquire(t.Context(), 1); !errors.Is(err, ErrCircuitOpen) {
+	if _, err := client.Acquire(t.Context(), 1); !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("open error = %v", err)
 	}
 	time.Sleep(15 * time.Millisecond)

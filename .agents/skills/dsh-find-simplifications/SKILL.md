@@ -18,18 +18,16 @@ The methodology is ported from DeepSeek Harness `dsh-find-simplifications`. Bind
 
 - Read [README.md](../../../README.md), [docs/architecture.md](../../../docs/architecture.md), [docs/subscriptions.md](../../../docs/subscriptions.md), [docs/retention.md](../../../docs/retention.md), and [docs/distribution.md](../../../docs/distribution.md).
 - Read the Agent Note rules in [notes/README.md](../../notes/README.md). Treat notes as rationale, not golden truth; shipped code wins when they drift.
-- Skim `internal/app/embedded_cpa.go` and `third_party/cpaexecutor` before judging anything under `internal/cpa`. Simplifications that collapse the embedded loopback or the vendored runtime need extra evidence and an explicit user override.
+- The native runtime is in-process (`Runtime.Serve`, `DialWebSocket`). Do not reintroduce a loopback HTTP proxy.
 
 ## Protected Seams (Intentional By Default)
 
 Do not propose deleting these as "low effort" unless the user explicitly overrides the constraint. Removing an unused method *inside* a protected seam can still be valid.
 
-- Embedded CPA loopback: `internal/app/embedded_cpa.go` plus `cpa.Client` HTTP inference (`Acquire`, transport, circuit).
-- Vendored runtime: `third_party/cpaexecutor` / `relaybridge`, including its `/v0/management/*` OAuth paths.
 - Parent/child subscriptions and `AdmitRequest` reservation idempotency ([docs/subscriptions.md](../../../docs/subscriptions.md)).
 - Public protocol surfaces: `/v1/*`, `/v1/messages`, `/v1beta/*`, Codex compatibility paths.
 - Request-log summary vs detail retention; latency trace v3 with v2 UI read compatibility.
-- Native quota probes (`cpa.ProbeQuota`) talking to provider endpoints.
+- Native quota probes talking to provider endpoints.
 - In-process pricing catalog and per-minute rate limiter. Do not introduce Redis/KV or ClickHouse as a simplification; see the datastore note if present under `notes/implemented/architecture/`.
 
 ## What Counts As A Strong Candidate
@@ -50,8 +48,8 @@ Thin candidates are usually not enough for an Agent Note: deleting one typo, rem
 
 Use parallel subagents when the user asks for breadth. Give each agent a domain and require evidence, not guesses. Useful domains:
 
-- Embedded CPA client and loopback: `internal/cpa/client.go`, `admission.go`, `internal/app/embedded_cpa.go`, `proxy.go`, `native_websocket.go`.
-- Quota observation: `internal/cpa/quota.go` vs `native_quota.go` and `internal/app/quota_sync.go`.
+- Native runtime and admission: `internal/upstream`, `internal/gateway/admission.go`, `internal/app/proxy.go`, `native_websocket.go`.
+- Quota observation: `internal/gateway/native_quota.go` and `internal/app/quota_sync.go`.
 - Subscriptions and billing: `internal/store/subscriptions.go`, `store.go` Reserve/Settle vs Admit/SettleRequestReservation, `internal/app/subscriptions.go`.
 - Credentials, proxies, runtime settings: `internal/app/providers.go`, `proxies.go`, `native_settings.go`, `internal/cpaimport`.
 - Pricing and request logs: `internal/pricing/*`, `internal/store/pricing_backfill.go`, `request_logging.go`, `request_trace.go`, `QueryLogs` / Dashboard / UsageReport.
