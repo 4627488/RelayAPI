@@ -9,16 +9,24 @@ import (
 	"time"
 )
 
+const (
+	kimiQuotaUserAgent   = "KimiCLI/1.3"
+	kimiQuotaPlatform    = "kimi_cli"
+	kimiQuotaVersion     = "1.3"
+	kimiQuotaDeviceName  = "RelayAPI"
+	kimiQuotaDeviceModel = "Linux 6.8.0 x86_64"
+	kimiQuotaOSVersion   = "6.8.0"
+	kimiFiveHourMinutes  = 5 * 60
+	kimiSevenDayMinutes  = 7 * 24 * 60
+)
+
 func probeKimiQuota(ctx context.Context, client *http.Client, endpoints quotaEndpoints, authIndex, provider string, document map[string]any, now time.Time) (QuotaReport, error) {
 	token := scalarQuotaText(firstQuotaValue(document["access_token"], document["accessToken"], document["api_key"], document["apiKey"]))
 	if token == "" {
 		return QuotaReport{}, errors.New("Kimi quota credential is missing access_token")
 	}
-	headers := http.Header{
-		"Accept":        {"application/json"},
-		"Authorization": {"Bearer " + token},
-		"User-Agent":    {"RelayAPI-KimiMonitor/1.0"},
-	}
+	headers := kimiQuotaHeaders(firstQuotaText(scalarQuotaText(document["device_id"]), authIndex), token)
+
 	var payload map[string]any
 	var source string
 	errorsByEndpoint := make([]string, 0, 2)
@@ -49,20 +57,18 @@ func probeKimiQuota(ctx context.Context, client *http.Client, endpoints quotaEnd
 		return QuotaReport{}, fmt.Errorf("Kimi quota requests failed: %s", strings.Join(errorsByEndpoint, "; "))
 	}
 
-	windows := make([]QuotaWindow, 0, 6)
-	if usage, _ := payload["usage"].(map[string]any); usage != nil {
-		metadata := quotaMap(usage["window"])
-		kind := quotaDurationKind(metadata)
-		if kind == "" {
-			kind = "7d"
-		}
-		if window, ok := kimiQuotaWindow(kind, firstQuotaText(scalarQuotaText(usage["name"]), scalarQuotaText(usage["title"]), scalarQuotaText(usage["label"]), "7 天"), usage, metadata, now); ok {
+	windows := make([]QuotaWindow, 0, 2)
+	if usage := quotaMap(payload["usage"]); usage != nil {
+		if window, ok := amountWindow(quotaKind7d, quotaKindLabel(quotaKind7d), usage, quotaMap(usage["window"]), true, now); ok {
 			windows = append(windows, window)
 		}
 	}
+
+	var fiveHour, firstLimit map[string]any
+	var firstLimitMeta map[string]any
 	if rows, _ := payload["limits"].([]any); rows != nil {
-		for index, raw := range rows {
-			row, _ := raw.(map[string]any)
+		for _, raw := range rows {
+			row := quotaMap(raw)
 			if row == nil {
 				continue
 			}
@@ -71,19 +77,32 @@ func probeKimiQuota(ctx context.Context, client *http.Client, endpoints quotaEnd
 				detail = row
 			}
 			metadata := quotaMap(row["window"])
-			label := firstQuotaText(
-				scalarQuotaText(row["name"]), scalarQuotaText(row["title"]), scalarQuotaText(row["scope"]),
-				scalarQuotaText(detail["name"]), scalarQuotaText(detail["title"]), quotaDurationLabel(metadata), fmt.Sprintf("频控窗口 %d", index+1),
-			)
-			kind := quotaDurationKind(metadata)
-			if kind == "" {
-				kind = quotaSlug(label)
+			if firstLimit == nil {
+				firstLimit, firstLimitMeta = detail, metadata
 			}
-			if window, ok := kimiQuotaWindow(kind, label, detail, metadata, now); ok {
-				windows = append(windows, window)
+			switch quotaDurationMinutes(metadata) {
+			case kimiFiveHourMinutes:
+				if fiveHour == nil {
+					fiveHour = detail
+					if window, ok := amountWindow(quotaKind5h, quotaKindLabel(quotaKind5h), detail, metadata, true, now); ok {
+						windows = append(windows, window)
+					}
+				}
+			case kimiSevenDayMinutes:
+				if !hasQuotaKind(windows, quotaKind7d) {
+					if window, ok := amountWindow(quotaKind7d, quotaKindLabel(quotaKind7d), detail, metadata, true, now); ok {
+						windows = append(windows, window)
+					}
+				}
 			}
 		}
 	}
+	if !hasQuotaKind(windows, quotaKind5h) && firstLimit != nil && fiveHour == nil {
+		if window, ok := amountWindow(quotaKind5h, quotaKindLabel(quotaKind5h), firstLimit, firstLimitMeta, true, now); ok {
+			windows = append(windows, window)
+		}
+	}
+
 	windows = validQuotaWindows(windows, now)
 	if len(windows) == 0 {
 		return QuotaReport{}, errors.New("Kimi quota response contains no usable windows")
@@ -91,7 +110,7 @@ func probeKimiQuota(ctx context.Context, client *http.Client, endpoints quotaEnd
 	return QuotaReport{
 		AuthIndex: authIndex,
 		Provider:  provider,
-		PlanType:  quotaPlanType(payload, document),
+		PlanType:  kimiMembershipPlan(payload, document),
 		Supported: true,
 		Source:    source,
 		Observed:  now,
@@ -99,140 +118,40 @@ func probeKimiQuota(ctx context.Context, client *http.Client, endpoints quotaEnd
 	}, nil
 }
 
-func kimiQuotaWindow(kind, label string, detail, metadata map[string]any, now time.Time) (QuotaWindow, bool) {
-	limit := numericQuota(firstQuotaValue(detail["limit"], detail["total"], detail["quota"]))
-	usedRaw := numericQuota(firstQuotaValue(detail["used"], detail["consumed"]))
-	remaining := numericQuota(firstQuotaValue(detail["remaining"], detail["left"]))
-	used := percentQuota(firstQuotaValue(detail["used_percent"], detail["usedPercent"], detail["utilization"]))
-	if used == nil {
-		used = quotaPercentFromAmounts(usedRaw, remaining, limit)
+func kimiQuotaHeaders(deviceID, token string) http.Header {
+	return http.Header{
+		"Accept":             {"application/json"},
+		"Authorization":      {"Bearer " + token},
+		"User-Agent":         {kimiQuotaUserAgent},
+		"X-Msh-Platform":     {kimiQuotaPlatform},
+		"X-Msh-Version":      {kimiQuotaVersion},
+		"X-Msh-Device-Name":  {kimiQuotaDeviceName},
+		"X-Msh-Device-Model": {kimiQuotaDeviceModel},
+		"X-Msh-Os-Version":   {kimiQuotaOSVersion},
+		"X-Msh-Device-Id":    {strings.TrimSpace(deviceID)},
 	}
-	if used == nil && remaining == nil && limit == nil {
-		return QuotaWindow{}, false
-	}
-	return QuotaWindow{
-		Kind: kind, Label: label, UsedPercent: used, RemainingPercent: quotaComplement(used),
-		ResetsAt: quotaResetTime(detail, metadata, now), Enforceable: true, Unit: quotaUnit(detail, "units"),
-		Limit: limit, Remaining: quotaRemainingAmount(usedRaw, remaining, limit),
-	}, true
 }
 
-func quotaPayloadRoot(payload map[string]any) map[string]any {
-	if root, _ := payload["data"].(map[string]any); root != nil {
-		return root
+func kimiMembershipPlan(payload, document map[string]any) string {
+	user := quotaMap(payload["user"])
+	membership := quotaMap(user["membership"])
+	level := strings.TrimSpace(scalarQuotaText(membership["level"]))
+	if level != "" {
+		return strings.TrimPrefix(strings.ToUpper(level), "LEVEL_")
 	}
-	return payload
-}
-
-func quotaMap(value any) map[string]any {
-	result, _ := value.(map[string]any)
-	return result
-}
-
-func quotaPercentFromAmounts(used, remaining, limit *float64) *float64 {
-	if limit == nil || *limit <= 0 {
-		return nil
-	}
-	if used != nil {
-		value := clampQuota(*used / *limit * 100)
-		return &value
-	}
-	if remaining != nil {
-		value := clampQuota(100 - *remaining / *limit * 100)
-		return &value
-	}
-	return nil
-}
-
-func quotaRemainingAmount(used, remaining, limit *float64) *float64 {
-	if remaining != nil {
-		return remaining
-	}
-	if used == nil || limit == nil {
-		return nil
-	}
-	value := max(0, *limit-*used)
-	return &value
-}
-
-func quotaResetTime(detail, metadata map[string]any, now time.Time) *time.Time {
-	for _, source := range []map[string]any{detail, metadata} {
-		if source == nil {
-			continue
-		}
-		for _, key := range []string{"resets_at", "reset_at", "resetAt", "reset_time", "resetTime", "next_reset_at"} {
-			if parsed := parseQuotaTime(source[key], now); parsed != nil {
-				return parsed
-			}
-		}
-		for _, key := range []string{"reset_in", "resetIn", "reset_in_seconds", "ttl", "remaining_seconds"} {
-			if seconds := numericQuota(source[key]); seconds != nil && *seconds >= 0 {
-				parsed := now.Add(time.Duration(*seconds * float64(time.Second))).UTC()
-				return &parsed
-			}
-		}
-	}
-	return nil
-}
-
-func quotaDurationSeconds(metadata map[string]any) int64 {
-	if metadata == nil {
-		return 0
-	}
-	duration := numericQuota(metadata["duration"])
-	if duration == nil || *duration <= 0 {
-		return 0
-	}
-	unit := strings.ToLower(firstQuotaText(scalarQuotaText(metadata["timeUnit"]), scalarQuotaText(metadata["time_unit"]), scalarQuotaText(metadata["unit"])))
-	multiplier := float64(1)
-	switch {
-	case strings.Contains(unit, "minute"):
-		multiplier = 60
-	case strings.Contains(unit, "hour"):
-		multiplier = 60 * 60
-	case strings.Contains(unit, "day"):
-		multiplier = 24 * 60 * 60
-	}
-	return int64(*duration * multiplier)
-}
-
-func quotaDurationKind(metadata map[string]any) string {
-	seconds := quotaDurationSeconds(metadata)
-	if seconds == 18_000 {
-		return "5h"
-	}
-	if seconds == 604_800 {
-		return "7d"
-	}
-	if seconds > 0 && seconds%86_400 == 0 {
-		return fmt.Sprintf("%dd", seconds/86_400)
-	}
-	if seconds > 0 && seconds%3_600 == 0 {
-		return fmt.Sprintf("%dh", seconds/3_600)
-	}
-	if seconds > 0 && seconds%60 == 0 {
-		return fmt.Sprintf("%dm", seconds/60)
-	}
-	return ""
-}
-
-func quotaDurationLabel(metadata map[string]any) string {
-	return quotaDurationKind(metadata)
-}
-
-func quotaUnit(value map[string]any, fallback string) string {
-	return firstQuotaText(scalarQuotaText(value["unit"]), scalarQuotaText(value["quota_unit"]), fallback)
-}
-
-func quotaPlanType(root, document map[string]any) string {
-	plan := firstQuotaText(
-		scalarQuotaText(root["plan"]), scalarQuotaText(root["plan_name"]), scalarQuotaText(root["subscription_plan"]),
-		scalarQuotaText(root["tier"]), scalarQuotaText(root["membership"]), scalarQuotaText(root["level"]), scalarQuotaText(root["product"]),
+	return firstQuotaText(
+		scalarQuotaText(payload["plan"]),
+		scalarQuotaText(payload["plan_type"]),
+		scalarQuotaText(payload["tier"]),
+		scalarQuotaText(document["plan_type"]),
 	)
-	if plan == "" {
-		if subscription := quotaMap(root["subscription"]); subscription != nil {
-			plan = firstQuotaText(scalarQuotaText(subscription["name"]), scalarQuotaText(subscription["plan"]), scalarQuotaText(subscription["tier"]), scalarQuotaText(subscription["level"]))
+}
+
+func hasQuotaKind(windows []QuotaWindow, kind string) bool {
+	for _, window := range windows {
+		if window.Kind == kind {
+			return true
 		}
 	}
-	return firstQuotaText(plan, scalarQuotaText(document["plan_type"]), scalarQuotaText(document["subscription_type"]))
+	return false
 }

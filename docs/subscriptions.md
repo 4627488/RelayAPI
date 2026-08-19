@@ -143,22 +143,35 @@ rejects the request instead of silently bypassing the configured subscription.
 
 ## Native quota boundary
 
-The quota runtime executes inside RelayAPI. Built-in provider adapters declare:
+The quota runtime executes inside RelayAPI. Built-in probes follow the same
+window contract used by Codex WHAM, official kimi-cli `/usages`, and xAI CLI
+billing (as implemented by CPA / sub2api):
 
-- one or more provider extension keys and upstream HTTP requests;
-- credential templates such as `${auth.access_token}`;
-- optional requests for partially available provider APIs;
-- JSON paths for plan values, used/remaining percentages, raw limit/remaining,
-  and reset timestamps;
-- which windows are safe to enforce and calibrate.
+- Codex: `GET https://chatgpt.com/backend-api/wham/usage` with
+  `ChatGPT-Account-ID` and `OpenAI-Beta: codex-1`. `rate_limit.primary_window`
+  is `5h`, `secondary_window` is `7d` (`limit_window_seconds` 18000 / 604800 /
+  86400 refine the kind). `reset_at` wins over `reset_after_seconds`. Null
+  windows are unused slots. Spark (`metered_feature=codex_bengalfox`) is
+  display-only as `spark-5h` / `spark-7d`. Missing account id fails closed.
+- Kimi: `GET /coding/v1/usages` (Moonshot fallback) with official `KimiCLI/1.3`
+  fingerprint headers. Top-level `usage` is the weekly `7d` window;
+  `limits[]` with 300 minutes is `5h`. Kinds are never invented from labels.
+- xAI: parallel `GET /v1/billing?format=credits` and `GET /v1/billing`. Weekly
+  `7d` comes from `config.creditUsagePercent` (missing percent with a parseable
+  period is 0%). Monthly and prepaid are display-only. Plan comes from
+  `subscriptionTier` only. HTTP 412 / "no personal team" is unsupported, not a
+  probe error. Billing probes never send a `/responses` "hi" that consumes
+  quota.
 
-Codex and xAI are probed directly with the encrypted native credential and the
+Only standard `5h` / `7d` / `1d` windows with a future reset are enforceable.
+A credential may instead expose normalized `relay_quota` metadata directly.
+Reports exclude credential fields and raw upstream payloads.
+
+Codex, Kimi, and xAI are probed with the encrypted native credential and the
 reusable proxy explicitly selected for that model account. An account without a
 selected proxy always uses a direct connection and does not inherit the system
 proxy. The same account route is used for inference, model discovery, token
-refresh, and quota probes. A credential may instead expose normalized
-`relay_quota` metadata directly. Reports exclude credential fields and raw
-upstream payloads.
+refresh, and quota probes.
 
 The native runtime credential table and parent-subscription table render the same stored
 snapshot: plan, used/remaining percentage, reset time, raw credit units, and
