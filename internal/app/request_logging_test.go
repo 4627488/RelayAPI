@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/4627488/RelayAPI/internal/config"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -166,6 +167,35 @@ func TestBoundedErrorTextNeverReturnsInvalidUTF8(t *testing.T) {
 	value = boundedErrorText(string([]byte{'a', 0xff, 'b'}))
 	if !utf8.ValidString(value) || value != "a�b" {
 		t.Fatalf("invalid input was not normalized: %q", value)
+	}
+}
+
+func TestMaybeCaptureForwardedRequestSkipsSuccessfulUnsampledBodies(t *testing.T) {
+	app := &App{cfg: config.Config{RequestSuccessSamplePPM: 0}}
+	req, err := http.NewRequest(http.MethodPost, "/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	body := []byte(strings.Repeat(`{"model":"gpt-test","prompt":"x"}`, 200))
+	logContext := requestLogContext{requestBytes: int64(len(body))}
+	app.maybeCaptureForwardedRequest(&logContext, req, body, body, req.Header, "success-id", http.StatusOK, "")
+	if logContext.detail != nil {
+		t.Fatalf("unsampled success copied request detail: %+v", logContext.detail)
+	}
+	if logContext.forwardedBytes != int64(len(body)) {
+		t.Fatalf("forwarded bytes = %d", logContext.forwardedBytes)
+	}
+
+	app.maybeCaptureForwardedRequest(&logContext, req, body, body, req.Header, "error-id", http.StatusBadGateway, "upstream_http_error")
+	if logContext.detail == nil || logContext.detail.RequestBody == "" || !strings.Contains(logContext.detail.RequestHeaders, "[REDACTED]") {
+		t.Fatalf("error path must retain sanitized request detail: %+v", logContext.detail)
+	}
+
+	logContext = requestLogContext{requestBytes: int64(len(body))}
+	logContext.maybeCaptureUpstream(http.StatusOK, http.Header{"X-CPA-TRACE-ID": []string{"trace"}}, []byte(`{"ok":true}`), false, 11, false)
+	if logContext.detail != nil || logContext.responseBytes != 11 {
+		t.Fatalf("unsampled upstream capture = detail=%v bytes=%d", logContext.detail, logContext.responseBytes)
 	}
 }
 

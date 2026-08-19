@@ -130,8 +130,9 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		if session.established {
 			logContext.errorCode = "websocket_session_error"
 		}
-		logContext.detail.ErrorName = logContext.errorCode
-		logContext.detail.ErrorMessage = boundedErrorText(err.Error())
+		detail := logContext.ensureDetail()
+		detail.ErrorName = logContext.errorCode
+		detail.ErrorMessage = boundedErrorText(err.Error())
 	}
 	completed := time.Now()
 	timeline.Step(completed, "websocket_settlement", "WebSocket 结算", "billing", "结算会话内已完成的计费用量")
@@ -140,8 +141,11 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	logContext.requestBytes = accounting.requestBytes
 	logContext.forwardedBytes = accounting.forwardedBytes
 	logContext.responseBytes = accounting.responseBytes
-	logContext.detail.StageTimings = timeline.JSON(completed)
-	logContext.stageTimings = logContext.detail.StageTimings
+	stageTimings := timeline.JSON(completed)
+	if logContext.detail != nil {
+		logContext.detail.StageTimings = stageTimings
+	}
+	logContext.stageTimings = stageTimings
 	// Successful terminal responses already produced one durable log per billing
 	// entry. Only sessions without a billing entry need a session-level log.
 	if accounting.turnsSeen == 0 {
