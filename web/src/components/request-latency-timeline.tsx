@@ -11,13 +11,13 @@ import {
 import { cn } from "@/lib/utils"
 
 type LatencyOwner =
-  "relay" | "queue" | "cpa" | "upstream" | "downstream" | "billing"
+  "relay" | "queue" | "runtime" | "upstream" | "downstream" | "billing"
 
 type LatencySegment = {
   id: string
   label: string
   owner: LatencyOwner
-  track: "critical" | "cpa" | "attempt" | "network"
+  track: "critical" | "runtime" | "attempt" | "network"
   start_ms: number
   duration_ms: number
   description?: string
@@ -55,7 +55,7 @@ const ownerMeta: Record<
 > = {
   relay: { label: "Relay", bar: "bg-foreground", soft: "bg-foreground/5" },
   queue: { label: "排队", bar: "bg-chart-2", soft: "bg-chart-2/10" },
-  cpa: { label: "CPA", bar: "bg-chart-3", soft: "bg-chart-3/10" },
+  runtime: { label: "运行时", bar: "bg-chart-3", soft: "bg-chart-3/10" },
   upstream: { label: "供应商", bar: "bg-chart-4", soft: "bg-chart-4/10" },
   downstream: { label: "传输", bar: "bg-chart-2", soft: "bg-chart-2/10" },
   billing: { label: "结算", bar: "bg-chart-5", soft: "bg-chart-5/10" },
@@ -100,27 +100,24 @@ function LatencyChart({
   const critical = collapseCriticalPath(
     trace.segments.filter((segment) => segment.track === "critical")
   )
-  const cpaLane = trace.segments
-    .filter((segment) => segment.track === "cpa" || segment.track === "attempt")
+  const runtimeLane = trace.segments
+    .filter((segment) => segment.track === "runtime" || segment.track === "attempt")
     .sort(byStart)
   const network = trace.segments
     .filter((segment) => segment.track === "network")
     .sort(byStart)
-  const attempts = cpaLane.filter(
-    (segment) =>
-      segment.track === "attempt" && segment.id.startsWith("cpa_attempt_")
-  )
+  const attempts = runtimeLane.filter((segment) => segment.track === "attempt")
   const defaultSegment = critical.reduce<DisplaySegment | undefined>(
     (largest, segment) =>
       !largest || segment.duration_ms > largest.duration_ms ? segment : largest,
     undefined
   )
   const [selectedID, setSelectedID] = useState("")
-  const selectable = [...critical, ...cpaLane, ...network]
+  const selectable = [...critical, ...runtimeLane, ...network]
   const selected =
     selectable.find((segment) => segment.id === selectedID) ??
     defaultSegment ??
-    cpaLane[0] ??
+    runtimeLane[0] ??
     network[0]
   const visibleNetwork = networkForSelection(network, selected)
   const totals = ownerTotals(critical)
@@ -185,11 +182,11 @@ function LatencyChart({
               marks={marks}
             />
 
-            {cpaLane.length ? (
+            {runtimeLane.length ? (
               <>
-                <LaneLabel>CPA</LaneLabel>
+                <LaneLabel>上游</LaneLabel>
                 <TimelineLane
-                  segments={cpaLane}
+                  segments={runtimeLane}
                   total={total}
                   selectedID={selected?.id}
                   onSelect={setSelectedID}
@@ -544,9 +541,9 @@ function networkForSelection(
     if (sameAttempt.length) return sameAttempt
   }
   if (selected.track === "network") {
-    return selected.id.startsWith("cpa_attempt_")
+    return isAttemptScoped(selected.id)
       ? network.filter((segment) => segment.attempt === selected.attempt)
-      : network.filter((segment) => !segment.id.startsWith("cpa_attempt_"))
+      : network.filter((segment) => !isAttemptScoped(segment.id))
   }
   const start = selected.start_ms
   const end = start + selected.duration_ms
@@ -574,7 +571,7 @@ function segmentBar(
   variant: "path" | "execution" | "network"
 ) {
   if (segment.status === "failed") return "bg-destructive"
-  if (variant === "execution" && segment.id.startsWith("cpa_retry_wait_"))
+  if (variant === "execution" && isRetryWait(segment.id))
     return "border border-dashed border-muted-foreground/70 bg-muted-foreground/30 text-foreground"
   return ownerMeta[segment.owner].bar
 }
@@ -609,24 +606,25 @@ function parseTrace(value?: string): LatencyTrace | null {
       typeof parsed.total_ms !== "number"
     )
       return null
-    const segments = parsed.segments.filter(
-      (segment): segment is LatencySegment => {
-        if (!segment || typeof segment !== "object") return false
-        const candidate = segment as Partial<LatencySegment>
-        return (
-          typeof candidate.id === "string" &&
-          typeof candidate.label === "string" &&
-          typeof candidate.start_ms === "number" &&
-          typeof candidate.duration_ms === "number" &&
-          (candidate.track === "critical" ||
-            candidate.track === "cpa" ||
-            candidate.track === "attempt" ||
-            candidate.track === "network") &&
-          typeof candidate.owner === "string" &&
-          candidate.owner in ownerMeta
-        )
+    const segments = parsed.segments.flatMap((segment): LatencySegment[] => {
+      if (!segment || typeof segment !== "object") return []
+      const candidate = segment as Partial<LatencySegment> & {
+        track?: string
+        owner?: string
       }
-    )
+      const track = normalizeTrack(candidate.track)
+      const owner = normalizeOwner(candidate.owner)
+      if (
+        typeof candidate.id !== "string" ||
+        typeof candidate.label !== "string" ||
+        typeof candidate.start_ms !== "number" ||
+        typeof candidate.duration_ms !== "number" ||
+        !track ||
+        !owner
+      )
+        return []
+      return [{ ...segment, id: candidate.id, label: candidate.label, track, owner }]
+    })
     const marks = Array.isArray(parsed.marks)
       ? parsed.marks.filter(
           (mark): mark is LatencyMark =>
@@ -648,11 +646,39 @@ function parseTrace(value?: string): LatencyTrace | null {
   }
 }
 
+function normalizeTrack(
+  track?: string
+): LatencySegment["track"] | undefined {
+  if (track === "cpa") return "runtime"
+  if (
+    track === "critical" ||
+    track === "runtime" ||
+    track === "attempt" ||
+    track === "network"
+  )
+    return track
+  return undefined
+}
+
+function normalizeOwner(owner?: string): LatencyOwner | undefined {
+  if (owner === "cpa") return "runtime"
+  if (owner && owner in ownerMeta) return owner as LatencyOwner
+  return undefined
+}
+
+function isAttemptScoped(id: string) {
+  return id.includes("_attempt_")
+}
+
+function isRetryWait(id: string) {
+  return id.includes("_retry_wait_")
+}
+
 function ownerTotals(segments: DisplaySegment[]) {
   const result: Record<LatencyOwner, number> = {
     relay: 0,
     queue: 0,
-    cpa: 0,
+    runtime: 0,
     upstream: 0,
     downstream: 0,
     billing: 0,

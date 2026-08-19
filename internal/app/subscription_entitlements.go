@@ -53,14 +53,14 @@ func effectiveSubscriptionModels(parent store.ParentSubscription, child store.Ch
 	if parent.CapacityMode == db.ParentCapacityUnmetered {
 		childModels = nil
 	}
-	source := "cpa"
+	source := "upstream"
 	if len(parent.ModelAllowlist) > 0 {
 		source = "parent"
 	}
 	if len(childModels) > 0 {
 		source = "child"
 	}
-	if len(parent.CPAModelAllowlist) == 0 {
+	if len(parent.UpstreamModelAllowlist) == 0 {
 		var candidates []string
 		switch {
 		case allConcreteModels(parent.ModelAllowlist):
@@ -76,8 +76,8 @@ func effectiveSubscriptionModels(parent store.ParentSubscription, child store.Ch
 		}
 		return normalizedModels(result), source
 	}
-	result := make([]string, 0, len(parent.CPAModelAllowlist))
-	for _, model := range parent.CPAModelAllowlist {
+	result := make([]string, 0, len(parent.UpstreamModelAllowlist))
+	for _, model := range parent.UpstreamModelAllowlist {
 		if matchesModelList(model, parent.ModelAllowlist) && matchesModelList(model, childModels) {
 			result = append(result, model)
 		}

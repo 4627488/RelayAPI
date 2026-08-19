@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
 type quotaSyncResult struct {
 	ParentID   string    `json:"parent_id"`
-	AuthIndex  string    `json:"cpa_auth_index"`
+	AuthIndex  string    `json:"upstream_auth_index"`
 	Provider   string    `json:"provider"`
 	Supported  bool      `json:"supported"`
 	Status     string    `json:"status"`
@@ -58,13 +58,13 @@ func (a *App) refreshParentQuotas(ctx context.Context) {
 	}
 	eligible := make([]store.ParentSubscription, 0, len(parents))
 	for _, parent := range parents {
-		if parent.Enabled && !parent.CPAUnavailable && strings.TrimSpace(parent.CPAAuthIndex) != "" {
+		if parent.Enabled && !parent.UpstreamUnavailable && strings.TrimSpace(parent.UpstreamAuthIndex) != "" {
 			eligible = append(eligible, parent)
 		}
 	}
 	for _, result := range a.syncParentQuotas(ctx, eligible) {
 		if result.Status == "error" {
-			slog.Warn("automatic CPA quota sync", "parent_id", result.ParentID, "provider", result.Provider, "error", result.Error)
+			slog.Warn("automatic Upstream quota sync", "parent_id", result.ParentID, "provider", result.Provider, "error", result.Error)
 		}
 	}
 }
@@ -107,7 +107,7 @@ func (a *App) syncParentQuotas(ctx context.Context, parents []store.ParentSubscr
 }
 
 func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscription) quotaSyncResult {
-	result := quotaSyncResult{ParentID: parent.ID, AuthIndex: parent.CPAAuthIndex, Provider: parent.Provider}
+	result := quotaSyncResult{ParentID: parent.ID, AuthIndex: parent.UpstreamAuthIndex, Provider: parent.Provider}
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	credential, err := a.nativeQuotaCredential(probeCtx, parent)
@@ -128,8 +128,8 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
 		return result
 	}
-	report, err := cpa.ProbeQuota(probeCtx, cpa.QuotaProbeCredential{
-		AuthIndex: firstNonEmptyString(parent.CPAAuthIndex, parent.CPAAuthID), Provider: firstNonEmptyString(parent.Provider, credential.Provider),
+	report, err := gateway.ProbeQuota(probeCtx, gateway.QuotaProbeCredential{
+		AuthIndex: firstNonEmptyString(parent.UpstreamAuthIndex, parent.UpstreamCredentialID), Provider: firstNonEmptyString(parent.Provider, credential.Provider),
 		Document: credential.Document, ProxyURL: proxyURL,
 	})
 	if err != nil {
@@ -182,7 +182,7 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 }
 
 func (a *App) nativeQuotaCredential(ctx context.Context, parent store.ParentSubscription) (store.UpstreamCredentialSnapshot, error) {
-	identities := []string{parent.CPAAuthID, parent.CPAAuthName, parent.CPAAuthIndex}
+	identities := []string{parent.UpstreamCredentialID, parent.UpstreamCredentialName, parent.UpstreamAuthIndex}
 	seen := make(map[string]struct{}, len(identities))
 	for _, identity := range identities {
 		identity = strings.TrimSpace(identity)

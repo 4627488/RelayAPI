@@ -18,30 +18,31 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/config"
-	"github.com/4627488/RelayAPI/internal/cpa"
-	"github.com/4627488/RelayAPI/internal/cpaimport"
 	"github.com/4627488/RelayAPI/internal/db"
+	"github.com/4627488/RelayAPI/internal/egress"
+	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 type App struct {
-	cfg               config.Config
-	store             store.Store
-	mux               *http.ServeMux
-	stop              chan struct{}
-	wg                sync.WaitGroup
-	pricingSyncMu     sync.Mutex
-	setupBox          identity.SecretBox
-	nativeCPA         *cpa.Client
-	nativeCPARuntime  *relaybridge.Runtime
-	nativeCPAServer   *http.Server
-	nativeCPAServeErr atomic.Value
-	providerOAuth     providerOAuthSessions
-	nativeSettings    settingsState
-	memoryReclaiming  atomic.Bool
+	cfg                   config.Config
+	store                 store.Store
+	mux                   *http.ServeMux
+	stop                  chan struct{}
+	wg                    sync.WaitGroup
+	pricingSyncMu         sync.Mutex
+	setupBox              identity.SecretBox
+	nativeGateway         *gateway.Client
+	nativeRuntime         upstream.Runtime
+	nativeGatewayServer   *http.Server
+	nativeGatewayServeErr atomic.Value
+	providerOAuth         providerOAuthSessions
+	nativeSettings        settingsState
+	memoryReclaiming      atomic.Bool
+	finalizationSlots     chan struct{}
 }
 
 type contextKey string
@@ -62,23 +63,19 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	importGlobalProxy := ""
-	if cfg.CPAImportAuthDir != "" || cfg.CPAImportConfigPath != "" {
-		report, importErr := cpaimport.Import(ctx, dataStore, cfg.CPAImportAuthDir, cfg.CPAImportConfigPath, false)
-		if importErr != nil {
-			return nil, fmt.Errorf("import CPA credentials: %w", importErr)
-		}
-		importGlobalProxy = report.GlobalProxyURL
-		slog.Info("CPA credentials imported", "imported", report.Imported, "unchanged", report.Skipped)
+	finalizationCapacity := cfg.GatewayMaxInFlight
+	if finalizationCapacity < 1 {
+		finalizationCapacity = 16
 	}
 	a := &App{
 		cfg: cfg, store: dataStore, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
-		providerOAuth: newProviderOAuthSessions(),
+		providerOAuth:     newProviderOAuthSessions(),
+		finalizationSlots: make(chan struct{}, finalizationCapacity),
 	}
 	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
 		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
 	}
-	if err := a.startEmbeddedCPA(ctx, importGlobalProxy); err != nil {
+	if err := a.startNativeRuntime(ctx); err != nil {
 		return nil, err
 	}
 	a.routes()
@@ -88,13 +85,13 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 }
 
 func (a *App) Close() {
-	if a.nativeCPAServer != nil {
+	if a.nativeGatewayServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = a.nativeCPAServer.Shutdown(ctx)
+		_ = a.nativeGatewayServer.Shutdown(ctx)
 		cancel()
 	}
-	if a.nativeCPARuntime != nil {
-		_ = a.nativeCPARuntime.Close(context.Background())
+	if a.nativeRuntime != nil {
+		_ = a.nativeRuntime.Close(context.Background())
 	}
 	if a.stop != nil {
 		close(a.stop)
@@ -121,7 +118,7 @@ func (a *App) maintenance() {
 	for {
 		select {
 		case <-ticker.C:
-			a.reclaimExecutorCachesUnderPressure()
+			a.reclaimRuntimeMemoryUnderPressure()
 			if count, err := a.store.DeleteExpiredAgentSetups(context.Background(), time.Now()); err != nil {
 				slog.Error("delete expired agent setups", "error", err)
 			} else if count > 0 {
@@ -148,16 +145,16 @@ func (a *App) maintenance() {
 
 const largeRequestMemoryReleaseBytes = 8 << 20
 
-func (a *App) reclaimExecutorCachesUnderPressure() {
-	if a == nil || a.cfg.ExecutorCachePressureBytes == 0 {
+func (a *App) reclaimRuntimeMemoryUnderPressure() {
+	if a == nil || a.cfg.MemoryReclaimThresholdBytes == 0 {
 		return
 	}
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	if stats.HeapAlloc < a.cfg.ExecutorCachePressureBytes {
+	if stats.HeapAlloc < a.cfg.MemoryReclaimThresholdBytes {
 		return
 	}
-	a.reclaimExecutorMemory("heap_pressure", stats.HeapAlloc)
+	a.reclaimRuntimeMemory("heap_pressure", stats.HeapAlloc)
 }
 
 func (a *App) reclaimAfterLargeRequest(requestBytes int) {
@@ -166,19 +163,18 @@ func (a *App) reclaimAfterLargeRequest(requestBytes int) {
 	}
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	a.reclaimExecutorMemory("large_request_complete", stats.HeapAlloc)
+	a.reclaimRuntimeMemory("large_request_complete", stats.HeapAlloc)
 }
 
-func (a *App) reclaimExecutorMemory(reason string, heapAlloc uint64) {
+func (a *App) reclaimRuntimeMemory(reason string, heapAlloc uint64) {
 	if !a.memoryReclaiming.CompareAndSwap(false, true) {
 		return
 	}
 	defer a.memoryReclaiming.Store(false)
-	relaybridge.ClearReasoningCaches()
 	debug.FreeOSMemory()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	slog.Info("released executor memory", "reason", reason,
+	slog.Info("released runtime memory", "reason", reason,
 		"heap_alloc_bytes_before", heapAlloc, "heap_alloc_bytes_after", after.HeapAlloc)
 }
 
@@ -218,7 +214,7 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	if err != nil {
 		return err
 	}
-	client, err := cpa.OutboundHTTPClient(proxyURL, 30*time.Second)
+	client, err := egress.OutboundHTTPClient(proxyURL, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -370,22 +366,22 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = sqlDB.PingContext(ctx)
 	}
-	var cpaErr error
+	var runtimeErr error
 	activeSubscriptions, subscriptionErr := a.store.HasActiveChildSubscriptions(ctx, time.Now())
 	var credentialErr error
-	if a.nativeCPARuntime == nil || a.nativeCPARuntime.CredentialCount() == 0 {
+	if a.nativeRuntime == nil || a.nativeRuntime.CredentialCount() == 0 {
 		credentialErr = errors.New("no enabled upstream credentials")
 	}
-	if serveErr := a.nativeCPAServeErr.Load(); serveErr != nil {
-		cpaErr, _ = serveErr.(error)
+	if serveErr := a.nativeGatewayServeErr.Load(); serveErr != nil {
+		runtimeErr, _ = serveErr.(error)
 	}
 	status := http.StatusOK
-	if err != nil || cpaErr != nil || credentialErr != nil || subscriptionErr != nil {
+	if err != nil || runtimeErr != nil || credentialErr != nil || subscriptionErr != nil {
 		status = http.StatusServiceUnavailable
 	}
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "data_plane": "embedded_cpa", "upstream_credentials": errorText(credentialErr), "cpa": errorText(cpaErr),
-		"cpa_admission": a.inferenceCPA().AdmissionStatus(), "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
+		"database": errorText(err), "data_plane": "native_runtime", "upstream_credentials": errorText(credentialErr), "gateway": errorText(runtimeErr),
+		"upstream_admission": a.inferenceGateway().AdmissionStatus(), "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
 }
 
 func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {

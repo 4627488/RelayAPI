@@ -5,11 +5,9 @@ Set-StrictMode -Version 2
 
 $EndpointBase64 = '{{.EndpointBase64}}'
 $ApiKeyBase64 = '{{.APIKeyBase64}}'
-$ClaudePatchBase64 = '{{.ClaudePatchBase64}}'
 $OpenCodePatchBase64 = '{{.OpenCodePatchBase64}}'
 $CodexEditsBase64 = '{{.CodexEditsBase64}}'
 $DoCodex = {{if .Codex}}$true{{else}}$false{{end}}
-$DoClaude = {{if .Claude}}$true{{else}}$false{{end}}
 $DoOpenCode = {{if .OpenCode}}$true{{else}}$false{{end}}
 $InstallMissing = {{if .InstallMissing}}$true{{else}}$false{{end}}
 $VerifyConnection = {{if .VerifyConnection}}$true{{else}}$false{{end}}
@@ -44,7 +42,7 @@ function Get-SetupCommand([string]$Name) {
 }
 
 if ($Check) {
-  foreach ($name in @($(if ($DoCodex) {'codex'}), $(if ($DoClaude) {'claude'}), $(if ($DoOpenCode) {'opencode'}))) {
+  foreach ($name in @($(if ($DoCodex) {'codex'}), $(if ($DoOpenCode) {'opencode'}))) {
     if (-not $name) { continue }
     $command = Get-SetupCommand $name
     if ($command) {
@@ -70,10 +68,6 @@ function Install-SetupCli([string]$Name) {
         & ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/openai/codex/refs/heads/main/scripts/install/install.ps1')))
       } finally { $env:CODEX_NON_INTERACTIVE = $previous }
     }
-    'claude' {
-      Write-SetupInfo 'Installing Claude Code with the official installer.'
-      & ([scriptblock]::Create((Invoke-RestMethod 'https://claude.ai/install.ps1')))
-    }
     'opencode' {
       Write-SetupInfo 'Installing OpenCode.'
       if (Get-SetupCommand npm) { & npm install -g opencode-ai }
@@ -86,7 +80,6 @@ function Install-SetupCli([string]$Name) {
 }
 
 if ($DoCodex) { Install-SetupCli codex }
-if ($DoClaude) { Install-SetupCli claude }
 if ($DoOpenCode) { Install-SetupCli opencode }
 
 $script:Backups = New-Object System.Collections.ArrayList
@@ -135,14 +128,7 @@ function Merge-SetupJson([string]$Path, [string]$PatchBase64, [string]$Mode = 'd
   $base = if (Test-Path -LiteralPath $Path) { Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json } else { [pscustomobject]@{} }
   $patch = (ConvertFrom-SetupBase64 $PatchBase64) | ConvertFrom-Json
   Merge-SetupObject $base $patch $Mode
-  if ($Mode -eq 'claude') {
-    $claudeEnv = Get-SetupJsonProperty $base 'env'
-    if ($claudeEnv -is [pscustomobject]) {
-      $claudeEnv.PSObject.Properties.Remove('ANTHROPIC_AUTH_TOKEN')
-      $claudeEnv.PSObject.Properties.Remove('ANTHROPIC_API_KEY')
-    }
-  }
-  elseif ($Mode -eq 'opencode') {
+  if ($Mode -eq 'opencode') {
     $disabled = Get-SetupJsonProperty $base 'disabled_providers'
     if ($disabled -is [array]) {
       $base | Add-Member -NotePropertyName 'disabled_providers' -NotePropertyValue @($disabled | Where-Object { $_ -ne 'relayapi' }) -Force
@@ -166,12 +152,10 @@ $keyDir = Join-Path $HOME '.config\relayapi'
 $keyPath = Join-Path $keyDir 'api-key'
 $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $codexConfig = Join-Path $codexHome 'config.toml'
-$claudeConfig = Join-Path $HOME '.claude\settings.json'
 $openCodeConfig = Join-Path $HOME '.config\opencode\opencode.json'
 
 Backup-SetupTarget $keyPath
 if ($DoCodex) { Backup-SetupTarget $codexConfig }
-if ($DoClaude) { Backup-SetupTarget $claudeConfig }
 if ($DoOpenCode) { Backup-SetupTarget $openCodeConfig }
 
 try {
@@ -241,15 +225,6 @@ try {
       Stop-Setup "Codex did not confirm the configuration write (status: $status)."
     }
     Write-SetupOk "Codex configured in $codexConfig"
-  }
-  if ($DoClaude) {
-    Merge-SetupJson $claudeConfig $ClaudePatchBase64 'claude'
-    Write-SetupOk "Claude Code configured in $claudeConfig"
-    if ($env:ANTHROPIC_AUTH_TOKEN -or $env:ANTHROPIC_API_KEY) {
-      Write-SetupWarn 'Claude authentication variables are set in this shell and conflict with apiKeyHelper.'
-      Write-SetupInfo 'Run: Remove-Item Env:ANTHROPIC_AUTH_TOKEN, Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue'
-      Write-SetupInfo 'Also remove persistent user environment variables before starting Claude Code.'
-    }
   }
   if ($DoOpenCode) { Merge-SetupJson $openCodeConfig $OpenCodePatchBase64 'opencode'; Write-SetupOk "OpenCode configured in $openCodeConfig" }
 } catch {

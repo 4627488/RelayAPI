@@ -33,8 +33,6 @@ func ParseResponse(payload []byte) Result {
 				result.RequestID = id
 			}
 			readUsage(response["usage"], &result)
-			readUsageMetadata(response["usageMetadata"], &result)
-			readUsageMetadata(response["cpaUsageMetadata"], &result)
 			if tier := stringValue(response["service_tier"]); tier != "" {
 				result.ResponseServiceTier = tier
 			}
@@ -43,8 +41,8 @@ func ParseResponse(payload []byte) Result {
 			result.ResponseServiceTier = tier
 		}
 		readUsage(value["usage"], &result)
-		readUsageMetadata(value["usageMetadata"], &result)
-		readUsageMetadata(value["cpaUsageMetadata"], &result)
+		// Kimi may emit message-shaped streaming events even when Relay exposes
+		// the request through the OpenAI-compatible surface.
 		if message, ok := value["message"].(map[string]any); ok {
 			if id := stringValue(message["id"]); id != "" {
 				result.RequestID = id
@@ -79,22 +77,6 @@ func ParseResponse(payload []byte) Result {
 	return result
 }
 
-func readUsageMetadata(raw any, result *Result) {
-	usage, ok := raw.(map[string]any)
-	if !ok {
-		return
-	}
-	result.Found = true
-	result.Usage.Prompt = maxInt(result.Usage.Prompt, number(usage["promptTokenCount"]))
-	result.Usage.Completion = maxInt(result.Usage.Completion, number(usage["candidatesTokenCount"]))
-	result.Usage.Total = maxInt(result.Usage.Total, number(usage["totalTokenCount"]))
-	result.Usage.Cached = maxInt(result.Usage.Cached, number(usage["cachedContentTokenCount"]))
-	result.Usage.Reasoning = maxInt(result.Usage.Reasoning, number(usage["thoughtsTokenCount"]))
-	result.Usage.ImageInput = maxInt(result.Usage.ImageInput, modalityTokens(usage["promptTokensDetails"], "IMAGE"))
-	result.Usage.CachedImageInput = maxInt(result.Usage.CachedImageInput, modalityTokens(usage["cacheTokensDetails"], "IMAGE"), modalityTokens(usage["cachedContentTokenDetails"], "IMAGE"))
-	result.Usage.ImageOutput = maxInt(result.Usage.ImageOutput, modalityTokens(usage["candidatesTokensDetails"], "IMAGE"))
-}
-
 func readUsage(raw any, result *Result) {
 	usage, ok := raw.(map[string]any)
 	if !ok {
@@ -114,11 +96,11 @@ func readUsage(raw any, result *Result) {
 		nestedNumber(usage, "input_tokens_details", "cache_write_tokens"),
 		nestedNumber(usage, "prompt_tokens_details", "cache_write_tokens"),
 	)
-	// Anthropic Messages reports uncached input, cache reads, and cache writes as
-	// disjoint counters. Internally Prompt includes cache reads (CostNanoUSD
-	// subtracts Cached from Prompt) while cache writes remain a separate counter.
-	// OpenAI-style input_tokens already includes cached tokens, so only normalize
-	// when the Anthropic cache fields are present.
+	// Kimi and similar providers report uncached input, cache reads, and cache
+	// writes as disjoint counters. Internally Prompt includes cache reads
+	// (CostNanoUSD subtracts Cached from Prompt) while cache writes remain a
+	// separate counter. OpenAI-style input_tokens already includes cached
+	// tokens, so only normalize when these explicit cache fields are present.
 	if hasAnyKey(usage, "cache_read_input_tokens", "cache_creation_input_tokens") {
 		inputTokens = saturatingSum(inputTokens, cacheReadTokens)
 	}
@@ -202,18 +184,6 @@ func saturatingSum(values ...int64) int64 {
 		result += value
 	}
 	return result
-}
-func modalityTokens(raw any, modality string) int64 {
-	items, _ := raw.([]any)
-	var total int64
-	for _, rawItem := range items {
-		item, _ := rawItem.(map[string]any)
-		itemModality := strings.ToUpper(stringValue(item["modality"]))
-		if itemModality == strings.ToUpper(modality) {
-			total += number(item["tokenCount"])
-		}
-	}
-	return total
 }
 func maxInt(values ...int64) int64 {
 	var result int64

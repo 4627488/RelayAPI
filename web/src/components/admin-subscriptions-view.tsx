@@ -23,6 +23,7 @@ import { toast } from "sonner"
 
 import { ModelSelector } from "@/components/model-selector"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
+import { PageHeader } from "@/components/workspace-ui"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -396,25 +397,24 @@ export function AdminSubscriptionsView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">订阅分配</h1>
-          <p className="mt-1 text-sm text-muted-foreground">向租户分配模型与额度。</p>
-        </div>
-        <Button
-          disabled={
-            !selected ||
-            !isAllocatable(selected) ||
-            !tenants.some((tenant) => tenant.enabled)
-          }
-          onClick={() => selected && openAssignment(selected)}
-        >
-          <UserPlusIcon data-icon="inline-start" />
-          {selected?.item.capacity_mode === "unmetered"
-            ? "添加用户"
-            : "分配给租户"}
-        </Button>
-      </div>
+      <PageHeader
+        title="订阅分配"
+        actions={
+          <Button
+            disabled={
+              !selected ||
+              !isAllocatable(selected) ||
+              !tenants.some((tenant) => tenant.enabled)
+            }
+            onClick={() => selected && openAssignment(selected)}
+          >
+            <UserPlusIcon data-icon="inline-start" />
+            {selected?.item.capacity_mode === "unmetered"
+              ? "添加用户"
+              : "分配给租户"}
+          </Button>
+        }
+      />
 
       {loading ? (
         <AllocationSkeleton />
@@ -529,6 +529,10 @@ export function AdminSubscriptionsView() {
               <Field>
                 <FieldLabel>模型账户</FieldLabel>
                 <Select
+                  items={currentParents.map((view) => ({
+                    value: view.item.id,
+                    label: `${view.item.name} · ${billingLabel(view)}`,
+                  }))}
                   value={assignParentID}
                   onValueChange={(value) => changeAssignParent(value ?? "")}
                   required
@@ -607,6 +611,12 @@ export function AdminSubscriptionsView() {
                 <Field>
                   <FieldLabel>租户</FieldLabel>
                   <Select
+                    items={tenants
+                      .filter((tenant) => tenant.enabled)
+                      .map((tenant) => ({
+                        value: tenant.id,
+                        label: `${tenant.name} · ${tenant.owner_email}`,
+                      }))}
                     value={assignTenantID}
                     onValueChange={(value) => setAssignTenantID(value ?? "")}
                     required
@@ -1503,7 +1513,7 @@ function ParentSettingsDialog({
               <FieldLabel htmlFor="parent-models">账户模型范围</FieldLabel>
               <ModelSelector
                 id="parent-models"
-                options={current.item.cpa_model_allowlist ?? []}
+                options={current.item.upstream_model_allowlist ?? []}
                 value={models}
                 onChange={setModels}
               />
@@ -1650,6 +1660,10 @@ function ChildSettingsDialog({
             <Field>
               <FieldLabel>模型账户</FieldLabel>
               <Select
+                items={parents.map((view) => ({
+                  value: view.item.id,
+                  label: `${view.item.name} · ${billingLabel(view)}`,
+                }))}
                 value={parentID}
                 onValueChange={(value) => {
                   setParentID(value ?? "")
@@ -1779,7 +1793,7 @@ function AccountStatusBadge({ view }: { view: ParentSubscriptionView }) {
   if (view.item.status === "missing")
     return <Badge variant="outline">账户已删除</Badge>
   if (!view.item.enabled) return <Badge variant="secondary">已停用</Badge>
-  if (view.item.cpa_unavailable)
+  if (view.item.upstream_unavailable)
     return <Badge variant="destructive">账户不可用</Badge>
   if (view.item.capacity_mode === "observed" && !view.windows.length)
     return <Badge variant="outline">额度学习中</Badge>
@@ -1798,7 +1812,7 @@ function ChildStatusBadge({ child }: { child: ChildSubscription }) {
 }
 
 function isAllocatable(view: ParentSubscriptionView) {
-  if (!view.item.enabled || view.item.cpa_unavailable) return false
+  if (!view.item.enabled || view.item.upstream_unavailable) return false
   return (
     view.item.capacity_mode === "unmetered" ||
     view.windows.length > 0 ||
@@ -1810,7 +1824,8 @@ function accountBlockReason(view: ParentSubscriptionView) {
   if (view.item.status === "missing")
     return "模型账户已删除；历史授权仅可迁移到其他账户或删除。"
   if (!view.item.enabled) return "账户分配规则已停用。"
-  if (view.item.cpa_unavailable) return "模型账户当前不可用，请先检查账户状态。"
+  if (view.item.upstream_unavailable)
+    return "模型账户当前不可用，请先检查账户状态。"
   if (view.item.capacity_mode === "observed" && !view.windows.length)
     return view.item.quota_probe_status === "unsupported"
       ? "上游不支持额度观测，请改为余额结算。"
@@ -1841,7 +1856,7 @@ function displayPlan(value?: string) {
 function parentModelOptions(parent?: ParentSubscriptionView) {
   return parent?.item.model_allowlist?.length
     ? parent.item.model_allowlist
-    : (parent?.item.cpa_model_allowlist ?? [])
+    : (parent?.item.upstream_model_allowlist ?? [])
 }
 
 function observedEditableWindows(value: ParentSubscriptionView) {
@@ -1890,11 +1905,7 @@ function defaultChildName(parent?: ParentSubscription) {
     provider.includes("codex") ||
     provider.includes("chatgpt")
       ? "ChatGPT"
-      : provider.includes("anthropic") || provider.includes("claude")
-        ? "Claude"
-        : provider.includes("google") || provider.includes("gemini")
-          ? "Gemini"
-          : parent.name.trim()
+      : parent.name.trim()
   const plan = displayPlan(parent.plan_type)
   return plan ? `${product} ${plan}` : product || "租户授权"
 }

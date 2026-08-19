@@ -3,13 +3,13 @@
 RelayAPI models every capacity-bearing encrypted upstream credential as a
 parent subscription. Administrators split a parent into child subscriptions
 assigned to tenants. RelayAPI owns encrypted credential storage and accounting;
-the embedded CPA runtime owns protocol translation, retries, and routing.
+the native runtime owns protocol translation, retries, and routing.
 
 ## Invariants
 
 1. Client-supplied `X-Relay-*` headers are never trusted or forwarded.
-2. A quota-enforced request is pinned to exactly one embedded CPA credential.
-   The runtime must fail when that AuthID is not an eligible scheduler
+2. A quota-enforced request is pinned to exactly one native runtime credential.
+   The runtime must fail when that credential ID is not an eligible scheduler
    candidate and never silently delegate to another credential.
 3. Metered allocation shares use integer parts-per-million (`allocation_ppm`).
    Enabled allocations may not exceed the parent's configured oversell limit.
@@ -29,7 +29,7 @@ the embedded CPA runtime owns protocol translation, retries, and routing.
    pricing-incomplete for later reconciliation. Rejected upstream requests
    release their reservations.
 9. Tenants see child names, shares, usage, and reset times, but never parent
-   AuthIDs, account emails, tokens, or provider-private metadata.
+   credential IDs, account emails, tokens, or provider-private metadata.
 
 ## Data model
 
@@ -37,9 +37,9 @@ the embedded CPA runtime owns protocol translation, retries, and routing.
 
 `parent_subscriptions` mirrors a redacted native credential identity:
 
-- native credential ID stored as both `cpa_auth_id` and `cpa_auth_index`, and
+- native credential ID stored as both `upstream_credential_id` and `upstream_auth_index`, and
   used for strict picks, observations, and request attribution;
-- CPA auth-file name, provider, display name, status, and cached model list;
+- credential name, provider, status and cached model list;
 - capacity mode: `unmetered` or `observed`;
 - allocation/oversell limit and synchronization timestamps.
 - normalized quota-probe capability, status, last error, observation time, and
@@ -47,7 +47,7 @@ the embedded CPA runtime owns protocol translation, retries, and routing.
 
 `parent_quota_windows` stores arbitrary observed window kinds such as `5h`,
 `7d`, `daily`, `monthly`, or `credits`. Window identity and timing are updated
-by quota probes or CPA metadata; administrators may only override each
+by quota probes or native runtime metadata; administrators may only override each
 window's USD conversion. The core does not hard-code a provider list.
 
 ### Child subscriptions
@@ -63,21 +63,22 @@ window. Counters are changed only while holding PostgreSQL row locks.
 
 Provider API keys follow the same redacted credential path as OAuth accounts:
 
-1. the administrator stores the secret in CPA's provider configuration;
-2. CPA exposes the runtime credential's scheduler ID and stable auth index;
+1. the administrator stores the secret in Relay's encrypted credential store;
+2. the native runtime loads the stable credential ID and auth index;
 3. Relay synchronizes that identity as an `unmetered` parent subscription;
 4. the administrator creates one or more child access grants for tenants;
-5. Relay strictly pins each request to the selected CPA credential, reserves
+5. Relay strictly pins each request to the selected native runtime credential, reserves
    the priced request cost from the tenant row, then settles the actual cost.
 
-No provider API key is copied into Relay or returned to a tenant. Creating a
+Provider API keys are encrypted as whole credential documents and are never
+returned to a tenant. Creating a
 child does not transfer money into a second wallet: all children of a tenant
 share that tenant's single `balance_nano_usd` balance and billing ledger.
 
 ### Request reservations
 
 `request_reservations` is the idempotency and reconciliation authority. It
-records the tenant, API key, child, parent, AuthID, balance reserve, quota
+records the tenant, API key, child, parent, credential ID, balance reserve, quota
 reserve, exact quota-window generations, actual cost, status, expiration, and
 immutable price snapshot. A request crossing an upstream reset cannot be
 settled into the next generation.
@@ -89,21 +90,21 @@ tenant key
   -> tenant/key/model policy
   -> eligible child subscriptions
   -> lock and reserve balance + child windows
-  -> set internal X-Relay-CPA-Auth-ID
-  -> embedded CPA strictly pins the parent AuthID
-  -> protocol/provider request handled by CPA
+  -> set internal X-Relay-Upstream-Credential-ID
+  -> native runtime strictly pins the parent credential ID
+  -> protocol/provider request handled by native runtime
   -> parse response usage
   -> idempotently settle both reservations
 ```
 
 Candidates are ordered by explicit priority and stable creation order.
-Exhausted children are skipped before the upstream request. CPA model metadata
+Exhausted children are skipped before the upstream request. Native runtime model metadata
 is cached per parent so obviously incompatible parents are not selected; the
-embedded runtime remains the final authority on candidate validity.
+native runtime remains the final authority on candidate validity.
 
 A child subscription only claims the models allowed by its effective child,
-parent, and CPA model policies. If a tenant requests a model that is not
-claimed by any active child, Relay falls back to normal CPA scheduling and
+parent, and native runtime model policies. If a tenant requests a model that is not
+claimed by any active child, Relay falls back to normal native runtime scheduling and
 settles the request against the tenant's total balance. If a model is claimed
 but its assigned parent is unavailable or its child quota is exhausted, Relay
 rejects the request instead of silently bypassing the configured subscription.
@@ -112,7 +113,7 @@ rejects the request instead of silently bypassing the configured subscription.
 
 - `unmetered`: routing is pinned but no child quota is reserved. Balance billing
   and tenant/key limits still apply. This is the normal mode for pay-as-you-go
-  upstream API keys: the key remains private in CPA, any number of child access
+  upstream API keys: the key remains private in native runtime, any number of child access
   grants can be distributed, and every request is settled against the tenant's
   total Relay balance.
 - `observed`: Relay uses a differential method: between two observations in
@@ -158,18 +159,18 @@ refresh, and quota probes. A credential may instead expose normalized
 `relay_quota` metadata directly. Reports exclude credential fields and raw
 upstream payloads.
 
-The CPA credential table and parent-subscription table render the same stored
+The native runtime credential table and parent-subscription table render the same stored
 snapshot: plan, used/remaining percentage, reset time, raw credit units, and
 non-enforceable product/model windows. Automatic/observed mode treats these
 fields as read-only and exposes only the USD capacity conversion for each
 enforceable observed window.
-Model policies are selected from the credential's CPA-synchronized model list;
+Model policies are selected from the credential's native runtime-synchronized model list;
 an empty selection means inherit all available models.
 
-Upstream quota and child share are intentionally separate. CPA/adapter data can
+Upstream quota and child share are intentionally separate. native runtime/adapter data can
 discover a credential's plan, percentage consumption, reset time, and sometimes
 raw credits. Only an administrator can decide the child `allocation_ppm` policy;
-CPA scheduler weight is not a tenant allocation share.
+native runtime scheduler weight is not a tenant allocation share.
 
 ## Migration and rollout
 
@@ -182,10 +183,10 @@ Rollout order:
 2. synchronize native credential IDs into existing parent rows;
 3. verify native quota observations and reset generations;
 4. enable enforcement after model and quota validation;
-5. remove the external CPA service and legacy watchdog;
+5. remove the external native runtime service and legacy watchdog;
 6. reconcile and monitor incomplete-pricing requests before global enablement.
 
 The legacy Next.js implementation is a behavioral reference, not a storage or
 provider abstraction to copy. This design replaces its floating-point shares,
 SQLite concurrency, in-memory calibration tasks, and Codex/Grok registry with
-PostgreSQL row locking and CPA-native identity/routing.
+PostgreSQL row locking and native runtime-native identity/routing.

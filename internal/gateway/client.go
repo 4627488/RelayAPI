@@ -1,4 +1,4 @@
-package cpa
+package gateway
 
 import (
 	"fmt"
@@ -8,16 +8,13 @@ import (
 	"time"
 )
 
+// Client combines Relay's local admission controller with the transport used
+// to invoke the native provider runtime. It has no external control-plane API.
 type Client struct {
-	BaseURL     *url.URL
-	APIKey      string
-	HTTP        *http.Client
-	ControlHTTP *http.Client
-	admission   *admissionController
-}
-
-func New(rawURL, apiKey string, timeout time.Duration) (*Client, error) {
-	return NewWithOptions(rawURL, apiKey, Options{ResponseHeaderTimeout: timeout, MaxQueue: 32})
+	BaseURL   *url.URL
+	APIKey    string
+	HTTP      *http.Client
+	admission *admissionController
 }
 
 type Options struct {
@@ -32,11 +29,8 @@ type Options struct {
 
 func NewWithOptions(rawURL, apiKey string, options Options) (*Client, error) {
 	base, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	if base.Scheme == "" || base.Host == "" {
-		return nil, fmt.Errorf("CPA URL must be absolute")
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return nil, fmt.Errorf("runtime URL must be absolute")
 	}
 	if options.ResponseHeaderTimeout <= 0 {
 		options.ResponseHeaderTimeout = 10 * time.Minute
@@ -63,22 +57,11 @@ func NewWithOptions(rawURL, apiKey string, options Options) (*Client, error) {
 	transport.MaxConnsPerHost = options.MaxInFlight
 	transport.MaxIdleConnsPerHost = options.MaxInFlight
 	transport.MaxIdleConns = options.MaxInFlight * 2
+	transport.DisableCompression = true
 	transport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
-	controlTransport := http.DefaultTransport.(*http.Transport).Clone()
-	controlTransport.MaxConnsPerHost = 4
-	controlTransport.MaxIdleConnsPerHost = 4
-	controlTransport.MaxIdleConns = 8
-	controlTransport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
 	return &Client{
-		BaseURL: base, APIKey: apiKey,
-		// A total Client.Timeout breaks long-lived SSE and WebSocket traffic.
-		// Bound only the wait for response headers; request contexts own the
-		// complete operation lifetime. ControlHTTP is the non-inference pool used
-		// by GET /v1/models; it must not share the data-plane connection budget.
-		HTTP:        &http.Client{Transport: transport},
-		ControlHTTP: &http.Client{Transport: controlTransport},
-		admission: newAdmissionController(options.MaxInFlight, options.MaxQueue, options.MaxRequestBytesInFlight, options.QueueTimeout,
-			options.CircuitFailureThreshold, options.CircuitOpenDuration),
+		BaseURL: base, APIKey: apiKey, HTTP: &http.Client{Transport: transport},
+		admission: newAdmissionController(options.MaxInFlight, options.MaxQueue, options.MaxRequestBytesInFlight, options.QueueTimeout, options.CircuitFailureThreshold, options.CircuitOpenDuration),
 	}, nil
 }
 

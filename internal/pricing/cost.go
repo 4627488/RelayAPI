@@ -8,8 +8,8 @@ type Usage struct {
 }
 
 // CostNanoUSD calculates a non-negative, saturating request cost. Some APIs
-// include reasoning tokens inside output tokens (OpenAI), while others report
-// them separately (Gemini). Total disambiguates those two shapes.
+// include reasoning tokens inside output tokens, while others report them
+// separately. Total disambiguates those two shapes.
 func CostNanoUSD(price SnapshotPrice, usage Usage) int64 {
 	imageInput := min64(max64(0, usage.ImageInput), max64(0, usage.Prompt))
 	cachedInput := min64(max64(0, usage.Cached), max64(0, usage.Prompt))

@@ -13,7 +13,7 @@ func TestPublicLogDetailRedactsInternalFields(t *testing.T) {
 	item := store.LogWithDetail{
 		Log: db.RequestLog{
 			TenantID: "tenant-secret", APIKeyID: "key-secret", ReservationRequestID: &reservationID,
-			CPATraceID: "trace-secret", Provider: "provider-secret", AuthIndex: "auth-secret",
+			UpstreamTraceID: "trace-secret", Provider: "provider-secret", AuthIndex: "auth-secret",
 			ParentSubscriptionID: &parentID, CredentialEmail: "credential@example.com",
 			PriceSource: "internal-price", PriceModel: "internal-model", InputPriceNanoUSD: 42, PricingComplete: true, Settled: true, ReservedNanoUSD: 99, ForwardedBodyBytes: 17,
 			StageTimings: `{"internal":1}`, ErrorMessage: "internal failure detail",
@@ -27,7 +27,7 @@ func TestPublicLogDetailRedactsInternalFields(t *testing.T) {
 	}
 
 	got := publicLogDetail(item)
-	if got.Log.TenantID != "" || got.Log.APIKeyID != "" || got.Log.ReservationRequestID != nil || got.Log.CPATraceID != "" ||
+	if got.Log.TenantID != "" || got.Log.APIKeyID != "" || got.Log.ReservationRequestID != nil || got.Log.UpstreamTraceID != "" ||
 		got.Log.Provider != "" || got.Log.AuthIndex != "" || got.Log.ParentSubscriptionID != nil || got.Log.CredentialEmail != "" ||
 		got.Log.PriceSource != "" || got.Log.PriceModel != "" || got.Log.InputPriceNanoUSD != 0 || got.Log.PricingComplete || got.Log.Settled ||
 		got.Log.ReservedNanoUSD != 0 || got.Log.ForwardedBodyBytes != 0 || got.Log.StageTimings != "{}" || got.Log.ErrorMessage != "" {

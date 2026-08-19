@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/billing"
-	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
@@ -33,31 +33,21 @@ type requestMeta struct {
 	ServiceTier     string `json:"service_tier"`
 	ReasoningEffort string `json:"reasoning_effort"`
 	ImageCount      int    `json:"n"`
-	Reasoning       struct {
-		Effort string `json:"effort"`
-	} `json:"reasoning"`
-	RequestedModel string `json:"-"`
-	ModelAlias     string `json:"-"`
+	RequestedModel  string `json:"-"`
+	ModelAlias      string `json:"-"`
 }
 
-func readRequestMeta(body []byte, requestPath string) requestMeta {
-	var meta requestMeta
-	_ = json.Unmarshal(body, &meta)
+func readRequestMeta(body []byte, _ string) requestMeta {
+	values := gjson.GetManyBytes(body, "model", "stream", "service_tier", "reasoning_effort", "reasoning.effort", "n")
+	meta := requestMeta{
+		Model:           strings.TrimSpace(values[0].String()),
+		Stream:          values[1].Bool(),
+		ServiceTier:     strings.TrimSpace(values[2].String()),
+		ReasoningEffort: strings.TrimSpace(values[3].String()),
+		ImageCount:      int(values[5].Int()),
+	}
 	if meta.ReasoningEffort == "" {
-		meta.ReasoningEffort = meta.Reasoning.Effort
-	}
-	if meta.Model != "" {
-		return meta
-	}
-	// Gemini's native API puts the model in
-	// /v1beta/models/{model}:generateContent instead of the JSON body.
-	const marker = "/models/"
-	if index := strings.Index(requestPath, marker); index >= 0 {
-		value := requestPath[index+len(marker):]
-		if end := strings.IndexAny(value, ":/"); end >= 0 {
-			value = value[:end]
-		}
-		meta.Model, _ = url.PathUnescape(value)
+		meta.ReasoningEffort = strings.TrimSpace(values[4].String())
 	}
 	return meta
 }
@@ -149,18 +139,6 @@ func rewriteRequestModel(body []byte, requestURL *url.URL, requested, actual str
 			body = rewritten
 		}
 	}
-	const marker = "/models/"
-	if index := strings.Index(requestURL.Path, marker); index >= 0 {
-		start := index + len(marker)
-		end := len(requestURL.Path)
-		if relative := strings.IndexAny(requestURL.Path[start:], ":/"); relative >= 0 {
-			end = start + relative
-		}
-		if strings.EqualFold(requestURL.Path[start:end], requested) {
-			requestURL.Path = requestURL.Path[:start] + actual + requestURL.Path[end:]
-			requestURL.RawPath = ""
-		}
-	}
 	query := requestURL.Query()
 	if strings.EqualFold(strings.TrimSpace(query.Get("model")), requested) {
 		query.Set("model", actual)
@@ -194,33 +172,17 @@ func releaseBufferedRequest(upstream *http.Request, response *http.Response) {
 }
 
 type rollingCapture struct {
-	mu     sync.Mutex
-	buf    []byte
-	detail []byte
-	max    int
-	total  int64
-}
-
-type flushingCaptureWriter struct {
-	response http.ResponseWriter
-	capture  io.Writer
-}
-
-func (w *flushingCaptureWriter) Write(payload []byte) (int, error) {
-	if len(payload) > 0 && w.capture != nil {
-		_, _ = w.capture.Write(payload)
-	}
-	n, err := w.response.Write(payload)
-	if flusher, ok := w.response.(http.Flusher); ok {
-		flusher.Flush()
-	}
-	return n, err
+	buf      []byte
+	detail   []byte
+	max      int
+	total    int64
+	bufStart int
+	bufFull  bool
 }
 
 func (c *rollingCapture) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.total += int64(len(p))
+	size := len(p)
+	c.total += int64(size)
 	if len(c.detail) < requestLogDetailLimit {
 		remaining := requestLogDetailLimit - len(c.detail)
 		if remaining > len(p) {
@@ -228,38 +190,67 @@ func (c *rollingCapture) Write(p []byte) (int, error) {
 		}
 		c.detail = append(c.detail, p[:remaining]...)
 	}
-	if len(p) >= c.max {
-		c.buf = append(c.buf[:0], p[len(p)-c.max:]...)
-	} else {
-		overflow := len(c.buf) + len(p) - c.max
-		if overflow > 0 {
-			c.buf = append(c.buf[:0], c.buf[overflow:]...)
-		}
-		c.buf = append(c.buf, p...)
+	if c.max <= 0 || len(p) == 0 {
+		return size, nil
 	}
-	return len(p), nil
+	if len(p) >= c.max {
+		if cap(c.buf) < c.max {
+			c.buf = make([]byte, c.max)
+		} else {
+			c.buf = c.buf[:c.max]
+		}
+		copy(c.buf, p[len(p)-c.max:])
+		c.bufStart = 0
+		c.bufFull = true
+		return size, nil
+	}
+	if !c.bufFull {
+		remaining := c.max - len(c.buf)
+		if len(p) <= remaining {
+			c.buf = append(c.buf, p...)
+			c.bufFull = len(c.buf) == c.max
+			return size, nil
+		}
+		c.buf = append(c.buf, p[:remaining]...)
+		p = p[remaining:]
+		c.bufFull = true
+		c.bufStart = 0
+	}
+	first := min(len(p), c.max-c.bufStart)
+	copy(c.buf[c.bufStart:], p[:first])
+	copy(c.buf, p[first:])
+	c.bufStart = (c.bufStart + len(p)) % c.max
+	return size, nil
 }
 func (c *rollingCapture) Bytes() []byte {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]byte(nil), c.buf...)
+	if !c.bufFull || c.bufStart == 0 {
+		return c.buf
+	}
+	result := make([]byte, len(c.buf))
+	at := copy(result, c.buf[c.bufStart:])
+	copy(result[at:], c.buf[:c.bufStart])
+	return result
 }
 func (c *rollingCapture) Info() ([]byte, bool, int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	return append([]byte(nil), c.detail...), c.total > int64(len(c.detail)), c.total
 }
 
 type requestLogContext struct {
-	price          *store.ResolvedPrice
-	detail         *store.LogDetailInput
-	ttftMS         *int64
-	cpaTraceID     string
-	errorCode      string
-	requestBytes   int64
-	forwardedBytes int64
-	responseBytes  int64
-	stageTimings   string
+	price           *store.ResolvedPrice
+	detail          *store.LogDetailInput
+	ttftMS          *int64
+	upstreamTraceID string
+	errorCode       string
+	requestBytes    int64
+	forwardedBytes  int64
+	responseBytes   int64
+	stageTimings    string
+	completedAt     time.Time
+}
+
+type priceLookupResult struct {
+	price store.ResolvedPrice
+	err   error
 }
 
 func rejectedRequestDetail(r *http.Request, body []byte, _ bool, code, message string, started time.Time, timeline ...*latencyTimeline) *store.LogDetailInput {
@@ -297,6 +288,10 @@ func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, ad
 func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	timeline := newLatencyTimeline(started)
+	if retiredProtocolPath(r.URL.Path) {
+		writeError(w, http.StatusNotFound, "unsupported_protocol", "RelayAPI 仅支持 Responses 和 OpenAI 兼容协议")
+		return
+	}
 	keyValue := bearer(r)
 	key, err := a.store.ResolveKey(r.Context(), keyValue)
 	if err != nil || !key.Enabled || !key.TenantEnabled || expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
@@ -313,13 +308,13 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Relay-Request-ID", requestID)
 	admission := store.Admission{RequestID: requestID}
 	expectedBodyBytes := r.ContentLength
-	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.CPAMaxRequestBytes {
-		expectedBodyBytes = a.cfg.CPAMaxRequestBytes
+	if expectedBodyBytes < 0 || expectedBodyBytes > a.cfg.MaxRequestBytes {
+		expectedBodyBytes = a.cfg.MaxRequestBytes
 	}
-	targetCPA := a.inferenceCPA()
-	lease, err := targetCPA.Acquire(r.Context(), expectedBodyBytes)
+	targetUpstream := a.inferenceGateway()
+	lease, err := targetUpstream.Acquire(r.Context(), expectedBodyBytes)
 	if err != nil {
-		classified := writeCPAAdmissionError(w, err, targetCPA.AdmissionStatus())
+		classified := writeGatewayAdmissionError(w, err, targetUpstream.AdmissionStatus())
 		meta := requestMetadata(nil, r)
 		detail := rejectedRequestDetail(r, nil, false, classified.Code, classified.Message, started, timeline)
 		a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
@@ -327,11 +322,11 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer lease.Release()
 	leaseAcquiredAt := time.Now()
-	timeline.Step(leaseAcquiredAt, "cpa_admission_queue", "CPA 准入排队", "queue", "等待并发槽位与请求体内存预算")
+	timeline.Step(leaseAcquiredAt, "upstream_admission_queue", "Upstream 准入排队", "queue", "等待并发槽位与请求体内存预算")
 
-	body, err := readBoundedRequestBody(w, r, a.cfg.CPAMaxRequestBytes)
+	body, err := readBoundedRequestBody(w, r, a.cfg.MaxRequestBytes)
 	if err != nil {
-		message := fmt.Sprintf("请求体超过 %d MiB", a.cfg.CPAMaxRequestBytes>>20)
+		message := fmt.Sprintf("请求体超过 %d MiB", a.cfg.MaxRequestBytes>>20)
 		writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", message)
 		meta := requestMetadata(body, r)
 		detail := rejectedRequestDetail(r, body, true, "body_too_large", message, started, timeline)
@@ -345,10 +340,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	bodyReadAt := time.Now()
 	timeline.Step(bodyReadAt, "read_request_body", "读取客户端请求", "downstream", "读取并缓存客户端请求体")
 	originalBody := body
-	logContext := requestLogContext{requestBytes: int64(len(body))}
+	logContext := requestLogContext{detail: baseRequestDetail(r, body), requestBytes: int64(len(body))}
 	meta := requestMetadata(body, r)
 	clientRequestedModel := meta.Model
-	resolved := resolveAPIKeyModel(resolveClaudeCatalogModel(meta.Model), key.ModelAliases)
+	resolved := resolveAPIKeyModel(meta.Model, key.ModelAliases)
 	resolved.RequestedModel = clientRequestedModel
 	resolved.Stream = meta.Stream
 	resolved.ServiceTier = meta.ServiceTier
@@ -374,6 +369,24 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	modelResolvedAt := time.Now()
 	timeline.Step(modelResolvedAt, "model_resolution", "模型解析与权限", "relay", "解析别名、改写模型并检查 Key 模型权限")
+	var basePriceResult <-chan priceLookupResult
+	if billable {
+		result := make(chan priceLookupResult, 1)
+		basePriceResult = result
+		dimensions := pricing.Dimensions{
+			APIGroupKey: key.ID, Model: meta.Model, ServiceTier: meta.ServiceTier,
+			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+		}
+		// Daily-limit aggregation and price resolution are independent reads.
+		// Starting the price lookup here removes one database round trip from the
+		// critical path whenever a key also has a daily token limit.
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			price, lookupErr := a.store.ResolvePrice(r.Context(), dimensions)
+			result <- priceLookupResult{price: price, err: lookupErr}
+		}()
+	}
 	if err := a.enforceLimits(r.Context(), key); err != nil {
 		classified := userFacingError{Status: http.StatusInternalServerError, Code: "usage_limit_check_failed", Message: "暂时无法检查使用限制，请稍后重试", Retryable: true}
 		var limitErr *requestLimitError
@@ -391,11 +404,10 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	var price store.ResolvedPrice
 	var priceSnapshot []byte
 	priceConfigured := false
+	var deferredAdmissionPrice <-chan priceLookupResult
 	if billable {
-		price, err = a.store.ResolvePrice(r.Context(), pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, ServiceTier: meta.ServiceTier,
-			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-		})
+		lookup := <-basePriceResult
+		price, err = lookup.price, lookup.err
 		if err != nil {
 			if a.cfg.UnpricedModelPolicy == "deny" {
 				const message = "该模型尚未配置价格，请联系管理员完善计费配置"
@@ -435,20 +447,43 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 			a.writeRejectedRequestLog(key, requestID, admission, meta, r, classified.Status, started, classified.Code, classified.Message, detail)
 			return
 		}
+		var admissionPriceResult chan priceLookupResult
 		if priceConfigured {
-			if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
-				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
+			logContext.price = &price
+			admissionPriceResult = make(chan priceLookupResult, 1)
+			priceContext, cancelPriceLookup := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+			dimensions := pricing.Dimensions{
+				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.UpstreamAuthIndex,
 				ServiceTier: meta.ServiceTier, ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-			}); resolveErr == nil {
-				price = resolved
-				resolvedSnapshot := store.EncodePriceSnapshot(price)
-				if !bytes.Equal(resolvedSnapshot, priceSnapshot) {
-					_ = a.store.UpdateReservationPriceSnapshot(r.Context(), requestID, resolvedSnapshot)
-					priceSnapshot = resolvedSnapshot
-				}
 			}
+			a.wg.Add(1)
+			go func() {
+				defer a.wg.Done()
+				defer cancelPriceLookup()
+				resolvedPrice, resolveErr := a.store.ResolvePrice(priceContext, dimensions)
+				if resolveErr == nil {
+					resolvedSnapshot := store.EncodePriceSnapshot(resolvedPrice)
+					if !bytes.Equal(resolvedSnapshot, priceSnapshot) {
+						_ = a.store.UpdateReservationPriceSnapshot(priceContext, requestID, resolvedSnapshot)
+					}
+				}
+				admissionPriceResult <- priceLookupResult{price: resolvedPrice, err: resolveErr}
+			}()
+		}
+		if admissionPriceResult != nil {
+			deferredAdmissionPrice = admissionPriceResult
+		}
+	}
+	if websocket && deferredAdmissionPrice != nil {
+		// WebSocket settlement spans multiple turns and receives its price at
+		// session construction, so it cannot defer this lookup to HTTP response
+		// finalization. HTTP streaming keeps the lookup off its first-byte path.
+		lookup := <-deferredAdmissionPrice
+		if lookup.err == nil {
+			price = lookup.price
 			logContext.price = &price
 		}
+		deferredAdmissionPrice = nil
 	}
 	admittedAt := time.Now()
 	timeline.Step(admittedAt, "billing_admission", "订阅准入与预留", "billing", "解析价格、选择订阅与凭据并预留余额或额度")
@@ -460,7 +495,7 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var response *http.Response
-	target := targetCPA.URL(r.URL.RequestURI())
+	target := targetUpstream.URL(r.URL.RequestURI())
 	var upstream *http.Request
 	clientTraceState, clientTrace := newClientHTTPTrace()
 	transportStarted := false
@@ -468,35 +503,27 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		upstream = upstream.WithContext(httptrace.WithClientTrace(upstream.Context(), clientTrace))
 		copyHeaders(upstream.Header, r.Header)
-		upstream.Header.Set("Authorization", "Bearer "+targetCPA.APIKey)
+		upstream.Header.Set("Authorization", "Bearer "+targetUpstream.APIKey)
 		upstream.Header.Del("X-API-Key")
 		upstream.Header.Del("X-Goog-API-Key")
 		upstream.Header.Set("X-Relay-Request-ID", requestID)
-		if admission.CPAAuthID != "" {
-			upstream.Header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
+		if admission.UpstreamCredentialID != "" {
+			upstream.Header.Set("X-Relay-Upstream-Credential-ID", admission.UpstreamCredentialID)
 		}
-		upstream.Host = targetCPA.BaseURL.Host
-		timeline.Step(time.Now(), "prepare_cpa_request", "准备 CPA 请求", "relay", "构造 CPA 请求、改写正文并准备安全转发头")
+		upstream.Host = targetUpstream.BaseURL.Host
+		logContext.detail.ForwardedHeaders = sanitizedHeaders(upstream.Header)
+		captureForwardedRequest(logContext.detail, originalBody, body)
+		logContext.forwardedBytes = int64(len(body))
+		timeline.Step(time.Now(), "prepare_upstream_request", "准备 Upstream 请求", "relay", "构造 Upstream 请求、改写正文并准备安全转发头")
 		transportStarted = true
-		response, err = targetCPA.HTTP.Do(upstream)
+		response, err = targetUpstream.HTTP.Do(upstream)
 	} else {
-		timeline.Step(time.Now(), "prepare_cpa_request", "准备 CPA 请求", "relay", "构造 CPA 请求失败")
+		timeline.Step(time.Now(), "prepare_upstream_request", "准备 Upstream 请求", "relay", "构造 Upstream 请求失败")
 	}
 	upstreamResultAt := time.Now()
 	if transportStarted {
 		timeline.AddHTTPTrace(clientTraceState, upstreamResultAt)
 	}
-	statusForDetail, errorForDetail := 0, ""
-	if err != nil {
-		errorForDetail = classifyCPATransportError(err, r.Context().Err(), "awaiting_headers").Code
-	} else if response != nil {
-		statusForDetail = response.StatusCode
-	}
-	var forwardedHeader http.Header
-	if upstream != nil {
-		forwardedHeader = upstream.Header
-	}
-	a.maybeCaptureForwardedRequest(&logContext, r, originalBody, body, forwardedHeader, requestID, statusForDetail, errorForDetail)
 	// The transport has completely sent the request by the time Do returns.
 	// Break the response -> request -> bytes.Reader retention chain before a
 	// potentially long SSE response keeps the full client payload alive.
@@ -506,24 +533,22 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 	upstream = nil
 	if err != nil {
 		if r.Context().Err() == nil {
-			targetCPA.RecordTransportResult(err)
+			targetUpstream.RecordTransportResult(err)
 		}
 		a.releaseReservation(requestID, billable)
-		classified := classifyCPATransportError(err, r.Context().Err(), "awaiting_headers")
+		classified := classifyUpstreamTransportError(err, r.Context().Err(), "awaiting_headers")
 		logContext.errorCode = classified.Code
-		detail := logContext.ensureDetail()
-		detail.ErrorName = "upstream_error"
-		detail.ErrorMessage = err.Error()
+		logContext.detail.ErrorName = "upstream_error"
+		logContext.detail.ErrorMessage = err.Error()
 		completed := time.Now()
-		timeline.Step(completed, "relay_transport_error", "处理传输错误", "relay", "归类 CPA 连接错误并释放预留")
-		a.addEmbeddedCPATrace(timeline, requestID)
-		detail.StageTimings = timeline.JSON(completed)
-		logContext.stageTimings = detail.StageTimings
+		timeline.Step(completed, "relay_transport_error", "处理传输错误", "relay", "归类 Upstream 连接错误并释放预留")
+		logContext.detail.StageTimings = timeline.JSON(completed)
+		logContext.stageTimings = logContext.detail.StageTimings
 		a.writeRequestLog(key, requestID, admission, meta, r, 0, started, nil, false, true, 0, err.Error(), logContext)
-		writeCPATransportError(w, r, err, "awaiting_headers", requestID)
+		writeUpstreamTransportError(w, r, err, "awaiting_headers", requestID)
 		return
 	}
-	targetCPA.RecordTransportResult(nil)
+	targetUpstream.RecordTransportResult(nil)
 	defer response.Body.Close()
 	clientStatus := response.StatusCode
 	var normalizedError *userFacingError
@@ -538,11 +563,14 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Set("X-Relay-Request-ID", requestID)
+	if isCodexResponsesPath(r.URL.Path) && a.nativeRuntime != nil {
+		w.Header().Set("X-Models-Etag", modelCatalogRevision(key, a.nativeRuntime.Models(), "codex-capabilities=full-v1"))
+	}
 	if admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", admission.ChildSubscriptionID)
 	}
 	if response.StatusCode >= http.StatusBadRequest {
-		// CPA and providers sometimes use 429 for scheduler/auth failures. Read
+		// Upstream and providers sometimes use 429 for scheduler/auth failures. Read
 		// the small error body before committing headers so Relay can report the
 		// actual user-facing cause. Successful streaming responses remain direct.
 		payload, readErr := io.ReadAll(io.LimitReader(&observedReader{Reader: response.Body, onFirstByte: firstByte}, int64(capture.max+1)))
@@ -573,110 +601,105 @@ func (a *App) proxy(w http.ResponseWriter, r *http.Request) {
 		copyErr = copyStreaming(w, io.TeeReader(response.Body, capture), firstByte)
 	}
 	responseReadAt := time.Now()
+	logContext.completedAt = responseReadAt
 	if isUpstreamStreamError(copyErr) && r.Context().Err() == nil {
-		targetCPA.RecordTransportResult(copyErr)
+		targetUpstream.RecordTransportResult(copyErr)
 	}
 
-	parsed := billing.ParseResponse(capture.Bytes())
-	if priceConfigured && parsed.ResponseServiceTier != "" {
-		if resolved, resolveErr := a.store.ResolvePrice(r.Context(), pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
-			ServiceTier: meta.ServiceTier, ResponseServiceTier: parsed.ResponseServiceTier,
-			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-		}); resolveErr == nil {
-			price = resolved
-			logContext.price = &price
-			_ = a.store.UpdateReservationPriceSnapshot(r.Context(), requestID, store.EncodePriceSnapshot(price))
+	finalizeCtx := context.WithoutCancel(r.Context())
+	upstreamStatus := response.StatusCode
+	upstreamHeaders := response.Header.Clone()
+	a.finalizeResponse(func() {
+		if deferredAdmissionPrice != nil {
+			lookup := <-deferredAdmissionPrice
+			if lookup.err == nil {
+				price = lookup.price
+				logContext.price = &price
+			}
 		}
-	}
-	actual := int64(0)
-	settled := !billable
-	var cost *int64
-	if billable && response.StatusCode < http.StatusBadRequest && parsed.Found && priceConfigured && billing.UsageComplete(price, parsed.Usage) {
-		actual = billing.Cost(price, parsed.Usage)
-		cost = &actual
-		if err := a.store.SettleRequestReservation(context.WithoutCancel(r.Context()), requestID, actual, true); err == nil {
+		parsed := billing.ParseResponse(capture.Bytes())
+		if priceConfigured && parsed.ResponseServiceTier != "" {
+			if resolved, resolveErr := a.store.ResolvePrice(finalizeCtx, pricing.Dimensions{
+				APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.UpstreamAuthIndex,
+				ServiceTier: meta.ServiceTier, ResponseServiceTier: parsed.ResponseServiceTier,
+				ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+			}); resolveErr == nil {
+				price = resolved
+				logContext.price = &price
+				_ = a.store.UpdateReservationPriceSnapshot(finalizeCtx, requestID, store.EncodePriceSnapshot(price))
+			}
+		}
+		actual := int64(0)
+		settled := !billable
+		var cost *int64
+		if billable && upstreamStatus < http.StatusBadRequest && parsed.Found && priceConfigured && billing.UsageComplete(price, parsed.Usage) {
+			actual = billing.Cost(price, parsed.Usage)
+			cost = &actual
+			if err := a.store.SettleRequestReservation(finalizeCtx, requestID, actual, true); err == nil {
+				settled = true
+			} else {
+				slog.Error("settle request", "request_id", requestID, "error", err)
+			}
+		} else if billable && upstreamStatus < http.StatusBadRequest {
+			// Missing usage must not become free parent capacity. Conservatively
+			// settle the reservation and keep pricing_complete=false for reconciliation.
+			actual = max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
+			if err := a.store.SettleRequestReservation(finalizeCtx, requestID, actual, false); err == nil {
+				settled = true
+			} else {
+				slog.Error("settle incomplete request", "request_id", requestID, "error", err)
+			}
+		} else if billable {
+			a.releaseReservation(requestID, true)
 			settled = true
-		} else {
-			slog.Error("settle request", "request_id", requestID, "error", err)
 		}
-	} else if billable && response.StatusCode < http.StatusBadRequest {
-		// Missing usage must not become free parent capacity. Conservatively
-		// settle the reservation and keep pricing_complete=false for reconciliation.
-		actual = max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
-		if err := a.store.SettleRequestReservation(context.WithoutCancel(r.Context()), requestID, actual, false); err == nil {
-			settled = true
-		} else {
-			slog.Error("settle incomplete request", "request_id", requestID, "error", err)
+		errorMessage := ""
+		if copyErr != nil && normalizedError == nil {
+			errorMessage = copyErr.Error()
+			logContext.errorCode = "stream_copy_error"
 		}
-	} else if billable {
-		a.releaseReservation(requestID, true)
-		settled = true
-	}
-	errorMessage := ""
-	if copyErr != nil && normalizedError == nil {
-		errorMessage = copyErr.Error()
-		logContext.errorCode = "stream_copy_error"
-	}
-	rawResponse, responseTruncated, responseBytes := capture.Info()
-	logContext.cpaTraceID = strings.TrimSpace(response.Header.Get("X-CPA-TRACE-ID"))
-	upstreamError := upstreamErrorInfo{}
-	if response.StatusCode >= http.StatusBadRequest {
-		upstreamError = describeUpstreamError(response.StatusCode, rawResponse)
-		slog.Warn("upstream request failed",
-			"request_id", requestID,
-			"cpa_trace_id", logContext.cpaTraceID,
-			"model", meta.Model,
-			"credential_id", admission.CPAAuthID,
-			"upstream_status", response.StatusCode,
-			"upstream_code", upstreamError.Code,
-			"upstream_type", upstreamError.Type,
-			"upstream_message", upstreamError.Message,
-		)
-	}
-	if !firstByteAt.IsZero() {
-		ttft := firstByteAt.Sub(started).Milliseconds()
-		logContext.ttftMS = &ttft
-		timeline.Step(firstByteAt, "upstream_first_body", "等待首个响应数据", "upstream", "CPA 已返回响应头，继续等待首个响应正文数据")
-		timeline.Mark(firstByteAt, "first_byte", "首字节")
-	}
-	timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 CPA 响应并持续写回客户端")
-	if normalizedError != nil {
-		logContext.errorCode = normalizedError.Code
-		errorMessage = firstNonEmptyString(upstreamError.Summary, normalizedError.Message)
-	} else if response.StatusCode >= http.StatusBadRequest && logContext.errorCode == "" {
-		logContext.errorCode = "upstream_http_error"
-		errorMessage = upstreamErrorMessage(response.StatusCode, rawResponse)
-	}
-	retainDetail := shouldRetainRequestDetail(requestID, clientStatus, logContext.errorCode, a.cfg.RequestSuccessSamplePPM)
-	logContext.maybeCaptureUpstream(response.StatusCode, response.Header, rawResponse, responseTruncated, responseBytes, retainDetail)
-	if retainDetail {
-		detail := logContext.ensureDetail()
-		if response.StatusCode >= http.StatusBadRequest {
-			detail.ErrorDetail = upstreamError.Summary
+		rawResponse, responseTruncated, responseBytes := capture.Info()
+		logContext.upstreamTraceID = strings.TrimSpace(upstreamHeaders.Get("X-Upstream-TRACE-ID"))
+		logContext.detail.UpstreamStatus = upstreamStatus
+		logContext.detail.UpstreamHeaders = sanitizedHeaders(upstreamHeaders)
+		logContext.detail.UpstreamBody, _, _ = boundedDetail(rawResponse)
+		logContext.detail.UpstreamBodyTruncated = responseTruncated || responseBytes > requestLogDetailLimit
+		logContext.detail.UpstreamBodyBytes = responseBytes
+		logContext.responseBytes = responseBytes
+		if !firstByteAt.IsZero() {
+			ttft := firstByteAt.Sub(started).Milliseconds()
+			logContext.ttftMS = &ttft
+			timeline.Step(firstByteAt, "upstream_first_body", "等待首个响应数据", "upstream", "Upstream 已返回响应头，继续等待首个响应正文数据")
+			timeline.Mark(firstByteAt, "first_byte", "首字节")
 		}
+		timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "读取 上游响应并持续写回客户端")
 		if normalizedError != nil {
-			detail.ErrorName = logContext.errorCode
-			detail.ErrorMessage = normalizedError.Message
-		} else if response.StatusCode >= http.StatusBadRequest && detail.ErrorName == "" {
-			detail.ErrorName = logContext.errorCode
+			logContext.errorCode = normalizedError.Code
+			logContext.detail.ErrorName = logContext.errorCode
+			logContext.detail.ErrorMessage = normalizedError.Message
+			errorMessage = normalizedError.Message
+		} else if upstreamStatus >= http.StatusBadRequest && logContext.errorCode == "" {
+			logContext.errorCode = "upstream_http_error"
+			logContext.detail.ErrorName = logContext.errorCode
+			errorMessage = upstreamErrorMessage(upstreamStatus, rawResponse)
 		}
 		if copyErr != nil && normalizedError == nil {
-			detail.ErrorName = "stream_copy_error"
-			detail.ErrorMessage = copyErr.Error()
+			logContext.detail.ErrorName = "stream_copy_error"
+			logContext.detail.ErrorMessage = copyErr.Error()
 		}
-	}
-	completed := time.Now()
-	timeline.Step(completed, "usage_and_settlement", "用量解析与结算", "billing", "解析 usage、计算费用并结算请求预留")
-	timeline.Mark(completed, "complete", "请求完成")
-	a.addEmbeddedCPATrace(timeline, requestID)
-	stageTimings := timeline.JSON(completed)
-	if retainDetail {
-		logContext.ensureDetail().StageTimings = stageTimings
-	}
-	logContext.stageTimings = stageTimings
-	a.writeRequestLog(key, requestID, admission, meta, r, clientStatus, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
-	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
+		// Settlement and durable logging now run after the response boundary and
+		// must not inflate the latency reported to users.
+		timeline.Mark(responseReadAt, "complete", "响应完成")
+		logContext.detail.StageTimings = timeline.JSON(responseReadAt)
+		logContext.stageTimings = logContext.detail.StageTimings
+		a.writeRequestLog(key, requestID, admission, meta, r, clientStatus, started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
+		a.store.TouchKey(finalizeCtx, key.ID)
+	})
+}
+
+func isCodexResponsesPath(path string) bool {
+	path = strings.TrimRight(strings.TrimSpace(path), "/")
+	return path == "/v1/responses" || path == "/backend-api/codex/responses" || path == "/openai/v1/responses"
 }
 
 func saturatingMultiply64(left, right int64) int64 {
@@ -689,22 +712,9 @@ func saturatingMultiply64(left, right int64) int64 {
 	return left * right
 }
 
-func resolveClaudeCatalogModel(model string) string {
-	const prefix = "claude-fable-5-dd-"
-	model = strings.TrimSpace(model)
-	base, suffix := model, ""
-	if open := strings.LastIndex(model, "("); open > 0 && strings.HasSuffix(model, ")") {
-		base = model[:open]
-		suffix = model[open:]
-	}
-	if !strings.HasPrefix(strings.ToLower(base), prefix) {
-		return model
-	}
-	encoded := base[len(prefix):]
-	if encoded == "" {
-		return model
-	}
-	return reverseString(encoded) + suffix
+func retiredProtocolPath(path string) bool {
+	path = strings.TrimRight(strings.TrimSpace(path), "/")
+	return path == "/v1/messages" || path == "/v1/messages/count_tokens" || strings.HasPrefix(path, "/v1beta/")
 }
 
 func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
@@ -718,14 +728,43 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 	}
 }
 
+func (a *App) finalizeResponse(task func()) {
+	if task == nil {
+		return
+	}
+	if a.finalizationSlots == nil {
+		task()
+		return
+	}
+	select {
+	case a.finalizationSlots <- struct{}{}:
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			defer func() {
+				<-a.finalizationSlots
+				if value := recover(); value != nil {
+					slog.Error("finalize response panic", "value", value)
+				}
+			}()
+			task()
+		}()
+	default:
+		// A saturated finalizer means the database is already behind. Preserve
+		// accounting correctness and apply backpressure instead of creating an
+		// unbounded goroutine queue.
+		task()
+	}
+}
+
 func requestLogInput(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
 	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) store.LogInput {
 	client := identifyClientUserAgent(r.UserAgent())
 	usage := store.Usage{}
-	cpaID := ""
+	upstreamID := ""
 	if parsed != nil {
 		usage = parsed.Usage
-		cpaID = parsed.RequestID
+		upstreamID = parsed.RequestID
 	}
 	var costPointer *int64
 	if pricingComplete {
@@ -743,21 +782,25 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 			logContext.responseBytes = detail.UpstreamBodyBytes
 		}
 	}
+	completedAt := logContext.completedAt
+	if completedAt.IsZero() {
+		completedAt = time.Now()
+	}
 	return store.LogInput{
-		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, CPARequestID: cpaID, Model: meta.Model,
-		CPATraceID: logContext.cpaTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
+		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, UpstreamRequestID: upstreamID, Model: meta.Model,
+		UpstreamTraceID: logContext.upstreamTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
 		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
 		ClientName: client.Name, ClientVersion: client.Version, UserAgent: client.UserAgent,
-		AuthIndex: admission.CPAAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
+		AuthIndex: admission.UpstreamAuthIndex, ParentSubscriptionID: admission.ParentSubscriptionID,
 		ChildSubscriptionID: admission.ChildSubscriptionID,
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
 		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
-		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: time.Since(started).Milliseconds(),
+		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: completedAt.Sub(started).Milliseconds(),
 		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
 		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
 		StageTimings: logContext.stageTimings,
-		StartedAt:    started, CompletedAt: time.Now(), Detail: detail,
+		StartedAt:    started, CompletedAt: completedAt, Detail: detail,
 	}
 }
 
@@ -768,8 +811,13 @@ func parsedResponseServiceTier(parsed *billing.Result) string {
 	return parsed.ResponseServiceTier
 }
 
+var streamCopyBuffers = sync.Pool{
+	New: func() any { return make([]byte, 32<<10) },
+}
+
 func copyStreaming(w http.ResponseWriter, source io.Reader, onFirstByte func()) error {
-	buffer := make([]byte, 32<<10)
+	buffer := streamCopyBuffers.Get().([]byte)
+	defer streamCopyBuffers.Put(buffer)
 	flusher, _ := w.(http.Flusher)
 	for {
 		n, err := source.Read(buffer)
@@ -811,12 +859,12 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
 }
 
-func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.AdmissionStatus) cpaTransportError {
+func writeGatewayAdmissionError(w http.ResponseWriter, err error, status gateway.AdmissionStatus) upstreamTransportError {
 	retryAfter := int64(1)
 	httpStatus := http.StatusServiceUnavailable
 	retryable := true
-	code := "cpa_overloaded"
-	message := "CPA 当前并发已达到安全上限，请稍后重试"
+	code := "upstream_overloaded"
+	message := "Upstream 当前并发已达到安全上限，请稍后重试"
 	switch {
 	case errors.Is(err, context.Canceled):
 		httpStatus = 499
@@ -826,10 +874,10 @@ func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.Admissi
 	case errors.Is(err, context.DeadlineExceeded):
 		httpStatus = http.StatusGatewayTimeout
 		code = "request_timeout"
-		message = "请求在等待 CPA 准入时超时"
-	case errors.Is(err, cpa.ErrCircuitOpen):
-		code = "cpa_circuit_open"
-		message = "CPA 正在从连续故障中恢复，请稍后重试"
+		message = "请求在等待 Upstream 准入时超时"
+	case errors.Is(err, gateway.ErrCircuitOpen):
+		code = "upstream_circuit_open"
+		message = "Upstream 正在从连续故障中恢复，请稍后重试"
 		if status.RetryAfterMS > 0 {
 			retryAfter = (status.RetryAfterMS + 999) / 1000
 		}
@@ -846,7 +894,7 @@ func writeCPAAdmissionError(w http.ResponseWriter, err error, status cpa.Admissi
 		"code": code, "type": "service_unavailable", "message": message,
 		"details": details,
 	}})
-	return cpaTransportError{Status: httpStatus, Code: code, Message: message, Phase: "admission", Retryable: retryable}
+	return upstreamTransportError{Status: httpStatus, Code: code, Message: message, Phase: "admission", Retryable: retryable}
 }
 
 func (a *App) releaseReservation(requestID string, billable bool) {
@@ -881,7 +929,10 @@ func (e *requestLimitError) Error() string { return e.Message }
 
 func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
 	if key.TenantTokenLimit != nil || key.TokenLimitDaily != nil {
-		tenantTokens, keyTokens := key.DailyTokenUsage(time.Now())
+		tenantTokens, keyTokens, err := a.store.DailyTokens(ctx, key.TenantID, key.ID)
+		if err != nil {
+			return err
+		}
 		if key.TenantTokenLimit != nil && tenantTokens >= *key.TenantTokenLimit {
 			return &requestLimitError{Code: "tenant_daily_token_limit_exceeded", Message: "租户今日 Token 使用额度已用尽，请等待次日重置"}
 		}

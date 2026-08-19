@@ -43,10 +43,10 @@ var migrations = []migration{
 	},
 	{
 		version: 2,
-		name:    "separate CPA scheduler ID from auth index",
+		name:    "separate Upstream scheduler ID from auth index",
 		statements: []string{
-			`UPDATE parent_subscriptions SET cpa_auth_index = cpa_auth_id WHERE cpa_auth_index = ''`,
-			`CREATE UNIQUE INDEX parent_subscriptions_cpa_auth_index_unique ON parent_subscriptions(cpa_auth_index)`,
+			`UPDATE parent_subscriptions SET upstream_auth_index = upstream_credential_id WHERE upstream_auth_index = ''`,
+			`CREATE UNIQUE INDEX parent_subscriptions_upstream_auth_index_unique ON parent_subscriptions(upstream_auth_index)`,
 		},
 	},
 	{
@@ -78,7 +78,7 @@ var migrations = []migration{
 		statements: []string{
 			`CREATE INDEX IF NOT EXISTS request_logs_cleanup_idx ON request_logs(completed_at, id)`,
 			`CREATE INDEX IF NOT EXISTS request_log_details_cleanup_idx ON request_log_details(created_at, request_log_id)`,
-			`CREATE INDEX IF NOT EXISTS cpa_lifecycle_cleanup_idx ON cpa_lifecycle_events(processed, created_at, id)`,
+			`CREATE INDEX IF NOT EXISTS upstream_lifecycle_cleanup_idx ON upstream_lifecycle_events(processed, created_at, id)`,
 			`CREATE INDEX IF NOT EXISTS request_reservations_cleanup_idx ON request_reservations(status, pricing_complete, settled_at, request_id)`,
 			`CREATE INDEX IF NOT EXISTS billing_ledgers_cleanup_idx ON billing_ledgers(created_at, id)`,
 			`CREATE INDEX IF NOT EXISTS quota_observations_cleanup_idx ON parent_quota_observations(created_at, id)`,
@@ -102,6 +102,57 @@ var migrations = []migration{
 	},
 	{
 		version: 8,
+		name:    "native upstream naming",
+		statements: []string{
+			`DO $$ BEGIN
+				IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='parent_subscriptions' AND column_name='cpa_auth_id') THEN
+					UPDATE parent_subscriptions SET
+						upstream_credential_id = cpa_auth_id,
+						upstream_auth_index = CASE WHEN cpa_auth_index = '' THEN cpa_auth_id ELSE cpa_auth_index END,
+						upstream_credential_name = cpa_auth_name,
+						upstream_unavailable = cpa_unavailable,
+						upstream_model_allowlist = cpa_model_allowlist;
+					ALTER TABLE parent_subscriptions
+						DROP COLUMN cpa_auth_id CASCADE,
+						DROP COLUMN cpa_auth_index CASCADE,
+						DROP COLUMN cpa_auth_name CASCADE,
+						DROP COLUMN cpa_unavailable CASCADE,
+						DROP COLUMN cpa_model_allowlist CASCADE;
+				END IF;
+			END $$`,
+			`DO $$ BEGIN
+				IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='request_reservations' AND column_name='cpa_auth_id') THEN
+					UPDATE request_reservations SET upstream_credential_id=cpa_auth_id, upstream_auth_index=cpa_auth_index;
+					ALTER TABLE request_reservations DROP COLUMN cpa_auth_id CASCADE, DROP COLUMN cpa_auth_index CASCADE;
+				END IF;
+			END $$`,
+			`DO $$ BEGIN
+				IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='request_logs' AND column_name='cpa_request_id') THEN
+					UPDATE request_logs SET upstream_request_id=cpa_request_id, upstream_trace_id=cpa_trace_id, upstream_execution_id=cpa_execution_id;
+					ALTER TABLE request_logs DROP COLUMN cpa_request_id CASCADE, DROP COLUMN cpa_trace_id CASCADE, DROP COLUMN cpa_execution_id CASCADE;
+				END IF;
+			END $$`,
+			`DO $$ BEGIN
+				IF to_regclass('public.cpa_lifecycle_events') IS NOT NULL THEN
+					INSERT INTO upstream_lifecycle_events SELECT * FROM cpa_lifecycle_events ON CONFLICT DO NOTHING;
+					DROP TABLE cpa_lifecycle_events CASCADE;
+				END IF;
+			END $$`,
+			`DROP INDEX IF EXISTS parent_subscriptions_cpa_auth_index_unique`,
+			`DROP INDEX IF EXISTS cpa_lifecycle_cleanup_idx`,
+			`DO $$ BEGIN
+				IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='cpa_lifecycle_events_pkey')
+				AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='upstream_lifecycle_events_pkey') THEN
+					ALTER TABLE upstream_lifecycle_events RENAME CONSTRAINT cpa_lifecycle_events_pkey TO upstream_lifecycle_events_pkey;
+				END IF;
+			END $$`,
+			`UPDATE schema_migrations SET name='separate upstream scheduler ID from auth index' WHERE version=2`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS parent_subscriptions_upstream_auth_index_unique ON parent_subscriptions(upstream_auth_index)`,
+			`CREATE INDEX IF NOT EXISTS upstream_lifecycle_cleanup_idx ON upstream_lifecycle_events(processed, created_at, id)`,
+		},
+	},
+	{
+		version: 9,
 		name:    "daily token counters on tenants and keys",
 		statements: []string{
 			`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS daily_tokens_used bigint NOT NULL DEFAULT 0`,
@@ -130,6 +181,52 @@ var migrations = []migration{
 			 WHERE k.id = s.api_key_id`,
 		},
 	},
+}
+
+// prepareNativeSchema renames legacy columns before AutoMigrate. Doing this
+// first is essential: adding a new non-null credential ID column to a populated
+// installation would fail before the data-copy migration could run.
+func prepareNativeSchema(ctx context.Context, database *gorm.DB) error {
+	statements := []string{
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='parent_subscriptions' AND column_name='cpa_auth_id')
+			AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='parent_subscriptions' AND column_name='upstream_credential_id') THEN
+				ALTER TABLE parent_subscriptions RENAME COLUMN cpa_auth_id TO upstream_credential_id;
+				ALTER TABLE parent_subscriptions RENAME COLUMN cpa_auth_index TO upstream_auth_index;
+				ALTER TABLE parent_subscriptions RENAME COLUMN cpa_auth_name TO upstream_credential_name;
+				ALTER TABLE parent_subscriptions RENAME COLUMN cpa_unavailable TO upstream_unavailable;
+				ALTER TABLE parent_subscriptions RENAME COLUMN cpa_model_allowlist TO upstream_model_allowlist;
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='request_reservations' AND column_name='cpa_auth_id')
+			AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='request_reservations' AND column_name='upstream_credential_id') THEN
+				ALTER TABLE request_reservations RENAME COLUMN cpa_auth_id TO upstream_credential_id;
+				ALTER TABLE request_reservations RENAME COLUMN cpa_auth_index TO upstream_auth_index;
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='request_logs' AND column_name='cpa_request_id')
+			AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='request_logs' AND column_name='upstream_request_id') THEN
+				ALTER TABLE request_logs RENAME COLUMN cpa_request_id TO upstream_request_id;
+				ALTER TABLE request_logs RENAME COLUMN cpa_trace_id TO upstream_trace_id;
+				ALTER TABLE request_logs RENAME COLUMN cpa_execution_id TO upstream_execution_id;
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF to_regclass('public.cpa_lifecycle_events') IS NOT NULL AND to_regclass('public.upstream_lifecycle_events') IS NULL THEN
+				ALTER TABLE cpa_lifecycle_events RENAME TO upstream_lifecycle_events;
+				ALTER TABLE upstream_lifecycle_events RENAME COLUMN cpa_execution_id TO upstream_execution_id;
+				ALTER TABLE upstream_lifecycle_events RENAME COLUMN cpa_trace_id TO upstream_trace_id;
+			END IF;
+		END $$`,
+	}
+	for _, statement := range statements {
+		if err := database.WithContext(ctx).Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runMigrations(ctx context.Context, database *gorm.DB) error {

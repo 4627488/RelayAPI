@@ -18,34 +18,34 @@ const (
 	ReservationExpired  = "expired"
 )
 
-// ParentSubscription is a redacted accounting mirror of one stable CPA AuthID.
-// Provider secrets and OAuth material remain exclusively inside CLIProxyAPI.
+// ParentSubscription is a redacted accounting mirror of one stable upstream credential.
+// Provider secrets and OAuth material remain encrypted in Relay's credential store.
 // AllocationLimitPPM is retained as a fixed 100% schema-compatibility baseline;
 // child allocations may exceed it and the UI reports that state as a warning.
 type ParentSubscription struct {
-	ID                 string          `gorm:"type:uuid;primaryKey" json:"id"`
-	CPAAuthID          string          `gorm:"not null;uniqueIndex" json:"cpa_auth_id"`
-	CPAAuthIndex       string          `gorm:"not null;default:'';index" json:"cpa_auth_index"`
-	CPAAuthName        string          `gorm:"not null;default:'';index" json:"cpa_auth_name"`
-	Name               string          `gorm:"not null" json:"name"`
-	Provider           string          `gorm:"not null;default:'';index" json:"provider"`
-	PlanType           string          `gorm:"not null;default:''" json:"plan_type"`
-	Status             string          `gorm:"not null;default:'unknown'" json:"status"`
-	CPAUnavailable     bool            `gorm:"not null;default:false;index" json:"cpa_unavailable"`
-	CapacityMode       string          `gorm:"not null;default:'unmetered'" json:"capacity_mode"`
-	AllocationLimitPPM int64           `gorm:"not null;default:1000000" json:"allocation_limit_ppm"`
-	Enabled            bool            `gorm:"not null;index" json:"enabled"`
-	CPAModelAllowlist  pq.StringArray  `gorm:"type:text[];not null;default:'{}'" json:"cpa_model_allowlist"`
-	ModelAllowlist     pq.StringArray  `gorm:"type:text[];not null;default:'{}'" json:"model_allowlist"`
-	Metadata           json.RawMessage `gorm:"type:jsonb;not null;default:'{}'" json:"metadata"`
-	LastSyncedAt       *time.Time      `json:"last_synced_at"`
-	QuotaSupported     bool            `gorm:"not null;default:false" json:"quota_supported"`
-	QuotaProbeStatus   string          `gorm:"not null;default:'unknown'" json:"quota_probe_status"`
-	QuotaProbeError    string          `gorm:"not null;default:''" json:"quota_probe_error"`
-	QuotaObservedAt    *time.Time      `json:"quota_observed_at"`
-	QuotaSnapshot      json.RawMessage `gorm:"type:jsonb;not null;default:'{}'" json:"quota_snapshot"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
+	ID                     string          `gorm:"type:uuid;primaryKey" json:"id"`
+	UpstreamCredentialID   string          `gorm:"not null;uniqueIndex" json:"upstream_credential_id"`
+	UpstreamAuthIndex      string          `gorm:"not null;default:'';index" json:"upstream_auth_index"`
+	UpstreamCredentialName string          `gorm:"not null;default:'';index" json:"upstream_credential_name"`
+	Name                   string          `gorm:"not null" json:"name"`
+	Provider               string          `gorm:"not null;default:'';index" json:"provider"`
+	PlanType               string          `gorm:"not null;default:''" json:"plan_type"`
+	Status                 string          `gorm:"not null;default:'unknown'" json:"status"`
+	UpstreamUnavailable    bool            `gorm:"not null;default:false;index" json:"upstream_unavailable"`
+	CapacityMode           string          `gorm:"not null;default:'unmetered'" json:"capacity_mode"`
+	AllocationLimitPPM     int64           `gorm:"not null;default:1000000" json:"allocation_limit_ppm"`
+	Enabled                bool            `gorm:"not null;index" json:"enabled"`
+	UpstreamModelAllowlist pq.StringArray  `gorm:"type:text[];not null;default:'{}'" json:"upstream_model_allowlist"`
+	ModelAllowlist         pq.StringArray  `gorm:"type:text[];not null;default:'{}'" json:"model_allowlist"`
+	Metadata               json.RawMessage `gorm:"type:jsonb;not null;default:'{}'" json:"metadata"`
+	LastSyncedAt           *time.Time      `json:"last_synced_at"`
+	QuotaSupported         bool            `gorm:"not null;default:false" json:"quota_supported"`
+	QuotaProbeStatus       string          `gorm:"not null;default:'unknown'" json:"quota_probe_status"`
+	QuotaProbeError        string          `gorm:"not null;default:''" json:"quota_probe_error"`
+	QuotaObservedAt        *time.Time      `json:"quota_observed_at"`
+	QuotaSnapshot          json.RawMessage `gorm:"type:jsonb;not null;default:'{}'" json:"quota_snapshot"`
+	CreatedAt              time.Time       `json:"created_at"`
+	UpdatedAt              time.Time       `json:"updated_at"`
 }
 
 type ParentQuotaWindow struct {
@@ -109,8 +109,8 @@ type RequestReservation struct {
 	APIKeyID               string          `gorm:"type:uuid;not null;index" json:"api_key_id"`
 	ChildSubscriptionID    *string         `gorm:"type:uuid;index" json:"child_subscription_id"`
 	ParentSubscriptionID   *string         `gorm:"type:uuid;index" json:"parent_subscription_id"`
-	CPAAuthID              string          `gorm:"not null;default:'';index" json:"cpa_auth_id"`
-	CPAAuthIndex           string          `gorm:"not null;default:'';index" json:"cpa_auth_index"`
+	UpstreamCredentialID   string          `gorm:"not null;default:'';index" json:"upstream_credential_id"`
+	UpstreamAuthIndex      string          `gorm:"not null;default:'';index" json:"upstream_auth_index"`
 	Model                  string          `gorm:"not null;default:''" json:"model"`
 	BalanceReservedNanoUSD int64           `gorm:"not null;default:0" json:"balance_reserved_nano_usd"`
 	QuotaReservedNanoUSD   int64           `gorm:"not null;default:0" json:"quota_reserved_nano_usd"`

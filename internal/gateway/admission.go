@@ -1,4 +1,4 @@
-package cpa
+package gateway
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	ErrOverloaded  = errors.New("CPA admission queue is full")
-	ErrCircuitOpen = errors.New("CPA circuit breaker is open")
+	ErrOverloaded  = errors.New("Upstream admission queue is full")
+	ErrCircuitOpen = errors.New("Upstream circuit breaker is open")
 )
 
 type AdmissionStatus struct {

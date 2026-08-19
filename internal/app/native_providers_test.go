@@ -13,7 +13,7 @@ func TestNativeProviderAccountOmitsEmptyDetails(t *testing.T) {
 		ID: "openai-test", Name: "Test", Provider: "openai", Enabled: true,
 		Models: []string{"gpt-test"}, Document: []byte(`{"type":"openai"}`), Source: "import",
 	})
-	for _, key := range []string{"email", "base_url", "prefix", "auth_kind"} {
+	for _, key := range []string{"email", "base_url", "auth_kind"} {
 		if _, ok := result[key]; ok {
 			t.Errorf("empty detail %q should be omitted", key)
 		}
@@ -40,11 +40,11 @@ func TestNativeProviderAccountExposesEditableMetadataWithoutSecrets(t *testing.T
 }
 
 func TestUpdateNativeCredentialDocumentEditsConnectionSettings(t *testing.T) {
-	baseURL, prefix, apiKey := "https://new.example/v1", "team", "new-secret"
+	baseURL, apiKey := "https://new.example/v1", "new-secret"
 	websockets := true
 	headers := map[string]string{"X-Tenant": "tenant-a"}
 	updated, err := updateNativeCredentialDocument(json.RawMessage(`{"type":"openai","api_key":"old-secret","proxy_url":"http://old.test"}`), "api_key", nativeProviderUpdateInput{
-		BaseURL: &baseURL, Prefix: &prefix, APIKey: &apiKey,
+		BaseURL: &baseURL, APIKey: &apiKey,
 		WebSockets: &websockets, Headers: &headers,
 	})
 	if err != nil {
@@ -54,37 +54,25 @@ func TestUpdateNativeCredentialDocumentEditsConnectionSettings(t *testing.T) {
 	if err = json.Unmarshal(updated, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document["base_url"] != baseURL || document["prefix"] != prefix ||
-		document["api_key"] != apiKey || document["websockets"] != true {
+	if document["base_url"] != baseURL || document["api_key"] != apiKey || document["websockets"] != true {
 		t.Fatalf("updated document = %#v", document)
 	}
 	if got := document["headers"].(map[string]any)["X-Tenant"]; got != "tenant-a" {
 		t.Fatalf("headers = %#v", document["headers"])
 	}
 
-	clear := ""
-	updated, err = updateNativeCredentialDocument(updated, "api_key", nativeProviderUpdateInput{Prefix: &clear})
-	if err != nil {
-		t.Fatal(err)
-	}
-	document = nil
-	_ = json.Unmarshal(updated, &document)
 	if _, ok := document["proxy_url"]; ok {
 		t.Fatalf("proxy_url was not cleared: %#v", document)
-	}
-	if _, ok := document["prefix"]; ok {
-		t.Fatalf("prefix was not cleared: %#v", document)
 	}
 }
 
 func TestUpdateNativeCredentialDocumentRejectsUnsafeSettings(t *testing.T) {
-	badPrefix, changedOAuthBase := "team/child", "https://unexpected.example/v1"
+	changedOAuthBase := "https://unexpected.example/v1"
 	for _, test := range []struct {
 		document json.RawMessage
 		source   string
 		input    nativeProviderUpdateInput
 	}{
-		{document: json.RawMessage(`{"type":"openai","api_key":"secret"}`), source: "api_key", input: nativeProviderUpdateInput{Prefix: &badPrefix}},
 		{document: json.RawMessage(`{"type":"codex","access_token":"secret"}`), source: "oauth", input: nativeProviderUpdateInput{BaseURL: &changedOAuthBase}},
 	} {
 		if _, err := updateNativeCredentialDocument(test.document, test.source, test.input); err == nil {

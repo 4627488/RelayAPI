@@ -25,24 +25,9 @@ func TestParseResponseProtocols(t *testing.T) {
 			want:    store.Usage{Prompt: 1200, Completion: 20, Cached: 900, Total: 1220},
 		},
 		{
-			name:    "anthropic messages SSE",
-			payload: "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"usage\":{\"input_tokens\":13,\"output_tokens\":1,\"cache_read_input_tokens\":5,\"cache_creation_input_tokens\":2}}}\n\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":7}}\n\n",
-			want:    store.Usage{Prompt: 18, Completion: 7, Cached: 5, CacheWrite: 2, Total: 27},
-		},
-		{
-			name:    "gemini native",
-			payload: `{"responseId":"gem_1","usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":8,"totalTokenCount":31,"cachedContentTokenCount":4,"thoughtsTokenCount":3}}`,
-			want:    store.Usage{Prompt: 20, Completion: 8, Cached: 4, Reasoning: 3, Total: 31},
-		},
-		{
 			name:    "openai image usage",
 			payload: `{"usage":{"input_tokens":110,"output_tokens":196,"total_tokens":306,"input_tokens_details":{"text_tokens":10,"image_tokens":100},"output_tokens_details":{"image_tokens":196}}}`,
 			want:    store.Usage{Prompt: 110, Completion: 196, ImageInput: 100, ImageOutput: 196, Total: 306},
-		},
-		{
-			name:    "gemini image modalities",
-			payload: `{"usageMetadata":{"promptTokenCount":570,"candidatesTokenCount":1120,"totalTokenCount":1690,"promptTokensDetails":[{"modality":"TEXT","tokenCount":10},{"modality":"IMAGE","tokenCount":560}],"candidatesTokensDetails":[{"modality":"IMAGE","tokenCount":1120}]}}`,
-			want:    store.Usage{Prompt: 570, Completion: 1120, ImageInput: 560, ImageOutput: 1120, Total: 1690},
 		},
 	}
 	for _, test := range tests {

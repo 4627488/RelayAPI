@@ -19,7 +19,7 @@ func TestClassifyUpstreamErrorReportsCauseInsteadOfBlindStatus(t *testing.T) {
 		wantCode string
 		wantText string
 	}{
-		{name: "CPA scheduler has no account", status: http.StatusTooManyRequests, body: `{"error":{"code":"auth_unavailable","message":"no auth available"}}`, want: http.StatusServiceUnavailable, wantCode: "model_account_unavailable"},
+		{name: "Upstream scheduler has no account", status: http.StatusTooManyRequests, body: `{"error":{"code":"auth_unavailable","message":"no auth available"}}`, want: http.StatusServiceUnavailable, wantCode: "model_account_unavailable"},
 		{name: "account quota exhausted", status: http.StatusTooManyRequests, body: `{"error":{"code":"insufficient_quota","message":"usage limit reached"}}`, want: http.StatusPaymentRequired, wantCode: "model_account_quota_exhausted"},
 		{name: "real upstream rate limit", status: http.StatusTooManyRequests, body: `{"error":{"code":"rate_limit_exceeded","message":"too many requests"}}`, want: http.StatusTooManyRequests, wantCode: "upstream_rate_limited"},
 		{name: "expired account login", status: http.StatusUnauthorized, body: `{"error":{"message":"token expired"}}`, want: http.StatusServiceUnavailable, wantCode: "model_account_auth_failed"},

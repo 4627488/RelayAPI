@@ -1,6 +1,6 @@
 // Package pricing resolves immutable, integer-valued model price snapshots.
 //
-// Its snapshot/resolver shape is adapted from CPA Usage Keeper's MIT-licensed
+// Its snapshot/resolver shape is adapted from Upstream Usage Keeper's MIT-licensed
 // pricing domain, with Relay-specific modality-aware pricing and source precedence.
 package pricing
 
@@ -158,7 +158,7 @@ func (s *Snapshot) Resolve(dimensions Dimensions) (SnapshotPrice, bool) {
 	if dimensions.ModelAlias != "" {
 		if target, ok := s.aliases[strings.ToLower(clean(dimensions.ModelAlias))]; ok {
 			priced = target
-			matchedBy = "cpa_model_alias"
+			matchedBy = "upstream_model_alias"
 		}
 	}
 	candidates := modelCandidates(priced)

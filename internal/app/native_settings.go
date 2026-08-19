@@ -10,26 +10,18 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/store"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 const nativeRuntimeSettingsKey = "native-runtime"
 
 type nativeRuntimeSettings struct {
 	RequestRetry               int    `json:"request_retry"`
-	MaxRetryCredentials        int    `json:"max_retry_credentials"`
-	MaxRetryInterval           int    `json:"max_retry_interval"`
+	RetryMaxBackoffMS          int    `json:"retry_max_backoff_ms"`
 	RoutingStrategy            string `json:"routing_strategy"`
+	CredentialFailureThreshold int    `json:"credential_failure_threshold"`
+	CredentialCooldownSeconds  int    `json:"credential_cooldown_seconds"`
 	SystemProxyID              string `json:"system_proxy_id"`
-	PassthroughHeaders         bool   `json:"passthrough_headers"`
-	ImageGenerationMode        string `json:"image_generation_mode"`
-	GPTImageBaseModel          string `json:"gpt_image_base_model"`
-	VideoResultAuthCacheTTL    string `json:"video_result_auth_cache_ttl"`
-	ForceModelPrefix           bool   `json:"force_model_prefix"`
-	StreamKeepAliveSeconds     int    `json:"stream_keepalive_seconds"`
-	StreamBootstrapRetries     int    `json:"stream_bootstrap_retries"`
-	NonStreamKeepAliveInterval int    `json:"nonstream_keepalive_interval"`
-	DisableCredentialCooling   bool   `json:"disable_credential_cooling"`
 }
 
 type settingsState struct {
@@ -39,11 +31,8 @@ type settingsState struct {
 
 func defaultNativeRuntimeSettings() nativeRuntimeSettings {
 	return nativeRuntimeSettings{
-		RequestRetry: 2, MaxRetryCredentials: 0, MaxRetryInterval: 30,
-		RoutingStrategy: "round-robin", PassthroughHeaders: true,
-		ImageGenerationMode: "enabled", GPTImageBaseModel: "gpt-5.4-mini",
-		VideoResultAuthCacheTTL: "3h", StreamKeepAliveSeconds: 15,
-		StreamBootstrapRetries: 1, DisableCredentialCooling: true,
+		RequestRetry: 2, RetryMaxBackoffMS: 2_000, RoutingStrategy: "round-robin",
+		CredentialFailureThreshold: 3, CredentialCooldownSeconds: 30,
 	}
 }
 
@@ -57,6 +46,19 @@ func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSetti
 	if err = json.Unmarshal(document, &settings); err != nil {
 		return settings, true, "", err
 	}
+	// Settings written before the native UI cleanup do not contain the new
+	// isolation fields. Zero is not a valid user value, so it is safe to fill
+	// these defaults during the one-time shape migration.
+	defaults := defaultNativeRuntimeSettings()
+	if settings.RetryMaxBackoffMS == 0 {
+		settings.RetryMaxBackoffMS = defaults.RetryMaxBackoffMS
+	}
+	if settings.CredentialFailureThreshold == 0 {
+		settings.CredentialFailureThreshold = defaults.CredentialFailureThreshold
+	}
+	if settings.CredentialCooldownSeconds == 0 {
+		settings.CredentialCooldownSeconds = defaults.CredentialCooldownSeconds
+	}
 	var legacy struct {
 		ProxyURL string `json:"proxy_url"`
 	}
@@ -65,62 +67,39 @@ func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSetti
 }
 
 func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
-	if value.RequestRetry < 0 || value.RequestRetry > 20 {
-		return "请求重试次数必须在 0 到 20 之间"
+	if value.RequestRetry < 0 || value.RequestRetry > 5 {
+		return "请求重试次数必须在 0 到 5 之间"
 	}
-	if value.MaxRetryCredentials < 0 || value.MaxRetryCredentials > 100 {
-		return "最大凭据尝试数必须在 0 到 100 之间"
-	}
-	if value.MaxRetryInterval < 0 || value.MaxRetryInterval > 3600 {
-		return "最大重试间隔必须在 0 到 3600 秒之间"
+	if value.RetryMaxBackoffMS < 100 || value.RetryMaxBackoffMS > 10_000 {
+		return "重试退避上限必须在 100 到 10000 毫秒之间"
 	}
 	if value.RoutingStrategy != "round-robin" && value.RoutingStrategy != "fill-first" {
 		return "凭据调度策略无效"
 	}
-	if value.StreamKeepAliveSeconds < 0 || value.StreamKeepAliveSeconds > 300 || value.NonStreamKeepAliveInterval < 0 || value.NonStreamKeepAliveInterval > 300 {
-		return "保活间隔必须在 0 到 300 秒之间"
+	if value.CredentialFailureThreshold < 1 || value.CredentialFailureThreshold > 20 {
+		return "凭据隔离阈值必须在 1 到 20 之间"
 	}
-	if value.StreamBootstrapRetries < 0 || value.StreamBootstrapRetries > 10 {
-		return "流式启动重试必须在 0 到 10 之间"
-	}
-	switch value.ImageGenerationMode {
-	case "enabled", "disabled", "chat", "passthrough":
-	default:
-		return "图像生成策略无效"
-	}
-	if value.GPTImageBaseModel != "" && !strings.HasPrefix(strings.ToLower(value.GPTImageBaseModel), "gpt-") {
-		return "图像基础模型必须以 gpt- 开头"
-	}
-	if value.VideoResultAuthCacheTTL != "" {
-		if duration, err := time.ParseDuration(value.VideoResultAuthCacheTTL); err != nil || duration <= 0 {
-			return "视频结果绑定时长必须是有效的正数 duration，例如 3h"
-		}
+	if value.CredentialCooldownSeconds < 5 || value.CredentialCooldownSeconds > 3600 {
+		return "凭据冷却时间必须在 5 到 3600 秒之间"
 	}
 	return ""
 }
 
-func runtimeBridgeSettings(value nativeRuntimeSettings, systemProxyURL string) relaybridge.Settings {
-	imageMode := value.ImageGenerationMode
-	if imageMode == "disabled" {
-		imageMode = "all"
-	}
+func runtimeSettings(value nativeRuntimeSettings, systemProxyURL string) upstream.Settings {
 	if strings.TrimSpace(systemProxyURL) == "" {
 		systemProxyURL = "direct"
 	}
-	return relaybridge.Settings{
-		RequestRetry: value.RequestRetry, MaxRetryCredentials: value.MaxRetryCredentials,
-		MaxRetryInterval: time.Duration(value.MaxRetryInterval) * time.Second,
-		RoutingStrategy:  value.RoutingStrategy, ProxyURL: systemProxyURL,
-		PassthroughHeaders: value.PassthroughHeaders, DisableImageGeneration: imageMode,
-		GPTImage2BaseModel: value.GPTImageBaseModel, VideoResultAuthCacheTTL: value.VideoResultAuthCacheTTL,
-		ForceModelPrefix: value.ForceModelPrefix, StreamKeepAliveSeconds: value.StreamKeepAliveSeconds,
-		StreamBootstrapRetries: value.StreamBootstrapRetries, NonStreamKeepAliveInterval: value.NonStreamKeepAliveInterval,
-		DisableCredentialCooling: value.DisableCredentialCooling,
+	return upstream.Settings{
+		RequestRetry:    value.RequestRetry,
+		RetryMaxBackoff: time.Duration(value.RetryMaxBackoffMS) * time.Millisecond,
+		RoutingStrategy: value.RoutingStrategy, ProxyURL: systemProxyURL,
+		FailureThreshold: value.CredentialFailureThreshold,
+		FailureCooldown:  time.Duration(value.CredentialCooldownSeconds) * time.Second,
 	}
 }
 
 func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
-	if a.nativeCPARuntime == nil {
+	if a.nativeRuntime == nil {
 		writeError(w, http.StatusConflict, "native_mode_required", "此配置仅适用于 native 数据平面")
 		return
 	}
@@ -159,7 +138,7 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "settings_save_failed", "运行配置持久化失败")
 		return
 	}
-	if err := a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(input, systemProxyURL)); err != nil {
+	if err := a.nativeRuntime.ApplySettings(r.Context(), runtimeSettings(input, systemProxyURL)); err != nil {
 		_ = a.store.PutRuntimeSetting(r.Context(), nativeRuntimeSettingsKey, previous)
 		writeError(w, http.StatusInternalServerError, "runtime_update_failed", err.Error())
 		return
@@ -172,12 +151,13 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) nativeRuntimeInfo() map[string]any {
 	return map[string]any{
-		"ready": a.nativeCPARuntime != nil, "credentials": a.nativeCPARuntime.CredentialCount(), "models": len(a.nativeCPARuntime.Models()),
-		"request_timeout_seconds": int(a.cfg.RequestTimeout / time.Second), "max_in_flight": a.cfg.CPAMaxInFlight,
-		"max_queue": a.cfg.CPAMaxQueue, "queue_timeout_seconds": int(a.cfg.CPAQueueTimeout / time.Second),
-		"max_request_bytes": a.cfg.CPAMaxRequestBytes, "request_bytes_in_flight": a.cfg.CPARequestBytesInFlight,
-		"circuit_failure_threshold": a.cfg.CPACircuitFailureThreshold, "circuit_open_seconds": int(a.cfg.CPACircuitOpenDuration / time.Second),
-		"executor_cache_pressure_bytes": a.cfg.ExecutorCachePressureBytes, "unpriced_model_policy": a.cfg.UnpricedModelPolicy,
+		"ready": a.nativeRuntime != nil, "credentials": a.nativeRuntime.CredentialCount(), "models": len(a.nativeRuntime.Models()),
+		"upstream_websockets":     a.cfg.UpstreamWebSockets,
+		"request_timeout_seconds": int(a.cfg.RequestTimeout / time.Second), "max_in_flight": a.cfg.GatewayMaxInFlight,
+		"max_queue": a.cfg.GatewayMaxQueue, "queue_timeout_seconds": int(a.cfg.GatewayQueueTimeout / time.Second),
+		"max_request_bytes": a.cfg.MaxRequestBytes, "request_bytes_in_flight": a.cfg.RequestBytesInFlight,
+		"circuit_failure_threshold": a.cfg.GatewayCircuitFailureThreshold, "circuit_open_seconds": int(a.cfg.GatewayCircuitOpenDuration / time.Second),
+		"memory_reclaim_threshold_bytes": a.cfg.MemoryReclaimThresholdBytes, "unpriced_model_policy": a.cfg.UnpricedModelPolicy,
 		"request_log_retention_days": a.cfg.RequestLogRetentionDays, "request_success_detail_days": a.cfg.RequestSuccessDetailDays,
 		"request_error_detail_days": a.cfg.RequestDetailRetentionDays,
 	}
