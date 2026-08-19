@@ -2,7 +2,6 @@ package app
 
 import (
 	"testing"
-	"time"
 )
 
 func TestDefaultNativeRuntimeSettingsExposeOnlyEffectiveControls(t *testing.T) {
@@ -11,9 +10,6 @@ func TestDefaultNativeRuntimeSettingsExposeOnlyEffectiveControls(t *testing.T) {
 		t.Fatalf("default settings are invalid: %s", message)
 	}
 	compiled := runtimeSettings(settings, "direct")
-	if compiled.RequestRetry != 2 || compiled.RetryMaxBackoff != 2*time.Second {
-		t.Fatalf("retry settings = %#v", compiled)
-	}
 	if compiled.FailureThreshold != 3 || compiled.FailureCooldown != 0 {
 		t.Fatalf("isolation settings = %#v", compiled)
 	}
@@ -24,8 +20,6 @@ func TestNativeRuntimeSettingsValidation(t *testing.T) {
 		name string
 		edit func(*nativeRuntimeSettings)
 	}{
-		{"retry", func(value *nativeRuntimeSettings) { value.RequestRetry = 6 }},
-		{"backoff", func(value *nativeRuntimeSettings) { value.RetryMaxBackoffMS = 99 }},
 		{"routing", func(value *nativeRuntimeSettings) { value.RoutingStrategy = "random" }},
 		{"threshold", func(value *nativeRuntimeSettings) { value.CredentialFailureThreshold = 0 }},
 		{"cooldown", func(value *nativeRuntimeSettings) { value.CredentialCooldownSeconds = -1 }},

@@ -8,7 +8,7 @@ After CPA was removed, Relay still treated the native runtime as a remote HTTP s
 
 ## Decision
 
-Call `Runtime.Serve` with the already-read body and write success streams through a `runtimeWriter` onto the client `ResponseWriter`. Error statuses stay buffered so Relay can still rewrite provider 429/401 into user-facing errors. WebSocket billing still sits between the client and the runtime; that hop uses an in-memory `DialWebSocket` instead of `127.0.0.1`. Admission (`gateway.Client`) remains local concurrency/memory/circuit control and no longer owns a URL or API key. Parent identity is the credential ID; `SyncParentSubscription` and lifecycle event writers are deleted. The `upstream_lifecycle_events` table stays for retention of upgrade leftovers.
+Call `Runtime.Serve` with the already-read body and write the runtime response through a `runtimeWriter` onto the client `ResponseWriter`, including 4xx/5xx. WebSocket billing still sits between the client and the runtime; that hop uses an in-memory `DialWebSocket` instead of `127.0.0.1`. Admission (`gateway.Client`) remains local concurrency/memory/circuit control and no longer owns a URL or API key. Parent identity is the credential ID; `SyncParentSubscription` and lifecycle event writers are deleted. The `upstream_lifecycle_events` table stays for retention of upgrade leftovers.
 
 ## Alternatives considered
 

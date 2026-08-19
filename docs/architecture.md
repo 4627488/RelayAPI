@@ -53,9 +53,10 @@ added twice into the critical path.
 - Admission bounds concurrency, queue depth and aggregate buffered request
   bytes before the body is read.
 - Repeated transport failures open a circuit breaker with one recovery probe.
-- Temporary 408/429/502/503/504 responses are retried with bounded backoff.
-- OAuth tokens refresh proactively near expiry and once after a 401; refreshed
-  encrypted documents are written back through the credential store.
+- Provider errors and Relay errors are returned as written and recorded on the
+  request log. There is no transparent retry of 408/429/502/503/504.
+- OAuth tokens refresh proactively near expiry. A 401 still refreshes the
+  stored token for later requests but is returned as-is.
 - HTTP, HTTPS, SOCKS5 and SOCKS5H proxies are implemented in Relay and apply to
   inference, WebSocket, discovery, OAuth, quota and system requests.
 - Provider credentials remain encrypted in PostgreSQL. The native runtime

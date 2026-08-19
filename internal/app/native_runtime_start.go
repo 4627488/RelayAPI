@@ -59,9 +59,8 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	}
 	a.nativeSettings.value = settings
 	runtime, err := upstream.NewRuntime(upstream.Options{
-		RequestRetry:    settings.RequestRetry,
-		RetryMaxBackoff: time.Duration(settings.RetryMaxBackoffMS) * time.Millisecond, RoutingStrategy: settings.RoutingStrategy,
-		ProxyURL: firstNonEmptyString(systemProxyURL, "direct"), FailureThreshold: settings.CredentialFailureThreshold,
+		RoutingStrategy: settings.RoutingStrategy,
+		ProxyURL:        firstNonEmptyString(systemProxyURL, "direct"), FailureThreshold: settings.CredentialFailureThreshold,
 		FailureCooldown: time.Duration(settings.CredentialCooldownSeconds) * time.Second,
 		OnCredentialUpdated: func(updateCtx context.Context, id string, document []byte) {
 			if persistErr := a.persistEmbeddedCredential(updateCtx, id, document); persistErr != nil {

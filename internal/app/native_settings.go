@@ -16,8 +16,6 @@ import (
 const nativeRuntimeSettingsKey = "native-runtime"
 
 type nativeRuntimeSettings struct {
-	RequestRetry               int    `json:"request_retry"`
-	RetryMaxBackoffMS          int    `json:"retry_max_backoff_ms"`
 	RoutingStrategy            string `json:"routing_strategy"`
 	CredentialFailureThreshold int    `json:"credential_failure_threshold"`
 	CredentialCooldownSeconds  int    `json:"credential_cooldown_seconds"`
@@ -31,7 +29,7 @@ type settingsState struct {
 
 func defaultNativeRuntimeSettings() nativeRuntimeSettings {
 	return nativeRuntimeSettings{
-		RequestRetry: 2, RetryMaxBackoffMS: 2_000, RoutingStrategy: "round-robin",
+		RoutingStrategy:            "round-robin",
 		CredentialFailureThreshold: 3, CredentialCooldownSeconds: 0,
 	}
 }
@@ -46,16 +44,10 @@ func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSetti
 	if err = json.Unmarshal(document, &settings); err != nil {
 		return settings, true, "", err
 	}
-	// Settings written before the native UI cleanup do not contain the new
-	// isolation fields. Zero retry/threshold values are not valid user input,
-	// so they can be filled during the one-time shape migration. Cooldown 0 is
-	// valid and means isolation is off.
-	defaults := defaultNativeRuntimeSettings()
-	if settings.RetryMaxBackoffMS == 0 {
-		settings.RetryMaxBackoffMS = defaults.RetryMaxBackoffMS
-	}
+	// Settings written before isolation fields existed leave threshold at 0.
+	// Cooldown 0 is valid and means isolation is off.
 	if settings.CredentialFailureThreshold == 0 {
-		settings.CredentialFailureThreshold = defaults.CredentialFailureThreshold
+		settings.CredentialFailureThreshold = defaultNativeRuntimeSettings().CredentialFailureThreshold
 	}
 	// Zero cooldown is a valid stored value: it disables credential isolation.
 	var legacy struct {
@@ -66,12 +58,6 @@ func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSetti
 }
 
 func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
-	if value.RequestRetry < 0 || value.RequestRetry > 5 {
-		return "请求重试次数必须在 0 到 5 之间"
-	}
-	if value.RetryMaxBackoffMS < 100 || value.RetryMaxBackoffMS > 10_000 {
-		return "重试退避上限必须在 100 到 10000 毫秒之间"
-	}
 	if value.RoutingStrategy != "round-robin" && value.RoutingStrategy != "fill-first" {
 		return "凭据调度策略无效"
 	}
@@ -89,8 +75,6 @@ func runtimeSettings(value nativeRuntimeSettings, systemProxyURL string) upstrea
 		systemProxyURL = "direct"
 	}
 	return upstream.Settings{
-		RequestRetry:    value.RequestRetry,
-		RetryMaxBackoff: time.Duration(value.RetryMaxBackoffMS) * time.Millisecond,
 		RoutingStrategy: value.RoutingStrategy, ProxyURL: systemProxyURL,
 		FailureThreshold: value.CredentialFailureThreshold,
 		FailureCooldown:  time.Duration(value.CredentialCooldownSeconds) * time.Second,

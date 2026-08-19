@@ -222,15 +222,14 @@ func (c *rollingCapture) Info() ([]byte, bool, int64) {
 	return append([]byte(nil), c.detail...), c.total > int64(len(c.detail)), c.total
 }
 
-// runtimeWriter lets the in-process runtime write success streams straight to
-// the client. Error statuses stay buffered so Relay can still rewrite them.
+// runtimeWriter tees the in-process runtime onto the client and a log capture.
+// Status and body are forwarded as written; Relay does not rewrite them.
 type runtimeWriter struct {
 	client    http.ResponseWriter
 	header    http.Header
 	status    int
 	stream    bool
 	capture   *rollingCapture
-	errorBody []byte
 	committed bool
 	writeErr  error
 	firstByte func()
@@ -255,9 +254,7 @@ func (w *runtimeWriter) WriteHeader(status int) {
 	if w.onHeader != nil {
 		w.onHeader()
 	}
-	if status < http.StatusBadRequest {
-		w.commit()
-	}
+	w.commit()
 }
 
 func (w *runtimeWriter) Write(payload []byte) (int, error) {
@@ -271,19 +268,6 @@ func (w *runtimeWriter) Write(payload []byte) (int, error) {
 	if w.capture != nil {
 		_, _ = w.capture.Write(payload)
 	}
-	if w.status >= http.StatusBadRequest {
-		const limit = 2<<20 + 1
-		if remaining := limit - len(w.errorBody); remaining > 0 {
-			if remaining > len(payload) {
-				remaining = len(payload)
-			}
-			w.errorBody = append(w.errorBody, payload[:remaining]...)
-		}
-		return len(payload), nil
-	}
-	if !w.committed {
-		w.commit()
-	}
 	written, err := w.client.Write(payload)
 	if err != nil {
 		w.writeErr = &streamCopyError{operation: "write_downstream", err: err}
@@ -292,11 +276,8 @@ func (w *runtimeWriter) Write(payload []byte) (int, error) {
 }
 
 func (w *runtimeWriter) Flush() {
-	if w.status == 0 || w.status >= http.StatusBadRequest {
+	if w.status == 0 {
 		return
-	}
-	if !w.committed {
-		w.commit()
 	}
 	if flusher, ok := w.client.(http.Flusher); ok {
 		flusher.Flush()
@@ -645,25 +626,8 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 	call.body = nil
 	call.originalBody = nil
 	call.targetAdmission.RecordOutcome(out.writeErr)
-	clientStatus := status
 	writeErr := out.writeErr
-	var normalizedError *userFacingError
 	upstreamHeaders := out.Header().Clone()
-	if status >= http.StatusBadRequest {
-		classified := a.classifyUpstreamError(status, out.errorBody, call.admission)
-		normalizedError = &classified
-		clientStatus = classified.Status
-		for _, header := range []string{"Content-Length", "Content-Encoding", "Content-Range", "ETag"} {
-			w.Header().Del(header)
-		}
-		if !classified.Retryable {
-			w.Header().Del("Retry-After")
-		}
-		if firstByteAt.IsZero() {
-			firstByteAt = time.Now()
-		}
-		writeUserFacingError(w, classified)
-	}
 	responseReadAt := time.Now()
 	call.logContext.completedAt = responseReadAt
 	finalizeCtx := context.WithoutCancel(r.Context())
@@ -710,11 +674,13 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			settled = true
 		}
 		errorMessage := ""
-		if writeErr != nil && normalizedError == nil {
+		rawResponse, responseTruncated, responseBytes := capture.Info()
+		if writeErr != nil {
 			errorMessage = writeErr.Error()
 			logContext.errorCode = "stream_copy_error"
+		} else if status >= http.StatusBadRequest {
+			logContext.errorCode, errorMessage = observedError(status, rawResponse)
 		}
-		rawResponse, responseTruncated, responseBytes := capture.Info()
 		logContext.upstreamTraceID = strings.TrimSpace(upstreamHeaders.Get("X-Upstream-TRACE-ID"))
 		logContext.responseBytes = responseBytes
 		if !firstByteAt.IsZero() {
@@ -724,26 +690,12 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			call.timeline.Mark(firstByteAt, "first_byte", "首字节")
 		}
 		call.timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "运行时直接写入客户端响应")
-		if normalizedError != nil {
-			logContext.errorCode = normalizedError.Code
-			errorMessage = normalizedError.Message
-		} else if status >= http.StatusBadRequest && logContext.errorCode == "" {
-			logContext.errorCode = "upstream_http_error"
-			errorMessage = upstreamErrorMessage(status, rawResponse)
-		}
-		retainDetail := shouldRetainRequestDetail(call.requestID, clientStatus, logContext.errorCode, a.cfg.RequestSuccessSamplePPM)
+		retainDetail := shouldRetainRequestDetail(call.requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM)
 		logContext.maybeCaptureUpstream(status, upstreamHeaders, rawResponse, responseTruncated, responseBytes, retainDetail)
-		if retainDetail && normalizedError != nil {
+		if retainDetail && (writeErr != nil || status >= http.StatusBadRequest) {
 			detail := logContext.ensureDetail()
 			detail.ErrorName = logContext.errorCode
-			detail.ErrorMessage = normalizedError.Message
-		} else if retainDetail && status >= http.StatusBadRequest {
-			logContext.ensureDetail().ErrorName = logContext.errorCode
-		}
-		if writeErr != nil && normalizedError == nil && retainDetail {
-			detail := logContext.ensureDetail()
-			detail.ErrorName = "stream_copy_error"
-			detail.ErrorMessage = writeErr.Error()
+			detail.ErrorMessage = errorMessage
 		}
 		// Settlement and durable logging now run after the response boundary and
 		// must not inflate the latency reported to users.
@@ -754,7 +706,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			logContext.ensureDetail().StageTimings = stageTimings
 		}
 		logContext.stageTimings = stageTimings
-		a.writeRequestLog(call.key, call.requestID, call.admission, call.meta, r, clientStatus, call.started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
+		a.writeRequestLog(call.key, call.requestID, call.admission, call.meta, r, status, call.started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
 		a.store.TouchKey(finalizeCtx, call.key.ID)
 	})
 }

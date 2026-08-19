@@ -42,8 +42,6 @@ import { PageHeader, StatStrip } from "@/components/workspace-ui"
 import { api, type OutboundProxy } from "@/lib/api"
 
 type RuntimeSettings = {
-  request_retry: number
-  retry_max_backoff_ms: number
   routing_strategy: "round-robin" | "fill-first"
   credential_failure_threshold: number
   credential_cooldown_seconds: number
@@ -74,8 +72,6 @@ type SettingsResponse = {
 }
 
 const recommended: Omit<RuntimeSettings, "system_proxy_id"> = {
-  request_retry: 2,
-  retry_max_backoff_ms: 2000,
   routing_strategy: "round-robin",
   credential_failure_threshold: 3,
   credential_cooldown_seconds: 0,
@@ -315,29 +311,9 @@ export function RuntimeSettingsView() {
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    轮询适合共享容量；固定优先级适合主账户加备用账户。
+                    轮询适合共享容量；固定优先级适合主账户加备用账户。上游错误原样返回，不会透明重试。
                   </FieldDescription>
                 </Field>
-                <NumberField
-                  id="request-retry"
-                  label="单凭据重试"
-                  suffix="次"
-                  description="只重试连接失败、408、429、502、503 和 504；不会重放普通 4xx。"
-                  value={value.request_retry}
-                  min={0}
-                  max={5}
-                  onChange={(next) => patch("request_retry", next)}
-                />
-                <NumberField
-                  id="retry-backoff"
-                  label="退避时间上限"
-                  suffix="ms"
-                  description="指数退避的封顶值；较低更快失败，较高更温和地面对限流。"
-                  value={value.retry_max_backoff_ms}
-                  min={100}
-                  max={10000}
-                  onChange={(next) => patch("retry_max_backoff_ms", next)}
-                />
               </FieldGroup>
             </CardContent>
           </Card>

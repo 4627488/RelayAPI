@@ -167,22 +167,19 @@ func TestXAIApplyPatchRestoredForNonStreamingResponses(t *testing.T) {
 	}
 }
 
-func TestRuntimeRetriesTransientProviderFailure(t *testing.T) {
+func TestRuntimeReturnsFirstProviderErrorWithoutRetry(t *testing.T) {
 	var attempts atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if attempts.Add(1) == 1 {
-			http.Error(w, "busy", http.StatusServiceUnavailable)
-			return
-		}
-		_, _ = io.WriteString(w, `{"id":"resp_ok","output":[]}`)
+		attempts.Add(1)
+		http.Error(w, "busy", http.StatusServiceUnavailable)
 	}))
 	defer provider.Close()
-	r, err := NewRuntime(Options{RequestRetry: 1, RetryMaxBackoff: time.Millisecond, FailureThreshold: 3, FailureCooldown: time.Second}, []Credential{{ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL})}})
+	r, err := NewRuntime(Options{FailureThreshold: 3, FailureCooldown: time.Second}, []Credential{{ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL})}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	response := runtimeRequest(t, r, http.MethodPost, "/v1/responses", `{"model":"gpt","input":"hi"}`)
-	if response.Code != http.StatusOK || attempts.Load() != 2 {
+	if response.Code != http.StatusServiceUnavailable || attempts.Load() != 1 || !strings.Contains(response.Body.String(), "busy") {
 		t.Fatalf("status = %d, attempts = %d, body = %s", response.Code, attempts.Load(), response.Body.String())
 	}
 }
@@ -206,7 +203,7 @@ func TestCredentialIsolationRemovesAndRestoresOnlyFailingRoute(t *testing.T) {
 		t.Fatal("credential remained routable after reaching threshold")
 	}
 	if err := runtime.ApplySettings(t.Context(), Settings{
-		RoutingStrategy: "round-robin", RetryMaxBackoff: time.Second, ProxyURL: "direct",
+		RoutingStrategy: "round-robin", ProxyURL: "direct",
 		FailureThreshold: 2, FailureCooldown: 200 * time.Millisecond,
 	}); err != nil {
 		t.Fatal(err)

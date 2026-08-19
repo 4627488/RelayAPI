@@ -68,8 +68,6 @@ type Credential struct {
 }
 
 type Options struct {
-	RequestRetry        int
-	RetryMaxBackoff     time.Duration
 	RoutingStrategy     string
 	ProxyURL            string
 	FailureThreshold    int
@@ -79,8 +77,6 @@ type Options struct {
 }
 
 type Settings struct {
-	RequestRetry     int
-	RetryMaxBackoff  time.Duration
 	RoutingStrategy  string
 	ProxyURL         string
 	FailureThreshold int

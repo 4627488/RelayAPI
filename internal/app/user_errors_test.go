@@ -10,35 +10,18 @@ import (
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
-func TestClassifyUpstreamErrorReportsCauseInsteadOfBlindStatus(t *testing.T) {
-	tests := []struct {
-		name     string
-		status   int
-		body     string
-		want     int
-		wantCode string
-		wantText string
-	}{
-		{name: "Upstream scheduler has no account", status: http.StatusTooManyRequests, body: `{"error":{"code":"auth_unavailable","message":"no auth available"}}`, want: http.StatusServiceUnavailable, wantCode: "model_account_unavailable"},
-		{name: "account quota exhausted", status: http.StatusTooManyRequests, body: `{"error":{"code":"insufficient_quota","message":"usage limit reached"}}`, want: http.StatusPaymentRequired, wantCode: "model_account_quota_exhausted"},
-		{name: "real upstream rate limit", status: http.StatusTooManyRequests, body: `{"error":{"code":"rate_limit_exceeded","message":"too many requests"}}`, want: http.StatusTooManyRequests, wantCode: "upstream_rate_limited"},
-		{name: "expired account login", status: http.StatusUnauthorized, body: `{"error":{"message":"token expired"}}`, want: http.StatusServiceUnavailable, wantCode: "model_account_auth_failed"},
-		{name: "account lacks model permission", status: http.StatusForbidden, body: `{"error":{"message":"model not allowed for this account"}}`, want: http.StatusServiceUnavailable, wantCode: "model_account_permission_denied"},
-		{name: "provider outage", status: http.StatusInternalServerError, body: `{"error":{"message":"internal"}}`, want: http.StatusBadGateway, wantCode: "upstream_service_error"},
-		{name: "context too large", status: http.StatusBadRequest, body: `{"error":{"message":"maximum context length exceeded"}}`, want: http.StatusBadRequest, wantCode: "context_length_exceeded"},
-		{name: "provider request error", status: http.StatusBadRequest, body: `{"error":{"type":"invalid_request_error","code":"invalid_request_error","message":"reasoning_content must be passed back"}}`, want: http.StatusBadRequest, wantCode: "invalid_request_error", wantText: "reasoning_content must be passed back"},
+func TestObservedErrorKeepsProviderPayload(t *testing.T) {
+	code, message := observedError(http.StatusTooManyRequests, []byte(`{"error":{"code":"rate_limit_exceeded","message":"too many requests"}}`))
+	if code != "rate_limit_exceeded" || message != "too many requests" {
+		t.Fatalf("observed = %s %q", code, message)
 	}
-	app := &App{}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := app.classifyUpstreamError(test.status, []byte(test.body), store.Admission{})
-			if got.Status != test.want || got.Code != test.wantCode || got.UpstreamStatus != test.status {
-				t.Fatalf("classification = %+v, want status/code %d/%s", got, test.want, test.wantCode)
-			}
-			if test.wantText != "" && got.Message != test.wantText {
-				t.Fatalf("message = %q, want %q", got.Message, test.wantText)
-			}
-		})
+	code, message = observedError(http.StatusUnauthorized, []byte(`{"error":{"message":"token expired"}}`))
+	if code != "upstream_http_error" || message != "token expired" {
+		t.Fatalf("message-only payload = %s %q", code, message)
+	}
+	code, message = observedError(http.StatusBadGateway, []byte(`{"error":{"code":"upstream_connection_failed","message":"dial tcp: connection refused"}}`))
+	if code != "upstream_connection_failed" || message != "dial tcp: connection refused" {
+		t.Fatalf("runtime error = %s %q", code, message)
 	}
 }
 

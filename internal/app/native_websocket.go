@@ -318,17 +318,18 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 
 	upstream, response, err := a.dialNativeRuntimeWebSocket(r.Context(), r, accounting.admission, requestID)
 	if err != nil {
-		classified := userFacingError{Status: http.StatusServiceUnavailable, Code: "model_account_unavailable", Message: "无法连接当前订阅的模型账户，请稍后重试或联系管理员", Retryable: true}
+		status, code, message := http.StatusBadGateway, "upstream_connection_failed", err.Error()
 		if response != nil {
-			classified.UpstreamStatus = response.StatusCode
+			status = response.StatusCode
+			payload := []byte(nil)
 			if response.Body != nil {
-				payload, _ := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+				payload, _ = io.ReadAll(io.LimitReader(response.Body, 2<<20))
 				_ = response.Body.Close()
-				classified = a.classifyUpstreamError(response.StatusCode, payload, accounting.admission)
 			}
+			code, message = observedError(status, payload)
 		}
-		accounting.errorHTTP, accounting.errorCode = classified.Status, classified.Code
-		writeNativeWebSocketError(downstream, classified.Status, classified.Code, classified.Message)
+		accounting.errorHTTP, accounting.errorCode = status, code
+		writeNativeWebSocketError(downstream, status, code, message)
 		return session, meta, err
 	}
 	if response != nil && response.Body != nil {

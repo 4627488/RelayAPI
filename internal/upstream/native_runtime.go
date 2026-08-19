@@ -66,9 +66,6 @@ type nativeCredential struct {
 // NewRuntime creates the focused Relay runtime for Codex, Kimi, xAI,
 // Aliyun Bailian and OpenAI-compatible providers.
 func NewRuntime(options Options, credentials []Credential) (Runtime, error) {
-	if options.RetryMaxBackoff <= 0 {
-		options.RetryMaxBackoff = 2 * time.Second
-	}
 	if options.FailureThreshold <= 0 {
 		options.FailureThreshold = 3
 	}
@@ -81,9 +78,8 @@ func NewRuntime(options Options, credentials []Credential) (Runtime, error) {
 		traces: newRequestTraceRegistry(),
 	}
 	r.settings = Settings{
-		RequestRetry:    options.RequestRetry,
-		RetryMaxBackoff: options.RetryMaxBackoff, RoutingStrategy: options.RoutingStrategy,
-		ProxyURL: options.ProxyURL, FailureThreshold: options.FailureThreshold,
+		RoutingStrategy: options.RoutingStrategy,
+		ProxyURL:        options.ProxyURL, FailureThreshold: options.FailureThreshold,
 		FailureCooldown: options.FailureCooldown,
 	}
 	r.oauth = newOAuthManager(options)
@@ -657,7 +653,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	r.mu.RLock()
 	threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown
 	r.mu.RUnlock()
-	availabilityFailure := response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || retryableProviderStatus(response.StatusCode)
+	availabilityFailure := response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || providerAvailabilityStatus(response.StatusCode)
 	if response.StatusCode < 400 {
 		credential.record(true, "", false, threshold, cooldown)
 	} else if availabilityFailure {
@@ -718,88 +714,44 @@ func (w immediateFlushWriter) Write(payload []byte) (int, error) {
 }
 
 func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nativeCredential, target string, body []byte, trace *RequestTrace) (*http.Response, error) {
-	r.mu.RLock()
-	requestRetry, retryMaxBackoff := r.settings.RequestRetry, r.settings.RetryMaxBackoff
-	r.mu.RUnlock()
-	attempts := requestRetry + 1
-	if attempts < 1 {
-		attempts = 1
+	if credential.tokenNeedsRefresh() {
+		_ = r.refreshCredential(source.Context(), credential)
 	}
-	var lastErr error
-	refreshed := false
-	for index := 0; index < attempts; index++ {
-		if !refreshed && credential.tokenNeedsRefresh() {
-			if refreshErr := r.refreshCredential(source.Context(), credential); refreshErr == nil {
-				refreshed = true
-			}
-		}
-		request, err := http.NewRequestWithContext(source.Context(), source.Method, target, bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		copyProviderHeaders(request.Header, source.Header)
-		credential.authorize(request.Header)
-		clientTraceState, clientTrace := providerClientTrace()
-		request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
-		attemptStarted := time.Now()
-		response, err := credential.client.Do(request)
-		snapshot := clientTraceState.snapshot()
-		recorded := ExecutionAttempt{
-			Number: index + 1, StartedAt: attemptStarted, CompletedAt: time.Now(),
-			RequestWrittenAt: snapshot.wroteRequest, FirstResponseAt: snapshot.firstResponseByte,
-			GetConnAt: snapshot.getConn, GotConnAt: snapshot.gotConn,
-			DNSStartedAt: snapshot.dnsStart, DNSCompletedAt: snapshot.dnsDone,
-			ConnectStartedAt: snapshot.connectStart, ConnectCompletedAt: snapshot.connectDone,
-			TLSStartedAt: snapshot.tlsStart, TLSCompletedAt: snapshot.tlsDone,
-			Provider: credential.Provider, Model: jsonString(body, "model"), CredentialID: credential.ID,
-			ConnectionReused: snapshot.reused, RemoteAddr: snapshot.remoteAddr,
-		}
-		if err != nil {
-			recorded.Status, recorded.Error = "failed", err.Error()
-		} else if response.StatusCode >= 400 {
-			recorded.Status, recorded.Error = "failed", fmt.Sprintf("HTTP %d", response.StatusCode)
-			recorded.HeadersAt = snapshot.firstResponseByte
-		} else {
-			recorded.Status = "complete"
-			recorded.HeadersAt = snapshot.firstResponseByte
-		}
-		trace.addAttempt(recorded)
-		if err == nil && response.StatusCode == http.StatusUnauthorized && !refreshed && credential.hasRefreshToken() {
-			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-			_ = response.Body.Close()
-			if refreshErr := r.refreshCredential(source.Context(), credential); refreshErr == nil {
-				refreshed = true
-				index--
-				continue
-			}
-		}
-		if err == nil && !retryableProviderStatus(response.StatusCode) {
-			return response, nil
-		}
-		if err == nil {
-			lastErr = fmt.Errorf("upstream returned HTTP %d", response.StatusCode)
-			if index+1 >= attempts {
-				return response, nil
-			}
-			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-			_ = response.Body.Close()
-		} else {
-			lastErr = err
-			if index+1 >= attempts {
-				break
-			}
-		}
-		delay := time.Duration(1<<min(index, 5)) * 100 * time.Millisecond
-		if retryMaxBackoff > 0 && delay > retryMaxBackoff {
-			delay = retryMaxBackoff
-		}
-		select {
-		case <-time.After(delay):
-		case <-source.Context().Done():
-			return nil, source.Context().Err()
-		}
+	request, err := http.NewRequestWithContext(source.Context(), source.Method, target, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
 	}
-	return nil, lastErr
+	copyProviderHeaders(request.Header, source.Header)
+	credential.authorize(request.Header)
+	clientTraceState, clientTrace := providerClientTrace()
+	request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
+	attemptStarted := time.Now()
+	response, err := credential.client.Do(request)
+	snapshot := clientTraceState.snapshot()
+	recorded := ExecutionAttempt{
+		Number: 1, StartedAt: attemptStarted, CompletedAt: time.Now(),
+		RequestWrittenAt: snapshot.wroteRequest, FirstResponseAt: snapshot.firstResponseByte,
+		GetConnAt: snapshot.getConn, GotConnAt: snapshot.gotConn,
+		DNSStartedAt: snapshot.dnsStart, DNSCompletedAt: snapshot.dnsDone,
+		ConnectStartedAt: snapshot.connectStart, ConnectCompletedAt: snapshot.connectDone,
+		TLSStartedAt: snapshot.tlsStart, TLSCompletedAt: snapshot.tlsDone,
+		Provider: credential.Provider, Model: jsonString(body, "model"), CredentialID: credential.ID,
+		ConnectionReused: snapshot.reused, RemoteAddr: snapshot.remoteAddr,
+	}
+	if err != nil {
+		recorded.Status, recorded.Error = "failed", err.Error()
+	} else if response.StatusCode >= 400 {
+		recorded.Status, recorded.Error = "failed", fmt.Sprintf("HTTP %d", response.StatusCode)
+		recorded.HeadersAt = snapshot.firstResponseByte
+	} else {
+		recorded.Status = "complete"
+		recorded.HeadersAt = snapshot.firstResponseByte
+	}
+	trace.addAttempt(recorded)
+	if err == nil && response.StatusCode == http.StatusUnauthorized && credential.hasRefreshToken() {
+		_ = r.refreshCredential(source.Context(), credential)
+	}
+	return response, err
 }
 
 func (c *nativeCredential) hasRefreshToken() bool {
@@ -877,7 +829,7 @@ func parseCredentialTime(value string) time.Time {
 	return parsed
 }
 
-func retryableProviderStatus(status int) bool {
+func providerAvailabilityStatus(status int) bool {
 	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
