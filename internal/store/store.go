@@ -442,49 +442,6 @@ func (s Store) DailyTokens(ctx context.Context, tenantID, keyID string) (tenant,
 	return value.Tenant, value.Key, err
 }
 
-func (s Store) Reserve(ctx context.Context, tenantID, requestID string, amount int64) error {
-	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		var tenant Tenant
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", tenantID).Error; err != nil {
-			return err
-		}
-		if !tenant.Enabled || tenant.BalanceNanoUSD < amount {
-			return errors.New("insufficient balance")
-		}
-		tenant.BalanceNanoUSD -= amount
-		if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
-			return err
-		}
-		return tx.Create(&db.BillingLedger{
-			ID: identity.NewID(), TenantID: tenantID, RequestID: &requestID, Kind: "reservation",
-			AmountNanoUSD: -amount, BalanceAfterNanoUSD: tenant.BalanceNanoUSD, Note: "request reserve",
-		}).Error
-	})
-}
-
-func (s Store) Settle(ctx context.Context, tenantID, requestID string, reserved, actual int64) error {
-	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		var tenant Tenant
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, "id = ?", tenantID).Error; err != nil {
-			return err
-		}
-		delta := reserved - actual
-		tenant.BalanceNanoUSD += delta
-		if err := tx.Model(&tenant).Update("balance_nano_usd", tenant.BalanceNanoUSD).Error; err != nil {
-			return err
-		}
-		kind := "settlement"
-		if actual == 0 {
-			kind = "refund"
-		}
-		return tx.Create(&db.BillingLedger{
-			ID: identity.NewID(), TenantID: tenantID, RequestID: &requestID, Kind: kind,
-			AmountNanoUSD: delta, BalanceAfterNanoUSD: tenant.BalanceNanoUSD,
-			Note: fmt.Sprintf("reserve=%d actual=%d", reserved, actual),
-		}).Error
-	})
-}
-
 func (s Store) Credit(ctx context.Context, tenantID string, amount int64, note string) error {
 	return scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
 		var tenant Tenant
@@ -888,7 +845,9 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 			return err
 		}
 	}
-	return applyPendingCPALifecycleEvents(tx, l.ID)
+	// New traffic no longer inserts cpa_lifecycle_events. Retention still
+	// deletes upgrade leftovers; do not SELECT them on every request write.
+	return nil
 }
 
 func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, error) {
@@ -896,14 +855,24 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 	if err := scoped(ctx, s.DB).First(&tenant, "id = ?", tenantID).Error; err != nil {
 		return nil, notFound(err)
 	}
+	since := time.Now().AddDate(0, 0, -30)
 	type totals struct{ Requests, Tokens, Cost int64 }
 	var total totals
 	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select("count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
-		Where("tenant_id = ? AND started_at >= ?", tenantID, time.Now().AddDate(0, 0, -30)).Scan(&total).Error
+		Where("tenant_id = ? AND started_at >= ?", tenantID, since).Scan(&total).Error
 	if err != nil {
 		return nil, err
 	}
+	var rolled totals
+	if err := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).
+		Select("COALESCE(sum(requests),0) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
+		Where("tenant_id = ? AND day >= ?", tenantID, since).Scan(&rolled).Error; err != nil {
+		return nil, err
+	}
+	total.Requests += rolled.Requests
+	total.Tokens += rolled.Tokens
+	total.Cost += rolled.Cost
 	return map[string]any{"tenant": tenant, "requests_30d": total.Requests, "tokens_30d": total.Tokens, "cost_nano_usd_30d": total.Cost}, nil
 }
 
@@ -994,13 +963,8 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if input.MinLatencyMS > 0 {
 		query = query.Where("latency_ms >= ?", input.MinLatencyMS)
 	}
-	countQuery := query.Session(&gorm.Session{})
 	summaryQuery := query.Session(&gorm.Session{})
 	itemsQuery := query.Session(&gorm.Session{})
-	var total int64
-	if err := countQuery.Count(&total).Error; err != nil {
-		return LogPage{}, err
-	}
 	var summary LogSummary
 	if err := summaryQuery.Select(
 		"count(*) AS requests, COALESCE(sum(CASE WHEN status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
@@ -1019,7 +983,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if err := itemsQuery.Order("started_at DESC").Offset((input.Page - 1) * input.PageSize).Limit(input.PageSize).Find(&items).Error; err != nil {
 		return LogPage{}, err
 	}
-	return LogPage{Items: items, Page: input.Page, PageSize: input.PageSize, Total: total, Summary: summary}, nil
+	return LogPage{Items: items, Page: input.Page, PageSize: input.PageSize, Total: summary.Requests, Summary: summary}, nil
 }
 
 type LogWithDetail struct {

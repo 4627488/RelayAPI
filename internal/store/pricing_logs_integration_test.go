@@ -75,14 +75,6 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}
 
 	requestID := identity.NewID()
-	if err := dataStore.RecordCPALifecycleEvent(ctx, CPALifecycleInput{
-		RequestLogID: requestID, Event: "request.complete", CPAExecutionID: "cpa-execution",
-		CPATraceID: "cpa-trace", Model: "actual-model", RequestedModel: "alias-model",
-		Provider: "openai", ExecutorType: "codex", AuthIndex: "auth-priority",
-		Outcome: "succeeded",
-	}); err != nil {
-		t.Fatal(err)
-	}
 	started := time.Now().Add(-time.Second)
 	cost := int64(42)
 	if err := dataStore.WriteLog(ctx, LogInput{
@@ -94,6 +86,14 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		RequestBodyBytes: 128, ForwardedBodyBytes: 144, ResponseBodyBytes: 512,
 		Detail: &LogDetailInput{RequestHeaders: `{}`, RequestBody: `{}`, ForwardedHeaders: `{}`,
 			ForwardedBody: `{}`, UpstreamHeaders: `{}`, UpstreamBody: `{}`, StageTimings: `{}`},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataStore.RecordCPALifecycleEvent(ctx, CPALifecycleInput{
+		RequestLogID: requestID, Event: "request.complete", CPAExecutionID: "cpa-execution",
+		CPATraceID: "cpa-trace", Model: "actual-model", RequestedModel: "alias-model",
+		Provider: "openai", ExecutorType: "codex", AuthIndex: "auth-priority",
+		Outcome: "succeeded",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		t.Fatalf("empty subscription IDs must be stored as NULL: %+v", detailed.Log)
 	}
 	page, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Query: "cpa-trace", PageSize: 25})
-	if err != nil || page.Total != 1 || page.Summary.Tokens != 12 || page.Summary.PromptTokens != 10 || page.Summary.RequestBytes != 128 || page.Summary.ResponseBytes != 512 {
+	if err != nil || page.Total != 1 || page.Total != page.Summary.Requests || page.Summary.Tokens != 12 || page.Summary.PromptTokens != 10 || page.Summary.RequestBytes != 128 || page.Summary.ResponseBytes != 512 {
 		t.Fatalf("log query = %+v, err=%v", page, err)
 	}
 
@@ -312,6 +312,43 @@ func TestRetentionDeletesSuccessfulUnpricedDetails(t *testing.T) {
 	}
 	if remaining != 1 {
 		t.Fatalf("remaining details = %d, want only the error detail", remaining)
+	}
+	overview, err := dataStore.Dashboard(ctx, tenantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveRequests := dashboardInt64(overview["requests_30d"])
+	liveTokens := dashboardInt64(overview["tokens_30d"])
+	liveCost := dashboardInt64(overview["cost_nano_usd_30d"])
+	rolledDay := time.Now().AddDate(0, 0, -10)
+	rolledDay = time.Date(rolledDay.Year(), rolledDay.Month(), rolledDay.Day(), 0, 0, 0, 0, time.UTC)
+	if err := database.Create(&db.UsageDailyRollup{
+		Day: rolledDay, TenantID: tenantID, Model: "rolled-model",
+		Requests: 7, TotalTokens: 70, CostNanoUSD: 9, UpdatedAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	overview, err = dataStore.Dashboard(ctx, tenantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dashboardInt64(overview["requests_30d"]) != liveRequests+7 ||
+		dashboardInt64(overview["tokens_30d"]) != liveTokens+70 ||
+		dashboardInt64(overview["cost_nano_usd_30d"]) != liveCost+9 {
+		t.Fatalf("dashboard after rollup = %#v live=%d/%d/%d", overview, liveRequests, liveTokens, liveCost)
+	}
+}
+
+func dashboardInt64(value any) int64 {
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	default:
+		return 0
 	}
 }
 
