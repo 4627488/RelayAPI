@@ -37,8 +37,9 @@ the native runtime owns protocol translation, retries, and routing.
 
 `parent_subscriptions` mirrors a redacted native credential identity:
 
-- native credential ID stored as both `upstream_credential_id` and `upstream_auth_index`, and
-  used for strict picks, observations, and request attribution;
+- native credential ID stored as `upstream_credential_id` (mirrored onto
+  `upstream_auth_index` for pricing-rule and log compatibility) and used for
+  strict picks, observations, and request attribution;
 - credential name, provider, status and cached model list;
 - capacity mode: `unmetered` or `observed`;
 - allocation/oversell limit and synchronization timestamps.

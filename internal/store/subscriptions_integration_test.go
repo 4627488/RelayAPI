@@ -293,16 +293,16 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	syncedParent, err := store.SyncParentSubscription(ctx, ParentSubscription{
-		UpstreamCredentialID: "scheduler-auth-id", UpstreamAuthIndex: "auth-integration", UpstreamCredentialName: "auth.json",
+	syncedParent, err := store.SyncNativeParentSubscription(ctx, ParentSubscription{
+		UpstreamCredentialID: "auth-integration", UpstreamCredentialName: "auth.json",
 		Name: "parent", Provider: "test", CapacityMode: db.ParentCapacityUnmetered,
 		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if syncedParent.ID != parent.ID || syncedParent.UpstreamCredentialID != "scheduler-auth-id" || syncedParent.UpstreamAuthIndex != "auth-integration" {
-		t.Fatalf("parent identity mapping was not updated in place: %+v", syncedParent)
+	if syncedParent.ID != parent.ID || syncedParent.UpstreamCredentialID != "auth-integration" || syncedParent.UpstreamAuthIndex != "auth-integration" {
+		t.Fatalf("parent identity was not updated in place: %+v", syncedParent)
 	}
 	parent = syncedParent
 	firstReset := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
@@ -405,8 +405,8 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	}
 
 	store := Store{DB: database}
-	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
-		UpstreamCredentialID: "observed-auth-id", UpstreamAuthIndex: "observed-auth-index", UpstreamCredentialName: "observed.json",
+	parent, err := store.SyncNativeParentSubscription(ctx, ParentSubscription{
+		UpstreamCredentialID: "observed-auth-id", UpstreamCredentialName: "observed.json",
 		Name: "observed parent", Provider: "extension-provider", CapacityMode: db.ParentCapacityObserved,
 		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})
@@ -560,8 +560,8 @@ func TestModelWithoutChildAssignmentFallsBackToTenantBalance(t *testing.T) {
 	}
 
 	store := Store{DB: database}
-	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
-		UpstreamCredentialID: "subscription-auth", UpstreamAuthIndex: "subscription-index", UpstreamCredentialName: "subscription.json",
+	parent, err := store.SyncNativeParentSubscription(ctx, ParentSubscription{
+		UpstreamCredentialID: "subscription-auth", UpstreamCredentialName: "subscription.json",
 		Name: "subscription parent", Provider: "test", CapacityMode: db.ParentCapacityUnmetered,
 		AllocationLimitPPM: 1_000_000, Enabled: true, UpstreamModelAllowlist: []string{"subscription-model"},
 		Metadata: json.RawMessage(`{}`),
@@ -741,8 +741,8 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 		t.Fatalf("turn rows = %d, want 2", turns)
 	}
 
-	parent, err := store.SyncParentSubscription(ctx, ParentSubscription{
-		UpstreamCredentialID: "ws-auth-id", UpstreamAuthIndex: "ws-auth-index", UpstreamCredentialName: "ws.json",
+	parent, err := store.SyncNativeParentSubscription(ctx, ParentSubscription{
+		UpstreamCredentialID: "ws-auth-id", UpstreamCredentialName: "ws.json",
 		Name: "ws parent", Provider: "test", CapacityMode: db.ParentCapacityObserved,
 		AllocationLimitPPM: 1_000_000, Enabled: true, Metadata: json.RawMessage(`{}`),
 	})

@@ -100,21 +100,12 @@ func (s Store) GetParentSubscription(ctx context.Context, id string) (ParentSubs
 	return item, notFound(err)
 }
 
-func (s Store) GetParentSubscriptionByUpstreamAuthIndex(ctx context.Context, authIndex string) (ParentSubscription, error) {
-	var item ParentSubscription
-	err := scoped(ctx, s.DB).Where("status <> ?", "missing").First(&item, "upstream_auth_index = ?", strings.TrimSpace(authIndex)).Error
-	return item, notFound(err)
-}
-
 func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscription) (ParentSubscription, error) {
 	if item.ID == "" {
 		item.ID = identity.NewID()
 	}
 	item.UpstreamCredentialID = strings.TrimSpace(item.UpstreamCredentialID)
-	item.UpstreamAuthIndex = strings.TrimSpace(item.UpstreamAuthIndex)
-	if item.UpstreamAuthIndex == "" {
-		item.UpstreamAuthIndex = item.UpstreamCredentialID
-	}
+	item.UpstreamAuthIndex = item.UpstreamCredentialID
 	item.UpstreamCredentialName = strings.TrimSpace(item.UpstreamCredentialName)
 	item.Name = strings.TrimSpace(item.Name)
 	item.Provider = strings.TrimSpace(item.Provider)
@@ -134,9 +125,9 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 		item.QuotaSnapshot = json.RawMessage(`{}`)
 	}
 	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "upstream_auth_index"}},
+		Columns: []clause.Column{{Name: "upstream_credential_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"upstream_credential_id", "upstream_credential_name", "name", "provider", "plan_type", "status", "upstream_unavailable", "capacity_mode",
+			"upstream_auth_index", "upstream_credential_name", "name", "provider", "plan_type", "status", "upstream_unavailable", "capacity_mode",
 			"allocation_limit_ppm", "enabled", "model_allowlist", "metadata", "last_synced_at", "updated_at",
 		}),
 	}).Create(&item).Error
@@ -144,53 +135,11 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 		return ParentSubscription{}, err
 	}
 	var result ParentSubscription
-	err = scoped(ctx, s.DB).First(&result, "upstream_auth_index = ?", item.UpstreamAuthIndex).Error
-	return result, err
-}
-
-func (s Store) SyncParentSubscription(ctx context.Context, item ParentSubscription) (ParentSubscription, error) {
-	if item.ID == "" {
-		item.ID = identity.NewID()
-	}
-	item.UpstreamCredentialID = strings.TrimSpace(item.UpstreamCredentialID)
-	item.UpstreamAuthIndex = strings.TrimSpace(item.UpstreamAuthIndex)
-	if item.UpstreamAuthIndex == "" {
-		item.UpstreamAuthIndex = item.UpstreamCredentialID
-	}
-	item.UpstreamCredentialName = strings.TrimSpace(item.UpstreamCredentialName)
-	item.Name = strings.TrimSpace(item.Name)
-	if item.Name == "" {
-		item.Name = firstNonEmpty(item.UpstreamCredentialName, item.UpstreamCredentialID)
-	}
-	if len(item.Metadata) == 0 {
-		item.Metadata = json.RawMessage(`{}`)
-	}
-	if len(item.QuotaSnapshot) == 0 {
-		item.QuotaSnapshot = json.RawMessage(`{}`)
-	}
-	if item.CapacityMode == "" {
-		item.CapacityMode = db.ParentCapacityUnmetered
-	}
-	if item.AllocationLimitPPM == 0 {
-		item.AllocationLimitPPM = 1_000_000
-	}
-	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "upstream_auth_index"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"upstream_credential_id", "upstream_credential_name", "provider", "plan_type", "status", "upstream_unavailable", "upstream_model_allowlist", "metadata", "last_synced_at", "updated_at",
-		}),
-	}).Create(&item).Error
-	if err != nil {
-		return ParentSubscription{}, err
-	}
-	var result ParentSubscription
-	err = scoped(ctx, s.DB).First(&result, "upstream_auth_index = ?", item.UpstreamAuthIndex).Error
+	err = scoped(ctx, s.DB).First(&result, "upstream_credential_id = ?", item.UpstreamCredentialID).Error
 	return result, err
 }
 
 // SyncNativeParentSubscription uses the credential ID as the durable identity.
-// Native credentials do not have the separate scheduler auth index used by the
-// legacy external Upstream control plane.
 func (s Store) SyncNativeParentSubscription(ctx context.Context, item ParentSubscription) (ParentSubscription, error) {
 	if item.ID == "" {
 		item.ID = identity.NewID()
@@ -228,7 +177,7 @@ func (s Store) MarkMissingParentSubscriptions(ctx context.Context, seen []string
 		query := tx.Model(&ParentSubscription{}).
 			Where("last_synced_at IS NOT NULL AND last_synced_at < ?", syncStartedAt)
 		if len(seen) > 0 {
-			query = query.Where("upstream_auth_index NOT IN ?", seen)
+			query = query.Where("upstream_credential_id NOT IN ?", seen)
 		}
 		var missingIDs []string
 		if err := query.Pluck("id", &missingIDs).Error; err != nil || len(missingIDs) == 0 {
