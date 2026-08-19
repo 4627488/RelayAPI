@@ -595,6 +595,13 @@ export function UsageView({
         <div className="flex flex-wrap items-center gap-2">
           {admin ? (
             <Select
+              items={[
+                { value: "all", label: "全部用户" },
+                ...users.map((user) => ({
+                  value: user.id,
+                  label: user.name,
+                })),
+              ]}
               value={userID}
               onValueChange={(value) => void load(days, value ?? "all")}
             >

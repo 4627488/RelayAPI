@@ -71,4 +71,3 @@ func TestRuntimeCredentialsUsesSelectedProxyOrExplicitDirect(t *testing.T) {
 		}
 	}
 }
-
