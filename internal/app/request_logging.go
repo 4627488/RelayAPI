@@ -2,12 +2,16 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"hash/fnv"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -201,4 +205,143 @@ func boundedErrorText(value string) string {
 		return value[:end]
 	}
 	return value
+}
+
+type requestLogContext struct {
+	price           *store.ResolvedPrice
+	detail          *store.LogDetailInput
+	ttftMS          *int64
+	upstreamTraceID string
+	errorCode       string
+	requestBytes    int64
+	forwardedBytes  int64
+	responseBytes   int64
+	stageTimings    string
+	completedAt     time.Time
+}
+
+func rejectedRequestDetail(r *http.Request, body []byte, code, message string, started time.Time, timeline ...*latencyTimeline) *store.LogDetailInput {
+	detail := baseRequestDetail(r, body)
+	if r.ContentLength > detail.RequestBodyBytes {
+		detail.RequestBodyBytes = r.ContentLength
+		detail.RequestBodyTruncated = true
+	}
+	detail.ErrorName = code
+	detail.ErrorMessage = boundedErrorText(message)
+	completed := time.Now()
+	if len(timeline) > 0 && timeline[0] != nil {
+		timeline[0].Step(completed, "relay_rejection", "Relay 返回错误", "relay", "请求在进入上游前被 Relay 拒绝")
+		detail.StageTimings = timeline[0].JSON(completed)
+	} else {
+		fallback := newLatencyTimeline(started)
+		fallback.Step(completed, "relay_rejection", "Relay 返回错误", "relay", "请求在进入上游前被 Relay 拒绝")
+		detail.StageTimings = fallback.JSON(completed)
+	}
+	return detail
+}
+
+func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta,
+	r *http.Request, status int, started time.Time, code, message string, detail *store.LogDetailInput) {
+	requestBytes := int64(0)
+	stageTimings := "{}"
+	if detail != nil {
+		requestBytes = detail.RequestBodyBytes
+		stageTimings = detail.StageTimings
+	}
+	a.writeRequestLog(key, requestID, admission, meta, r, status, started, nil, false, true, 0,
+		boundedErrorText(message), requestLogContext{detail: detail, errorCode: code, requestBytes: requestBytes, stageTimings: stageTimings})
+}
+
+func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
+	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) {
+	input := requestLogInput(key, requestID, admission, meta, r, status, started, parsed, pricingComplete, settled, cost, errorMessage, logContext)
+	if !shouldRetainRequestDetail(requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
+		input.Detail = nil
+	}
+	if err := a.store.WriteLog(context.WithoutCancel(r.Context()), input); err != nil {
+		slog.Error("write request log", "request_id", requestID, "error", err)
+	}
+}
+
+func (a *App) finalizeResponse(task func()) {
+	if task == nil {
+		return
+	}
+	if a.finalizationSlots == nil {
+		task()
+		return
+	}
+	select {
+	case a.finalizationSlots <- struct{}{}:
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			defer func() {
+				<-a.finalizationSlots
+				if value := recover(); value != nil {
+					slog.Error("finalize response panic", "value", value)
+				}
+			}()
+			task()
+		}()
+	default:
+		// A saturated finalizer means the database is already behind. Preserve
+		// accounting correctness and apply backpressure instead of creating an
+		// unbounded goroutine queue.
+		task()
+	}
+}
+
+func requestLogInput(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
+	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) store.LogInput {
+	client := identifyClientUserAgent(r.UserAgent())
+	usage := store.Usage{}
+	upstreamID := ""
+	if parsed != nil {
+		usage = parsed.Usage
+		upstreamID = parsed.RequestID
+	}
+	var costPointer *int64
+	if pricingComplete {
+		costPointer = &cost
+	}
+	detail := logContext.detail
+	if detail != nil {
+		if logContext.requestBytes == 0 {
+			logContext.requestBytes = detail.RequestBodyBytes
+		}
+		if logContext.forwardedBytes == 0 {
+			logContext.forwardedBytes = detail.ForwardedBodyBytes
+		}
+		if logContext.responseBytes == 0 {
+			logContext.responseBytes = detail.UpstreamBodyBytes
+		}
+	}
+	completedAt := logContext.completedAt
+	if completedAt.IsZero() {
+		completedAt = time.Now()
+	}
+	return store.LogInput{
+		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, UpstreamRequestID: upstreamID, Model: meta.Model,
+		UpstreamTraceID: logContext.upstreamTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
+		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),
+		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
+		ClientName: client.Name, ClientVersion: client.Version, UserAgent: client.UserAgent,
+		AuthIndex: admissionAuthIndex(admission), ParentSubscriptionID: admission.ParentSubscriptionID,
+		ChildSubscriptionID: admission.ChildSubscriptionID,
+		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
+		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
+		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: completedAt.Sub(started).Milliseconds(),
+		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
+		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
+		StageTimings: logContext.stageTimings,
+		StartedAt:    started, CompletedAt: completedAt, Detail: detail,
+	}
+}
+
+func parsedResponseServiceTier(parsed *billing.Result) string {
+	if parsed == nil {
+		return ""
+	}
+	return parsed.ResponseServiceTier
 }

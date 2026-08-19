@@ -2,8 +2,10 @@ package app
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/4627488/RelayAPI/internal/config"
@@ -165,5 +167,51 @@ func TestCaptureWebSocketRequestStoresFirstFrame(t *testing.T) {
 	captureWebSocketRequest(detail, []byte(`{"type":"response.create","model":"gpt-5.6"}`))
 	if !strings.Contains(detail.RequestBody, "response.create") || detail.RequestBodyBytes == 0 || detail.RequestBodyTruncated {
 		t.Fatalf("captured websocket request = %+v", detail)
+	}
+}
+
+func TestFinalizeResponseIsBoundedAndAsynchronous(t *testing.T) {
+	a := &App{finalizationSlots: make(chan struct{}, 1)}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	a.finalizeResponse(func() {
+		close(started)
+		<-release
+	})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("finalizer did not start")
+	}
+
+	fallbackRan := false
+	a.finalizeResponse(func() { fallbackRan = true })
+	if !fallbackRan {
+		t.Fatal("saturated finalizer did not apply synchronous backpressure")
+	}
+	close(release)
+	a.wg.Wait()
+}
+
+func TestRequestLogUsesResponseBoundaryInsteadOfFinalizerTime(t *testing.T) {
+	started := time.Now().Add(-2 * time.Second).Truncate(time.Millisecond)
+	completed := started.Add(750 * time.Millisecond)
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	input := requestLogInput(store.KeyContext{}, "request", store.Admission{}, requestMeta{}, request,
+		http.StatusOK, started, nil, false, true, 0, "", requestLogContext{completedAt: completed})
+	if input.LatencyMS != 750 || !input.CompletedAt.Equal(completed) {
+		t.Fatalf("logged boundary = %d ms at %s, want 750 ms at %s", input.LatencyMS, input.CompletedAt, completed)
+	}
+}
+
+func TestRejectedRequestDetailMarksUnreadBody(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("request body"))
+	request.Header.Set("X-Goog-Api-Key", "relay_gemini_secret")
+	detail := rejectedRequestDetail(request, nil, "upstream_overloaded", "Upstream overloaded", time.Now())
+	if detail.RequestBodyBytes != request.ContentLength || !detail.RequestBodyTruncated {
+		t.Fatalf("unread body metadata = bytes %d, truncated %v", detail.RequestBodyBytes, detail.RequestBodyTruncated)
+	}
+	if strings.Contains(detail.RequestHeaders, "relay_gemini_secret") || detail.ErrorName != "upstream_overloaded" {
+		t.Fatalf("rejected detail = %+v", detail)
 	}
 }
