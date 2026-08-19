@@ -40,6 +40,7 @@ type RequestTrace struct {
 	Model        string
 	Translation  string
 	Attempts     []ExecutionAttempt
+	Transfer     TraceTransfer
 }
 
 type ExecutionAttempt struct {

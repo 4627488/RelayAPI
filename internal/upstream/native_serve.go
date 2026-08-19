@@ -132,13 +132,16 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	} else {
 		credential.releaseProbe()
 	}
+	clock := newTransferClock()
+	defer clock.apply(trace)
+	source := clock.reader(response.Body)
 	if collectStream && response.StatusCode < 400 {
-		payload, collectErr := collectResponsesSSE(response.Body)
+		payload, collectErr := collectResponsesSSE(source)
 		if collectErr != nil {
 			if len(payload) > 0 {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadGateway)
-				_, _ = w.Write(payload)
+				_, _ = clock.writer(w).Write(payload)
 				return
 			}
 			writeRuntimeError(w, http.StatusBadGateway, "upstream_response_invalid", collectErr.Error())
@@ -155,30 +158,30 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(response.StatusCode)
-		_, _ = w.Write(payload)
+		_, _ = clock.writer(w).Write(payload)
 		return
 	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	stream := clientStream
-	streamWriter := io.Writer(w)
+	streamWriter := clock.writer(w)
 	if stream && response.StatusCode < http.StatusBadRequest {
 		// net/http buffers small writes. Provider SSE events are often only a few
 		// hundred bytes, so a plain io.Copy can otherwise hold several events
 		// before the outer relay (and therefore the client) sees anything.
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
-			streamWriter = immediateFlushWriter{Writer: w, Flusher: flusher}
+			streamWriter = clock.writer(immediateFlushWriter{Writer: w, Flusher: flusher})
 		}
 	}
 	if response.StatusCode >= 400 || (responseMode == "passthrough" && toolRestorer == nil) {
-		_, _ = io.Copy(streamWriter, response.Body)
+		_, _ = io.Copy(streamWriter, source)
 		return
 	}
 	if stream {
 		if responseMode == "passthrough" {
 			if toolRestorer != nil {
-				_ = restoreToolStream(streamWriter, response.Body, toolRestorer)
+				_ = restoreToolStream(streamWriter, source, toolRestorer)
 			}
 			return
 		}
@@ -186,10 +189,10 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		if toolRestorer != nil {
 			destination = toolRestoreWriter{Writer: streamWriter, restorer: toolRestorer}
 		}
-		_ = translateStream(destination, response.Body, responseMode, model)
+		_ = translateStream(destination, source, responseMode, model)
 		return
 	}
-	payload, readErr := io.ReadAll(io.LimitReader(response.Body, maxProviderResponseBytes))
+	payload, readErr := io.ReadAll(io.LimitReader(source, maxProviderResponseBytes))
 	if readErr != nil {
 		return
 	}
@@ -202,7 +205,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	if toolRestorer != nil {
 		payload = toolRestorer.restore(payload)
 	}
-	_, _ = w.Write(payload)
+	_, _ = streamWriter.Write(payload)
 }
 
 type immediateFlushWriter struct {

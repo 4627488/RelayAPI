@@ -87,7 +87,6 @@ type runtimeWriter struct {
 	committed bool
 	writeErr  error
 	firstByte func()
-	onHeader  func()
 }
 
 func (w *runtimeWriter) Header() http.Header {
@@ -105,9 +104,6 @@ func (w *runtimeWriter) WriteHeader(status int) {
 		status = http.StatusOK
 	}
 	w.status = status
-	if w.onHeader != nil {
-		w.onHeader()
-	}
 	w.commit()
 }
 
@@ -193,20 +189,13 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 	}
 	call.timeline.Step(time.Now(), "prepare_runtime_request", "准备运行时请求", "relay", "去掉客户端凭据头并钉住上游账户")
 	capture := &rollingCapture{max: 2 << 20}
-	var firstByteAt, headerAt time.Time
+	var firstByteAt time.Time
 	out := &runtimeWriter{client: w, stream: call.meta.Stream, capture: capture, firstByte: func() {
 		if firstByteAt.IsZero() {
 			firstByteAt = time.Now()
 		}
-	}, onHeader: func() {
-		if headerAt.IsZero() {
-			headerAt = time.Now()
-		}
 	}}
 	a.nativeRuntime.Serve(out, r, call.body)
-	if !headerAt.IsZero() {
-		call.timeline.Step(headerAt, "runtime_response_headers", "运行时返回响应头", "runtime", "进程内调用原生运行时，包含凭据路由与供应商等待")
-	}
 	status := out.statusCode()
 	errorForDetail := ""
 	if status >= http.StatusBadRequest {
@@ -276,10 +265,8 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		if !firstByteAt.IsZero() {
 			ttft := firstByteAt.Sub(call.started).Milliseconds()
 			logContext.ttftMS = &ttft
-			call.timeline.Step(firstByteAt, "runtime_first_body", "等待首个响应数据", "runtime", "运行时已返回响应头，继续等待首个响应正文数据")
-			call.timeline.Mark(firstByteAt, "first_byte", "首字节")
+			call.timeline.Mark(firstByteAt, "first_byte", "客户端首字节")
 		}
-		call.timeline.Step(responseReadAt, "response_transfer", "响应传输", "downstream", "运行时直接写入客户端响应")
 		retainDetail := shouldRetainRequestDetail(call.requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM)
 		logContext.maybeCaptureUpstream(status, upstreamHeaders, rawResponse, responseTruncated, responseBytes, retainDetail)
 		if retainDetail && (writeErr != nil || status >= http.StatusBadRequest) {
