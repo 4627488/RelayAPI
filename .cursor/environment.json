@@ -5,7 +5,7 @@
   "terminals": [
     {
       "name": "relayapi backend",
-      "command": "DATABASE_URL='postgres://relay:relay@127.0.0.1:5432/relay?sslmode=disable' RELAY_SESSION_SECRET='relay-dev-session-secret-0123456789abcdef' RELAY_API_KEY_ENCRYPTION_KEY='relay-dev-encryption-key-0123456789abcdef' RELAY_PUBLIC_URL='http://localhost:3000' go run ./cmd/relayapi"
+      "command": "./.cursor/start.sh && DATABASE_URL='postgres://relay:relay@127.0.0.1:5432/relay?sslmode=disable' RELAY_SESSION_SECRET='relay-dev-session-secret-0123456789abcdef' RELAY_API_KEY_ENCRYPTION_KEY='relay-dev-encryption-key-0123456789abcdef' RELAY_PUBLIC_URL='http://localhost:3000' go run ./cmd/relayapi"
     },
     {
       "name": "web dev server",
