@@ -14,7 +14,7 @@ func TestDefaultNativeRuntimeSettingsExposeOnlyEffectiveControls(t *testing.T) {
 	if compiled.RequestRetry != 2 || compiled.RetryMaxBackoff != 2*time.Second {
 		t.Fatalf("retry settings = %#v", compiled)
 	}
-	if compiled.FailureThreshold != 3 || compiled.FailureCooldown != 30*time.Second {
+	if compiled.FailureThreshold != 3 || compiled.FailureCooldown != 0 {
 		t.Fatalf("isolation settings = %#v", compiled)
 	}
 }
@@ -28,7 +28,8 @@ func TestNativeRuntimeSettingsValidation(t *testing.T) {
 		{"backoff", func(value *nativeRuntimeSettings) { value.RetryMaxBackoffMS = 99 }},
 		{"routing", func(value *nativeRuntimeSettings) { value.RoutingStrategy = "random" }},
 		{"threshold", func(value *nativeRuntimeSettings) { value.CredentialFailureThreshold = 0 }},
-		{"cooldown", func(value *nativeRuntimeSettings) { value.CredentialCooldownSeconds = 4 }},
+		{"cooldown", func(value *nativeRuntimeSettings) { value.CredentialCooldownSeconds = -1 }},
+		{"cooldown_high", func(value *nativeRuntimeSettings) { value.CredentialCooldownSeconds = 3601 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -101,7 +101,7 @@ func chatToResponsesRequest(payload []byte) ([]byte, error) {
 	if err := json.Unmarshal(payload, &source); err != nil {
 		return nil, fmt.Errorf("invalid Chat Completions request: %w", err)
 	}
-	target := copyKnown(source, "model", "stream", "temperature", "top_p", "parallel_tool_calls", "service_tier", "user")
+	target := copyKnown(source, "model", "stream", "temperature", "top_p", "parallel_tool_calls", "service_tier", "user", "prompt_cache_key", "previous_response_id")
 	input := make([]any, 0)
 	for _, raw := range asAnySlice(source["messages"]) {
 		message, ok := raw.(map[string]any)

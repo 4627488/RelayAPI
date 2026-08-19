@@ -32,7 +32,7 @@ type settingsState struct {
 func defaultNativeRuntimeSettings() nativeRuntimeSettings {
 	return nativeRuntimeSettings{
 		RequestRetry: 2, RetryMaxBackoffMS: 2_000, RoutingStrategy: "round-robin",
-		CredentialFailureThreshold: 3, CredentialCooldownSeconds: 30,
+		CredentialFailureThreshold: 3, CredentialCooldownSeconds: 0,
 	}
 }
 
@@ -47,8 +47,9 @@ func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSetti
 		return settings, true, "", err
 	}
 	// Settings written before the native UI cleanup do not contain the new
-	// isolation fields. Zero is not a valid user value, so it is safe to fill
-	// these defaults during the one-time shape migration.
+	// isolation fields. Zero retry/threshold values are not valid user input,
+	// so they can be filled during the one-time shape migration. Cooldown 0 is
+	// valid and means isolation is off.
 	defaults := defaultNativeRuntimeSettings()
 	if settings.RetryMaxBackoffMS == 0 {
 		settings.RetryMaxBackoffMS = defaults.RetryMaxBackoffMS
@@ -56,9 +57,7 @@ func (a *App) loadNativeRuntimeSettings(ctx context.Context) (nativeRuntimeSetti
 	if settings.CredentialFailureThreshold == 0 {
 		settings.CredentialFailureThreshold = defaults.CredentialFailureThreshold
 	}
-	if settings.CredentialCooldownSeconds == 0 {
-		settings.CredentialCooldownSeconds = defaults.CredentialCooldownSeconds
-	}
+	// Zero cooldown is a valid stored value: it disables credential isolation.
 	var legacy struct {
 		ProxyURL string `json:"proxy_url"`
 	}
@@ -79,8 +78,8 @@ func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
 	if value.CredentialFailureThreshold < 1 || value.CredentialFailureThreshold > 20 {
 		return "凭据隔离阈值必须在 1 到 20 之间"
 	}
-	if value.CredentialCooldownSeconds < 5 || value.CredentialCooldownSeconds > 3600 {
-		return "凭据冷却时间必须在 5 到 3600 秒之间"
+	if value.CredentialCooldownSeconds < 0 || value.CredentialCooldownSeconds > 3600 {
+		return "凭据冷却时间必须在 0 到 3600 秒之间；0 表示不隔离"
 	}
 	return ""
 }

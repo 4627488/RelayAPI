@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 func TestLatencyTimelinePreservesCriticalPathAndNetworkSpans(t *testing.T) {
@@ -42,6 +44,40 @@ func TestLatencyTimelineKeepsSubMillisecondPrecision(t *testing.T) {
 	}
 	if trace.Segments[0].DurationMS != 0.375 || trace.TotalMS != 0.5 {
 		t.Fatalf("sub-ms trace = %#v", trace)
+	}
+}
+
+func TestLatencyTimelineAddsNativeRuntimeAttempts(t *testing.T) {
+	started := time.Now()
+	timeline := newLatencyTimeline(started)
+	timeline.Step(started.Add(time.Millisecond), "prepare", "Prepare", "relay", "")
+	timeline.AddUpstreamTrace(upstream.RequestTrace{
+		RequestID: "request", StartedAt: started.Add(time.Millisecond), CompletedAt: started.Add(12 * time.Millisecond),
+		Translation: "responses-to-chat",
+		Attempts: []upstream.ExecutionAttempt{{
+			Number: 1, Provider: "aliyun-bailian", Model: "qwen-plus", CredentialID: "bailian-a",
+			StartedAt: started.Add(3 * time.Millisecond), CompletedAt: started.Add(10 * time.Millisecond), Status: "complete",
+			GetConnAt: started.Add(3 * time.Millisecond), GotConnAt: started.Add(4 * time.Millisecond),
+			RequestWrittenAt: started.Add(5 * time.Millisecond), FirstResponseAt: started.Add(8 * time.Millisecond),
+		}},
+	})
+	var trace latencyTrace
+	if err := json.Unmarshal([]byte(timeline.JSON(started.Add(13*time.Millisecond))), &trace); err != nil {
+		t.Fatal(err)
+	}
+	if trace.Version != 3 {
+		t.Fatalf("trace version = %d", trace.Version)
+	}
+	wantTracks := map[string]bool{"runtime": false, "attempt": false, "network": false}
+	for _, segment := range trace.Segments {
+		if _, exists := wantTracks[segment.Track]; exists {
+			wantTracks[segment.Track] = true
+		}
+	}
+	for track, found := range wantTracks {
+		if !found {
+			t.Fatalf("missing %s track in %#v", track, trace.Segments)
+		}
 	}
 }
 

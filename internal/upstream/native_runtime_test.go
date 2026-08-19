@@ -216,7 +216,7 @@ func TestCredentialIsolationRemovesAndRestoresOnlyFailingRoute(t *testing.T) {
 		t.Fatal("hot settings update discarded credential isolation state")
 	}
 	for range 4 {
-		selected, ok := runtime.selectCredential("gpt", "")
+		selected, ok := runtime.selectCredential("gpt", "", "")
 		if !ok || selected.ID != "second" {
 			t.Fatalf("selected credential = %#v, want healthy second route", selected)
 		}
@@ -369,6 +369,86 @@ func TestResponsesStreamTranslationEmitsChatToolDeltas(t *testing.T) {
 	text := output.String()
 	if !strings.Contains(text, `"name":"shell"`) || !strings.Contains(text, `"finish_reason":"tool_calls"`) || !strings.Contains(text, `"total_tokens":5`) || !strings.Contains(text, "data: [DONE]") {
 		t.Fatalf("translated stream = %s", text)
+	}
+}
+
+func TestBailianChatRequestsUseResponsesAndStayOnTheSameCredential(t *testing.T) {
+	var keys []string
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Errorf("path = %s, want /responses", r.URL.Path)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["prompt_cache_key"] != "conv-1" {
+			t.Errorf("prompt_cache_key = %#v", body["prompt_cache_key"])
+		}
+		keys = append(keys, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "resp_bailian", "object": "response", "status": "completed",
+			"output": []any{map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "ok"}}}},
+			"usage":  map[string]any{"input_tokens": 10, "output_tokens": 2, "input_tokens_details": map[string]any{"cached_tokens": 8}},
+		})
+	}))
+	defer provider.Close()
+
+	runtimeValue, err := NewRuntime(Options{APIKey: "runtime-test-key"}, []Credential{
+		{ID: "bailian-a", Provider: "aliyun-bailian", Enabled: true, Models: []string{"qwen-plus"}, Document: testJSON(t, map[string]any{"type": "openai-compatibility", "api_key": "key-a", "base_url": provider.URL})},
+		{ID: "bailian-b", Provider: "aliyun-bailian", Enabled: true, Models: []string{"qwen-plus"}, Document: testJSON(t, map[string]any{"type": "openai-compatibility", "api_key": "key-b", "base_url": provider.URL})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := runtimeValue.(*nativeRuntime)
+	if compiled := runtime.credentials["bailian-a"]; compiled == nil || !compiled.SessionAffinity || compiled.Vendor != "aliyun-bailian" {
+		t.Fatalf("bailian credential = %#v", compiled)
+	}
+	body := `{"model":"qwen-plus","prompt_cache_key":"conv-1","messages":[{"role":"user","content":"hi"}]}`
+	first := runtimeRequest(t, runtime, http.MethodPost, "/v1/chat/completions", body)
+	second := runtimeRequest(t, runtime, http.MethodPost, "/v1/chat/completions", body)
+	if first.Code != http.StatusOK || second.Code != http.StatusOK {
+		t.Fatalf("status = %d / %d, body = %s / %s", first.Code, second.Code, first.Body.String(), second.Body.String())
+	}
+	if !strings.Contains(first.Body.String(), `"object":"chat.completion"`) {
+		t.Fatalf("client protocol was not restored: %s", first.Body.String())
+	}
+	if len(keys) != 2 || keys[0] == "" || keys[0] != keys[1] {
+		t.Fatalf("session affinity keys = %#v", keys)
+	}
+}
+
+func TestDisabledCredentialCoolingKeepsFailedRoutesEligible(t *testing.T) {
+	runtimeValue, err := NewRuntime(Options{FailureThreshold: 1, FailureCooldown: 0}, []Credential{
+		{ID: "only", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key"})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := runtimeValue.(*nativeRuntime)
+	credential := runtime.credentials["only"]
+	credential.record(false, "temporary", true, 1, 0)
+	if !credential.available(time.Now()) {
+		t.Fatal("zero cooldown isolated the only credential")
+	}
+}
+
+func TestRuntimeTraceCapturesProviderAttempts(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"id":"resp_ok","output":[]}`)
+	}))
+	defer provider.Close()
+	runtime := newTestRuntime(t, Credential{
+		ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"},
+		Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL}),
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt","input":"hi"}`))
+	request.Header.Set("Authorization", "Bearer runtime-test-key")
+	request.Header.Set("X-Relay-Request-ID", "trace-1")
+	recorder := httptest.NewRecorder()
+	runtime.Handler().ServeHTTP(recorder, request)
+	trace, ok := runtime.TakeRequestTrace("trace-1")
+	if !ok || trace.CredentialID != "openai" || len(trace.Attempts) != 1 || trace.Attempts[0].Status != "complete" {
+		t.Fatalf("trace = %#v, ok = %v", trace, ok)
 	}
 }
 

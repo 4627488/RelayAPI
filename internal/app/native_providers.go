@@ -55,6 +55,11 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				documentProvider = "openai-compatibility"
 			}
 			document := map[string]any{"type": documentProvider, "api_key": strings.TrimSpace(input.APIKey), "auth_kind": "api_key"}
+			if input.Provider == "aliyun-bailian" {
+				document["vendor"] = "aliyun-bailian"
+				document["session_affinity"] = true
+				document["cache_mode"] = "auto"
+			}
 			baseURL := strings.TrimSpace(input.BaseURL)
 			if baseURL == "" {
 				switch input.Provider {

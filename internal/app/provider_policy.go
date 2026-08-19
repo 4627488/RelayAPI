@@ -45,8 +45,8 @@ func validateSupportedCredentialDocument(provider string, document []byte) error
 	if !supported {
 		return fmt.Errorf("凭据类型 %q 不受支持", rawType)
 	}
-	if provider == "aliyun-bailian" {
-		provider = "openai-compatibility"
+	if provider == "aliyun-bailian" && (documentProvider == "aliyun-bailian" || documentProvider == "openai-compatibility") {
+		return nil
 	}
 	if (provider == "openai" && documentProvider == "openai-compatibility") ||
 		(provider == "openai-compatibility" && documentProvider == "openai") {

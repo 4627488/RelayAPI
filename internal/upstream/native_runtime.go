@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"sort"
 	"strings"
@@ -34,6 +35,8 @@ type nativeRuntime struct {
 	next        atomic.Uint64
 	handler     http.Handler
 	oauth       *oauthManager
+	affinity    map[string]affinityEntry
+	traces      *requestTraceRegistry
 }
 
 type nativeCredential struct {
@@ -56,10 +59,12 @@ type nativeCredential struct {
 	expiresAt           time.Time
 	consecutiveFailures int
 	probeActive         bool
+	SessionAffinity     bool
+	Vendor              string
 }
 
-// NewRuntime creates the focused Relay runtime for Codex, Kimi, xAI and
-// OpenAI-compatible providers.
+// NewRuntime creates the focused Relay runtime for Codex, Kimi, xAI,
+// Aliyun Bailian and OpenAI-compatible providers.
 func NewRuntime(options Options, credentials []Credential) (Runtime, error) {
 	if options.RetryMaxBackoff <= 0 {
 		options.RetryMaxBackoff = 2 * time.Second
@@ -67,10 +72,14 @@ func NewRuntime(options Options, credentials []Credential) (Runtime, error) {
 	if options.FailureThreshold <= 0 {
 		options.FailureThreshold = 3
 	}
-	if options.FailureCooldown <= 0 {
-		options.FailureCooldown = 30 * time.Second
+	if options.FailureCooldown < 0 {
+		options.FailureCooldown = 0
 	}
-	r := &nativeRuntime{options: options, credentials: make(map[string]*nativeCredential), modelRoutes: make(map[string][]string)}
+	r := &nativeRuntime{
+		options: options, credentials: make(map[string]*nativeCredential),
+		modelRoutes: make(map[string][]string), affinity: make(map[string]affinityEntry),
+		traces: newRequestTraceRegistry(),
+	}
 	r.settings = Settings{
 		RequestRetry:    options.RequestRetry,
 		RetryMaxBackoff: options.RetryMaxBackoff, RoutingStrategy: options.RoutingStrategy,
@@ -100,7 +109,7 @@ func (r *nativeRuntime) Models() []string {
 }
 
 func (r *nativeRuntime) ModelProvider(model string) (string, bool) {
-	credential, ok := r.selectCredential(model, "")
+	credential, ok := r.selectCredential(model, "", "")
 	if !ok {
 		return "", false
 	}
@@ -187,7 +196,7 @@ func (r *nativeRuntime) ApplySettings(_ context.Context, settings Settings) erro
 	if settings.RoutingStrategy != "" && settings.RoutingStrategy != "round-robin" && settings.RoutingStrategy != "fill-first" {
 		return fmt.Errorf("unsupported routing strategy %q", settings.RoutingStrategy)
 	}
-	if settings.FailureThreshold < 1 || settings.FailureCooldown <= 0 {
+	if settings.FailureThreshold < 1 || settings.FailureCooldown < 0 {
 		return errors.New("credential failure isolation settings are invalid")
 	}
 	r.mu.RLock()
@@ -284,20 +293,26 @@ func (r *nativeRuntime) rebuildRoutesLocked() {
 	sort.Slice(r.models, func(i, j int) bool { return strings.ToLower(r.models[i]) < strings.ToLower(r.models[j]) })
 }
 
-func (r *nativeRuntime) selectCredential(model, pinnedID string) (*nativeCredential, bool) {
+func (r *nativeRuntime) selectCredential(model, pinnedID, affinityKey string) (*nativeCredential, bool) {
+	now := time.Now()
+	if pinnedID != "" {
+		r.mu.RLock()
+		credential := r.credentials[pinnedID]
+		r.mu.RUnlock()
+		return credential, credential != nil && credential.available(now)
+	}
+	if pinned := r.affinityCredential(affinityKey, model, now); pinned != nil {
+		return pinned, true
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if pinnedID != "" {
-		credential := r.credentials[pinnedID]
-		return credential, credential != nil && credential.available(time.Now())
-	}
 	ids := r.modelRoutes[strings.ToLower(strings.TrimSpace(model))]
 	if len(ids) == 0 {
 		return nil, false
 	}
 	available := ids[:0]
 	for _, id := range ids {
-		if credential := r.credentials[id]; credential != nil && credential.available(time.Now()) {
+		if credential := r.credentials[id]; credential != nil && credential.available(now) {
 			available = append(available, id)
 		}
 	}
@@ -326,7 +341,8 @@ func compileNativeCredential(source Credential, globalProxy string) (*nativeCred
 	}
 	if rawType := firstString(document, "type"); rawType != "" {
 		documentProvider := canonicalProvider(rawType)
-		compatibleOpenAI := (provider == "openai" || provider == "openai-compatibility") && (documentProvider == "openai" || documentProvider == "openai-compatibility")
+		compatibleOpenAI := (provider == "openai" || provider == "openai-compatibility" || provider == "aliyun-bailian") &&
+			(documentProvider == "openai" || documentProvider == "openai-compatibility" || documentProvider == "aliyun-bailian")
 		if documentProvider == "" || (documentProvider != provider && !compatibleOpenAI) {
 			return nil, fmt.Errorf("upstream credential %q type %q does not match provider %q", source.ID, rawType, source.Provider)
 		}
@@ -338,6 +354,15 @@ func compileNativeCredential(source Credential, globalProxy string) (*nativeCred
 		ProxyURL: firstString(document, "proxy_url"), ModelRoutes: make(map[string]string),
 		Status:   CredentialStatus{Status: "active", PlanType: firstString(document, "plan_type")},
 		document: document,
+	}
+	credential.Vendor = firstString(document, "vendor")
+	if affinity, ok := document["session_affinity"].(bool); ok {
+		credential.SessionAffinity = affinity
+	} else if firstString(document, "session_affinity") == "true" || provider == "aliyun-bailian" {
+		credential.SessionAffinity = true
+	}
+	if provider == "aliyun-bailian" && credential.Vendor == "" {
+		credential.Vendor = "aliyun-bailian"
 	}
 	credential.WebSockets, _ = document["websockets"].(bool)
 	credential.BaseURL = strings.TrimRight(firstString(document, "base_url"), "/")
@@ -386,7 +411,9 @@ func canonicalProvider(value string) string {
 		return "xai"
 	case "openai":
 		return "openai"
-	case "openai-compatible", "openai-compatibility", "aliyun-bailian", "bailian":
+	case "aliyun-bailian", "bailian":
+		return "aliyun-bailian"
+	case "openai-compatible", "openai-compatibility":
 		return "openai-compatibility"
 	default:
 		return ""
@@ -401,6 +428,8 @@ func defaultBaseURL(provider string) string {
 		return "https://api.kimi.com/coding/v1"
 	case "xai":
 		return "https://api.x.ai/v1"
+	case "aliyun-bailian":
+		return "https://dashscope.aliyuncs.com/compatible-mode/v1"
 	default:
 		return "https://api.openai.com/v1"
 	}
@@ -571,6 +600,9 @@ func (r *nativeRuntime) serveModels(w http.ResponseWriter, request *http.Request
 }
 
 func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Request) {
+	requestID := strings.TrimSpace(request.Header.Get("X-Relay-Request-ID"))
+	trace := r.beginTrace(requestID)
+	defer r.finishTrace(requestID)
 	body, err := io.ReadAll(io.LimitReader(request.Body, 1<<30))
 	if err != nil {
 		writeRuntimeError(w, http.StatusBadRequest, "invalid_request", "unable to read request")
@@ -578,11 +610,13 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	}
 	model := jsonString(body, "model")
 	pinned := strings.TrimSpace(request.Header.Get("X-Relay-Upstream-Credential-ID"))
-	credential, ok := r.selectCredential(model, strings.TrimSpace(pinned))
+	affinityKey := sessionAffinityKey(body, request.Header)
+	credential, ok := r.selectCredential(model, pinned, affinityKey)
 	if !ok {
 		writeRuntimeError(w, http.StatusServiceUnavailable, "model_account_unavailable", "no upstream credential can serve this model")
 		return
 	}
+	r.rememberAffinity(affinityKey, credential)
 	upstreamModel := credential.ModelRoutes[strings.ToLower(model)]
 	if upstreamModel == "" {
 		upstreamModel = model
@@ -595,7 +629,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		body, err = responsesToChatRequest(body)
 		requestPath = "/chat/completions"
 		responseMode = "chat-to-responses"
-	} else if credential.Provider == "codex" && isChatPath(requestPath) {
+	} else if (credential.Provider == "codex" || credential.Provider == "aliyun-bailian") && isChatPath(requestPath) {
 		body, err = chatToResponsesRequest(body)
 		requestPath = "/responses"
 		responseMode = "responses-to-chat"
@@ -604,11 +638,12 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		writeRuntimeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	trace.setSelection(credential, model, responseMode)
 	if credential.Provider == "xai" {
 		body, toolRestorer = lowerCodexTools(body)
 	}
 	target := credential.upstreamURL(requestPath)
-	response, err := r.doProviderRequest(request, credential, target, body)
+	response, err := r.doProviderRequest(request, credential, target, body, trace)
 	if err != nil {
 		r.mu.RLock()
 		threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown
@@ -681,7 +716,7 @@ func (w immediateFlushWriter) Write(payload []byte) (int, error) {
 	return written, err
 }
 
-func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nativeCredential, target string, body []byte) (*http.Response, error) {
+func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nativeCredential, target string, body []byte, trace *RequestTrace) (*http.Response, error) {
 	r.mu.RLock()
 	requestRetry, retryMaxBackoff := r.settings.RequestRetry, r.settings.RetryMaxBackoff
 	r.mu.RUnlock()
@@ -691,7 +726,7 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 	}
 	var lastErr error
 	refreshed := false
-	for attempt := 0; attempt < attempts; attempt++ {
+	for index := 0; index < attempts; index++ {
 		if !refreshed && credential.tokenNeedsRefresh() {
 			if refreshErr := r.refreshCredential(source.Context(), credential); refreshErr == nil {
 				refreshed = true
@@ -703,13 +738,37 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 		}
 		copyProviderHeaders(request.Header, source.Header)
 		credential.authorize(request.Header)
+		clientTraceState, clientTrace := providerClientTrace()
+		request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
+		attemptStarted := time.Now()
 		response, err := credential.client.Do(request)
+		snapshot := clientTraceState.snapshot()
+		recorded := ExecutionAttempt{
+			Number: index + 1, StartedAt: attemptStarted, CompletedAt: time.Now(),
+			RequestWrittenAt: snapshot.wroteRequest, FirstResponseAt: snapshot.firstResponseByte,
+			GetConnAt: snapshot.getConn, GotConnAt: snapshot.gotConn,
+			DNSStartedAt: snapshot.dnsStart, DNSCompletedAt: snapshot.dnsDone,
+			ConnectStartedAt: snapshot.connectStart, ConnectCompletedAt: snapshot.connectDone,
+			TLSStartedAt: snapshot.tlsStart, TLSCompletedAt: snapshot.tlsDone,
+			Provider: credential.Provider, Model: jsonString(body, "model"), CredentialID: credential.ID,
+			ConnectionReused: snapshot.reused, RemoteAddr: snapshot.remoteAddr,
+		}
+		if err != nil {
+			recorded.Status, recorded.Error = "failed", err.Error()
+		} else if response.StatusCode >= 400 {
+			recorded.Status, recorded.Error = "failed", fmt.Sprintf("HTTP %d", response.StatusCode)
+			recorded.HeadersAt = snapshot.firstResponseByte
+		} else {
+			recorded.Status = "complete"
+			recorded.HeadersAt = snapshot.firstResponseByte
+		}
+		trace.addAttempt(recorded)
 		if err == nil && response.StatusCode == http.StatusUnauthorized && !refreshed && credential.hasRefreshToken() {
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
 			_ = response.Body.Close()
 			if refreshErr := r.refreshCredential(source.Context(), credential); refreshErr == nil {
 				refreshed = true
-				attempt--
+				index--
 				continue
 			}
 		}
@@ -718,18 +777,18 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 		}
 		if err == nil {
 			lastErr = fmt.Errorf("upstream returned HTTP %d", response.StatusCode)
-			if attempt+1 >= attempts {
+			if index+1 >= attempts {
 				return response, nil
 			}
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
 			_ = response.Body.Close()
 		} else {
 			lastErr = err
-			if attempt+1 >= attempts {
+			if index+1 >= attempts {
 				break
 			}
 		}
-		delay := time.Duration(1<<min(attempt, 5)) * 100 * time.Millisecond
+		delay := time.Duration(1<<min(index, 5)) * 100 * time.Millisecond
 		if retryMaxBackoff > 0 && delay > retryMaxBackoff {
 			delay = retryMaxBackoff
 		}
@@ -867,7 +926,7 @@ func (c *nativeCredential) record(success bool, message string, availabilityFail
 			wasProbe := c.probeActive
 			c.probeActive = false
 			c.consecutiveFailures++
-			if wasProbe || c.consecutiveFailures >= threshold {
+			if cooldown > 0 && (wasProbe || c.consecutiveFailures >= threshold) {
 				c.Status.Status = "cooldown"
 				c.Status.Unavailable = true
 				c.Status.NextRetryAfter = time.Now().Add(cooldown)

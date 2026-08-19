@@ -34,7 +34,7 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 	}
 	model := websocketModel(first)
 	pinned := strings.TrimSpace(request.Header.Get("X-Relay-Upstream-Credential-ID"))
-	credential, ok := r.selectCredential(model, pinned)
+	credential, ok := r.selectCredential(model, pinned, sessionAffinityKey(first, request.Header))
 	if !ok || (!credential.WebSockets && !websocketPrewarm(first)) {
 		_ = downstream.WriteJSON(map[string]any{"type": "error", "error": map[string]any{"type": "model_account_unavailable", "message": "no upstream credential can serve this model"}})
 		return

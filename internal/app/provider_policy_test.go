@@ -26,6 +26,7 @@ func TestValidateSupportedCredentialDocumentRejectsExecutorEscape(t *testing.T) 
 	}{
 		{"codex", `{"type":"codex"}`},
 		{"aliyun-bailian", `{"type":"openai-compatibility"}`},
+		{"aliyun-bailian", `{"type":"aliyun-bailian"}`},
 		{"openai", `{"type":"openai-compatibility"}`},
 	}
 	for _, test := range valid {

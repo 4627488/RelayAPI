@@ -78,7 +78,7 @@ const recommended: Omit<RuntimeSettings, "system_proxy_id"> = {
   retry_max_backoff_ms: 2000,
   routing_strategy: "round-robin",
   credential_failure_threshold: 3,
-  credential_cooldown_seconds: 30,
+  credential_cooldown_seconds: 0,
 }
 
 function NumberField({
@@ -374,9 +374,9 @@ export function RuntimeSettingsView() {
                   id="failure-cooldown"
                   label="隔离冷却时间"
                   suffix="秒"
-                  description="冷却结束后自动回到候选池，由下一次请求验证恢复情况。"
+                  description="0 表示不隔离。非 0 时冷却结束后回到候选池，由下一次请求验证恢复。"
                   value={value.credential_cooldown_seconds}
-                  min={5}
+                  min={0}
                   max={3600}
                   onChange={(next) =>
                     patch("credential_cooldown_seconds", next)

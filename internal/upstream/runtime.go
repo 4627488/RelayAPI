@@ -24,7 +24,36 @@ type Runtime interface {
 	OAuthStatus(context.Context, string) (OAuthStatusResult, error)
 	SubmitOAuthCallback(context.Context, string, string, string) error
 	CancelOAuth(context.Context, string) error
+	TakeRequestTrace(string) (RequestTrace, bool)
 	Close(context.Context) error
+}
+
+// RequestTrace is the secret-free execution trace observed inside the native runtime.
+type RequestTrace struct {
+	RequestID    string
+	StartedAt    time.Time
+	CompletedAt  time.Time
+	Provider     string
+	CredentialID string
+	Model        string
+	Translation  string
+	Attempts     []ExecutionAttempt
+}
+
+type ExecutionAttempt struct {
+	Number                                              int
+	StartedAt, CompletedAt, HeadersAt, RequestWrittenAt time.Time
+	FirstResponseAt, GetConnAt, GotConnAt               time.Time
+	DNSStartedAt, DNSCompletedAt                        time.Time
+	ConnectStartedAt, ConnectCompletedAt                time.Time
+	TLSStartedAt, TLSCompletedAt                        time.Time
+	Status                                              string
+	Error                                               string
+	Provider                                            string
+	Model                                               string
+	CredentialID                                        string
+	ConnectionReused                                    bool
+	RemoteAddr                                          string
 }
 
 type Credential struct {

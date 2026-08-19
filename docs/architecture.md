@@ -1,8 +1,9 @@
 # RelayAPI architecture
 
 RelayAPI is a Codex-first, multi-tenant policy and accounting gateway. It owns
-the provider runtime for Codex, Kimi, xAI and OpenAI-compatible services such as
-Aliyun Bailian. There is no external or embedded third-party proxy runtime.
+the provider runtime for Codex, Kimi, xAI/Grok and OpenAI-compatible services
+such as Aliyun Bailian. There is no external or embedded third-party proxy
+runtime.
 
 ## Request boundary
 
@@ -36,6 +37,16 @@ WebSocket sessions support multiple turns. A completed turn may release its
 upstream connection while retaining the downstream session; the next complete
 turn reconnects with the same credential. `generate:false` prewarm is answered
 locally without consuming provider capacity.
+
+Bailian credentials are first-class: Chat Completions is translated to the
+DashScope Responses path so prefix cache can attach, and requests that share
+`prompt_cache_key`, `previous_response_id`, or `user` stay on the same
+credential for an hour.
+
+Request logs keep a version-3 latency trace. Relay records admission and
+loopback timing; the native runtime overlays routing, each provider attempt,
+and provider DNS/TCP/TLS spans on parallel tracks so they are not added twice
+into the critical path.
 
 ## Reliability and security
 
