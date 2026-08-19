@@ -278,6 +278,12 @@ func TestCodexCatalogAdvertisesFullAgentSurfaceByDefault(t *testing.T) {
 			t.Fatalf("%s = %#v; model = %#v", key, model[key], model)
 		}
 	}
+	if model["shell_type"] != "shell_command" || model["supported_in_api"] != true || model["default_reasoning_level"] != "medium" {
+		t.Fatalf("Codex ModelInfo required fields missing: %#v", model)
+	}
+	if model["base_instructions"] == nil || model["base_instructions"] == "" || model["max_context_window"] == nil {
+		t.Fatalf("Codex ModelInfo instructions/context missing: %#v", model)
+	}
 }
 
 func TestCodexOAuthStartUsesPKCEAndStableCallback(t *testing.T) {

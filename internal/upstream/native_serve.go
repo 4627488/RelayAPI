@@ -35,16 +35,10 @@ func (r *nativeRuntime) ServeModels(w http.ResponseWriter, request *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	if _, codex := request.URL.Query()["client_version"]; codex {
 		items := make([]map[string]any, 0, len(models))
-		for _, model := range models {
-			items = append(items, map[string]any{
-				"slug": model, "display_name": model, "description": "RelayAPI upstream model", "visibility": "list",
-				"context_window": 262144, "max_output_tokens": 32768,
-				"apply_patch_tool_type": "freeform", "web_search_tool_type": "text_and_image", "multi_agent_version": "v2",
-				"supports_parallel_tool_calls": true, "supports_image_detail_original": true, "supports_search_tool": true,
-				"support_verbosity": true, "supports_reasoning_summary_parameter": true, "include_skills_usage_instructions": true,
-				"include_plugin_usage_instructions": true, "include_apps_usage_instructions": true, "prefer_websockets": true,
-				"input_modalities": []any{"text", "image"},
-			})
+		for index, model := range models {
+			item := NewCodexCatalogItem(model)
+			CompleteCodexCatalogItem(item, 100+index*10)
+			items = append(items, item)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"models": items})
 		return

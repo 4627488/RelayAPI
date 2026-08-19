@@ -20,11 +20,17 @@ Gemini-native `/v1beta/*` remain intentionally unsupported.
 
 ## Codex interoperability
 
-Codex model catalogs advertise the full agent surface by default: freeform
-`apply_patch`, web search, parallel tools, image input, reasoning summaries,
-skills/plugins/apps instructions, WebSocket preference and multi-agent v2.
-Administrators may select the diagnostic `verified` policy, but optimistic is
-the product default.
+Codex model catalogs advertise a complete `ModelInfo` per published slug so
+the client does not fall back to `model_info_from_slug`. Relay's tenant, key,
+and subscription allowlists decide visibility: allowed models are `list`,
+denied official slugs stay as `hide` tombstones (dropping them would let
+Codex's bundled copy reappear). Each row includes reasoning levels, both
+context windows, `shell_type`, `supported_in_api`, `priority`,
+`base_instructions`, and the full agent surface: freeform `apply_patch`, web
+search, parallel tools, image input, reasoning summaries, skills/plugins/apps
+instructions, WebSocket preference and multi-agent v2. Image-only slugs such
+as `gpt-image-*` stay hidden in the Codex picker. Optimistic capability
+advertising is the product default; adapters lower unsupported wire details.
 
 Provider adapters preserve that client contract. For example, xAI and generic
 Chat Completions backends receive a JSON-schema string-input function when

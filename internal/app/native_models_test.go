@@ -105,7 +105,7 @@ func TestFilterCodexCatalogHidesDeniedModelsInsteadOfDroppingThem(t *testing.T) 
 }
 
 func TestPromoteCodexCatalogCapabilitiesAdvertisesFullAgentSurface(t *testing.T) {
-	payload := []byte(`{"models":[{"slug":"qwen-max","visibility":"list"},{"slug":"private","visibility":"hide"}]}`)
+	payload := []byte(`{"models":[{"slug":"qwen-max","visibility":"list"},{"slug":"private","visibility":"hide"},{"slug":"gpt-image-1.5","visibility":"list"}]}`)
 	promoted, err := promoteCodexCatalogCapabilities(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -116,6 +116,40 @@ func TestPromoteCodexCatalogCapabilitiesAdvertisesFullAgentSurface(t *testing.T)
 	}
 	items := document["models"].([]any)
 	model := items[0].(map[string]any)
+	assertCodexModelInfoComplete(t, model)
+	if model["display_name"] != "Qwen Max" || model["visibility"] != "list" {
+		t.Fatalf("visible model identity = %#v", model)
+	}
+	hidden := items[1].(map[string]any)
+	assertCodexModelInfoComplete(t, hidden)
+	if hidden["visibility"] != "hide" {
+		t.Fatalf("hidden tombstone visibility = %#v", hidden["visibility"])
+	}
+	image := items[2].(map[string]any)
+	if image["visibility"] != "hide" {
+		t.Fatalf("image-only model stayed visible: %#v", image)
+	}
+	assertCodexModelInfoComplete(t, image)
+}
+
+func assertCodexModelInfoComplete(t *testing.T, model map[string]any) {
+	t.Helper()
+	if catalogModelID(model) == "" {
+		t.Fatalf("slug missing: %#v", model)
+	}
+	if model["display_name"] == nil || model["display_name"] == "" || model["description"] == nil || model["description"] == "" {
+		t.Fatalf("identity missing: %#v", model)
+	}
+	if model["shell_type"] != "shell_command" || model["default_reasoning_level"] != "medium" || model["supported_in_api"] != true {
+		t.Fatalf("required picker fields = %#v", model)
+	}
+	levels, _ := model["supported_reasoning_levels"].([]any)
+	if len(levels) == 0 {
+		t.Fatalf("supported_reasoning_levels = %#v", model["supported_reasoning_levels"])
+	}
+	if model["max_context_window"] == nil || model["context_window"] == nil {
+		t.Fatalf("context windows missing: %#v", model)
+	}
 	if model["apply_patch_tool_type"] != "freeform" || model["web_search_tool_type"] != "text_and_image" || model["multi_agent_version"] != "v2" {
 		t.Fatalf("full Codex capabilities were not advertised: %#v", model)
 	}
@@ -124,9 +158,12 @@ func TestPromoteCodexCatalogCapabilitiesAdvertisesFullAgentSurface(t *testing.T)
 			t.Fatalf("%s = %#v, want true", key, model[key])
 		}
 	}
-	hidden := items[1].(map[string]any)
-	if _, exists := hidden["apply_patch_tool_type"]; exists {
-		t.Fatalf("hidden tombstone was promoted: %#v", hidden)
+	if model["base_instructions"] == nil || model["base_instructions"] == "" {
+		t.Fatal("base_instructions missing")
+	}
+	policy, _ := model["truncation_policy"].(map[string]any)
+	if policy["mode"] == nil || policy["limit"] == nil {
+		t.Fatalf("truncation_policy = %#v", model["truncation_policy"])
 	}
 }
 
@@ -235,8 +272,14 @@ func TestServeModelCatalogReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 	if got["private-model"] == nil || got["private-model"]["visibility"] != "hide" {
 		t.Fatal("catalog did not hide the model outside the key and tenant allowlists")
 	}
+	assertCodexModelInfoComplete(t, got["grok-4.5"])
+	assertCodexModelInfoComplete(t, got["gpt-5.6-sol"])
+	assertCodexModelInfoComplete(t, got["private-model"])
 	if got["gpt-5.6-sol"]["context_window"] != got["grok-4.5"]["context_window"] {
 		t.Fatal("alias did not inherit target model metadata")
+	}
+	if got["gpt-5.6-sol"]["supported_reasoning_levels"] == nil || got["private-model"]["base_instructions"] == nil {
+		t.Fatal("alias or hidden override dropped Codex ModelInfo fields")
 	}
 	if recorder.Header().Get("ETag") == "" {
 		t.Fatal("Codex model catalog did not include an ETag")

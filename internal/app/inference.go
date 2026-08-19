@@ -186,7 +186,7 @@ type publicInference struct {
 func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call publicInference) {
 	prepareRuntimeHeaders(r.Header, call.requestID, call.admission.UpstreamCredentialID)
 	if isCodexResponsesPath(r.URL.Path) {
-		w.Header().Set("X-Models-Etag", modelCatalogRevision(call.key, a.nativeRuntime.Models(), "codex-capabilities=full-v1"))
+		w.Header().Set("X-Models-Etag", modelCatalogRevision(call.key, a.nativeRuntime.Models(), codexCatalogRevisionToken))
 	}
 	if call.admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", call.admission.ChildSubscriptionID)
