@@ -32,6 +32,20 @@ instructions, WebSocket preference and multi-agent v2. Image-only slugs such
 as `gpt-image-*` stay hidden in the Codex picker. Optimistic capability
 advertising is the product default; adapters lower unsupported wire details.
 
+Context windows, input modalities, and advertised reasoning levels for
+non-OpenAI slugs are overlaid from [models.dev](https://models.dev/api.json),
+the same catalog Relay already fetches for prices. The snapshot loads from
+stored `RawJSON` on boot and refreshes a few seconds later, or immediately
+after an admin catalog sync. First-party rows win (`openai`, `xai`,
+`deepseek`, `moonshotai`, then `moonshotai-cn`); aggregator copies of the
+same slug are ignored. Official OpenAI slugs keep Relay's Codex template so
+the bundled picker contract stays stable. Moonshot and DeepSeek overlays
+turn off `prefer_websockets` (Relay's WebSocket path is Responses-native and
+those providers are Chat-only) plus verbosity and multi-agent flags those
+APIs do not have. `apply_patch` stays freeform; adapters still lower it for
+Chat. models.dev is not a permission source, and Relay does not fetch CPA's
+`models.json` or embed the official Codex catalog.
+
 Provider adapters preserve that client contract. For example, xAI and generic
 Chat Completions backends receive a JSON-schema string-input function when
 Codex sends a freeform custom tool. Relay restores the provider's function call

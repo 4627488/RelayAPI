@@ -41,6 +41,7 @@ type App struct {
 	nativeSettings    settingsState
 	memoryReclaiming  atomic.Bool
 	finalizationSlots chan struct{}
+	capabilities      atomic.Pointer[pricing.CapabilityIndex]
 }
 
 type contextKey string
@@ -77,9 +78,55 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	a.routes()
+	a.loadCapabilitiesFromStore(ctx)
 	a.wg.Add(1)
 	go a.maintenance()
 	return a, nil
+}
+
+func (a *App) setCapabilities(index *pricing.CapabilityIndex) {
+	if a == nil || index == nil {
+		return
+	}
+	a.capabilities.Store(index)
+}
+
+func (a *App) capabilityIndex() *pricing.CapabilityIndex {
+	if a == nil {
+		return nil
+	}
+	return a.capabilities.Load()
+}
+
+func (a *App) codexCatalogRevisionToken() string {
+	token := codexCatalogRevisionToken
+	if version := a.capabilityIndex().Version(); version != "" {
+		return token + "|" + version
+	}
+	return token
+}
+
+func (a *App) loadCapabilitiesFromStore(ctx context.Context) {
+	if a == nil || a.store.DB == nil {
+		return
+	}
+	rows, err := a.store.ListCatalogPrices(ctx)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	models := make([]string, len(rows))
+	sourceIDs := make([]string, len(rows))
+	raw := make([]string, len(rows))
+	version := ""
+	for i, row := range rows {
+		models[i] = row.Model
+		sourceIDs[i] = row.SourceModelID
+		raw[i] = row.RawJSON
+		if version == "" {
+			version = row.Version
+		}
+	}
+	a.setCapabilities(pricing.IndexFromCatalogPrices(version, models, sourceIDs, raw))
 }
 
 func (a *App) Close() {
@@ -104,6 +151,8 @@ func (a *App) maintenance() {
 	defer quotaTicker.Stop()
 	initialQuotaSync := time.NewTimer(15 * time.Second)
 	defer initialQuotaSync.Stop()
+	initialCatalog := time.NewTimer(3 * time.Second)
+	defer initialCatalog.Stop()
 	retentionTicker := time.NewTicker(time.Hour)
 	defer retentionTicker.Stop()
 	initialRetention := time.NewTimer(30 * time.Second)
@@ -124,6 +173,10 @@ func (a *App) maintenance() {
 			}
 		case <-initialRetention.C:
 			a.runRetention(context.Background())
+		case <-initialCatalog.C:
+			if err := a.refreshPricingCatalog(context.Background(), false); err != nil {
+				slog.Warn("refresh models.dev catalog", "error", err)
+			}
 		case <-initialQuotaSync.C:
 			a.refreshParentQuotas(context.Background())
 		case <-quotaTicker.C:
@@ -215,7 +268,11 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	if err != nil {
 		return err
 	}
-	return a.store.ApplyCatalog(ctx, result)
+	if err := a.store.ApplyCatalog(ctx, result); err != nil {
+		return err
+	}
+	a.setCapabilities(pricing.NewCapabilityIndex(result.Version, result.Capabilities))
+	return nil
 }
 
 func (a *App) Handler() http.Handler {

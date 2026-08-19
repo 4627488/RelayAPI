@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
 )
@@ -106,7 +107,7 @@ func TestFilterCodexCatalogHidesDeniedModelsInsteadOfDroppingThem(t *testing.T) 
 
 func TestPromoteCodexCatalogCapabilitiesAdvertisesFullAgentSurface(t *testing.T) {
 	payload := []byte(`{"models":[{"slug":"qwen-max","visibility":"list"},{"slug":"private","visibility":"hide"},{"slug":"gpt-image-1.5","visibility":"list"}]}`)
-	promoted, err := promoteCodexCatalogCapabilities(payload)
+	promoted, err := promoteCodexCatalogCapabilities(payload, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +133,91 @@ func TestPromoteCodexCatalogCapabilitiesAdvertisesFullAgentSurface(t *testing.T)
 	assertCodexModelInfoComplete(t, image)
 }
 
+func TestPromoteOverlaysModelsDevCapabilities(t *testing.T) {
+	payload := []byte(`{"models":[
+		{"slug":"kimi-k3","visibility":"list"},
+		{"slug":"kimi-k2.5","visibility":"list"},
+		{"slug":"gpt-5.4","visibility":"list"}
+	]}`)
+	index := pricing.NewCapabilityIndex("sha256:test", []pricing.Capability{
+		{
+			ID: "moonshotai/kimi-k3", Name: "Kimi K3", Provider: "moonshotai", Context: 1048576, MaxOutput: 65536,
+			Reasoning: true, ReasoningOptions: []pricing.ReasoningOption{{Type: "effort", Values: []string{"low", "high", "max"}}},
+			InputModalities: []string{"text", "image"},
+		},
+		{
+			ID: "moonshotai/kimi-k2.5", Name: "Kimi K2.5", Provider: "moonshotai", Context: 262144, MaxOutput: 32768,
+			Reasoning: true, ReasoningOptions: []pricing.ReasoningOption{{Type: "toggle"}},
+			InputModalities: []string{"text", "image"},
+		},
+		{
+			ID: "openai/gpt-5.4", Name: "GPT-5.4", Provider: "openai", Context: 1050000,
+			Reasoning: true, ReasoningOptions: []pricing.ReasoningOption{{Type: "effort", Values: []string{"none", "low", "medium", "high", "xhigh"}}},
+		},
+	})
+	promoted, err := promoteCodexCatalogCapabilities(payload, index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(promoted, &document); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]map[string]any{}
+	for _, raw := range document["models"].([]any) {
+		item := raw.(map[string]any)
+		got[catalogModelID(item)] = item
+	}
+	k3 := got["kimi-k3"]
+	assertCodexModelInfoComplete(t, k3)
+	if k3["context_window"] != float64(1048576) || k3["max_context_window"] != float64(1048576) || k3["max_output_tokens"] != float64(65536) {
+		t.Fatalf("kimi-k3 windows = %#v", k3)
+	}
+	if k3["prefer_websockets"] != false || k3["support_verbosity"] != false || k3["multi_agent_version"] != nil {
+		t.Fatalf("kimi-k3 should not advertise Responses-only transport: %#v", k3)
+	}
+	if k3["apply_patch_tool_type"] != "freeform" {
+		t.Fatalf("models.dev overlay deleted apply_patch: %#v", k3["apply_patch_tool_type"])
+	}
+	assertReasoningEfforts(t, k3, []string{"low", "high", "max"}, "high")
+
+	k25 := got["kimi-k2.5"]
+	assertCodexModelInfoComplete(t, k25)
+	assertReasoningEfforts(t, k25, []string{"none", "high"}, "high")
+	if k25["prefer_websockets"] != false {
+		t.Fatalf("kimi-k2.5 prefer_websockets = %#v", k25["prefer_websockets"])
+	}
+
+	gpt := got["gpt-5.4"]
+	assertCodexModelInfoComplete(t, gpt)
+	if gpt["context_window"] != float64(262144) {
+		t.Fatalf("official OpenAI slug was overlaid: context=%#v", gpt["context_window"])
+	}
+	assertReasoningEfforts(t, gpt, []string{"none", "low", "medium", "high"}, "medium")
+}
+
+func assertReasoningEfforts(t *testing.T, model map[string]any, want []string, defaultLevel string) {
+	t.Helper()
+	if model["default_reasoning_level"] != defaultLevel {
+		t.Fatalf("default_reasoning_level = %#v, want %q", model["default_reasoning_level"], defaultLevel)
+	}
+	levels, _ := model["supported_reasoning_levels"].([]any)
+	got := make([]string, 0, len(levels))
+	for _, raw := range levels {
+		level, _ := raw.(map[string]any)
+		effort, _ := level["effort"].(string)
+		got = append(got, effort)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("reasoning efforts = %#v, want %#v", got, want)
+	}
+	for i, effort := range want {
+		if got[i] != effort {
+			t.Fatalf("reasoning efforts = %#v, want %#v", got, want)
+		}
+	}
+}
+
 func assertCodexModelInfoComplete(t *testing.T, model map[string]any) {
 	t.Helper()
 	if catalogModelID(model) == "" {
@@ -140,8 +226,11 @@ func assertCodexModelInfoComplete(t *testing.T, model map[string]any) {
 	if model["display_name"] == nil || model["display_name"] == "" || model["description"] == nil || model["description"] == "" {
 		t.Fatalf("identity missing: %#v", model)
 	}
-	if model["shell_type"] != "shell_command" || model["default_reasoning_level"] != "medium" || model["supported_in_api"] != true {
+	if model["shell_type"] != "shell_command" || model["supported_in_api"] != true {
 		t.Fatalf("required picker fields = %#v", model)
+	}
+	if model["default_reasoning_level"] == nil || model["default_reasoning_level"] == "" {
+		t.Fatalf("default_reasoning_level missing: %#v", model)
 	}
 	levels, _ := model["supported_reasoning_levels"].([]any)
 	if len(levels) == 0 {
@@ -150,10 +239,13 @@ func assertCodexModelInfoComplete(t *testing.T, model map[string]any) {
 	if model["max_context_window"] == nil || model["context_window"] == nil {
 		t.Fatalf("context windows missing: %#v", model)
 	}
-	if model["apply_patch_tool_type"] != "freeform" || model["web_search_tool_type"] != "text_and_image" || model["multi_agent_version"] != "v2" {
-		t.Fatalf("full Codex capabilities were not advertised: %#v", model)
+	if model["apply_patch_tool_type"] != "freeform" {
+		t.Fatalf("apply_patch_tool_type = %#v", model["apply_patch_tool_type"])
 	}
-	for _, key := range []string{"supports_parallel_tool_calls", "supports_image_detail_original", "supports_search_tool", "support_verbosity", "supports_reasoning_summary_parameter", "prefer_websockets"} {
+	if model["web_search_tool_type"] != "text" && model["web_search_tool_type"] != "text_and_image" {
+		t.Fatalf("web_search_tool_type = %#v", model["web_search_tool_type"])
+	}
+	for _, key := range []string{"supports_parallel_tool_calls", "supports_search_tool", "supports_reasoning_summary_parameter"} {
 		if model[key] != true {
 			t.Fatalf("%s = %#v, want true", key, model[key])
 		}

@@ -140,6 +140,9 @@ func TestFetchModelsDevBuildsVersionedFivePartCatalog(t *testing.T) {
 		"openai":{"id":"openai","models":{
 			"gpt-test":{"id":"gpt-test","cost":{"input":2.5,"output":10,"cache_read":0.25,"cache_write":3.125}}
 		}},
+		"moonshotai":{"id":"moonshotai","models":{
+			"kimi-k3":{"id":"kimi-k3","name":"Kimi K3","reasoning":true,"reasoning_options":[{"type":"effort","values":["low","high","max"]}],"limit":{"context":1048576,"output":65536},"modalities":{"input":["text","image"]}}
+		}},
 		"anthropic":{"id":"anthropic","models":{
 			"claude-a":{"id":"claude-a","cost":{"input":3,"output":15}},
 			"claude-b":{"id":"claude-b","cost":{"input":3,"output":15}},
@@ -172,5 +175,10 @@ func TestFetchModelsDevBuildsVersionedFivePartCatalog(t *testing.T) {
 	if found == nil || found.InputNanoUSDPerToken != 2500 || found.CachedInputNanoUSDPerToken != 250 ||
 		found.CacheWriteNanoUSDPerToken != 3125 || found.ReasoningNanoUSDPerToken != 10000 {
 		t.Fatalf("unexpected converted price: %+v", found)
+	}
+	index := NewCapabilityIndex(result.Version, result.Capabilities)
+	kimi, ok := index.Lookup("kimi-k3")
+	if !ok || kimi.Context != 1048576 || kimi.Provider != "moonshotai" || !kimi.Reasoning {
+		t.Fatalf("unpriced first-party capability missing: %#v ok=%v", kimi, ok)
 	}
 }

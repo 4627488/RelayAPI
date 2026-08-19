@@ -797,6 +797,7 @@ func (a *App) adminPricingSync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	a.setCapabilities(pricing.NewCapabilityIndex(result.Version, result.Capabilities))
 	samples := result.Entries
 	if len(samples) > 20 {
 		samples = samples[:20]

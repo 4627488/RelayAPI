@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
 )
@@ -19,7 +20,7 @@ const maxModelCatalogBytes int64 = 256 << 20
 
 // Bump this when the Codex ModelInfo shape changes so clients refresh
 // GET /v1/models and honor X-Models-Etag on subsequent Responses calls.
-const codexCatalogRevisionToken = "codex-modelinfo-v1"
+const codexCatalogRevisionToken = "codex-modelinfo-v2"
 
 func isNativeModelCatalogRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodGet {
@@ -63,7 +64,7 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 			return
 		}
 		if codexCatalog {
-			promoted, promoteErr := promoteCodexCatalogCapabilities(payload)
+			promoted, promoteErr := promoteCodexCatalogCapabilities(payload, a.capabilityIndex())
 			if promoteErr != nil {
 				writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型能力无效: %v", promoteErr))
 				return
@@ -81,7 +82,7 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Type", "application/json")
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		etag := modelCatalogRevision(key, runtimeModels, codexCatalogRevisionToken)
+		etag := modelCatalogRevision(key, runtimeModels, a.codexCatalogRevisionToken())
 		w.Header().Set("ETag", etag)
 		if etagMatches(r.Header.Get("If-None-Match"), etag) {
 			w.WriteHeader(http.StatusNotModified)
@@ -96,7 +97,9 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 // expose the richest Codex agent surface and let the provider adapter lower
 // unsupported wire details. Every catalog row — including hide tombstones —
 // must be a complete ModelInfo so Codex does not reject the remote list.
-func promoteCodexCatalogCapabilities(payload []byte) ([]byte, error) {
+// Non-OpenAI slugs then take context, modalities, and reasoning levels from
+// the latest models.dev snapshot when one is loaded.
+func promoteCodexCatalogCapabilities(payload []byte, index *pricing.CapabilityIndex) ([]byte, error) {
 	var document map[string]any
 	if err := json.Unmarshal(payload, &document); err != nil {
 		return nil, err
@@ -111,6 +114,7 @@ func promoteCodexCatalogCapabilities(payload []byte) ([]byte, error) {
 			continue
 		}
 		upstream.CompleteCodexCatalogItem(item, 0)
+		applyModelsDevCapability(item, catalogModelID(item), index)
 	}
 	visible, hidden := 0, 0
 	for _, raw := range items {
@@ -127,6 +131,172 @@ func promoteCodexCatalogCapabilities(payload []byte) ([]byte, error) {
 		item["priority"] = 100 + visible*10
 	}
 	return json.Marshal(document)
+}
+
+func applyModelsDevCapability(item map[string]any, slug string, index *pricing.CapabilityIndex) {
+	if item == nil || index == nil {
+		return
+	}
+	capability, ok := index.Lookup(slug)
+	if !ok || skipModelsDevOverlay(slug, capability) {
+		return
+	}
+	if capability.Name != "" {
+		item["display_name"] = capability.Name
+	}
+	if capability.Context > 0 {
+		item["context_window"] = capability.Context
+		item["max_context_window"] = capability.Context
+	}
+	if capability.MaxOutput > 0 {
+		item["max_output_tokens"] = capability.MaxOutput
+	}
+	if modalities := codexInputModalities(capability.InputModalities); len(modalities) > 0 {
+		item["input_modalities"] = modalities
+		supportsImage := false
+		for _, modality := range modalities {
+			if modality == "image" {
+				supportsImage = true
+			}
+		}
+		item["supports_image_detail_original"] = supportsImage
+		if supportsImage {
+			item["web_search_tool_type"] = "text_and_image"
+		} else {
+			item["web_search_tool_type"] = "text"
+		}
+	}
+	if levels, defaultLevel := modelsDevReasoningLevels(capability); len(levels) > 0 {
+		item["supported_reasoning_levels"] = levels
+		item["default_reasoning_level"] = defaultLevel
+	}
+	switch strings.ToLower(capability.Provider) {
+	case "moonshotai", "moonshotai-cn", "deepseek":
+		item["prefer_websockets"] = false
+		item["support_verbosity"] = false
+		delete(item, "multi_agent_version")
+	}
+}
+
+func skipModelsDevOverlay(slug string, capability pricing.Capability) bool {
+	if strings.EqualFold(capability.Provider, "openai") {
+		return true
+	}
+	lower := strings.ToLower(strings.TrimSpace(slug))
+	switch {
+	case strings.HasPrefix(lower, "gpt-"), strings.HasPrefix(lower, "o1-"),
+		strings.HasPrefix(lower, "o3-"), strings.HasPrefix(lower, "o4-"),
+		strings.HasPrefix(lower, "codex-"):
+		return true
+	default:
+		return false
+	}
+}
+
+func modelsDevReasoningLevels(capability pricing.Capability) ([]any, string) {
+	var effort []string
+	toggle := false
+	for _, option := range capability.ReasoningOptions {
+		switch option.Type {
+		case "toggle":
+			toggle = true
+		case "effort":
+			effort = append(effort, option.Values...)
+		}
+	}
+	if len(effort) > 0 {
+		return reasoningLevelObjects(effort), pickDefaultReasoningLevel(effort, false)
+	}
+	if toggle {
+		return reasoningLevelObjects([]string{"none", "high"}), "high"
+	}
+	if capability.Reasoning {
+		return reasoningLevelObjects([]string{"high"}), "high"
+	}
+	return reasoningLevelObjects([]string{"none"}), "none"
+}
+
+func reasoningLevelObjects(efforts []string) []any {
+	levels := make([]any, 0, len(efforts))
+	seen := make(map[string]struct{}, len(efforts))
+	for _, effort := range efforts {
+		effort = strings.ToLower(strings.TrimSpace(effort))
+		if effort == "" {
+			continue
+		}
+		if _, exists := seen[effort]; exists {
+			continue
+		}
+		seen[effort] = struct{}{}
+		levels = append(levels, map[string]any{"effort": effort, "description": reasoningLevelDescription(effort)})
+	}
+	return levels
+}
+
+func pickDefaultReasoningLevel(efforts []string, allowNone bool) string {
+	preferred := []string{"medium", "high", "low", "max", "xhigh"}
+	if allowNone {
+		preferred = append(preferred, "none")
+	}
+	have := make(map[string]struct{}, len(efforts))
+	first := ""
+	for _, effort := range efforts {
+		effort = strings.ToLower(strings.TrimSpace(effort))
+		if effort == "" {
+			continue
+		}
+		if first == "" {
+			first = effort
+		}
+		have[effort] = struct{}{}
+	}
+	for _, effort := range preferred {
+		if _, ok := have[effort]; ok {
+			return effort
+		}
+	}
+	if first != "" {
+		return first
+	}
+	return "medium"
+}
+
+func reasoningLevelDescription(level string) string {
+	switch level {
+	case "none":
+		return "Fastest responses with limited reasoning"
+	case "minimal":
+		return "Fastest responses with minimal reasoning"
+	case "low":
+		return "Fast responses with lighter reasoning"
+	case "medium":
+		return "Balances speed and reasoning depth for everyday tasks"
+	case "high":
+		return "Greater reasoning depth for complex problems"
+	case "xhigh":
+		return "Extra high reasoning depth for complex problems"
+	case "max":
+		return "Maximum available reasoning depth for complex problems"
+	default:
+		return level
+	}
+}
+
+func codexInputModalities(values []string) []any {
+	result := make([]any, 0, 2)
+	seen := make(map[string]struct{}, 2)
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "text" && value != "image" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func filterModelCatalog(payload []byte, allowedModels []string) ([]byte, error) {
