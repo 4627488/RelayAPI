@@ -614,7 +614,7 @@ func newEmbeddedCPATestApp(t *testing.T, credential relaybridge.Credential) *App
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(runtime.Handler())
-	client, err := cpa.New(server.URL, "embedded-test-key", "", time.Minute)
+	client, err := cpa.New(server.URL, "embedded-test-key", time.Minute)
 	if err != nil {
 		server.Close()
 		_ = runtime.Close(context.Background())
