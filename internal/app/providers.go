@@ -17,3 +17,7 @@ func (a *App) adminProviderAccountUpdate(w http.ResponseWriter, r *http.Request)
 func (a *App) adminProviderAccountDelete(w http.ResponseWriter, r *http.Request) {
 	a.nativeProviderAccountDelete(w, r)
 }
+
+func (a *App) adminProviderAccountTest(w http.ResponseWriter, r *http.Request) {
+	a.nativeProviderAccountTest(w, r)
+}

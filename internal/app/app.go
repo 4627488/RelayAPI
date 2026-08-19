@@ -268,6 +268,7 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("POST /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/models", a.withAdmin(http.HandlerFunc(a.adminProviderModels)))
+	a.mux.Handle("POST /api/admin/providers/accounts/{name}/test", a.withAdmin(http.HandlerFunc(a.adminProviderAccountTest)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
 	a.mux.Handle("POST /api/admin/providers/oauth/sessions", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthStart)))
