@@ -79,7 +79,6 @@ func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		UpstreamCredentialID   string `json:"upstream_credential_id"`
-		UpstreamAuthIndex      string `json:"upstream_auth_index"`
 		UpstreamCredentialName string `json:"upstream_credential_name"`
 		Provider               string `json:"provider"`
 		parentSubscriptionInput
@@ -92,7 +91,7 @@ func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := a.store.UpsertParentSubscription(r.Context(), store.ParentSubscription{
-		UpstreamCredentialID: input.UpstreamCredentialID, UpstreamAuthIndex: input.UpstreamAuthIndex, UpstreamCredentialName: input.UpstreamCredentialName, Provider: input.Provider,
+		UpstreamCredentialID: input.UpstreamCredentialID, UpstreamCredentialName: input.UpstreamCredentialName, Provider: input.Provider,
 		Name: input.Name, PlanType: input.PlanType, CapacityMode: input.CapacityMode,
 		AllocationLimitPPM: 1_000_000, Enabled: input.Enabled, ModelAllowlist: input.ModelAllowlist,
 	})
@@ -251,10 +250,6 @@ func (a *App) adminParentObservations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, item)
 }
 
-func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Request) {
-	a.syncNativeParentSubscriptions(w, r)
-}
-
 func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 	items, err := a.syncNativeParentSubscriptionRows(r.Context())
 	if err != nil {
@@ -279,7 +274,7 @@ func (a *App) syncNativeParentSubscriptionRows(ctx context.Context) ([]store.Par
 		}
 		now := time.Now()
 		item, syncErr := a.store.SyncNativeParentSubscription(ctx, store.ParentSubscription{
-			UpstreamCredentialID: row.ID, UpstreamAuthIndex: row.ID, UpstreamCredentialName: row.ID, Name: row.Name, Provider: row.Provider,
+			UpstreamCredentialID: row.ID, UpstreamCredentialName: row.ID, Name: row.Name, Provider: row.Provider,
 			PlanType: "native", Status: status, CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
 			Enabled: true, UpstreamUnavailable: !row.Enabled, UpstreamModelAllowlist: row.Models, Metadata: json.RawMessage(`{"source":"native"}`), LastSyncedAt: &now,
 		})

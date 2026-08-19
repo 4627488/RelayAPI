@@ -2,40 +2,19 @@ package app
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"hash/fnv"
-	"io"
-	"net"
 	"net/http"
 	"strings"
-	"syscall"
 	"unicode/utf8"
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
-type upstreamErrorInfo struct {
-	Code    string
-	Type    string
-	Message string
-	Summary string
-}
-
 // Raw bodies are diagnostic data, not accounting data. Keep the error detail
 // ceiling small enough that a burst of bad requests cannot become a storage
 // incident; request_logs still retains the complete structured summary.
 const requestLogDetailLimit = 32 << 10
-
-type upstreamTransportError struct {
-	Status    int
-	Code      string
-	Message   string
-	Phase     string
-	Retryable bool
-}
 
 var sensitiveLogHeaders = map[string]struct{}{
 	"api-key": {}, "authorization": {}, "cookie": {}, "set-cookie": {},
@@ -211,26 +190,6 @@ func upstreamErrorMessage(status int, payload []byte) string {
 	return "upstream request failed"
 }
 
-func describeUpstreamError(status int, payload []byte) upstreamErrorInfo {
-	code, errorType, message := upstreamErrorFields(payload)
-	if message == "" {
-		message = upstreamErrorMessage(status, payload)
-	}
-	descriptor := code
-	if errorType != "" && !strings.EqualFold(errorType, code) {
-		descriptor = strings.TrimSpace(descriptor + "/" + errorType)
-	}
-	prefix := fmt.Sprintf("upstream HTTP %d", status)
-	if descriptor != "" {
-		prefix += " " + descriptor
-	}
-	summary := prefix
-	if message != "" {
-		summary += ": " + message
-	}
-	return upstreamErrorInfo{Code: code, Type: errorType, Message: message, Summary: boundedErrorText(summary)}
-}
-
 func boundedErrorText(value string) string {
 	const limit = 2048
 	value = strings.ToValidUTF8(strings.TrimSpace(value), "\uFFFD")
@@ -242,64 +201,4 @@ func boundedErrorText(value string) string {
 		return value[:end]
 	}
 	return value
-}
-
-func classifyUpstreamTransportError(err error, requestContextError error, phase string) upstreamTransportError {
-	result := upstreamTransportError{Status: http.StatusServiceUnavailable, Code: "upstream_unavailable", Message: "上游运行时暂时不可用，请稍后重试", Phase: phase, Retryable: true}
-	if err == nil {
-		return result
-	}
-	if errors.Is(requestContextError, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		result.Status = http.StatusGatewayTimeout
-		result.Code = "upstream_timeout"
-		result.Message = "上游响应超时，请稍后重试"
-		return result
-	}
-	if errors.Is(requestContextError, context.Canceled) || errors.Is(err, context.Canceled) {
-		result.Status = 499
-		result.Code = "client_canceled"
-		result.Message = "请求已由客户端取消"
-		result.Retryable = false
-		return result
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		result.Status = http.StatusGatewayTimeout
-		result.Code = "upstream_timeout"
-		result.Message = "上游响应超时，请稍后重试"
-		return result
-	}
-	lower := strings.ToLower(err.Error())
-	switch {
-	case errors.Is(err, io.EOF), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE),
-		strings.Contains(lower, "unexpected eof"), strings.Contains(lower, "connection reset"),
-		strings.Contains(lower, "server closed idle connection"):
-		result.Code = "upstream_connection_lost"
-		result.Message = "与 Upstream 的连接提前中断；Upstream 可能刚刚重启或触发了内存保护，请重试"
-	case errors.Is(err, syscall.ECONNREFUSED), strings.Contains(lower, "connection refused"), strings.Contains(lower, "no such host"):
-		result.Code = "upstream_unavailable"
-		result.Message = "无法连接 上游运行时；服务可能正在启动或恢复，请稍后重试"
-	}
-	return result
-}
-
-func writeUpstreamTransportError(w http.ResponseWriter, r *http.Request, err error, phase, requestID string) upstreamTransportError {
-	var requestErr error
-	if r != nil {
-		requestErr = r.Context().Err()
-	}
-	classified := classifyUpstreamTransportError(err, requestErr, phase)
-	details := map[string]any{"phase": classified.Phase, "retryable": classified.Retryable}
-	if requestID != "" {
-		details["request_id"] = requestID
-	}
-	if classified.Retryable {
-		details["retry_after_seconds"] = 5
-		w.Header().Set("Retry-After", "5")
-	}
-	w.Header().Set("X-Relay-Error-Code", classified.Code)
-	writeJSON(w, classified.Status, map[string]any{"error": map[string]any{
-		"code": classified.Code, "type": "service_unavailable", "message": classified.Message, "details": details,
-	}})
-	return classified
 }

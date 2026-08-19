@@ -1,8 +1,6 @@
 package app
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -24,29 +22,6 @@ func TestSanitizedHeadersRedactsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(value, "visible") || !strings.Contains(value, "[REDACTED]") {
 		t.Fatalf("unexpected sanitized headers: %s", value)
-	}
-}
-
-func TestClassifyUpstreamTransportError(t *testing.T) {
-	tests := []struct {
-		name, message, code string
-		err                 error
-		requestErr          error
-		status              int
-	}{
-		{name: "client canceled", err: context.Canceled, requestErr: context.Canceled, code: "client_canceled", status: 499},
-		{name: "timeout", err: context.DeadlineExceeded, code: "upstream_timeout", status: http.StatusGatewayTimeout},
-		{name: "reset", err: errors.New("read: connection reset by peer"), code: "upstream_connection_lost", status: http.StatusServiceUnavailable},
-		{name: "unexpected eof", err: errors.New("unexpected EOF"), code: "upstream_connection_lost", status: http.StatusServiceUnavailable},
-		{name: "refused", err: errors.New("dial tcp: connection refused"), code: "upstream_unavailable", status: http.StatusServiceUnavailable},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := classifyUpstreamTransportError(test.err, test.requestErr, "models")
-			if got.Code != test.code || got.Status != test.status || got.Phase != "models" {
-				t.Fatalf("classification = %+v", got)
-			}
-		})
 	}
 }
 
@@ -138,18 +113,6 @@ func TestUpstreamErrorMessageExtractsStructuredMessage(t *testing.T) {
 	got := upstreamErrorMessage(http.StatusBadRequest, []byte(`{"error":{"message":"invalid model"}}`))
 	if got != "invalid model" {
 		t.Fatalf("message = %q", got)
-	}
-}
-
-func TestDescribeUpstreamErrorPreservesProviderDiagnostics(t *testing.T) {
-	got := describeUpstreamError(http.StatusBadRequest, []byte(`{"error":{"type":"invalid_request_error","code":"reasoning_missing","message":"reasoning_content must be passed back"}}`))
-	if got.Code != "reasoning_missing" || got.Type != "invalid_request_error" || got.Message != "reasoning_content must be passed back" {
-		t.Fatalf("upstream error = %+v", got)
-	}
-	for _, value := range []string{"upstream HTTP 400", "reasoning_missing/invalid_request_error", "reasoning_content must be passed back"} {
-		if !strings.Contains(got.Summary, value) {
-			t.Fatalf("summary %q does not contain %q", got.Summary, value)
-		}
 	}
 }
 

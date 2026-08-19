@@ -177,7 +177,7 @@ func TestRuntimeRetriesTransientProviderFailure(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"resp_ok","output":[]}`)
 	}))
 	defer provider.Close()
-	r, err := NewRuntime(Options{APIKey: "runtime-test-key", RequestRetry: 1, RetryMaxBackoff: time.Millisecond, FailureThreshold: 3, FailureCooldown: time.Second}, []Credential{{ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL})}})
+	r, err := NewRuntime(Options{RequestRetry: 1, RetryMaxBackoff: time.Millisecond, FailureThreshold: 3, FailureCooldown: time.Second}, []Credential{{ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"}, Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL})}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestBailianChatRequestsUseResponsesAndStayOnTheSameCredential(t *testing.T)
 	}))
 	defer provider.Close()
 
-	runtimeValue, err := NewRuntime(Options{APIKey: "runtime-test-key"}, []Credential{
+	runtimeValue, err := NewRuntime(Options{}, []Credential{
 		{ID: "bailian-a", Provider: "aliyun-bailian", Enabled: true, Models: []string{"qwen-plus"}, Document: testJSON(t, map[string]any{"type": "openai-compatibility", "api_key": "key-a", "base_url": provider.URL})},
 		{ID: "bailian-b", Provider: "aliyun-bailian", Enabled: true, Models: []string{"qwen-plus"}, Document: testJSON(t, map[string]any{"type": "openai-compatibility", "api_key": "key-b", "base_url": provider.URL})},
 	})
@@ -476,7 +476,7 @@ func TestRuntimeTraceCapturesProviderAttempts(t *testing.T) {
 
 func newTestRuntime(t *testing.T, credential Credential) Runtime {
 	t.Helper()
-	runtime, err := NewRuntime(Options{APIKey: "runtime-test-key"}, []Credential{credential})
+	runtime, err := NewRuntime(Options{}, []Credential{credential})
 	if err != nil {
 		t.Fatal(err)
 	}

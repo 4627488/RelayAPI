@@ -68,8 +68,8 @@ func (c *Client) AdmissionStatus() AdmissionStatus {
 	return c.admission.status(time.Now())
 }
 
-func (c *Client) RecordTransportResult(err error) {
-	c.admission.recordTransportResult(err)
+func (c *Client) RecordOutcome(err error) {
+	c.admission.recordOutcome(err)
 }
 
 func (a *admissionController) acquire(ctx context.Context, expectedBodyBytes int64) (*Lease, error) {
@@ -183,7 +183,7 @@ func (a *admissionController) cancelProbe(probe bool) {
 	a.mu.Unlock()
 }
 
-func (a *admissionController) recordTransportResult(err error) {
+func (a *admissionController) recordOutcome(err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.probeActive = false

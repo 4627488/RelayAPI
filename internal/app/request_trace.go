@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -230,18 +229,4 @@ func firstNonZeroTime(values ...time.Time) time.Time {
 		}
 	}
 	return time.Time{}
-}
-
-type observedReader struct {
-	io.Reader
-	onFirstByte func()
-}
-
-func (r *observedReader) Read(payload []byte) (int, error) {
-	n, err := r.Reader.Read(payload)
-	if n > 0 && r.onFirstByte != nil {
-		r.onFirstByte()
-		r.onFirstByte = nil
-	}
-	return n, err
 }

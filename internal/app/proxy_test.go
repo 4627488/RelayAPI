@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -15,18 +13,6 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
-
-var errStreamTest = errors.New("stream test failure")
-
-type failingStreamReader struct{}
-
-func (failingStreamReader) Read([]byte) (int, error) { return 0, errStreamTest }
-
-type failingResponseWriter struct{ header http.Header }
-
-func (w *failingResponseWriter) Header() http.Header     { return w.header }
-func (*failingResponseWriter) Write([]byte) (int, error) { return 0, errStreamTest }
-func (*failingResponseWriter) WriteHeader(int)           {}
 
 func TestRoutesRegisterWithFrontendCatchAll(t *testing.T) {
 	a := &App{mux: http.NewServeMux()}
@@ -82,16 +68,6 @@ func TestRuntimeWriterStreamsSuccessAndBuffersErrors(t *testing.T) {
 	}
 	if failed.status != http.StatusTooManyRequests || string(failed.errorBody) != `{"error":"busy"}` {
 		t.Fatalf("buffered error = %d %q", failed.status, failed.errorBody)
-	}
-}
-
-func TestCopyStreamingClassifiesOnlyUpstreamReadFailures(t *testing.T) {
-	if err := copyStreaming(httptest.NewRecorder(), failingStreamReader{}, nil); !isUpstreamStreamError(err) {
-		t.Fatalf("upstream read error was not classified: %v", err)
-	}
-	writer := &failingResponseWriter{header: make(http.Header)}
-	if err := copyStreaming(writer, strings.NewReader("payload"), nil); err == nil || isUpstreamStreamError(err) {
-		t.Fatalf("downstream write error misclassified: %v", err)
 	}
 }
 
@@ -168,7 +144,7 @@ func TestEnforceLimitsSkipsUsageQueryWhenNoDailyLimitExists(t *testing.T) {
 func TestRejectedRequestDetailMarksUnreadBody(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("request body"))
 	request.Header.Set("X-Goog-Api-Key", "relay_gemini_secret")
-	detail := rejectedRequestDetail(request, nil, false, "upstream_overloaded", "Upstream overloaded", time.Now())
+	detail := rejectedRequestDetail(request, nil, "upstream_overloaded", "Upstream overloaded", time.Now())
 	if detail.RequestBodyBytes != request.ContentLength || !detail.RequestBodyTruncated {
 		t.Fatalf("unread body metadata = bytes %d, truncated %v", detail.RequestBodyBytes, detail.RequestBodyTruncated)
 	}
@@ -318,13 +294,12 @@ func TestReadBoundedRequestBody(t *testing.T) {
 	})
 }
 
-func TestReleaseBufferedRequestBreaksBodyRetention(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("payload"))
-	request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("payload")), nil }
-	response := &http.Response{Request: request}
-	releaseBufferedRequest(request, response)
-	if request.Body != nil || request.GetBody != nil || response.Request.Body != nil || response.Request.GetBody != nil {
-		t.Fatal("request body remained reachable from the response")
+func TestAdmissionAuthIndexPrefersCredentialID(t *testing.T) {
+	if got := admissionAuthIndex(store.Admission{UpstreamCredentialID: "cred", UpstreamAuthIndex: "legacy"}); got != "cred" {
+		t.Fatalf("got %q", got)
+	}
+	if got := admissionAuthIndex(store.Admission{UpstreamAuthIndex: "legacy"}); got != "legacy" {
+		t.Fatalf("legacy fallback = %q", got)
 	}
 }
 

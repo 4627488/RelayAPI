@@ -296,7 +296,7 @@ func (a *App) routes() {
 	a.mux.Handle("PUT /api/admin/subscriptions/parents/{id}/windows", a.withAdmin(http.HandlerFunc(a.adminParentWindows)))
 	a.mux.Handle("GET /api/admin/subscriptions/parents/{id}/observations", a.withAdmin(http.HandlerFunc(a.adminParentObservations)))
 	a.mux.Handle("POST /api/admin/subscriptions/parents/{id}/observations", a.withAdmin(http.HandlerFunc(a.adminParentObservations)))
-	a.mux.Handle("POST /api/admin/subscriptions/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentSubscriptions)))
+	a.mux.Handle("POST /api/admin/subscriptions/sync", a.withAdmin(http.HandlerFunc(a.syncNativeParentSubscriptions)))
 	a.mux.Handle("POST /api/admin/subscriptions/quota/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentQuotas)))
 	a.mux.Handle("POST /api/admin/subscriptions/parents/{id}/quota/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentQuota)))
 	a.mux.Handle("GET /api/admin/subscriptions/children", a.withAdmin(http.HandlerFunc(a.adminChildSubscriptions)))
@@ -305,7 +305,7 @@ func (a *App) routes() {
 	a.mux.Handle("DELETE /api/admin/subscriptions/children/{id}", a.withAdmin(http.HandlerFunc(a.adminChildSubscription)))
 
 	for _, pattern := range []string{"/v1/", "/backend-api/codex/", "/openai/v1/", "/v1beta/"} {
-		a.mux.Handle(pattern, http.HandlerFunc(a.proxy))
+		a.mux.Handle(pattern, http.HandlerFunc(a.handlePublic))
 	}
 	a.mux.HandleFunc("/", a.frontend)
 }
@@ -363,7 +363,7 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	activeSubscriptions, subscriptionErr := a.store.HasActiveChildSubscriptions(ctx, time.Now())
 	var credentialErr error
 	if a.nativeRuntime == nil || a.nativeRuntime.CredentialCount() == 0 {
-		credentialErr = errors.New("no enabled upstream credentials")
+		credentialErr = errors.New("no enabled runtime credentials")
 	}
 	if a.nativeRuntime == nil {
 		runtimeErr = errors.New("native runtime is not available")
@@ -377,8 +377,8 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 		admissionStatus = admission.AdmissionStatus()
 	}
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "data_plane": "native_runtime", "upstream_credentials": errorText(credentialErr), "runtime": errorText(runtimeErr),
-		"upstream_admission": admissionStatus, "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
+		"database": errorText(err), "data_plane": "native_runtime", "runtime_credentials": errorText(credentialErr), "runtime": errorText(runtimeErr),
+		"runtime_admission": admissionStatus, "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
 }
 
 func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {

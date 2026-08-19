@@ -12,6 +12,7 @@ import (
 type Runtime interface {
 	Handler() http.Handler
 	Serve(http.ResponseWriter, *http.Request, []byte)
+	ServeModels(http.ResponseWriter, *http.Request)
 	CredentialCount() int
 	Models() []string
 	ModelProvider(string) (string, bool)
@@ -67,7 +68,6 @@ type Credential struct {
 }
 
 type Options struct {
-	APIKey              string
 	RequestRetry        int
 	RetryMaxBackoff     time.Duration
 	RoutingStrategy     string

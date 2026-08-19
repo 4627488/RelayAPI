@@ -65,7 +65,7 @@ type nativeWebSocketSessionState struct {
 
 const nativeWebSocketHeartbeatInterval = 30 * time.Second
 
-func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
+func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext, timeline *latencyTimeline) {
 	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
 	accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
@@ -97,7 +97,7 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	if accounting.turnsSeen == 0 && accounting.price != nil && accounting.result.ResponseServiceTier != "" {
 		if resolved, resolveErr := a.store.ResolvePrice(context.Background(), pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.UpstreamAuthIndex,
+			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(admission),
 			ServiceTier: meta.ServiceTier, ResponseServiceTier: accounting.result.ResponseServiceTier,
 			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
 		}); resolveErr == nil {
@@ -167,7 +167,7 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	turn, meta := entry.Result, entry.Meta
 	var turnPrice *store.ResolvedPrice
 	if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
-		APIGroupKey: key.ID, Model: meta.Model, AuthIndex: accounting.admission.UpstreamAuthIndex,
+		APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(accounting.admission),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
 		ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
 	}); err == nil {
@@ -492,11 +492,7 @@ func (a *App) dialNativeRuntimeWebSocket(ctx context.Context, r *http.Request, a
 	if a.nativeRuntime == nil {
 		return nil, nil, fmt.Errorf("native runtime is not available")
 	}
-	header := nativeRuntimeWebSocketHeaders(r.Header)
-	header.Set("X-Relay-Request-ID", requestID)
-	if admission.UpstreamCredentialID != "" {
-		header.Set("X-Relay-Upstream-Credential-ID", admission.UpstreamCredentialID)
-	}
+	header := nativeRuntimeWebSocketHeaders(r.Header, requestID, admission.UpstreamCredentialID)
 	return nativeruntime.DialWebSocket(ctx, a.nativeRuntime.Handler(), nativeRuntimeWebSocketPath(r.URL), header, websocket.Subprotocols(r))
 }
 
@@ -514,11 +510,11 @@ func nativeRuntimeWebSocketPath(requestURL *url.URL) string {
 	return path
 }
 
-func nativeRuntimeWebSocketHeaders(source http.Header) http.Header {
+func nativeRuntimeWebSocketHeaders(source http.Header, requestID, credentialID string) http.Header {
 	header := source.Clone()
-	stripRelayHeaders(header)
+	prepareRuntimeHeaders(header, requestID, credentialID)
 	for _, name := range []string{
-		"Authorization", "Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version",
+		"Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version",
 		"Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol",
 	} {
 		header.Del(name)
@@ -688,7 +684,7 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 	if !priceConfigured {
 		return admission, nil, "", nil
 	}
-	dimensions.AuthIndex = admission.UpstreamAuthIndex
+	dimensions.AuthIndex = admissionAuthIndex(admission)
 	if resolved, resolveErr := a.store.ResolvePrice(ctx, dimensions); resolveErr == nil {
 		resolvedSnapshot := store.EncodePriceSnapshot(resolved)
 		if !bytes.Equal(resolvedSnapshot, store.EncodePriceSnapshot(price)) {

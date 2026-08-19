@@ -65,8 +65,8 @@ func TestAdmissionLoadSheddingReleasesAllResources(t *testing.T) {
 
 func TestCircuitBreakerAllowsSingleRecoveryProbe(t *testing.T) {
 	client := New(Options{MaxInFlight: 2, CircuitFailureThreshold: 2, CircuitOpenDuration: 10 * time.Millisecond})
-	client.RecordTransportResult(errors.New("reset"))
-	client.RecordTransportResult(errors.New("refused"))
+	client.RecordOutcome(errors.New("reset"))
+	client.RecordOutcome(errors.New("refused"))
 	if _, err := client.Acquire(t.Context(), 1); !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("open error = %v", err)
 	}
@@ -78,7 +78,7 @@ func TestCircuitBreakerAllowsSingleRecoveryProbe(t *testing.T) {
 	if _, err = client.Acquire(t.Context(), 1); !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("parallel probe error = %v", err)
 	}
-	client.RecordTransportResult(nil)
+	client.RecordOutcome(nil)
 	probe.Release()
 	lease, err := client.Acquire(t.Context(), 1)
 	if err != nil {

@@ -557,12 +557,8 @@ func (c *nativeCredential) authorize(header http.Header) {
 }
 
 func (r *nativeRuntime) serveHTTP(w http.ResponseWriter, request *http.Request) {
-	if key := strings.TrimSpace(r.options.APIKey); key != "" && request.Header.Get("Authorization") != "Bearer "+key {
-		writeRuntimeError(w, http.StatusUnauthorized, "invalid_runtime_key", "native runtime authentication failed")
-		return
-	}
 	if request.Method == http.MethodGet && strings.TrimRight(request.URL.Path, "/") == "/v1/models" {
-		r.serveModels(w, request)
+		r.ServeModels(w, request)
 		return
 	}
 	if isRuntimeWebSocket(request) {
@@ -581,7 +577,7 @@ func (r *nativeRuntime) Serve(w http.ResponseWriter, request *http.Request, body
 	r.serveInference(w, request, body)
 }
 
-func (r *nativeRuntime) serveModels(w http.ResponseWriter, request *http.Request) {
+func (r *nativeRuntime) ServeModels(w http.ResponseWriter, request *http.Request) {
 	models := r.Models()
 	w.Header().Set("Content-Type", "application/json")
 	if _, codex := request.URL.Query()["client_version"]; codex {

@@ -71,7 +71,7 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 		OnOAuthCredential: a.captureProviderOAuthCredential,
 	}, credentials)
 	if err != nil {
-		return fmt.Errorf("build native runtime runtime: %w", err)
+		return fmt.Errorf("build native runtime: %w", err)
 	}
 	a.nativeAdmission = gateway.New(gateway.Options{
 		MaxInFlight:             a.cfg.GatewayMaxInFlight,
@@ -103,20 +103,12 @@ func runtimeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSock
 				}
 			}
 			delete(value, "_relay_proxy_url")
+			provider := strings.ToLower(strings.TrimSpace(row.Provider))
+			if provider == "codex" || provider == "xai" {
+				value["websockets"] = upstreamWebSockets
+			}
 			if encoded, marshalErr := json.Marshal(value); marshalErr == nil {
 				document = encoded
-			}
-		}
-		provider := strings.ToLower(strings.TrimSpace(row.Provider))
-		if provider == "codex" || provider == "xai" {
-			if json.Unmarshal(document, &value) == nil {
-				// Upstream treats this field as a per-credential capability flag. Make the
-				// Relay-level switch authoritative so imported and OAuth credentials
-				// do not silently fall back to HTTP merely because the field is absent.
-				value["websockets"] = upstreamWebSockets
-				if encoded, marshalErr := json.Marshal(value); marshalErr == nil {
-					document = encoded
-				}
 			}
 		}
 		credentials = append(credentials, upstream.Credential{ID: row.ID, Label: row.Name, Provider: row.Provider, Enabled: enabled, Models: append([]string(nil), row.Models...), Document: document})

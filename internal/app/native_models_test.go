@@ -158,7 +158,7 @@ func TestRetiredProtocolPathsAreRejectedBeforeAuthentication(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, path, nil)
 			recorder := httptest.NewRecorder()
-			new(App).proxy(recorder, request)
+			new(App).handlePublic(recorder, request)
 			if recorder.Code != http.StatusNotFound {
 				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 			}
@@ -197,7 +197,7 @@ func TestAddCodexModelAliasesReplacesCollidingCatalogEntry(t *testing.T) {
 	}
 }
 
-func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) {
+func TestServeModelCatalogReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) {
 	app := newNativeRuntimeTestApp(t, upstream.Credential{
 		ID: "codex-catalog", Provider: "codex", Enabled: true,
 		Models:   []string{"grok-4.5", "subscription-model", "private-model"},
@@ -211,7 +211,7 @@ func TestProxyNativeModelsReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 	key.SubscriptionModelGrants = []store.SubscriptionModelGrant{{UpstreamModels: []string{"subscription-model"}}}
 	key.ModelAliases = []store.APIKeyModelAlias{{Alias: "gpt-5.6-sol", Model: "grok-4.5"}}
 
-	app.proxyNativeModels(recorder, request, key)
+	app.serveModelCatalog(recorder, request, key)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())

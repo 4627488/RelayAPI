@@ -24,24 +24,16 @@ func isNativeModelCatalogRequest(r *http.Request) bool {
 	return path == "/v1/models"
 }
 
-// proxyNativeModels preserves the standard OpenAI and rich Codex catalog
+// serveModelCatalog preserves the standard OpenAI and rich Codex catalog
 // formats, then applies Relay's tenant and key policy.
-func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key store.KeyContext) {
+func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key store.KeyContext) {
 	if a.nativeRuntime == nil {
 		writeError(w, http.StatusServiceUnavailable, "model_catalog_error", "模型运行时不可用")
 		return
 	}
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, r.URL.RequestURI(), nil)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "model_catalog_error", err.Error())
-		return
-	}
-	copyHeaders(request.Header, r.Header)
-	request.Header.Del("Authorization")
-	request.Header.Del("X-API-Key")
-	request.Header.Del("X-Goog-API-Key")
+	prepareRuntimeHeaders(r.Header, "", "")
 	recorder := httptest.NewRecorder()
-	a.nativeRuntime.Handler().ServeHTTP(recorder, request)
+	a.nativeRuntime.ServeModels(recorder, r)
 	response := recorder.Result()
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maxModelCatalogBytes))
@@ -51,9 +43,7 @@ func (a *App) proxyNativeModels(w http.ResponseWriter, r *http.Request, key stor
 	}
 	runtimeModels := []string(nil)
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		if a.nativeRuntime != nil {
-			runtimeModels = a.nativeRuntime.Models()
-		}
+		runtimeModels = a.nativeRuntime.Models()
 		allowedModels := make([]string, 0, len(runtimeModels))
 		for _, model := range runtimeModels {
 			if key.AllowsModel(model) {

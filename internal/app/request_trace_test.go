@@ -2,8 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"io"
-	"strings"
 	"testing"
 	"time"
 
@@ -78,17 +76,5 @@ func TestLatencyTimelineAddsNativeRuntimeAttempts(t *testing.T) {
 		if !found {
 			t.Fatalf("missing %s track in %#v", track, trace.Segments)
 		}
-	}
-}
-
-func TestObservedReaderSignalsOnlyAfterReadingData(t *testing.T) {
-	called := 0
-	reader := &observedReader{Reader: strings.NewReader("response"), onFirstByte: func() { called++ }}
-	if called != 0 {
-		t.Fatal("observer fired before read")
-	}
-	payload, err := io.ReadAll(reader)
-	if err != nil || string(payload) != "response" || called != 1 {
-		t.Fatalf("read = %q, %v; calls = %d", payload, err, called)
 	}
 }
