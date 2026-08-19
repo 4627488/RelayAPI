@@ -494,8 +494,9 @@ export function ProvidersView() {
                           {displayName(account)}
                         </p>
                         <p className="truncate text-xs text-muted-foreground">
-                          {account.email || account.name}
-                          {` · ${proxyName}`}
+                          {[account.email, proxyName]
+                            .filter(Boolean)
+                            .join(" · ")}
                         </p>
                       </TableCell>
                       <TableCell className="whitespace-normal">
