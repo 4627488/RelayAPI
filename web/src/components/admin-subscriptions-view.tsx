@@ -398,7 +398,6 @@ export function AdminSubscriptionsView() {
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="订阅分配"
         actions={
           <Button
             disabled={

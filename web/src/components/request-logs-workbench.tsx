@@ -71,7 +71,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { PageHeader, SearchField, StatStrip } from "@/components/workspace-ui"
+import { SearchField, StatStrip } from "@/components/workspace-ui"
 import {
   api,
   type RequestLog,
@@ -216,8 +216,6 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="请求日志" />
-
       <StatStrip
         className="sm:grid-cols-3 xl:grid-cols-6"
         items={[
@@ -715,9 +713,7 @@ function LogDetailSheet({
                       <TabsTrigger value="request">客户端请求</TabsTrigger>
                     ) : null}
                     {forwardedVisible ? (
-                      <TabsTrigger value="forwarded">
-                        上游转发
-                      </TabsTrigger>
+                      <TabsTrigger value="forwarded">上游转发</TabsTrigger>
                     ) : null}
                     {responseVisible ? (
                       <TabsTrigger value="response">上游响应</TabsTrigger>

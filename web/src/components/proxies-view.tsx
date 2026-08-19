@@ -195,7 +195,6 @@ export function ProxiesView() {
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="代理"
         actions={
           <Button onClick={() => setEditor({ item: null, open: true })}>
             <PlusIcon data-icon="inline-start" />

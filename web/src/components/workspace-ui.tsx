@@ -15,11 +15,12 @@ export function PageHeader({
   actions,
   className,
 }: {
-  title: ReactNode
+  title?: ReactNode
   accessory?: ReactNode
   actions?: ReactNode
   className?: string
 }) {
+  if (!title && !accessory && !actions) return null
   return (
     <header
       className={cn(
@@ -27,14 +28,18 @@ export function PageHeader({
         className
       )}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-        <h1 className="font-heading text-2xl font-semibold tracking-tight">
-          {title}
-        </h1>
-        {accessory}
-      </div>
+      {title || accessory ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+          {title ? (
+            <h1 className="font-heading text-2xl font-semibold tracking-tight">
+              {title}
+            </h1>
+          ) : null}
+          {accessory}
+        </div>
+      ) : null}
       {actions ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:ml-auto">
           {actions}
         </div>
       ) : null}

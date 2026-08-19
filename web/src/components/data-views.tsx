@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
 import {
   ActivityIcon,
@@ -270,12 +271,21 @@ export function ApiKeyUsageTable({
   )
 }
 
-export function LogsTable({ logs }: { logs: RequestLog[] }) {
+export function LogsTable({
+  logs,
+  action,
+}: {
+  logs: RequestLog[]
+  action?: ReactNode
+}) {
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>最近请求</CardTitle>
-        <CardDescription>状态、模型、Token 和响应耗时。</CardDescription>
+      <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>最近请求</CardTitle>
+          <CardDescription>状态、模型、Token 和响应耗时。</CardDescription>
+        </div>
+        {action}
       </CardHeader>
       <CardContent>
         {logs.length ? (

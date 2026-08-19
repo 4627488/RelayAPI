@@ -386,7 +386,6 @@ export function ProvidersView() {
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
-        title="模型管理"
         actions={
           <>
             <Button

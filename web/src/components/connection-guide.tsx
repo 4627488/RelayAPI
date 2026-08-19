@@ -10,7 +10,6 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { PageHeader } from "@/components/workspace-ui"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -201,8 +200,6 @@ export function ConnectionGuide({
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
-      <PageHeader title="接入向导" />
-
       {!usableKeys.length ? (
         <Alert>
           <KeyRoundIcon />

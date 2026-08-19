@@ -20,7 +20,6 @@ import {
 } from "@/components/ui/empty"
 import { Progress, ProgressLabel } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
-import { PageHeader } from "@/components/workspace-ui"
 import {
   api,
   type ChildSubscription,
@@ -43,8 +42,6 @@ export function TenantSubscriptionsView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="我的订阅" />
-
       {loading ? (
         <div className="flex justify-center py-12">
           <Spinner />

@@ -265,7 +265,6 @@ export function PricingView() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="模型设置"
         actions={
           <>
             <Button
@@ -333,10 +332,9 @@ export function PricingView() {
         <CardHeader>
           <CardTitle>已接入模型</CardTitle>
           <CardDescription>
-            计价仍按 USD / 1M
-            tokens。能力元数据优先用本页覆盖，其次 Models.dev，最后才是 Codex
-            模板。用来补 models.dev 没有或不对的条目，例如 Kimi Coding Plan 的
-            kimi-k3-256k。
+            计价仍按 USD / 1M tokens。能力元数据优先用本页覆盖，其次
+            Models.dev，最后才是 Codex 模板。用来补 models.dev
+            没有或不对的条目，例如 Kimi Coding Plan 的 kimi-k3-256k。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -525,8 +523,8 @@ export function PricingView() {
           <DialogHeader>
             <DialogTitle>配置模型设置</DialogTitle>
             <DialogDescription>
-              能力覆盖会写进 Codex 目录，优先于 Models.dev。价格覆盖只影响本站计费，单位为
-              USD / 1M tokens。
+              能力覆盖会写进 Codex 目录，优先于
+              Models.dev。价格覆盖只影响本站计费，单位为 USD / 1M tokens。
             </DialogDescription>
           </DialogHeader>
           <form id="price-form" key={editingPrice?.model} onSubmit={savePrice}>
@@ -605,9 +603,7 @@ export function PricingView() {
                     <FieldLabel>默认推理</FieldLabel>
                     <select
                       name="default_reasoning_level"
-                      defaultValue={
-                        editingPrice?.default_reasoning_level ?? ""
-                      }
+                      defaultValue={editingPrice?.default_reasoning_level ?? ""}
                       className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
                     >
                       <option value="">自动</option>
@@ -663,63 +659,67 @@ export function PricingView() {
               </FieldSet>
               <FieldSet>
                 <FieldLegend>计价</FieldLegend>
-              <FieldGroup className="grid gap-3 sm:grid-cols-3">
-                {[
-                  ["input", "普通输入", editingPrice?.input_nano_usd_per_token],
-                  [
-                    "cached",
-                    "缓存读取",
-                    editingPrice?.cached_input_nano_usd_per_token,
-                  ],
-                  [
-                    "cacheWrite",
-                    "缓存写入",
-                    editingPrice?.cache_write_nano_usd_per_token,
-                  ],
-                  ["output", "输出", editingPrice?.output_nano_usd_per_token],
-                  [
-                    "reasoning",
-                    "推理",
-                    editingPrice?.reasoning_nano_usd_per_token,
-                  ],
-                  [
-                    "multiplier",
-                    "整体倍率",
-                    editingPrice?.price_multiplier ?? 1,
-                  ],
-                  [
-                    "imageInput",
-                    "图片输入",
-                    editingPrice?.image_input_nano_usd_per_token,
-                  ],
-                  [
-                    "cachedImageInput",
-                    "图片缓存读取",
-                    editingPrice?.cached_image_input_nano_usd_per_token,
-                  ],
-                  [
-                    "imageOutput",
-                    "图片输出",
-                    editingPrice?.image_output_nano_usd_per_token,
-                  ],
-                ].map(([name, label, value]) => (
-                  <Field key={String(name)}>
-                    <FieldLabel>{label}</FieldLabel>
-                    <Input
-                      name={String(name)}
-                      type="number"
-                      min="0"
-                      step="any"
-                      defaultValue={
-                        name === "multiplier"
-                          ? Number(value)
-                          : pricePerMillion(Number(value ?? 0))
-                      }
-                      required
-                    />
-                  </Field>
-                ))}
-              </FieldGroup>
+                <FieldGroup className="grid gap-3 sm:grid-cols-3">
+                  {[
+                    [
+                      "input",
+                      "普通输入",
+                      editingPrice?.input_nano_usd_per_token,
+                    ],
+                    [
+                      "cached",
+                      "缓存读取",
+                      editingPrice?.cached_input_nano_usd_per_token,
+                    ],
+                    [
+                      "cacheWrite",
+                      "缓存写入",
+                      editingPrice?.cache_write_nano_usd_per_token,
+                    ],
+                    ["output", "输出", editingPrice?.output_nano_usd_per_token],
+                    [
+                      "reasoning",
+                      "推理",
+                      editingPrice?.reasoning_nano_usd_per_token,
+                    ],
+                    [
+                      "multiplier",
+                      "整体倍率",
+                      editingPrice?.price_multiplier ?? 1,
+                    ],
+                    [
+                      "imageInput",
+                      "图片输入",
+                      editingPrice?.image_input_nano_usd_per_token,
+                    ],
+                    [
+                      "cachedImageInput",
+                      "图片缓存读取",
+                      editingPrice?.cached_image_input_nano_usd_per_token,
+                    ],
+                    [
+                      "imageOutput",
+                      "图片输出",
+                      editingPrice?.image_output_nano_usd_per_token,
+                    ],
+                  ].map(([name, label, value]) => (
+                    <Field key={String(name)}>
+                      <FieldLabel>{label}</FieldLabel>
+                      <Input
+                        name={String(name)}
+                        type="number"
+                        min="0"
+                        step="any"
+                        defaultValue={
+                          name === "multiplier"
+                            ? Number(value)
+                            : pricePerMillion(Number(value ?? 0))
+                        }
+                        required
+                      />
+                    </Field>
+                  ))}
+                </FieldGroup>
               </FieldSet>
             </FieldGroup>
           </form>
@@ -767,14 +767,7 @@ function capabilitySourceLabel(source?: string) {
   return "模板"
 }
 
-const reasoningEffortOptions = [
-  "none",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]
+const reasoningEffortOptions = ["none", "low", "medium", "high", "xhigh", "max"]
 
 function inferredProvider(model?: string) {
   const value = model?.toLowerCase() ?? ""

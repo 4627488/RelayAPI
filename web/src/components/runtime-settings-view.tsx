@@ -1,19 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import {
-  ActivityIcon,
-  CheckCircle2Icon,
-  GaugeIcon,
-  NetworkIcon,
-  RotateCcwIcon,
-  RouteIcon,
-  SaveIcon,
-  ServerCogIcon,
-  SparklesIcon,
-  TimerResetIcon,
-} from "lucide-react"
+import { RotateCcwIcon, SaveIcon } from "lucide-react"
 import { toast } from "sonner"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -38,7 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
-import { PageHeader, StatStrip } from "@/components/workspace-ui"
+import { StatStrip } from "@/components/workspace-ui"
 import { api, type OutboundProxy } from "@/lib/api"
 
 type RuntimeSettings = {
@@ -69,12 +57,6 @@ type SettingsResponse = {
   mode: "native"
   settings: RuntimeSettings
   runtime: RuntimeInfo
-}
-
-const recommended: Omit<RuntimeSettings, "system_proxy_id"> = {
-  routing_strategy: "round-robin",
-  credential_failure_threshold: 3,
-  credential_cooldown_seconds: 0,
 }
 
 function NumberField({
@@ -208,45 +190,11 @@ export function RuntimeSettingsView() {
       `${runtime.circuit_failure_threshold} 次 / ${runtime.circuit_open_seconds}s`,
     ],
     ["未定价模型", runtime.unpriced_model_policy === "allow" ? "允许" : "拒绝"],
+    ["上游 WebSocket", runtime.upstream_websockets ? "已启用" : "已关闭"],
   ]
 
   return (
-    <div className="flex flex-col gap-5 pb-20">
-      <PageHeader
-        title="运行策略"
-        accessory={
-          <Badge variant="secondary">
-            <SparklesIcon /> Relay Native
-          </Badge>
-        }
-        actions={
-          <>
-            <Button
-              variant="ghost"
-              disabled={saving}
-              onClick={() =>
-                setValue((current) =>
-                  current ? { ...current, ...recommended } : current
-                )
-              }
-            >
-              <TimerResetIcon /> 建议值
-            </Button>
-            <Button
-              variant="outline"
-              disabled={!dirty || saving}
-              onClick={() => saved && setValue(saved)}
-            >
-              <RotateCcwIcon /> 撤销
-            </Button>
-            <Button disabled={!dirty || saving} onClick={() => void save()}>
-              {saving ? <Spinner /> : <SaveIcon />}
-              {dirty ? "保存更改" : "已保存"}
-            </Button>
-          </>
-        }
-      />
-
+    <div className="flex flex-col gap-5">
       <StatStrip
         className="lg:grid-cols-4"
         items={[
@@ -268,25 +216,18 @@ export function RuntimeSettingsView() {
         <div className="grid gap-5">
           <Card>
             <CardHeader>
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-primary/10 p-2 text-primary">
-                  <RouteIcon className="size-5" />
-                </div>
-                <div>
-                  <CardTitle>调度与透明重试</CardTitle>
-                  <CardDescription className="mt-1">
-                    决定同一模型的多个账户如何分流，以及临时网络或限流错误的恢复节奏。
-                  </CardDescription>
-                </div>
-              </div>
+              <CardTitle>凭据调度</CardTitle>
+              <CardDescription>
+                同一模型有多个账户时如何分流。上游错误原样返回，不会改写或重试。
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <FieldGroup className="grid md:grid-cols-2">
+              <FieldGroup>
                 <Field>
-                  <FieldLabel>凭据调度</FieldLabel>
+                  <FieldLabel>调度方式</FieldLabel>
                   <Select
                     items={{
-                      "round-robin": "轮询均衡（推荐）",
+                      "round-robin": "轮询均衡",
                       "fill-first": "固定优先级",
                     }}
                     value={value.routing_strategy}
@@ -303,15 +244,13 @@ export function RuntimeSettingsView() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        <SelectItem value="round-robin">
-                          轮询均衡（推荐）
-                        </SelectItem>
+                        <SelectItem value="round-robin">轮询均衡</SelectItem>
                         <SelectItem value="fill-first">固定优先级</SelectItem>
                       </SelectGroup>
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    轮询适合共享容量；固定优先级适合主账户加备用账户。上游错误原样返回，不会透明重试。
+                    轮询适合共享容量；固定优先级适合主账户加备用账户。
                   </FieldDescription>
                 </Field>
               </FieldGroup>
@@ -320,17 +259,10 @@ export function RuntimeSettingsView() {
 
           <Card>
             <CardHeader>
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-amber-500/10 p-2 text-amber-600">
-                  <ActivityIcon className="size-5" />
-                </div>
-                <div>
-                  <CardTitle>凭据故障隔离</CardTitle>
-                  <CardDescription className="mt-1">
-                    逐凭据观察鉴权、连接和临时上游故障，自动绕开不健康账户，再进行试探恢复。
-                  </CardDescription>
-                </div>
-              </div>
+              <CardTitle>凭据故障隔离</CardTitle>
+              <CardDescription>
+                连续失败的账户会暂时离开候选池，冷却后再由下一次请求验证。
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup className="grid md:grid-cols-2">
@@ -350,7 +282,7 @@ export function RuntimeSettingsView() {
                   id="failure-cooldown"
                   label="隔离冷却时间"
                   suffix="秒"
-                  description="0 表示不隔离。非 0 时冷却结束后回到候选池，由下一次请求验证恢复。"
+                  description="0 表示不隔离。非 0 时冷却结束后回到候选池。"
                   value={value.credential_cooldown_seconds}
                   min={0}
                   max={3600}
@@ -366,17 +298,11 @@ export function RuntimeSettingsView() {
         <div className="grid gap-5">
           <Card>
             <CardHeader>
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-blue-500/10 p-2 text-blue-600">
-                  <NetworkIcon className="size-5" />
-                </div>
-                <div>
-                  <CardTitle>系统网络</CardTitle>
-                  <CardDescription className="mt-1">
-                    仅供 OAuth、公共价格目录等 Relay 自身请求使用。
-                  </CardDescription>
-                </div>
-              </div>
+              <CardTitle>系统网络</CardTitle>
+              <CardDescription>
+                仅供 OAuth、公共价格目录等 Relay
+                自身请求使用。推理流量在账户页单独选代理。
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Field>
@@ -412,7 +338,7 @@ export function RuntimeSettingsView() {
                   </SelectContent>
                 </Select>
                 <FieldDescription>
-                  推理流量不继承这里；每个模型账户在账户页独立选择代理。
+                  账户代理在「出站代理」里维护，再到模型账户上绑定。
                 </FieldDescription>
               </Field>
             </CardContent>
@@ -420,17 +346,10 @@ export function RuntimeSettingsView() {
 
           <Card>
             <CardHeader>
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-muted p-2 text-muted-foreground">
-                  <ServerCogIcon className="size-5" />
-                </div>
-                <div>
-                  <CardTitle>当前部署边界</CardTitle>
-                  <CardDescription className="mt-1">
-                    这些值影响进程资源，需要修改环境变量并重启。
-                  </CardDescription>
-                </div>
-              </div>
+              <CardTitle>当前部署边界</CardTitle>
+              <CardDescription>
+                这些值影响进程资源，需要修改环境变量并重启。
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <dl className="grid gap-x-5 gap-y-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
@@ -441,19 +360,29 @@ export function RuntimeSettingsView() {
                   </div>
                 ))}
               </dl>
-              <div className="mt-5 flex items-center gap-2 rounded-lg border bg-muted/35 px-3 py-2.5 text-xs text-muted-foreground">
-                {runtime.upstream_websockets ? (
-                  <CheckCircle2Icon className="size-4 text-emerald-600" />
-                ) : (
-                  <GaugeIcon className="size-4" />
-                )}
-                Codex / xAI 上游 WebSocket：
-                {runtime.upstream_websockets ? "已启用" : "已关闭"}
-              </div>
             </CardContent>
           </Card>
         </div>
       </div>
+
+      {dirty ? (
+        <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background px-4 py-3">
+          <p className="text-sm">有未保存的更改</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => saved && setValue(saved)}
+            >
+              <RotateCcwIcon /> 撤销
+            </Button>
+            <Button disabled={saving} onClick={() => void save()}>
+              {saving ? <Spinner /> : <SaveIcon />}
+              保存
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -9,7 +9,6 @@ import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
-  NetworkIcon,
   PackageOpenIcon,
   Settings2Icon,
   PlugIcon,
@@ -22,7 +21,6 @@ import {
 } from "lucide-react"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -74,6 +72,7 @@ interface NavigationItem {
   id: Page
   label: string
   icon: ComponentType
+  section?: string
 }
 
 const userItems: NavigationItem[] = [
@@ -84,6 +83,38 @@ const userItems: NavigationItem[] = [
   { id: "subscriptions", label: "我的订阅", icon: PackageOpenIcon },
   { id: "logs", label: "请求日志", icon: ListIcon },
 ]
+
+const adminItems: NavigationItem[] = [
+  { id: "overview", label: "管理总览", icon: GaugeIcon, section: "运营" },
+  { id: "users", label: "用户", icon: UsersIcon, section: "运营" },
+  {
+    id: "subscriptions",
+    label: "订阅分配",
+    icon: PackageOpenIcon,
+    section: "运营",
+  },
+  { id: "usage", label: "全局用量", icon: BarChart3Icon, section: "运营" },
+  { id: "logs", label: "请求日志", icon: ListIcon, section: "运营" },
+  { id: "providers", label: "模型管理", icon: PlugIcon, section: "上游" },
+  { id: "pricing", label: "模型设置", icon: Settings2Icon, section: "上游" },
+  {
+    id: "settings",
+    label: "系统设置",
+    icon: SlidersHorizontalIcon,
+    section: "上游",
+  },
+]
+
+function navPage(page: Page): Page {
+  if (page === "invitations") return "users"
+  if (page === "proxies") return "settings"
+  return page
+}
+
+function navLabel(items: NavigationItem[], page: Page) {
+  const id = navPage(page)
+  return items.find((item) => item.id === id)?.label
+}
 
 function EmailAvatar({ email, name }: { email: string; name: string }) {
   const [source, setSource] = useState("")
@@ -129,19 +160,6 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
   )
 }
 
-const adminItems: NavigationItem[] = [
-  { id: "overview", label: "管理总览", icon: GaugeIcon },
-  { id: "users", label: "用户", icon: UsersIcon },
-  { id: "invitations", label: "邀请", icon: SendIcon },
-  { id: "providers", label: "模型管理", icon: PlugIcon },
-  { id: "proxies", label: "代理", icon: NetworkIcon },
-  { id: "settings", label: "系统设置", icon: SlidersHorizontalIcon },
-  { id: "subscriptions", label: "订阅分配", icon: PackageOpenIcon },
-  { id: "usage", label: "全局用量", icon: BarChart3Icon },
-  { id: "pricing", label: "模型设置", icon: Settings2Icon },
-  { id: "logs", label: "请求日志", icon: ListIcon },
-]
-
 const themes: Array<{ value: Theme; label: string; icon: ComponentType }> = [
   { value: "light", label: "浅色", icon: SunIcon },
   { value: "dark", label: "深色", icon: MoonIcon },
@@ -175,6 +193,53 @@ function ThemeChoices({
         </DropdownMenuRadioItem>
       ))}
     </DropdownMenuRadioGroup>
+  )
+}
+
+function SidebarNav({
+  items,
+  page,
+  fallbackLabel,
+  onPageChange,
+}: {
+  items: NavigationItem[]
+  page: Page
+  fallbackLabel: string
+  onPageChange: (page: Page) => void
+}) {
+  const groups: { title: string; items: NavigationItem[] }[] = []
+  for (const item of items) {
+    const title = item.section || fallbackLabel
+    const last = groups.at(-1)
+    if (last && last.title === title) last.items.push(item)
+    else groups.push({ title, items: [item] })
+  }
+  const active = navPage(page)
+
+  return (
+    <>
+      {groups.map((group) => (
+        <SidebarGroup key={group.title}>
+          <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {group.items.map((item) => (
+                <SidebarMenuItem key={item.id}>
+                  <SidebarMenuButton
+                    isActive={active === item.id}
+                    tooltip={item.label}
+                    onClick={() => onPageChange(item.id)}
+                  >
+                    <item.icon />
+                    <span>{item.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ))}
+    </>
   )
 }
 
@@ -227,25 +292,12 @@ export function AppShell({
           </SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>{admin ? "管理" : "工作区"}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {items.map((item) => (
-                  <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton
-                      isActive={page === item.id}
-                      tooltip={item.label}
-                      onClick={() => onPageChange(item.id)}
-                    >
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          <SidebarNav
+            items={items}
+            page={page}
+            fallbackLabel="工作区"
+            onPageChange={onPageChange}
+          />
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
@@ -310,35 +362,7 @@ export function AppShell({
         <header className="flex h-14 shrink-0 items-center gap-3 px-4 sm:px-6">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-4" />
-          <p className="text-sm font-medium">
-            {items.find((item) => item.id === page)?.label}
-          </p>
-          <div className="ml-auto">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="选择主题"
-                  />
-                }
-              >
-                {theme === "light" ? (
-                  <SunIcon />
-                ) : theme === "dark" ? (
-                  <MoonIcon />
-                ) : (
-                  <MonitorIcon />
-                )}
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>外观</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <ThemeChoices value={theme} onValueChange={setTheme} />
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          <p className="text-sm font-medium">{navLabel(items, page)}</p>
         </header>
         <main className="flex flex-1 flex-col p-4 pt-0 sm:p-6 sm:pt-0">
           {children}
