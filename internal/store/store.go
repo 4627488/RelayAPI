@@ -807,7 +807,7 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 }
 
 // UpsertLog supports durable WebSocket accounting and session-level failures.
-// Each billed turn has its own log ID; replaying the same entry stays idempotent.
+// The session request log is upserted in place; replaying a turn stays idempotent.
 func (s Store) UpsertLog(ctx context.Context, l LogInput) error {
 	return s.writeLog(ctx, l, true)
 }
@@ -857,7 +857,9 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 		create = create.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
-				"upstream_request_id", "response_service_tier", "status_code", "request_body_bytes",
+				"model", "requested_model", "actual_model", "model_alias",
+				"service_tier", "reasoning_effort", "upstream_request_id", "response_service_tier",
+				"status_code", "stream", "request_body_bytes",
 				"forwarded_body_bytes", "response_body_bytes", "prompt_tokens", "completion_tokens",
 				"cached_tokens", "cache_write_tokens", "reasoning_tokens", "image_input_tokens",
 				"cached_image_input_tokens", "image_output_tokens", "total_tokens", "cost_nano_usd",
@@ -910,7 +912,7 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 	type totals struct{ Requests, Tokens, Cost int64 }
 	var total totals
 	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
-		Select("count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
+		Select(requestLogUnitCountSQL()+" AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
 		Where("tenant_id = ? AND started_at >= ?", tenantID, since).Scan(&total).Error
 	if err != nil {
 		return nil, err
@@ -925,6 +927,36 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 	total.Tokens += rolled.Tokens
 	total.Cost += rolled.Cost
 	return map[string]any{"tenant": tenant, "requests_30d": total.Requests, "tokens_30d": total.Tokens, "cost_nano_usd_30d": total.Cost}, nil
+}
+
+const requestLogUnitSQL = "(reservation_request_id IS NULL OR reservation_request_id = id)"
+
+func requestLogUnitSQLOn(table string) string {
+	if table == "" {
+		return requestLogUnitSQL
+	}
+	return "(" + table + ".reservation_request_id IS NULL OR " + table + ".reservation_request_id = " + table + ".id)"
+}
+
+func requestLogUnitCountSQL() string {
+	return requestLogUnitCountSQLOn("")
+}
+
+func requestLogUnitCountSQLOn(table string) string {
+	return "count(*) FILTER (WHERE " + requestLogUnitSQLOn(table) + ")"
+}
+
+func requestLogUnitErrorSQL() string {
+	return requestLogUnitErrorSQLOn("")
+}
+
+func requestLogUnitErrorSQLOn(table string) string {
+	prefix := ""
+	if table != "" {
+		prefix = table + "."
+	}
+	return "COALESCE(sum(CASE WHEN (" + requestLogUnitSQLOn(table) + ") AND (" +
+		prefix + "status_code = 0 OR " + prefix + "status_code >= 400 OR COALESCE(" + prefix + "error_code, '') <> '') THEN 1 ELSE 0 END),0)"
 }
 
 type LogQuery struct {
@@ -997,7 +1029,9 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	case "error":
 		query = query.Where("status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> ''")
 	case "stream":
-		query = query.Where("stream = ?", true)
+		query = query.Where("stream = ? AND request_type NOT LIKE ?", true, "%websocket%")
+	case "websocket":
+		query = query.Where("request_type LIKE ?", "%websocket%")
 	}
 	if input.Method != "" {
 		query = query.Where("method = ?", strings.ToUpper(input.Method))
@@ -1015,17 +1049,19 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 		query = query.Where("latency_ms >= ?", input.MinLatencyMS)
 	}
 	summaryQuery := query.Session(&gorm.Session{})
-	itemsQuery := query.Session(&gorm.Session{})
+	itemsQuery := query.Session(&gorm.Session{}).Where(requestLogUnitSQL)
 	var summary LogSummary
 	if err := summaryQuery.Select(
-		"count(*) AS requests, COALESCE(sum(CASE WHEN status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
+		requestLogUnitCountSQL() + " AS requests, " +
+			requestLogUnitErrorSQL() + " AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
-			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, COALESCE(avg(latency_ms),0) AS average_latency, " +
-			"COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms),0) AS latency_p50, " +
-			"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms),0) AS latency_p95, " +
-			"COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE ttftms IS NOT NULL),0) AS ttft_p50, " +
-			"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE ttftms IS NOT NULL),0) AS ttft_p95, " +
-			"count(ttftms) AS ttft_samples, " +
+			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, " +
+			"COALESCE(avg(latency_ms) FILTER (WHERE " + requestLogUnitSQL + "),0) AS average_latency, " +
+			"COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE " + requestLogUnitSQL + "),0) AS latency_p50, " +
+			"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE " + requestLogUnitSQL + "),0) AS latency_p95, " +
+			"COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE ttftms IS NOT NULL AND " + requestLogUnitSQL + "),0) AS ttft_p50, " +
+			"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE ttftms IS NOT NULL AND " + requestLogUnitSQL + "),0) AS ttft_p95, " +
+			"count(ttftms) FILTER (WHERE ttftms IS NOT NULL AND " + requestLogUnitSQL + ") AS ttft_samples, " +
 			"COALESCE(sum(request_body_bytes),0) AS request_bytes, COALESCE(sum(response_body_bytes),0) AS response_bytes",
 	).Scan(&summary).Error; err != nil {
 		return LogPage{}, err
@@ -1040,6 +1076,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 type LogWithDetail struct {
 	Log    db.RequestLog        `json:"log"`
 	Detail *db.RequestLogDetail `json:"detail"`
+	Turns  []db.WebSocketTurn   `json:"turns,omitempty"`
 }
 
 func (s Store) RequestLogDetail(ctx context.Context, id, tenantID string) (LogWithDetail, error) {
@@ -1051,15 +1088,38 @@ func (s Store) RequestLogDetail(ctx context.Context, id, tenantID string) (LogWi
 	if err := query.First(&item).Error; err != nil {
 		return LogWithDetail{}, notFound(err)
 	}
+	result := LogWithDetail{Log: item}
+	if turns, err := s.listWebSocketTurns(ctx, requestLogSessionID(item)); err != nil {
+		return LogWithDetail{}, err
+	} else if len(turns) > 0 {
+		result.Turns = turns
+	}
 	var detail db.RequestLogDetail
 	err := scoped(ctx, s.DB).First(&detail, "request_log_id = ?", id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return LogWithDetail{Log: item}, nil
+		return result, nil
 	}
 	if err != nil {
 		return LogWithDetail{}, err
 	}
-	return LogWithDetail{Log: item, Detail: &detail}, nil
+	result.Detail = &detail
+	return result, nil
+}
+
+func requestLogSessionID(item db.RequestLog) string {
+	if item.ReservationRequestID != nil && strings.TrimSpace(*item.ReservationRequestID) != "" {
+		return *item.ReservationRequestID
+	}
+	return item.ID
+}
+
+func (s Store) listWebSocketTurns(ctx context.Context, requestID string) ([]db.WebSocketTurn, error) {
+	if strings.TrimSpace(requestID) == "" {
+		return nil, nil
+	}
+	var turns []db.WebSocketTurn
+	err := scoped(ctx, s.DB).Where("request_id = ?", requestID).Order("created_at ASC, turn_id ASC").Find(&turns).Error
+	return turns, err
 }
 
 func (s Store) CreateInvitation(ctx context.Context, email string, expiresAt time.Time) (Invitation, string, error) {
@@ -1168,9 +1228,9 @@ func (s Store) AdminOverview(ctx context.Context) (map[string]any, error) {
 	now := time.Now()
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	if err := database.Model(&db.RequestLog{}).Select(
-		"count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+
+		requestLogUnitCountSQL()+" AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+
 			"COALESCE(sum(cost_nano_usd),0) AS cost, "+
-			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors",
+			requestLogUnitErrorSQL()+" AS errors",
 	).Where("started_at >= ?", dayStart).Scan(&today).Error; err != nil {
 		return nil, err
 	}
@@ -1212,8 +1272,8 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	}
 	var total summary
 	if err := base.Joins("LEFT JOIN parent_subscriptions ON parent_subscriptions.id = request_logs.parent_subscription_id").Select(
-		"count(*) AS requests, " +
-			"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(request_logs.error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, " +
+		requestLogUnitCountSQLOn("request_logs") + " AS requests, " +
+			requestLogUnitErrorSQLOn("request_logs") + " AS errors, " +
 			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, " +
 			"COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, " +
 			"COALESCE(sum(reasoning_tokens),0) AS reasoning_tokens, COALESCE(sum(image_input_tokens),0) AS image_input_tokens, " +
@@ -1268,8 +1328,8 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	dailyItems := make([]daily, 0)
 	dailyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
-			"to_char(started_at, 'YYYY-MM-DD') AS date, count(*) AS requests, "+
-				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
+			"to_char(started_at, 'YYYY-MM-DD') AS date, "+requestLogUnitCountSQL()+" AS requests, "+
+				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
 				"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
 				"COALESCE(sum(cost_nano_usd),0) AS cost",
@@ -1325,8 +1385,8 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	models := make([]modelTotal, 0)
 	modelQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
-			"model, count(*) AS requests, "+
-				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
+			"model, "+requestLogUnitCountSQL()+" AS requests, "+
+				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
 				"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
 				"COALESCE(sum(cost_nano_usd),0) AS cost",
@@ -1381,8 +1441,8 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	apiKeys := make([]apiKeyTotal, 0)
 	apiKeyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
-			"api_key_id, api_key_name, api_key_prefix, tenant_name, count(*) AS requests, "+
-				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
+			"api_key_id, api_key_name, api_key_prefix, tenant_name, "+requestLogUnitCountSQL()+" AS requests, "+
+				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
 		).Where("started_at >= ?", since)
 	if tenantID != "" {
@@ -1404,8 +1464,8 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	if tenantID == "" {
 		var liveUsers []userTotal
 		if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Select(
-			"tenant_id, tenant_name, count(*) AS requests, "+
-				"COALESCE(sum(CASE WHEN status_code >= 400 OR status_code = 0 OR COALESCE(error_code, '') <> '' THEN 1 ELSE 0 END),0) AS errors, "+
+			"tenant_id, tenant_name, "+requestLogUnitCountSQL()+" AS requests, "+
+				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
 		).Where("started_at >= ?", since).Group("tenant_id, tenant_name").Scan(&liveUsers).Error; err != nil {
 			return nil, err

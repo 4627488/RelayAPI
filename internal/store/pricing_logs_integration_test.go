@@ -328,6 +328,132 @@ func TestRetentionDeletesSuccessfulUnpricedDetails(t *testing.T) {
 	}
 }
 
+func TestQueryLogsCountsWebSocketSessionAsOneUnit(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	if err := database.Exec(`TRUNCATE web_socket_turns, request_log_details, usage_daily_rollups,
+		request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	tenantID, keyID := identity.NewID(), identity.NewID()
+	if err := database.Create(&db.Tenant{
+		ID: tenantID, Name: "session-unit", OwnerEmail: "session-unit@example.test",
+		PasswordHash: "test", Enabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&db.APIKey{
+		ID: keyID, TenantID: tenantID, Name: "session-unit",
+		KeyHash: []byte("session-unit-key"), Prefix: "relay_su", Enabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	dataStore := Store{DB: database}
+	started := time.Now().Add(-time.Minute)
+	sessionID, childID, sseID := identity.NewID(), identity.NewID(), identity.NewID()
+	sessionCost, childCost, sseCost := int64(25), int64(7), int64(3)
+	if err := dataStore.WriteLog(ctx, LogInput{
+		ID: sessionID, TenantID: tenantID, APIKeyID: keyID, ReservationRequestID: sessionID,
+		Model: "ws-model", RequestType: "responses.websocket", Method: "GET", Path: "/v1/responses/ws",
+		StatusCode: 101, Stream: false, Usage: Usage{Prompt: 20, Completion: 10, Total: 30},
+		CostNanoUSD: &sessionCost, PricingComplete: true, Settled: true,
+		RequestBodyBytes: 80, ResponseBodyBytes: 200, StartedAt: started, CompletedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataStore.WriteLog(ctx, LogInput{
+		ID: childID, TenantID: tenantID, APIKeyID: keyID, ReservationRequestID: sessionID,
+		Model: "ws-model", RequestType: "responses.websocket", Method: "GET", Path: "/v1/responses/ws",
+		StatusCode: 101, Stream: true, Usage: Usage{Prompt: 4, Completion: 3, Total: 7},
+		CostNanoUSD: &childCost, PricingComplete: true, Settled: true,
+		RequestBodyBytes: 20, ResponseBodyBytes: 40, StartedAt: started.Add(10 * time.Second), CompletedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := dataStore.WriteLog(ctx, LogInput{
+		ID: sseID, TenantID: tenantID, APIKeyID: keyID, Model: "sse-model",
+		RequestType: "responses", Method: "POST", Path: "/v1/responses",
+		StatusCode: 200, Stream: true, Usage: Usage{Prompt: 3, Completion: 2, Total: 5},
+		CostNanoUSD: &sseCost, PricingComplete: true, Settled: true,
+		RequestBodyBytes: 16, ResponseBodyBytes: 32, StartedAt: started, CompletedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&[]db.WebSocketTurn{
+		{RequestID: sessionID, TurnID: "resp_1", Model: "ws-model", PromptTokens: 20, CompletionTokens: 10, TotalTokens: 30, CostNanoUSD: 25, CreatedAt: started},
+		{RequestID: sessionID, TurnID: "resp_2", Model: "ws-model-2", PromptTokens: 4, CompletionTokens: 3, TotalTokens: 7, CostNanoUSD: 7, CreatedAt: started.Add(10 * time.Second)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, PageSize: 25})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Items) != 2 || page.Summary.Tokens != 42 || page.Summary.CostNanoUSD != 35 {
+		t.Fatalf("unit list = total=%d items=%d tokens=%d cost=%d", page.Total, len(page.Items), page.Summary.Tokens, page.Summary.CostNanoUSD)
+	}
+	for _, item := range page.Items {
+		if item.ID == childID {
+			t.Fatalf("historical websocket turn row leaked into the unit list: %+v", item)
+		}
+	}
+
+	websocketPage, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Status: "websocket"})
+	if err != nil || websocketPage.Total != 1 || websocketPage.Summary.Tokens != 37 || len(websocketPage.Items) != 1 || websocketPage.Items[0].ID != sessionID {
+		t.Fatalf("websocket filter = %+v, err=%v", websocketPage, err)
+	}
+	streamPage, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Status: "stream"})
+	if err != nil || streamPage.Total != 1 || streamPage.Summary.Tokens != 5 || len(streamPage.Items) != 1 || streamPage.Items[0].ID != sseID {
+		t.Fatalf("sse filter = %+v, err=%v", streamPage, err)
+	}
+
+	detail, err := dataStore.RequestLogDetail(ctx, sessionID, tenantID)
+	if err != nil || len(detail.Turns) != 2 || detail.Turns[0].TurnID != "resp_1" || detail.Turns[1].Model != "ws-model-2" {
+		t.Fatalf("session turns = %+v, err=%v", detail.Turns, err)
+	}
+
+	overview, err := dataStore.Dashboard(ctx, tenantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dashboardInt64(overview["requests_30d"]) != 2 || dashboardInt64(overview["tokens_30d"]) != 42 {
+		t.Fatalf("dashboard unit = %#v", overview)
+	}
+	report, err := dataStore.UsageReport(ctx, tenantID, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawSummary, err := json.Marshal(report["summary"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usageSummary struct {
+		Requests int64 `json:"requests"`
+		Tokens   int64 `json:"tokens"`
+		Cost     int64 `json:"cost_nano_usd"`
+	}
+	if err := json.Unmarshal(rawSummary, &usageSummary); err != nil {
+		t.Fatal(err)
+	}
+	if usageSummary.Requests != 2 || usageSummary.Tokens != 42 || usageSummary.Cost != 35 {
+		t.Fatalf("usage summary = %+v", usageSummary)
+	}
+}
+
 func dashboardInt64(value any) int64 {
 	switch typed := value.(type) {
 	case int64:

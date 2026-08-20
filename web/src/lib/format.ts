@@ -66,3 +66,9 @@ export function requestLogStatus(statusCode: number) {
   if (statusCode === 101) return "101 · WS"
   return String(statusCode)
 }
+
+export function requestLogTransport(requestType?: string, stream?: boolean) {
+  if ((requestType || "").includes("websocket")) return "WebSocket"
+  if (stream) return "SSE"
+  return "HTTP"
+}

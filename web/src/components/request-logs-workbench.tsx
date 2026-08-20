@@ -77,6 +77,7 @@ import {
   type RequestLog,
   type RequestLogDetail,
   type RequestLogPage,
+  type WebSocketTurn,
 } from "@/lib/api"
 import {
   bytes,
@@ -87,6 +88,7 @@ import {
   money,
   requestLogStatus,
   requestLogSucceeded,
+  requestLogTransport,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
@@ -118,6 +120,7 @@ const emptyPage: RequestLogPage = {
 type SelectedLog = {
   log: RequestLog
   detail: RequestLogDetail | null
+  turns?: WebSocketTurn[]
 }
 
 export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
@@ -260,7 +263,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
         <CardHeader className="border-b">
           <CardTitle>请求明细</CardTitle>
           <CardDescription>
-            点击一行打开详情；负载大小不依赖正文采样，会随日志摘要保留。
+            一条日志是一次对 Relay 的调用。SSE 仍是一条 HTTP 请求；WebSocket
+            按会话一行，轮次在详情里。
           </CardDescription>
           <FieldGroup className="grid gap-2 pt-2 md:grid-cols-[minmax(16rem,1fr)_9rem_auto_auto]">
             <Field>
@@ -285,7 +289,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                   all: "全部状态",
                   success: "成功",
                   error: "错误",
-                  stream: "流式",
+                  stream: "SSE",
+                  websocket: "WebSocket",
                 }}
                 value={status}
                 onValueChange={(value) => {
@@ -303,7 +308,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                     <SelectItem value="all">全部状态</SelectItem>
                     <SelectItem value="success">成功</SelectItem>
                     <SelectItem value="error">错误</SelectItem>
-                    <SelectItem value="stream">流式</SelectItem>
+                    <SelectItem value="stream">SSE</SelectItem>
+                    <SelectItem value="websocket">WebSocket</SelectItem>
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -484,9 +490,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                         >
                           {requestLogStatus(log.status_code)}
                         </Badge>
-                        {log.stream && log.status_code !== 101 ? (
+                        {requestLogTransport(log.request_type, log.stream) !==
+                        "HTTP" ? (
                           <span className="text-xs text-muted-foreground">
-                            流式
+                            {requestLogTransport(log.request_type, log.stream)}
                           </span>
                         ) : null}
                       </div>
@@ -499,7 +506,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                           log.path}
                       </p>
                       <p className="max-w-72 truncate text-xs text-muted-foreground">
-                        {log.request_type || `${log.method} ${log.path}`}
+                        {requestLogTransport(log.request_type, log.stream)}
+                        {log.request_type
+                          ? ` · ${log.request_type}`
+                          : ` · ${log.method} ${log.path}`}
                         {log.provider
                           ? ` · ${log.provider}${log.auth_index ? ` / ${log.auth_index}` : ""}`
                           : ""}
@@ -653,6 +663,7 @@ function LogDetailSheet({
 }) {
   const log = value?.log
   const detail = value?.detail ?? null
+  const turns = value?.turns ?? []
   const requestVisible = Boolean(
     detail &&
     (hasJSONObject(detail.request_headers) ||
@@ -721,7 +732,12 @@ function LogDetailSheet({
                   </TabsList>
                 </div>
                 <TabsContent value="overview">
-                  <LogOverview log={log} detail={detail} loading={loading} />
+                  <LogOverview
+                    log={log}
+                    detail={detail}
+                    turns={turns}
+                    loading={loading}
+                  />
                 </TabsContent>
                 {requestVisible && detail ? (
                   <TabsContent value="request">
@@ -740,7 +756,12 @@ function LogDetailSheet({
                 ) : null}
               </Tabs>
             ) : (
-              <LogOverview log={log} detail={detail} loading={loading} />
+              <LogOverview
+                log={log}
+                detail={detail}
+                turns={turns}
+                loading={loading}
+              />
             )}
           </div>
         ) : null}
@@ -752,10 +773,12 @@ function LogDetailSheet({
 function LogOverview({
   log,
   detail,
+  turns,
   loading,
 }: {
   log: RequestLog
   detail: RequestLogDetail | null
+  turns: WebSocketTurn[]
   loading: boolean
 }) {
   const costRows = useMemo(() => {
@@ -854,6 +877,7 @@ function LogOverview({
         <Facts
           items={[
             ["入口", `${log.method} ${log.path}`],
+            ["传输", requestLogTransport(log.request_type, log.stream)],
             ["类型", log.request_type],
             ["模型", modelRoute(log)],
             [
@@ -904,6 +928,43 @@ function LogOverview({
           ]}
         />
       </DetailGroup>
+
+      {turns.length ? (
+        <DetailGroup title={`会话轮次 · ${turns.length}`}>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>轮次</TableHead>
+                <TableHead>模型</TableHead>
+                <TableHead className="text-right">Token</TableHead>
+                <TableHead className="text-right">耗时</TableHead>
+                <TableHead className="text-right">费用</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {turns.map((turn) => (
+                <TableRow key={turn.turn_id}>
+                  <TableCell className="max-w-40 truncate font-mono text-xs">
+                    {turn.turn_id}
+                  </TableCell>
+                  <TableCell className="max-w-32 truncate text-xs">
+                    {turn.model || "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {compactTokens(turn.total_tokens)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {turn.latency_ms} ms
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(turn.cost_nano_usd)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </DetailGroup>
+      ) : null}
 
       <RequestLatencyTimeline
         value={latencyTrace}

@@ -18,7 +18,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/4627488/RelayAPI/internal/billing"
-	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	nativeruntime "github.com/4627488/RelayAPI/internal/upstream"
@@ -42,6 +41,7 @@ type nativeWebSocketAccounting struct {
 	pricingComplete  bool
 	currentMeta      requestMeta
 	currentStarted   time.Time
+	sessionStarted   time.Time
 	currentRequest   int64
 	currentForwarded int64
 	currentResponse  int64
@@ -67,7 +67,7 @@ const nativeWebSocketHeartbeatInterval = 30 * time.Second
 
 func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext, timeline *latencyTimeline) {
-	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
+	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable, sessionStarted: started}
 	accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
 		return a.persistNativeWebSocketTurn(context.WithoutCancel(r.Context()), r, key, requestID,
 			logContext, &accounting, entry, cumulative)
@@ -146,17 +146,15 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 		logContext.detail.StageTimings = stageTimings
 	}
 	logContext.stageTimings = stageTimings
-	// Successful terminal responses already produced one durable log per billing
-	// entry. Only sessions without a billing entry need a session-level log.
-	if accounting.turnsSeen == 0 {
-		input := requestLogInput(key, requestID, admission, meta, r, statusCode, started, &accounting.result,
-			pricingComplete, settled, actual, errorString(err), logContext)
-		if !shouldRetainRequestDetail(requestID, statusCode, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
-			input.Detail = nil
-		}
-		if logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input); logErr != nil {
-			slog.Error("upsert native websocket request log", "request_id", requestID, "error", logErr)
-		}
+	input := requestLogInput(key, requestID, admission, meta, r, statusCode, started, &accounting.result,
+		pricingComplete, settled, actual, errorString(err), logContext)
+	input.ReservationRequestID = requestID
+	input.Stream = false
+	if !shouldRetainRequestDetail(requestID, statusCode, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
+		input.Detail = nil
+	}
+	if logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input); logErr != nil {
+		slog.Error("upsert native websocket request log", "request_id", requestID, "error", logErr)
 	}
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
@@ -191,34 +189,36 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 		turnID = fmt.Sprintf("sha256:%x", sha256.Sum256(entry.Payload))
 	}
 	logContext.price = turnPrice
-	logContext.requestBytes = entry.RequestBytes
-	logContext.forwardedBytes = entry.ForwardedBytes
-	logContext.responseBytes = entry.ResponseBytes
+	logContext.requestBytes = accounting.requestBytes
+	logContext.forwardedBytes = accounting.forwardedBytes
+	logContext.responseBytes = accounting.responseBytes
 	turnCompleted := time.Now()
-	duration := turnCompleted.Sub(entry.StartedAt).Milliseconds()
-	turnTimeline := newLatencyTimeline(entry.StartedAt)
-	turnTimeline.Step(turnCompleted, "websocket_turn", "WebSocket 请求轮次", "downstream", "从 response.create 到终止事件的完整轮次")
-	turnTimeline.Mark(turnCompleted, "complete", "轮次结束")
-	logContext.stageTimings = turnTimeline.JSON(turnCompleted)
-	logID := requestID
-	if accounting.turnsSeen > 0 {
-		logID = identity.NewID()
-		logContext.detail = nil
-	} else if !shouldRetainRequestDetail(logID, http.StatusSwitchingProtocols, "", a.cfg.RequestSuccessSamplePPM) {
+	sessionStarted := accounting.sessionStarted
+	if sessionStarted.IsZero() {
+		sessionStarted = entry.StartedAt
+	}
+	sessionTimeline := newLatencyTimeline(sessionStarted)
+	sessionTimeline.Step(turnCompleted, "websocket_session", "WebSocket 会话", "downstream", "会话内已完成的计费轮次按累计用量写入同一条日志")
+	sessionTimeline.Mark(turnCompleted, "complete", "轮次已计入会话")
+	logContext.stageTimings = sessionTimeline.JSON(turnCompleted)
+	if !shouldRetainRequestDetail(requestID, http.StatusSwitchingProtocols, "", a.cfg.RequestSuccessSamplePPM) {
 		logContext.detail = nil
 	} else if logContext.detail != nil {
 		detail := *logContext.detail
 		detail.StageTimings = logContext.stageTimings
 		logContext.detail = &detail
 	}
-	input := requestLogInput(key, logID, accounting.admission, meta, r, http.StatusSwitchingProtocols,
-		entry.StartedAt, &turn, turnComplete, true, turnCost, "", logContext)
+	input := requestLogInput(key, requestID, accounting.admission, meta, r, http.StatusSwitchingProtocols,
+		sessionStarted, &cumulative, aggregateComplete, true, aggregateCost, "", logContext)
 	input.ReservationRequestID = requestID
-	input.LatencyMS = duration
-	input.CompletedAt = time.Now()
+	input.Stream = false
+	input.LatencyMS = turnCompleted.Sub(sessionStarted).Milliseconds()
+	input.CompletedAt = turnCompleted
 	inserted, err := a.store.AccrueWebSocketTurn(ctx, store.WebSocketTurnAccrual{
-		RequestID: requestID, TurnID: turnID, Usage: turn.Usage, CostNanoUSD: turnCost,
-		PricingComplete: turnComplete, Log: input,
+		RequestID: requestID, TurnID: turnID, Model: meta.Model, Usage: turn.Usage, CostNanoUSD: turnCost,
+		PricingComplete: turnComplete, RequestBodyBytes: entry.RequestBytes, ResponseBodyBytes: entry.ResponseBytes,
+		LatencyMS: turnCompleted.Sub(entry.StartedAt).Milliseconds(), StartedAt: entry.StartedAt, CompletedAt: turnCompleted,
+		Log: input,
 	})
 	if err != nil || !inserted {
 		return inserted, err

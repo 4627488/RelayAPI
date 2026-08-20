@@ -677,14 +677,13 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 		t.Fatalf("duplicate accrual inserted=%v, err=%v", inserted, err)
 	}
 	secondLog := log
-	secondLog.ID = identity.NewID()
-	secondLog.Model, secondLog.ActualModel = "model-2", "model-2"
-	secondLog.Usage = Usage{Prompt: 4, Completion: 3, Total: 7}
-	secondLog.CostNanoUSD = int64Pointer(7)
+	secondLog.Usage = Usage{Prompt: 24, Completion: 13, Total: 37}
+	secondLog.CostNanoUSD = int64Pointer(32)
 	secondInput := input
 	secondInput.TurnID = "resp_2"
-	secondInput.Usage = secondLog.Usage
+	secondInput.Usage = Usage{Prompt: 4, Completion: 3, Total: 7}
 	secondInput.CostNanoUSD = 7
+	secondInput.Model = "model-2"
 	secondInput.Log = secondLog
 	inserted, err = store.AccrueWebSocketTurn(ctx, secondInput)
 	if err != nil || !inserted {
@@ -706,15 +705,13 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 		t.Fatalf("active reservation = %+v", reservation)
 	}
 	var requestLogs []db.RequestLog
-	if err := database.Where("id IN ?", []string{requestID, secondLog.ID}).Order("model").Find(&requestLogs).Error; err != nil {
+	if err := database.Where("id = ?", requestID).Find(&requestLogs).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(requestLogs) != 2 || requestLogs[0].Model != "model" || requestLogs[0].TotalTokens != 30 ||
-		requestLogs[0].CostNanoUSD == nil || *requestLogs[0].CostNanoUSD != 25 ||
-		requestLogs[1].Model != "model-2" || requestLogs[1].TotalTokens != 7 ||
-		requestLogs[1].CostNanoUSD == nil || *requestLogs[1].CostNanoUSD != 7 ||
-		requestLogs[1].ReservationRequestID == nil || *requestLogs[1].ReservationRequestID != requestID {
-		t.Fatalf("per-entry websocket logs = %+v", requestLogs)
+	if len(requestLogs) != 1 || requestLogs[0].TotalTokens != 37 ||
+		requestLogs[0].CostNanoUSD == nil || *requestLogs[0].CostNanoUSD != 32 ||
+		requestLogs[0].ReservationRequestID == nil || *requestLogs[0].ReservationRequestID != requestID {
+		t.Fatalf("session websocket log = %+v", requestLogs)
 	}
 
 	reclaimed, err := store.ReclaimExpiredReservations(ctx, time.Now().Add(2*time.Minute))
