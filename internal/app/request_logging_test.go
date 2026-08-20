@@ -111,6 +111,18 @@ func TestRequestTypeRecognizesSupportedSurfaces(t *testing.T) {
 	}
 }
 
+func TestRequestTransportSplitsHTTPSESSAndWebSocket(t *testing.T) {
+	if got := requestTransport("responses", false); got != "http" {
+		t.Fatalf("http = %q", got)
+	}
+	if got := requestTransport("chat.completions", true); got != "sse" {
+		t.Fatalf("sse = %q", got)
+	}
+	if got := requestTransport("responses.websocket", true); got != "websocket" {
+		t.Fatalf("websocket must win over stream = %q", got)
+	}
+}
+
 func TestUpstreamErrorMessageExtractsStructuredMessage(t *testing.T) {
 	got := upstreamErrorMessage(http.StatusBadRequest, []byte(`{"error":{"message":"invalid model"}}`))
 	if got != "invalid model" {

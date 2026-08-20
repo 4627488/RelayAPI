@@ -130,6 +130,7 @@ type RequestReservation struct {
 type WebSocketTurn struct {
 	RequestID              string    `gorm:"type:uuid;primaryKey" json:"request_id"`
 	TurnID                 string    `gorm:"primaryKey" json:"turn_id"`
+	Model                  string    `gorm:"not null;default:''" json:"model"`
 	PromptTokens           int64     `gorm:"not null;default:0" json:"prompt_tokens"`
 	CompletionTokens       int64     `gorm:"not null;default:0" json:"completion_tokens"`
 	CachedTokens           int64     `gorm:"not null;default:0" json:"cached_tokens"`
@@ -141,5 +142,10 @@ type WebSocketTurn struct {
 	TotalTokens            int64     `gorm:"not null;default:0" json:"total_tokens"`
 	CostNanoUSD            int64     `gorm:"not null;default:0" json:"cost_nano_usd"`
 	PricingComplete        bool      `gorm:"not null;default:false" json:"pricing_complete"`
+	RequestBodyBytes       int64     `gorm:"not null;default:0" json:"request_body_bytes"`
+	ResponseBodyBytes      int64     `gorm:"not null;default:0" json:"response_body_bytes"`
+	LatencyMS              int64     `gorm:"not null;default:0" json:"latency_ms"`
+	StartedAt              time.Time `json:"started_at"`
+	CompletedAt            time.Time `json:"completed_at"`
 	CreatedAt              time.Time `gorm:"not null" json:"created_at"`
 }

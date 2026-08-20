@@ -24,6 +24,7 @@ func TestPublicLogDetailRedactsInternalFields(t *testing.T) {
 			UpstreamHeaders: `{"X-Provider-Secret":["secret"]}`, UpstreamBody: `{"answer":"tenant-owned"}`,
 			ErrorStack: "secret stack", ErrorCause: "secret cause", ErrorDetail: "secret detail", StageTimings: `{"internal":1}`,
 		},
+		Turns: []db.WebSocketTurn{{TurnID: "resp_1", TotalTokens: 30, CostNanoUSD: 25}},
 	}
 
 	got := publicLogDetail(item)
@@ -39,5 +40,8 @@ func TestPublicLogDetailRedactsInternalFields(t *testing.T) {
 	}
 	if got.Detail.RequestBody == "" || got.Detail.UpstreamBody == "" {
 		t.Fatalf("tenant-owned payloads were removed: %#v", got.Detail)
+	}
+	if len(got.Turns) != 1 || got.Turns[0].TurnID != "resp_1" || got.Turns[0].TotalTokens != 30 {
+		t.Fatalf("session turns must stay visible: %#v", got.Turns)
 	}
 }

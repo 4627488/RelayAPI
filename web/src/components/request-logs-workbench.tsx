@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -53,13 +54,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -77,6 +71,7 @@ import {
   type RequestLog,
   type RequestLogDetail,
   type RequestLogPage,
+  type WebSocketTurn,
 } from "@/lib/api"
 import {
   bytes,
@@ -87,6 +82,7 @@ import {
   money,
   requestLogStatus,
   requestLogSucceeded,
+  requestLogTransport,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
@@ -118,6 +114,7 @@ const emptyPage: RequestLogPage = {
 type SelectedLog = {
   log: RequestLog
   detail: RequestLogDetail | null
+  turns?: WebSocketTurn[]
 }
 
 export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
@@ -135,6 +132,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   const [loading, setLoading] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [selected, setSelected] = useState<SelectedLog | null>(null)
+  const detailRequest = useRef(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -175,19 +173,69 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     return () => window.clearTimeout(timer)
   }, [load])
 
-  async function openDetail(log: RequestLog) {
-    setSelected({ log, detail: null })
-    setDetailLoading(true)
-    try {
-      const prefix = admin ? "/api/admin/logs" : "/api/logs"
-      setSelected(await api<SelectedLog>(`${prefix}/${log.id}`))
-    } catch (cause) {
-      setSelected(null)
-      toast.error(cause instanceof Error ? cause.message : "读取日志详情失败")
-    } finally {
-      setDetailLoading(false)
-    }
+  const fetchDetail = useCallback(
+    async (id: string, placeholder?: RequestLog) => {
+      const token = ++detailRequest.current
+      if (placeholder) setSelected({ log: placeholder, detail: null })
+      else setSelected((current) => (current?.log.id === id ? current : null))
+      setDetailLoading(true)
+      try {
+        const prefix = admin ? "/api/admin/logs" : "/api/logs"
+        const next = await api<SelectedLog>(`${prefix}/${id}`)
+        if (detailRequest.current !== token) return
+        setSelected(next)
+      } catch (cause) {
+        if (detailRequest.current !== token) return
+        setSelected(null)
+        toast.error(cause instanceof Error ? cause.message : "读取日志详情失败")
+        if (logIdFromHash() === id) writeLogHash(null, "replace")
+      } finally {
+        if (detailRequest.current === token) setDetailLoading(false)
+      }
+    },
+    [admin]
+  )
+
+  function openDetail(log: RequestLog) {
+    writeLogHash(log.id, "push")
+    void fetchDetail(log.id, log)
   }
+
+  const closeDetail = useCallback(() => {
+    detailRequest.current += 1
+    setSelected(null)
+    setDetailLoading(false)
+    writeLogHash(null, "push")
+  }, [])
+
+  useEffect(() => {
+    function syncFromLocation() {
+      const id = logIdFromHash()
+      if (!id) {
+        detailRequest.current += 1
+        setSelected(null)
+        setDetailLoading(false)
+        return
+      }
+      void fetchDetail(id)
+    }
+    window.addEventListener("hashchange", syncFromLocation)
+    if (logIdFromHash()) void fetchDetail(logIdFromHash())
+    return () => {
+      window.removeEventListener("hashchange", syncFromLocation)
+    }
+  }, [fetchDetail])
+
+  useEffect(() => {
+    if (!selected) return
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return
+      event.preventDefault()
+      closeDetail()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [closeDetail, selected])
 
   function resetFilters() {
     setQuery("")
@@ -213,6 +261,26 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     to,
   ].filter(Boolean).length
   const hasFilters = Boolean(query || status !== "all" || advancedFilterCount)
+
+  if (selected) {
+    return (
+      <LogDetailPage
+        value={selected}
+        loading={detailLoading}
+        onBack={closeDetail}
+      />
+    )
+  }
+
+  if (detailLoading && logIdFromHash()) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-9 w-28" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-72 w-full" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -260,7 +328,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
         <CardHeader className="border-b">
           <CardTitle>请求明细</CardTitle>
           <CardDescription>
-            点击一行打开详情；负载大小不依赖正文采样，会随日志摘要保留。
+            一条日志是一次对 Relay 的调用。SSE 仍是一条 HTTP 请求；WebSocket
+            按会话一行，轮次在详情里。
           </CardDescription>
           <FieldGroup className="grid gap-2 pt-2 md:grid-cols-[minmax(16rem,1fr)_9rem_auto_auto]">
             <Field>
@@ -285,7 +354,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                   all: "全部状态",
                   success: "成功",
                   error: "错误",
-                  stream: "流式",
+                  stream: "SSE",
+                  websocket: "WebSocket",
                 }}
                 value={status}
                 onValueChange={(value) => {
@@ -303,7 +373,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                     <SelectItem value="all">全部状态</SelectItem>
                     <SelectItem value="success">成功</SelectItem>
                     <SelectItem value="error">错误</SelectItem>
-                    <SelectItem value="stream">流式</SelectItem>
+                    <SelectItem value="stream">SSE</SelectItem>
+                    <SelectItem value="websocket">WebSocket</SelectItem>
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -484,9 +555,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                         >
                           {requestLogStatus(log.status_code)}
                         </Badge>
-                        {log.stream && log.status_code !== 101 ? (
+                        {requestLogTransport(log.request_type, log.stream) !==
+                        "HTTP" ? (
                           <span className="text-xs text-muted-foreground">
-                            流式
+                            {requestLogTransport(log.request_type, log.stream)}
                           </span>
                         ) : null}
                       </div>
@@ -499,7 +571,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                           log.path}
                       </p>
                       <p className="max-w-72 truncate text-xs text-muted-foreground">
-                        {log.request_type || `${log.method} ${log.path}`}
+                        {requestLogTransport(log.request_type, log.stream)}
+                        {log.request_type
+                          ? ` · ${log.request_type}`
+                          : ` · ${log.method} ${log.path}`}
                         {log.provider
                           ? ` · ${log.provider}${log.auth_index ? ` / ${log.auth_index}` : ""}`
                           : ""}
@@ -630,29 +705,22 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
           </div>
         </CardFooter>
       </Card>
-
-      <LogDetailSheet
-        value={selected}
-        loading={detailLoading}
-        onOpenChange={(open) => {
-          if (!open) setSelected(null)
-        }}
-      />
     </div>
   )
 }
 
-function LogDetailSheet({
+function LogDetailPage({
   value,
   loading,
-  onOpenChange,
+  onBack,
 }: {
-  value: SelectedLog | null
+  value: SelectedLog
   loading: boolean
-  onOpenChange: (open: boolean) => void
+  onBack: () => void
 }) {
-  const log = value?.log
-  const detail = value?.detail ?? null
+  const log = value.log
+  const detail = value.detail ?? null
+  const turns = value.turns ?? []
   const requestVisible = Boolean(
     detail &&
     (hasJSONObject(detail.request_headers) ||
@@ -676,86 +744,104 @@ function LogDetailSheet({
     Number(requestVisible) + Number(forwardedVisible) + Number(responseVisible)
 
   return (
-    <Sheet open={Boolean(value)} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 sm:max-w-3xl">
-        <SheetHeader className="border-b pr-14">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <Button variant="outline" onClick={onBack}>
+          <ChevronLeftIcon data-icon="inline-start" />
+          返回列表
+        </Button>
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            {log ? (
-              <Badge
-                variant={
-                  requestLogSucceeded(log.status_code, log.error_code)
-                    ? "secondary"
-                    : "destructive"
-                }
-              >
-                {requestLogStatus(log.status_code)}
-              </Badge>
-            ) : null}
-            <SheetTitle>请求详情</SheetTitle>
+            <Badge
+              variant={
+                requestLogSucceeded(log.status_code, log.error_code)
+                  ? "secondary"
+                  : "destructive"
+              }
+            >
+              {requestLogStatus(log.status_code)}
+            </Badge>
+            <h1 className="text-lg font-medium">
+              {modelRoute(log) || "请求详情"}
+            </h1>
           </div>
-          <SheetDescription className="flex min-w-0 items-center gap-1 font-mono text-xs">
-            <span className="truncate">{log?.id}</span>
-            {log ? <CopyButton value={log.id} label="复制请求 ID" /> : null}
-          </SheetDescription>
-        </SheetHeader>
+          <p className="mt-1 flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground">
+            <span className="truncate">{log.id}</span>
+            <CopyButton value={log.id} label="复制请求 ID" />
+            <span>
+              {requestLogTransport(log.request_type, log.stream)}
+              {` · ${dateTime(log.started_at)}`}
+            </span>
+          </p>
+        </div>
+      </div>
 
-        {log ? (
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {detailSections ? (
-              <Tabs defaultValue="overview" className="gap-0">
-                <div className="sticky top-0 bg-popover px-4 pt-2">
-                  <TabsList
-                    variant="line"
-                    className="w-full justify-start overflow-x-auto"
-                  >
-                    <TabsTrigger value="overview">概览</TabsTrigger>
-                    {requestVisible ? (
-                      <TabsTrigger value="request">客户端请求</TabsTrigger>
-                    ) : null}
-                    {forwardedVisible ? (
-                      <TabsTrigger value="forwarded">上游转发</TabsTrigger>
-                    ) : null}
-                    {responseVisible ? (
-                      <TabsTrigger value="response">上游响应</TabsTrigger>
-                    ) : null}
-                  </TabsList>
-                </div>
-                <TabsContent value="overview">
-                  <LogOverview log={log} detail={detail} loading={loading} />
-                </TabsContent>
-                {requestVisible && detail ? (
-                  <TabsContent value="request">
-                    <RequestSection detail={detail} />
-                  </TabsContent>
+      <Card>
+        {detailSections ? (
+          <Tabs defaultValue="overview" className="gap-0">
+            <div className="border-b px-4 pt-3">
+              <TabsList
+                variant="line"
+                className="w-full justify-start overflow-x-auto"
+              >
+                <TabsTrigger value="overview">概览</TabsTrigger>
+                {requestVisible ? (
+                  <TabsTrigger value="request">客户端请求</TabsTrigger>
                 ) : null}
-                {forwardedVisible && detail ? (
-                  <TabsContent value="forwarded">
-                    <ForwardedSection detail={detail} />
-                  </TabsContent>
+                {forwardedVisible ? (
+                  <TabsTrigger value="forwarded">上游转发</TabsTrigger>
                 ) : null}
-                {responseVisible && detail ? (
-                  <TabsContent value="response">
-                    <ResponseSection detail={detail} />
-                  </TabsContent>
+                {responseVisible ? (
+                  <TabsTrigger value="response">上游响应</TabsTrigger>
                 ) : null}
-              </Tabs>
-            ) : (
-              <LogOverview log={log} detail={detail} loading={loading} />
-            )}
-          </div>
-        ) : null}
-      </SheetContent>
-    </Sheet>
+              </TabsList>
+            </div>
+            <TabsContent value="overview">
+              <LogOverview
+                log={log}
+                detail={detail}
+                turns={turns}
+                loading={loading}
+              />
+            </TabsContent>
+            {requestVisible && detail ? (
+              <TabsContent value="request">
+                <RequestSection detail={detail} />
+              </TabsContent>
+            ) : null}
+            {forwardedVisible && detail ? (
+              <TabsContent value="forwarded">
+                <ForwardedSection detail={detail} />
+              </TabsContent>
+            ) : null}
+            {responseVisible && detail ? (
+              <TabsContent value="response">
+                <ResponseSection detail={detail} />
+              </TabsContent>
+            ) : null}
+          </Tabs>
+        ) : (
+          <LogOverview
+            log={log}
+            detail={detail}
+            turns={turns}
+            loading={loading}
+          />
+        )}
+      </Card>
+    </div>
   )
 }
 
 function LogOverview({
   log,
   detail,
+  turns,
   loading,
 }: {
   log: RequestLog
   detail: RequestLogDetail | null
+  turns: WebSocketTurn[]
   loading: boolean
 }) {
   const costRows = useMemo(() => {
@@ -854,6 +940,7 @@ function LogOverview({
         <Facts
           items={[
             ["入口", `${log.method} ${log.path}`],
+            ["传输", requestLogTransport(log.request_type, log.stream)],
             ["类型", log.request_type],
             ["模型", modelRoute(log)],
             [
@@ -904,6 +991,43 @@ function LogOverview({
           ]}
         />
       </DetailGroup>
+
+      {turns.length ? (
+        <DetailGroup title={`会话轮次 · ${turns.length}`}>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>轮次</TableHead>
+                <TableHead>模型</TableHead>
+                <TableHead className="text-right">Token</TableHead>
+                <TableHead className="text-right">耗时</TableHead>
+                <TableHead className="text-right">费用</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {turns.map((turn) => (
+                <TableRow key={turn.turn_id}>
+                  <TableCell className="max-w-40 truncate font-mono text-xs">
+                    {turn.turn_id}
+                  </TableCell>
+                  <TableCell className="max-w-32 truncate text-xs">
+                    {turn.model || "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {compactTokens(turn.total_tokens)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {turn.latency_ms} ms
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(turn.cost_nano_usd)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </DetailGroup>
+      ) : null}
 
       <RequestLatencyTimeline
         value={latencyTrace}
@@ -1087,7 +1211,7 @@ function DetailGroup({
 function Facts({ items }: { items: Array<[string, string | undefined]> }) {
   const visible = items.filter(([, value]) => Boolean(value))
   return (
-    <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
+    <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
       {visible.map(([label, value]) => (
         <Detail key={label} label={label} value={value ?? ""} />
       ))}
@@ -1128,7 +1252,7 @@ function Payload({
         {truncated ? <Badge variant="outline">已截断</Badge> : null}
         <CopyButton value={value} label={`复制 ${title}`} className="ml-auto" />
       </div>
-      <pre className="max-h-[32rem] overflow-auto rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed break-all whitespace-pre-wrap">
+      <pre className="max-h-[min(40rem,70vh)] overflow-auto rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed break-all whitespace-pre-wrap">
         {value}
       </pre>
     </section>
@@ -1218,6 +1342,27 @@ function modelRoute(log: RequestLog) {
   if (requested && actual && requested !== actual)
     return `${requested} → ${actual}`
   return actual || requested
+}
+
+const logHashPrefix = "#log="
+
+function logIdFromHash(hash = window.location.hash) {
+  if (!hash.startsWith(logHashPrefix)) return ""
+  try {
+    return decodeURIComponent(hash.slice(logHashPrefix.length)).trim()
+  } catch {
+    return ""
+  }
+}
+
+function writeLogHash(id: string | null, mode: "push" | "replace") {
+  const url = new URL(window.location.href)
+  url.hash = id ? `log=${encodeURIComponent(id)}` : ""
+  const next = `${url.pathname}${url.search}${url.hash}`
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  if (next === current) return
+  if (mode === "replace") window.history.replaceState(null, "", next)
+  else window.history.pushState(null, "", next)
 }
 
 function timingLabel(value: string) {

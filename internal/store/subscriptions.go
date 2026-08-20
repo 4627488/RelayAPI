@@ -75,12 +75,18 @@ type Admission struct {
 }
 
 type WebSocketTurnAccrual struct {
-	RequestID       string
-	TurnID          string
-	Usage           Usage
-	CostNanoUSD     int64
-	PricingComplete bool
-	Log             LogInput
+	RequestID         string
+	TurnID            string
+	Model             string
+	Usage             Usage
+	CostNanoUSD       int64
+	PricingComplete   bool
+	RequestBodyBytes  int64
+	ResponseBodyBytes int64
+	LatencyMS         int64
+	StartedAt         time.Time
+	CompletedAt       time.Time
+	Log               LogInput
 }
 
 type quotaWindowReservation struct {
@@ -1123,7 +1129,7 @@ func (s Store) SettleRequestReservation(ctx context.Context, requestID string, a
 }
 
 // AccrueWebSocketTurn durably charges one terminal WebSocket response and
-// writes its billing-entry log in the same transaction. Replayed terminal
+// upserts the session request log in the same transaction. Replayed terminal
 // frames are ignored by the request_id + turn_id primary key.
 func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccrual) (bool, error) {
 	inserted := false
@@ -1135,14 +1141,26 @@ func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccru
 		if reservation.Status != db.ReservationActive {
 			return fmt.Errorf("request reservation is %s", reservation.Status)
 		}
+		completedAt := input.CompletedAt
+		if completedAt.IsZero() {
+			completedAt = time.Now()
+		}
+		startedAt := input.StartedAt
+		if startedAt.IsZero() {
+			startedAt = completedAt
+		}
 		turn := db.WebSocketTurn{
 			RequestID: input.RequestID, TurnID: strings.TrimSpace(input.TurnID),
+			Model:        strings.TrimSpace(input.Model),
 			PromptTokens: input.Usage.Prompt, CompletionTokens: input.Usage.Completion,
 			CachedTokens: input.Usage.Cached, CacheWriteTokens: input.Usage.CacheWrite,
 			ReasoningTokens: input.Usage.Reasoning, ImageInputTokens: input.Usage.ImageInput,
 			CachedImageInputTokens: input.Usage.CachedImageInput, ImageOutputTokens: input.Usage.ImageOutput,
 			TotalTokens: input.Usage.Total, CostNanoUSD: input.CostNanoUSD,
-			PricingComplete: input.PricingComplete, CreatedAt: time.Now(),
+			PricingComplete:  input.PricingComplete,
+			RequestBodyBytes: input.RequestBodyBytes, ResponseBodyBytes: input.ResponseBodyBytes,
+			LatencyMS: input.LatencyMS, StartedAt: startedAt, CompletedAt: completedAt,
+			CreatedAt: time.Now(),
 		}
 		if turn.TurnID == "" {
 			return errors.New("websocket turn id is required")

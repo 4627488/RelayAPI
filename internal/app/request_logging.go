@@ -78,6 +78,16 @@ func shouldRetainRequestDetail(requestID string, status int, errorCode string, s
 	return sampledRequest(requestID, successSamplePPM)
 }
 
+func requestTransport(requestType string, stream bool) string {
+	if strings.Contains(requestType, "websocket") {
+		return "websocket"
+	}
+	if stream {
+		return "sse"
+	}
+	return "http"
+}
+
 func requestType(path string, websocket bool) string {
 	if websocket {
 		if strings.Contains(path, "/responses") {
