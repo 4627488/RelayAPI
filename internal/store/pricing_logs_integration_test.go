@@ -343,15 +343,15 @@ func TestQueryLogsCountsWebSocketSessionAsOneUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sqlDB.Close()
-	if err := database.Exec(`TRUNCATE web_socket_turns, request_log_details, usage_daily_rollups,
-		request_logs, api_keys, tenants CASCADE`).Error; err != nil {
+	if err := database.Exec(`TRUNCATE web_socket_turns, request_reservations, billing_ledgers,
+		request_log_details, usage_daily_rollups, request_logs, api_keys, tenants CASCADE`).Error; err != nil {
 		t.Fatal(err)
 	}
 
 	tenantID, keyID := identity.NewID(), identity.NewID()
 	if err := database.Create(&db.Tenant{
 		ID: tenantID, Name: "session-unit", OwnerEmail: "session-unit@example.test",
-		PasswordHash: "test", Enabled: true,
+		PasswordHash: "test", Enabled: true, BalanceNanoUSD: 100,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -364,6 +364,13 @@ func TestQueryLogsCountsWebSocketSessionAsOneUnit(t *testing.T) {
 	dataStore := Store{DB: database}
 	started := time.Now().Add(-time.Minute)
 	sessionID, childID, sseID := identity.NewID(), identity.NewID(), identity.NewID()
+	if _, err := dataStore.AdmitRequest(ctx, AdmissionInput{
+		RequestID: sessionID, Key: KeyContext{APIKey: db.APIKey{ID: keyID, TenantID: tenantID}},
+		Model: "ws-model", BalanceReserve: 10, QuotaReserve: 10, PriceConfigured: true,
+		PriceSnapshot: json.RawMessage(`{"model":"ws-model"}`), ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	sessionCost, childCost, sseCost := int64(25), int64(7), int64(3)
 	if err := dataStore.WriteLog(ctx, LogInput{
 		ID: sessionID, TenantID: tenantID, APIKeyID: keyID, ReservationRequestID: sessionID,
@@ -393,8 +400,8 @@ func TestQueryLogsCountsWebSocketSessionAsOneUnit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.Create(&[]db.WebSocketTurn{
-		{RequestID: sessionID, TurnID: "resp_1", Model: "ws-model", PromptTokens: 20, CompletionTokens: 10, TotalTokens: 30, CostNanoUSD: 25, CreatedAt: started},
-		{RequestID: sessionID, TurnID: "resp_2", Model: "ws-model-2", PromptTokens: 4, CompletionTokens: 3, TotalTokens: 7, CostNanoUSD: 7, CreatedAt: started.Add(10 * time.Second)},
+		{RequestID: sessionID, TurnID: "resp_1", Model: "ws-model", PromptTokens: 20, CompletionTokens: 10, TotalTokens: 30, CostNanoUSD: 25, StartedAt: started, CompletedAt: started.Add(time.Second), CreatedAt: started},
+		{RequestID: sessionID, TurnID: "resp_2", Model: "ws-model-2", PromptTokens: 4, CompletionTokens: 3, TotalTokens: 7, CostNanoUSD: 7, StartedAt: started.Add(10 * time.Second), CompletedAt: started.Add(11 * time.Second), CreatedAt: started.Add(10 * time.Second)},
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
