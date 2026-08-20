@@ -91,6 +91,26 @@ func TestCopyHeadersDropsInternalRelayHeaders(t *testing.T) {
 	}
 }
 
+func TestPrepareRuntimeHeadersPinsCPAAndUpstreamCredential(t *testing.T) {
+	header := http.Header{
+		"Authorization":       {"Bearer client-key"},
+		"X-Relay-Cpa-Auth-Id": {"attacker-selected-auth"},
+	}
+	prepareRuntimeHeaders(header, "req-1", "cred-9")
+	if header.Get("Authorization") != "" {
+		t.Fatal("client authorization must be stripped before the CPA hop")
+	}
+	if header.Get("X-Relay-Request-ID") != "req-1" {
+		t.Fatalf("request id = %q", header.Get("X-Relay-Request-ID"))
+	}
+	if header.Get("X-Relay-Upstream-Credential-ID") != "cred-9" {
+		t.Fatalf("upstream credential = %q", header.Get("X-Relay-Upstream-Credential-ID"))
+	}
+	if header.Get("X-Relay-CPA-Auth-ID") != "cred-9" {
+		t.Fatalf("cpa auth = %q", header.Get("X-Relay-CPA-Auth-ID"))
+	}
+}
+
 func TestStripRelayHeaders(t *testing.T) {
 	header := http.Header{
 		"X-Relay-Cpa-Auth-Id":   {"attacker-selected-auth"},

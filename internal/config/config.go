@@ -44,6 +44,8 @@ type Config struct {
 	InvitationRetentionDays        int
 	RetentionBatchSize             int
 	RetentionMaxRuntime            time.Duration
+	CPAImportAuthDir               string
+	CPAImportConfigPath            string
 }
 
 func Load() (Config, error) {
@@ -81,6 +83,8 @@ func Load() (Config, error) {
 		InvitationRetentionDays:        int(envInt64("INVITATION_RETENTION_DAYS", 30)),
 		RetentionBatchSize:             int(envInt64("RETENTION_BATCH_SIZE", 5_000)),
 		RetentionMaxRuntime:            time.Duration(envInt64("RETENTION_MAX_RUNTIME_SECONDS", 30)) * time.Second,
+		CPAImportAuthDir:               strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_AUTH_DIR")),
+		CPAImportConfigPath:            strings.TrimSpace(os.Getenv("RELAY_CPA_IMPORT_CONFIG")),
 	}
 	if cfg.APIKeyEncryptionKey == "" {
 		cfg.APIKeyEncryptionKey = cfg.SessionSecret

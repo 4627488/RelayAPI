@@ -40,6 +40,12 @@ type RuntimeSettings = {
   memory_reclaim_threshold_mib: number
   unpriced_model_policy: "allow" | "deny"
   upstream_websockets: boolean
+  request_retry: number
+  max_retry_credentials: number
+  max_retry_interval: number
+  disable_credential_cooling: boolean
+  passthrough_headers: boolean
+  stream_keepalive_seconds: number
 }
 
 type RuntimeInfo = {
@@ -51,7 +57,7 @@ type RuntimeInfo = {
 }
 
 type SettingsResponse = {
-  mode: "native"
+  mode: "embedded_cpa" | "native"
   settings: RuntimeSettings
   runtime: RuntimeInfo
 }
@@ -198,7 +204,8 @@ export function RuntimeSettingsView() {
             <CardHeader>
               <CardTitle>凭据调度</CardTitle>
               <CardDescription>
-                同一模型有多个账户时如何分流。上游错误原样返回，不会改写或重试。
+                同一模型有多个账户时如何分流。Relay 不会改写用户请求；内置 CPA
+                只在下面配置的次数内更换凭据重试。
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -239,37 +246,102 @@ export function RuntimeSettingsView() {
 
           <Card>
             <CardHeader>
-              <CardTitle>凭据故障隔离</CardTitle>
+              <CardTitle>内置 CPA</CardTitle>
               <CardDescription>
-                连续失败的账户会暂时离开候选池，冷却后再由下一次请求验证。
+                这些旋钮只作用于进程内 CPA，不改变 Relay 的准入与结算。
               </CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup className="grid md:grid-cols-2">
                 <NumberField
-                  id="failure-threshold"
-                  label="连续失败阈值"
+                  id="request-retry"
+                  label="请求重试"
                   suffix="次"
-                  description="达到阈值后仅隔离该凭据，不影响同模型下的其他账户。"
-                  value={value.credential_failure_threshold}
-                  min={1}
+                  description="同一请求在 CPA 内最多再试几次，不含 Relay 重放。"
+                  value={value.request_retry}
+                  min={0}
                   max={20}
-                  onChange={(next) =>
-                    patch("credential_failure_threshold", next)
-                  }
+                  onChange={(next) => patch("request_retry", next)}
                 />
                 <NumberField
-                  id="failure-cooldown"
-                  label="隔离冷却时间"
+                  id="max-retry-credentials"
+                  label="最多尝试凭据"
+                  suffix="个"
+                  description="0 表示不额外限制。用于同一模型下换账户重试。"
+                  value={value.max_retry_credentials}
+                  min={0}
+                  max={100}
+                  onChange={(next) => patch("max_retry_credentials", next)}
+                />
+                <NumberField
+                  id="max-retry-interval"
+                  label="最大重试间隔"
                   suffix="秒"
-                  description="0 表示不隔离。非 0 时冷却结束后回到候选池。"
-                  value={value.credential_cooldown_seconds}
+                  description="CPA 两次尝试之间的上限。"
+                  value={value.max_retry_interval}
                   min={0}
                   max={3600}
-                  onChange={(next) =>
-                    patch("credential_cooldown_seconds", next)
-                  }
+                  onChange={(next) => patch("max_retry_interval", next)}
                 />
+                <NumberField
+                  id="stream-keepalive"
+                  label="流式保活"
+                  suffix="秒"
+                  description="0 表示不发送保活。只影响已建立的 SSE。"
+                  value={value.stream_keepalive_seconds}
+                  min={0}
+                  max={300}
+                  onChange={(next) => patch("stream_keepalive_seconds", next)}
+                />
+                <Field>
+                  <FieldLabel>凭据冷却</FieldLabel>
+                  <Select
+                    items={{ disabled: "关闭", enabled: "开启" }}
+                    value={
+                      value.disable_credential_cooling ? "disabled" : "enabled"
+                    }
+                    onValueChange={(next) =>
+                      next &&
+                      patch("disable_credential_cooling", next === "disabled")
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="disabled">关闭</SelectItem>
+                        <SelectItem value="enabled">开启</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    关闭后失败凭据仍留在候选池，避免把偶发 429 当成账户故障。
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel>透传请求头</FieldLabel>
+                  <Select
+                    items={{ enabled: "开启", disabled: "关闭" }}
+                    value={value.passthrough_headers ? "enabled" : "disabled"}
+                    onValueChange={(next) =>
+                      next && patch("passthrough_headers", next === "enabled")
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">开启</SelectItem>
+                        <SelectItem value="disabled">关闭</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    开启后 CPA 会把部分客户端头继续带到上游。
+                  </FieldDescription>
+                </Field>
               </FieldGroup>
             </CardContent>
           </Card>

@@ -182,7 +182,11 @@ type publicInference struct {
 func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call publicInference) {
 	prepareRuntimeHeaders(r.Header, call.requestID, call.admission.UpstreamCredentialID)
 	if isCodexResponsesPath(r.URL.Path) {
-		w.Header().Set("X-Models-Etag", modelCatalogRevision(call.key, a.nativeRuntime.Models(), a.codexCatalogRevisionToken()))
+		models := []string(nil)
+		if a.nativeRuntime != nil {
+			models = a.nativeRuntime.Models()
+		}
+		w.Header().Set("X-Models-Etag", modelCatalogRevision(call.key, models, a.codexCatalogRevisionToken()))
 	}
 	if call.admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", call.admission.ChildSubscriptionID)
@@ -260,7 +264,10 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		} else if status >= http.StatusBadRequest {
 			logContext.errorCode, errorMessage = observedError(status, rawResponse)
 		}
-		logContext.upstreamTraceID = strings.TrimSpace(upstreamHeaders.Get("X-Upstream-TRACE-ID"))
+		logContext.upstreamTraceID = firstNonEmptyString(
+			strings.TrimSpace(upstreamHeaders.Get("X-Upstream-TRACE-ID")),
+			strings.TrimSpace(upstreamHeaders.Get("X-CPA-TRACE-ID")),
+		)
 		logContext.responseBytes = responseBytes
 		if !firstByteAt.IsZero() {
 			ttft := firstByteAt.Sub(call.started).Milliseconds()
@@ -339,6 +346,7 @@ func prepareRuntimeHeaders(header http.Header, requestID, credentialID string) {
 	}
 	if credentialID != "" {
 		header.Set("X-Relay-Upstream-Credential-ID", credentialID)
+		header.Set("X-Relay-CPA-Auth-ID", credentialID)
 	}
 }
 

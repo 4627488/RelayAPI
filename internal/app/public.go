@@ -73,7 +73,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		expectedBodyBytes = a.maxRequestBytes()
 	}
 	targetAdmission := a.admission()
-	if targetAdmission == nil || a.nativeRuntime == nil {
+	if targetAdmission == nil || a.nativeRuntime == nil || a.inferenceCPA() == nil {
 		a.rejectPublic(w, r, key, requestID, admission, requestMetadata(nil, r), nil, started, timeline,
 			publicError(http.StatusServiceUnavailable, "runtime_unavailable", "模型运行时不可用"))
 		return

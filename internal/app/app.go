@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/config"
+	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/cpaimport"
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/egress"
 	"github.com/4627488/RelayAPI/internal/gateway"
@@ -25,6 +27,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
+	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
 
 type App struct {
@@ -37,6 +40,10 @@ type App struct {
 	setupBox          identity.SecretBox
 	nativeAdmission   atomic.Pointer[gateway.Client]
 	nativeRuntime     upstream.Runtime
+	nativeCPA         *cpa.Client
+	nativeCPARuntime  *relaybridge.Runtime
+	nativeCPAServer   *http.Server
+	nativeCPAServeErr atomic.Value
 	providerOAuth     providerOAuthSessions
 	nativeSettings    settingsState
 	memoryReclaiming  atomic.Bool
@@ -66,6 +73,15 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if finalizationCapacity < 1 {
 		finalizationCapacity = 16
 	}
+	importGlobalProxy := ""
+	if cfg.CPAImportAuthDir != "" || cfg.CPAImportConfigPath != "" {
+		report, importErr := cpaimport.Import(ctx, dataStore, cfg.CPAImportAuthDir, cfg.CPAImportConfigPath, false)
+		if importErr != nil {
+			return nil, fmt.Errorf("import CPA credentials: %w", importErr)
+		}
+		importGlobalProxy = report.GlobalProxyURL
+		slog.Info("CPA credentials imported", "imported", report.Imported, "unchanged", report.Skipped)
+	}
 	a := &App{
 		cfg: cfg, store: dataStore, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
 		providerOAuth:     newProviderOAuthSessions(),
@@ -74,7 +90,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
 		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
 	}
-	if err := a.startNativeRuntime(ctx); err != nil {
+	if err := a.startEmbeddedCPA(ctx, importGlobalProxy); err != nil {
 		return nil, err
 	}
 	a.routes()
@@ -156,9 +172,7 @@ func (a *App) mergeCapabilityIndex(ctx context.Context, version string, fetched 
 }
 
 func (a *App) Close() {
-	if a.nativeRuntime != nil {
-		_ = a.nativeRuntime.Close(context.Background())
-	}
+	a.closeEmbeddedCPA()
 	if a.stop != nil {
 		close(a.stop)
 		a.wg.Wait()
@@ -433,7 +447,7 @@ func (a *App) frontend(w http.ResponseWriter, r *http.Request) {
 func (a *App) serviceInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":        "RelayAPI",
-		"description": "multi-tenant native model gateway",
+		"description": "multi-tenant embedded CPA gateway",
 		"health":      "/healthz",
 		"models":      "/v1/models",
 	})
@@ -452,8 +466,11 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	if a.nativeRuntime == nil || a.nativeRuntime.CredentialCount() == 0 {
 		credentialErr = errors.New("no enabled runtime credentials")
 	}
-	if a.nativeRuntime == nil {
-		runtimeErr = errors.New("native runtime is not available")
+	if a.nativeCPARuntime == nil || a.nativeCPA == nil {
+		runtimeErr = errors.New("embedded CPA runtime is not available")
+	}
+	if serveErr, ok := a.nativeCPAServeErr.Load().(error); ok && serveErr != nil {
+		runtimeErr = serveErr
 	}
 	status := http.StatusOK
 	if err != nil || runtimeErr != nil || credentialErr != nil || subscriptionErr != nil {
@@ -464,7 +481,7 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 		admissionStatus = admission.AdmissionStatus()
 	}
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "data_plane": "native_runtime", "runtime_credentials": errorText(credentialErr), "runtime": errorText(runtimeErr),
+		"database": errorText(err), "data_plane": "embedded_cpa", "runtime_credentials": errorText(credentialErr), "runtime": errorText(runtimeErr),
 		"runtime_admission": admissionStatus, "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
 }
 
