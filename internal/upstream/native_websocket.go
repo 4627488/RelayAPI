@@ -87,6 +87,7 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 		if credential.Provider == "xai" {
 			var current *toolResponseRestorer
 			payload, current = lowerCodexTools(payload)
+			payload = sanitizeXAIResponses(payload)
 			if current != nil {
 				restorer = current
 			}
