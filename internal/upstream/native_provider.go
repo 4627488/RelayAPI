@@ -54,6 +54,25 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 	return response, err
 }
 
+func (r *nativeRuntime) RefreshCredential(ctx context.Context, id string, force bool) ([]byte, bool, error) {
+	r.mu.RLock()
+	credential := r.credentials[strings.TrimSpace(id)]
+	r.mu.RUnlock()
+	if credential == nil {
+		return nil, false, fmt.Errorf("upstream credential %q is not registered", id)
+	}
+	if !credential.hasRefreshToken() {
+		return credential.currentDocument(), false, nil
+	}
+	if !force && !credential.tokenNeedsRefresh() {
+		return credential.currentDocument(), false, nil
+	}
+	if err := r.refreshCredential(ctx, credential); err != nil {
+		return nil, false, err
+	}
+	return credential.currentDocument(), true, nil
+}
+
 func (r *nativeRuntime) refreshCredential(ctx context.Context, credential *nativeCredential) error {
 	credential.tokenMu.Lock()
 	defer credential.tokenMu.Unlock()
@@ -63,9 +82,15 @@ func (r *nativeRuntime) refreshCredential(ctx context.Context, credential *nativ
 	endpoint, clientID := "", ""
 	switch credential.Provider {
 	case "codex":
-		endpoint, clientID = "https://auth.openai.com/oauth/token", codexClientID
+		endpoint, clientID = firstString(credential.document, "token_endpoint"), codexClientID
+		if endpoint == "" {
+			endpoint = "https://auth.openai.com/oauth/token"
+		}
 	case "kimi":
-		endpoint, clientID = "https://auth.kimi.com/api/oauth/token", kimiClientID
+		endpoint, clientID = firstString(credential.document, "token_endpoint"), kimiClientID
+		if endpoint == "" {
+			endpoint = "https://auth.kimi.com/api/oauth/token"
+		}
 	case "xai":
 		endpoint, clientID = firstString(credential.document, "token_endpoint"), xaiClientID
 	default:

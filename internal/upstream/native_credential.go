@@ -357,10 +357,28 @@ func (c *nativeCredential) hasRefreshToken() bool {
 	return c.RefreshToken != ""
 }
 
+const credentialRefreshLead = 5 * time.Minute
+
 func (c *nativeCredential) tokenNeedsRefresh() bool {
 	c.tokenMu.Lock()
 	defer c.tokenMu.Unlock()
-	return c.RefreshToken != "" && !c.expiresAt.IsZero() && time.Now().Add(2*time.Minute).After(c.expiresAt)
+	return credentialTokenNeedsRefresh(c.RefreshToken, c.expiresAt, time.Now())
+}
+
+func credentialTokenNeedsRefresh(refreshToken string, expiresAt, now time.Time) bool {
+	if strings.TrimSpace(refreshToken) == "" {
+		return false
+	}
+	if expiresAt.IsZero() {
+		return true
+	}
+	return !now.Add(credentialRefreshLead).Before(expiresAt)
+}
+
+func (c *nativeCredential) currentDocument() []byte {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	return append([]byte(nil), c.Credential.Document...)
 }
 
 func parseCredentialTime(value string) time.Time {
