@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptrace"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -54,27 +53,39 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 	return response, err
 }
 
+func (r *nativeRuntime) RefreshCredential(ctx context.Context, id string, force bool) ([]byte, bool, error) {
+	r.mu.RLock()
+	credential := r.credentials[strings.TrimSpace(id)]
+	r.mu.RUnlock()
+	if credential == nil {
+		return nil, false, fmt.Errorf("upstream credential %q is not registered", id)
+	}
+	if !credential.hasRefreshToken() {
+		return credential.currentDocument(), false, nil
+	}
+	if !force && !credential.tokenNeedsRefresh() {
+		return credential.currentDocument(), false, nil
+	}
+	if err := r.refreshCredential(ctx, credential); err != nil {
+		return nil, false, err
+	}
+	return credential.currentDocument(), true, nil
+}
+
 func (r *nativeRuntime) refreshCredential(ctx context.Context, credential *nativeCredential) error {
 	credential.tokenMu.Lock()
 	defer credential.tokenMu.Unlock()
 	if credential.RefreshToken == "" {
 		return errors.New("credential has no refresh token")
 	}
-	endpoint, clientID := "", ""
-	switch credential.Provider {
-	case "codex":
-		endpoint, clientID = "https://auth.openai.com/oauth/token", codexClientID
-	case "kimi":
-		endpoint, clientID = "https://auth.kimi.com/api/oauth/token", kimiClientID
-	case "xai":
-		endpoint, clientID = firstString(credential.document, "token_endpoint"), xaiClientID
-	default:
+	if credential.Provider != "codex" && credential.Provider != "kimi" && credential.Provider != "xai" {
 		return errors.New("credential provider does not support token refresh")
 	}
+	endpoint := oauthTokenEndpoint(credential.Provider, credential.document)
 	if endpoint == "" {
 		return errors.New("credential token endpoint is missing")
 	}
-	form := url.Values{"grant_type": {"refresh_token"}, "client_id": {clientID}, "refresh_token": {credential.RefreshToken}}
+	form := oauthRefreshForm(credential.Provider, credential.RefreshToken)
 	var tokens map[string]any
 	var err error
 	if credential.Provider == "kimi" {
@@ -85,19 +96,7 @@ func (r *nativeRuntime) refreshCredential(ctx context.Context, credential *nativ
 	if err != nil {
 		return err
 	}
-	credential.AccessToken = anyString(tokens["access_token"])
-	if refresh := anyString(tokens["refresh_token"]); refresh != "" {
-		credential.RefreshToken = refresh
-	}
-	credential.document["access_token"] = credential.AccessToken
-	credential.document["refresh_token"] = credential.RefreshToken
-	if idToken := anyString(tokens["id_token"]); idToken != "" {
-		credential.document["id_token"] = idToken
-	}
-	if expires, ok := tokens["expires_in"].(float64); ok && expires > 0 {
-		credential.expiresAt = time.Now().Add(time.Duration(expires) * time.Second)
-		credential.document["expired"] = credential.expiresAt.UTC().Format(time.RFC3339)
-	}
+	applyRefreshedTokens(credential, tokens, endpoint, time.Now())
 	payload, err := json.Marshal(credential.document)
 	if err != nil {
 		return err

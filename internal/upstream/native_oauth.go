@@ -18,10 +18,14 @@ import (
 )
 
 const (
-	codexClientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
-	codexRedirectURI = "http://localhost:1455/auth/callback"
-	kimiClientID     = "17e5f671-d194-4dfb-9706-5516cb48c098"
-	xaiClientID      = "b1a00492-073a-47ea-816f-4c329264a828"
+	codexClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexRedirectURI  = "http://localhost:1455/auth/callback"
+	codexTokenURL     = "https://auth.openai.com/oauth/token"
+	kimiClientID      = "17e5f671-d194-4dfb-9706-5516cb48c098"
+	kimiTokenURL      = "https://auth.kimi.com/api/oauth/token"
+	xaiClientID       = "b1a00492-073a-47ea-816f-4c329264a828"
+	xaiTokenURL       = "https://auth.x.ai/oauth2/token"
+	codexRefreshScope = "openid profile email"
 )
 
 type oauthManager struct {
@@ -151,7 +155,7 @@ func (m *oauthManager) submitCallback(ctx context.Context, provider, state, redi
 		return fmt.Errorf("OAuth callback is missing authorization code")
 	}
 	form := url.Values{"grant_type": {"authorization_code"}, "client_id": {codexClientID}, "code": {code}, "redirect_uri": {codexRedirectURI}, "code_verifier": {session.verifier}}
-	tokens, err := postOAuthForm(ctx, m.httpClient(), "https://auth.openai.com/oauth/token", form)
+	tokens, err := postOAuthForm(ctx, m.httpClient(), codexTokenURL, form)
 	if err != nil {
 		m.fail(state, err)
 		return err
@@ -168,7 +172,7 @@ func (m *oauthManager) startDevice(ctx context.Context, provider, deviceID strin
 		form := url.Values{"client_id": {kimiClientID}}
 		var result deviceAuthorization
 		err := postFormJSONHeaders(ctx, m.httpClient(), "https://auth.kimi.com/api/oauth/device_authorization", form, kimiOAuthHeaders(deviceID), &result)
-		return result, "https://auth.kimi.com/api/oauth/token", err
+		return result, kimiTokenURL, err
 	}
 	var discovery struct {
 		DeviceURL string `json:"device_authorization_endpoint"`
@@ -298,13 +302,126 @@ func (m *oauthManager) close() {
 
 func oauthDocument(provider string, tokens map[string]any, baseURL, tokenURL string) map[string]any {
 	result := map[string]any{"type": provider, "access_token": tokens["access_token"], "refresh_token": tokens["refresh_token"], "id_token": tokens["id_token"], "token_type": tokens["token_type"], "base_url": baseURL, "auth_kind": "oauth"}
-	if expires, ok := tokens["expires_in"].(float64); ok && expires > 0 {
-		result["expired"] = time.Now().Add(time.Duration(expires) * time.Second).UTC().Format(time.RFC3339)
+	if expiry := oauthExpiry(tokens, anyString(tokens["access_token"]), time.Now()); !expiry.IsZero() {
+		result["expired"] = expiry.UTC().Format(time.RFC3339)
 	}
 	if tokenURL != "" {
 		result["token_endpoint"] = tokenURL
 	}
 	return result
+}
+
+func oauthTokenEndpoint(provider string, document map[string]any) string {
+	if endpoint := firstString(document, "token_endpoint"); endpoint != "" {
+		return endpoint
+	}
+	switch provider {
+	case "codex":
+		return codexTokenURL
+	case "kimi":
+		return kimiTokenURL
+	case "xai":
+		return xaiTokenURL
+	default:
+		return ""
+	}
+}
+
+func oauthRefreshForm(provider, refreshToken string) url.Values {
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}}
+	switch provider {
+	case "codex":
+		form.Set("client_id", codexClientID)
+		form.Set("scope", codexRefreshScope)
+	case "kimi":
+		form.Set("client_id", kimiClientID)
+	case "xai":
+		form.Set("client_id", xaiClientID)
+	}
+	return form
+}
+
+func applyRefreshedTokens(credential *nativeCredential, tokens map[string]any, tokenEndpoint string, now time.Time) {
+	credential.AccessToken = anyString(tokens["access_token"])
+	if refresh := anyString(tokens["refresh_token"]); refresh != "" {
+		credential.RefreshToken = refresh
+	}
+	credential.document["access_token"] = credential.AccessToken
+	credential.document["refresh_token"] = credential.RefreshToken
+	if idToken := anyString(tokens["id_token"]); idToken != "" {
+		credential.document["id_token"] = idToken
+		claims := jwtClaims(idToken)
+		if email := claimString(claims, "email"); email != "" {
+			credential.document["email"] = email
+		}
+		if credential.Provider == "codex" {
+			accountID := firstNonEmpty(claimString(claims, "chatgpt_account_id"), nestedClaimString(claims, "https://api.openai.com/auth", "chatgpt_account_id"))
+			if accountID != "" {
+				credential.AccountID = accountID
+				credential.document["account_id"] = accountID
+			}
+		}
+		if credential.Provider == "xai" {
+			if subject := claimString(claims, "sub"); subject != "" {
+				credential.document["sub"] = subject
+			}
+		}
+	}
+	if tokenEndpoint != "" && firstString(credential.document, "token_endpoint") == "" {
+		credential.document["token_endpoint"] = tokenEndpoint
+	}
+	credential.expiresAt = oauthExpiry(tokens, credential.AccessToken, now)
+	credential.document["expired"] = credential.expiresAt.UTC().Format(time.RFC3339)
+}
+
+func oauthExpiry(tokens map[string]any, accessToken string, now time.Time) time.Time {
+	if seconds := anyPositiveSeconds(tokens["expires_in"]); seconds > 0 {
+		return now.Add(time.Duration(seconds) * time.Second)
+	}
+	if exp := jwtUnixTime(accessToken, "exp"); exp.After(now) {
+		return exp
+	}
+	return now.Add(time.Hour)
+}
+
+func anyPositiveSeconds(value any) int64 {
+	switch typed := value.(type) {
+	case float64:
+		if typed > 0 {
+			return int64(typed)
+		}
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil && parsed > 0 {
+			return parsed
+		}
+		asFloat, err := typed.Float64()
+		if err == nil && asFloat > 0 {
+			return int64(asFloat)
+		}
+	case int:
+		if typed > 0 {
+			return int64(typed)
+		}
+	case int64:
+		if typed > 0 {
+			return typed
+		}
+	case string:
+		parsed, err := json.Number(strings.TrimSpace(typed)).Int64()
+		if err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func jwtUnixTime(token, claim string) time.Time {
+	seconds := anyPositiveSeconds(jwtClaims(token)[claim])
+	if seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0).UTC()
 }
 
 func postOAuthForm(ctx context.Context, client *http.Client, endpoint string, form url.Values) (map[string]any, error) {

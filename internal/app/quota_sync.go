@@ -128,10 +128,7 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
 		return result
 	}
-	report, err := gateway.ProbeQuota(probeCtx, gateway.QuotaProbeCredential{
-		AuthIndex: parent.UpstreamCredentialID, Provider: firstNonEmptyString(parent.Provider, credential.Provider),
-		Document: credential.Document, ProxyURL: proxyURL,
-	})
+	report, err := a.probeQuotaWithRefresh(probeCtx, parent, credential, proxyURL)
 	if err != nil {
 		result.Status = "error"
 		result.Error = err.Error()
@@ -179,6 +176,69 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 		result.Status, result.Error = "error", err.Error()
 	}
 	return result
+}
+
+func (a *App) probeQuotaWithRefresh(ctx context.Context, parent store.ParentSubscription, credential store.UpstreamCredentialSnapshot, proxyURL string) (gateway.QuotaReport, error) {
+	return a.probeQuotaWithRefreshFn(ctx, parent, credential, proxyURL, gateway.ProbeQuota)
+}
+
+func (a *App) probeQuotaWithRefreshFn(
+	ctx context.Context,
+	parent store.ParentSubscription,
+	credential store.UpstreamCredentialSnapshot,
+	proxyURL string,
+	probe func(context.Context, gateway.QuotaProbeCredential) (gateway.QuotaReport, error),
+) (gateway.QuotaReport, error) {
+	document := a.refreshQuotaCredentialDocument(ctx, credential.ID, credential.Document, false)
+	input := gateway.QuotaProbeCredential{
+		AuthIndex: parent.UpstreamCredentialID,
+		Provider:  firstNonEmptyString(parent.Provider, credential.Provider),
+		Document:  document,
+		ProxyURL:  proxyURL,
+	}
+	report, err := probe(ctx, input)
+	if err == nil || !quotaProbeUnauthorized(err) || a == nil || a.nativeRuntime == nil {
+		return report, err
+	}
+	updated, refreshed, refreshErr := a.nativeRuntime.RefreshCredential(ctx, strings.TrimSpace(credential.ID), true)
+	if refreshErr != nil {
+		slog.Warn("refresh upstream credential after quota 401", "credential_id", credential.ID, "error", refreshErr)
+		return report, err
+	}
+	if !refreshed || len(updated) == 0 {
+		return report, err
+	}
+	input.Document = updated
+	return probe(ctx, input)
+}
+
+func (a *App) refreshQuotaCredentialDocument(ctx context.Context, credentialID string, stored []byte, force bool) []byte {
+	if a == nil || a.nativeRuntime == nil {
+		return stored
+	}
+	updated, refreshed, err := a.nativeRuntime.RefreshCredential(ctx, strings.TrimSpace(credentialID), force)
+	if err != nil {
+		slog.Warn("refresh upstream credential for quota probe", "credential_id", credentialID, "force", force, "error", err)
+		return stored
+	}
+	if len(updated) == 0 {
+		return stored
+	}
+	if refreshed {
+		slog.Info("refreshed upstream credential for quota probe", "credential_id", credentialID, "force", force)
+	}
+	return updated
+}
+
+func quotaProbeUnauthorized(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "http 401") ||
+		strings.Contains(message, "invalid_auth_token") ||
+		strings.Contains(message, "invalid_token") ||
+		strings.Contains(message, "unauthorized")
 }
 
 func (a *App) nativeQuotaCredential(ctx context.Context, parent store.ParentSubscription) (store.UpstreamCredentialSnapshot, error) {
