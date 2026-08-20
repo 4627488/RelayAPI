@@ -21,7 +21,13 @@ func TestQuotaProbeUnauthorized(t *testing.T) {
 		t.Fatal("nil error")
 	}
 	if !quotaProbeUnauthorized(errors.New(`Kimi quota requests failed: kimi-cn-usage: upstream returned HTTP 401: {"error":{"reason":"REASON_INVALID_AUTH_TOKEN"}}`)) {
-		t.Fatal("expected 401")
+		t.Fatal("expected kimi 401")
+	}
+	if !quotaProbeUnauthorized(errors.New("codex quota request: upstream returned HTTP 401: invalid_token")) {
+		t.Fatal("expected codex 401")
+	}
+	if !quotaProbeUnauthorized(errors.New("xAI quota requests failed: credits: upstream returned HTTP 401: unauthorized")) {
+		t.Fatal("expected xai 401")
 	}
 	if quotaProbeUnauthorized(errors.New("upstream returned HTTP 404: url.not_found")) {
 		t.Fatal("404 is not unauthorized")
@@ -160,5 +166,55 @@ func TestProbeQuotaWithRefreshRefreshesExpiredTokenBeforeFirstProbe(t *testing.T
 	}, "", probe)
 	if err != nil || len(tokens) != 1 || tokens[0] != "new-access" {
 		t.Fatalf("tokens = %v err=%v", tokens, err)
+	}
+}
+
+func TestProbeQuotaWithRefreshCoversCodexAndXAI(t *testing.T) {
+	for _, provider := range []string{"codex", "xai"} {
+		t.Run(provider, func(t *testing.T) {
+			oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				if r.Form.Get("grant_type") != "refresh_token" {
+					t.Errorf("grant_type = %q", r.Form.Get("grant_type"))
+				}
+				if provider == "codex" && r.Form.Get("scope") != "openid profile email" {
+					t.Errorf("codex scope = %q", r.Form.Get("scope"))
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": provider + "-access", "expires_in": 3600})
+			}))
+			defer oauth.Close()
+
+			runtime, err := upstream.NewRuntime(upstream.Options{}, []upstream.Credential{{
+				ID: provider + "-1", Provider: provider, Enabled: true, Models: []string{"model"},
+				Document: mustJSON(t, map[string]any{
+					"type": provider, "access_token": "old-access", "refresh_token": "refresh",
+					"expired": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339), "token_endpoint": oauth.URL,
+					"account_id": "acct_1",
+				}),
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = runtime.Close(t.Context()) })
+
+			var tokens []string
+			probe := func(_ context.Context, credential gateway.QuotaProbeCredential) (gateway.QuotaReport, error) {
+				var document map[string]any
+				_ = json.Unmarshal(credential.Document, &document)
+				token, _ := document["access_token"].(string)
+				tokens = append(tokens, token)
+				used := 3.0
+				reset := time.Now().UTC().Add(time.Hour)
+				return gateway.QuotaReport{Supported: true, Provider: provider, Observed: time.Now().UTC(), Windows: []gateway.QuotaWindow{{Kind: "5h", UsedPercent: &used, ResetsAt: &reset, Enforceable: true}}}, nil
+			}
+
+			application := &App{nativeRuntime: runtime}
+			_, err = application.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{UpstreamCredentialID: provider + "-1", Provider: provider}, store.UpstreamCredentialSnapshot{
+				ID: provider + "-1", Provider: provider, Document: mustJSON(t, map[string]any{"access_token": "old-access"}),
+			}, "", probe)
+			if err != nil || len(tokens) != 1 || tokens[0] != provider+"-access" {
+				t.Fatalf("tokens = %v err=%v", tokens, err)
+			}
+		})
 	}
 }

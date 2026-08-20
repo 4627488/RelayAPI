@@ -385,8 +385,13 @@ func parseCredentialTime(value string) time.Time {
 	if value == "" {
 		return time.Time{}
 	}
-	parsed, _ := time.Parse(time.RFC3339, value)
-	return parsed
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed
+	}
+	return time.Time{}
 }
 
 func providerAvailabilityStatus(status int) bool {

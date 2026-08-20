@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -161,7 +162,143 @@ func TestRefreshCredentialRefreshesWhenExpiryMissing(t *testing.T) {
 	}
 }
 
+func TestRefreshCredentialRefreshesCodexAndXAI(t *testing.T) {
+	now := time.Now()
+	codexJWT := testJWT(t, map[string]any{
+		"email":                       "user@example.com",
+		"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "acct_refreshed"},
+	})
+	xaiJWT := testJWT(t, map[string]any{"email": "grok@example.com", "sub": "user-22", "exp": now.Add(2 * time.Hour).Unix()})
+
+	tests := []struct {
+		name     string
+		id       string
+		provider string
+		document map[string]any
+		wantForm []string
+		check    func(*testing.T, http.Header, map[string]any)
+		response map[string]any
+	}{
+		{
+			name: "codex sends CPA scope and updates account id",
+			id:   "codex-1", provider: "codex",
+			document: map[string]any{
+				"type": "codex", "access_token": "old-access", "refresh_token": "old-refresh",
+				"account_id": "acct_old", "expired": now.Add(-time.Hour).UTC().Format(time.RFC3339),
+			},
+			wantForm: []string{"grant_type=refresh_token", "client_id=" + codexClientID, "refresh_token=old-refresh", "scope=openid+profile+email"},
+			response: map[string]any{"access_token": "codex-access", "refresh_token": "codex-refresh", "id_token": codexJWT, "expires_in": 3600},
+			check: func(t *testing.T, _ http.Header, payload map[string]any) {
+				t.Helper()
+				if payload["access_token"] != "codex-access" || payload["account_id"] != "acct_refreshed" || payload["email"] != "user@example.com" {
+					t.Fatalf("codex payload = %#v", payload)
+				}
+			},
+		},
+		{
+			name: "xai uses default token URL and persists it",
+			id:   "xai-1", provider: "xai",
+			document: map[string]any{
+				"type": "xai", "access_token": "old-access", "refresh_token": "old-refresh",
+				"expired": now.Add(-time.Hour).UTC().Format(time.RFC3339),
+			},
+			wantForm: []string{"grant_type=refresh_token", "client_id=" + xaiClientID, "refresh_token=old-refresh"},
+			response: map[string]any{"access_token": "xai-access", "id_token": xaiJWT},
+			check: func(t *testing.T, header http.Header, payload map[string]any) {
+				t.Helper()
+				if header.Get("X-Msh-Device-Id") != "" {
+					t.Fatalf("xAI refresh sent Kimi headers: %v", header)
+				}
+				if payload["access_token"] != "xai-access" || payload["sub"] != "user-22" || payload["email"] != "grok@example.com" {
+					t.Fatalf("xai payload = %#v", payload)
+				}
+				if payload["token_endpoint"] == "" || payload["expired"] == "" {
+					t.Fatalf("xai did not persist endpoint/expiry: %#v", payload)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var header http.Header
+			oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				header = r.Header.Clone()
+				body, _ := io.ReadAll(r.Body)
+				form := string(body)
+				for _, part := range test.wantForm {
+					if !strings.Contains(form, part) {
+						t.Errorf("form %q missing %q", form, part)
+					}
+				}
+				_ = json.NewEncoder(w).Encode(test.response)
+			}))
+			defer oauth.Close()
+			test.document["token_endpoint"] = oauth.URL
+			runtime, err := NewRuntime(Options{}, []Credential{{
+				ID: test.id, Provider: test.provider, Enabled: true, Models: []string{"model"},
+				Document: testJSON(t, test.document),
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = runtime.Close(t.Context()) })
+			document, refreshed, err := runtime.RefreshCredential(t.Context(), test.id, false)
+			if err != nil || !refreshed {
+				t.Fatalf("refresh = %v refreshed=%v", err, refreshed)
+			}
+			var payload map[string]any
+			if json.Unmarshal(document, &payload) != nil {
+				t.Fatal(document)
+			}
+			test.check(t, header, payload)
+		})
+	}
+}
+
+func TestOauthExpiryUsesExpiresInOrJWT(t *testing.T) {
+	now := time.Date(2026, 8, 20, 4, 0, 0, 0, time.UTC)
+	if got := oauthExpiry(map[string]any{"expires_in": json.Number("90")}, "", now); !got.Equal(now.Add(90 * time.Second)) {
+		t.Fatalf("expires_in = %v", got)
+	}
+	token := testJWT(t, map[string]any{"exp": now.Add(45 * time.Minute).Unix()})
+	if got := oauthExpiry(map[string]any{}, token, now); got.Before(now.Add(44*time.Minute)) || got.After(now.Add(46*time.Minute)) {
+		t.Fatalf("jwt exp = %v", got)
+	}
+	if got := oauthExpiry(map[string]any{}, "", now); !got.Equal(now.Add(time.Hour)) {
+		t.Fatalf("default = %v", got)
+	}
+}
+
+func TestOauthTokenEndpointDefaults(t *testing.T) {
+	if got := oauthTokenEndpoint("xai", nil); got != xaiTokenURL {
+		t.Fatalf("xai default = %q", got)
+	}
+	if got := oauthTokenEndpoint("codex", map[string]any{"token_endpoint": "https://auth.example/token"}); got != "https://auth.example/token" {
+		t.Fatalf("override = %q", got)
+	}
+	if got := oauthRefreshForm("codex", "rt").Get("scope"); got != codexRefreshScope {
+		t.Fatalf("codex scope = %q", got)
+	}
+	if oauthRefreshForm("xai", "rt").Get("scope") != "" {
+		t.Fatal("xAI refresh should not send Codex scope")
+	}
+}
+
 func fmtString(value any) string {
 	text, _ := value.(string)
 	return text
+}
+
+func testJWT(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]any{"alg": "none", "typ": "JWT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }

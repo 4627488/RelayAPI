@@ -235,7 +235,10 @@ func quotaProbeUnauthorized(err error) bool {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "http 401") || strings.Contains(message, "invalid_auth_token") || strings.Contains(message, "unauthorized")
+	return strings.Contains(message, "http 401") ||
+		strings.Contains(message, "invalid_auth_token") ||
+		strings.Contains(message, "invalid_token") ||
+		strings.Contains(message, "unauthorized")
 }
 
 func (a *App) nativeQuotaCredential(ctx context.Context, parent store.ParentSubscription) (store.UpstreamCredentialSnapshot, error) {
