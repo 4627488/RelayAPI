@@ -87,7 +87,7 @@ export function RequestLatencyTimeline({
   if (!parts.length) return null
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="max-w-56">
       <div
         className="flex h-1.5 overflow-hidden rounded-full bg-muted"
         role="img"
