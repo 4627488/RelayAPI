@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -94,9 +95,115 @@ import { copyText } from "@/lib/clipboard"
 interface UserWorkspaceProps {
   page: Page
   session: Session
+  onPageChange: (page: Page) => void
 }
 
-export function UserWorkspace({ page, session }: UserWorkspaceProps) {
+export function UserWorkspace({
+  page,
+  session,
+  onPageChange,
+}: UserWorkspaceProps) {
+  const tenantModels = session.tenant?.model_allowlist ?? []
+  if (page === "keys") return <KeysPage tenantModels={tenantModels} />
+  if (page === "logs") return <RequestLogsWorkbench />
+  if (page === "guide") return <GuidePage tenantModels={tenantModels} />
+  if (page === "subscriptions") return <TenantSubscriptionsView />
+  if (page === "usage") return <UsageView />
+  return <UserOverview session={session} onPageChange={onPageChange} />
+}
+
+function KeysPage({ tenantModels }: { tenantModels: string[] }) {
+  const [keys, setKeys] = useState<ApiKey[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
+
+  const load = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true)
+    setLoadError("")
+    try {
+      const keysValue = await api<{ items: ApiKey[] }>("/api/keys")
+      setKeys(keysValue.items ?? [])
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "无法读取密钥"
+      setLoadError(message)
+      if (!showLoading) toast.error(message)
+    } finally {
+      if (showLoading) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load(true)
+  }, [load])
+
+  if (loading) return <LoadingView />
+  if (loadError && keys.length === 0) {
+    return <LoadErrorView message={loadError} onRetry={() => void load(true)} />
+  }
+
+  return (
+    <KeysView
+      keys={keys}
+      tenantModels={tenantModels}
+      onChanged={() => load()}
+    />
+  )
+}
+
+function GuidePage({ tenantModels }: { tenantModels: string[] }) {
+  const [keys, setKeys] = useState<ApiKey[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
+
+  useEffect(() => {
+    let active = true
+    api<{ items: ApiKey[] }>("/api/keys")
+      .then((value) => {
+        if (active) setKeys(value.items ?? [])
+      })
+      .catch((cause) => {
+        if (active)
+          setLoadError(cause instanceof Error ? cause.message : "无法读取密钥")
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  if (loading) return <LoadingView />
+  if (loadError && keys.length === 0) {
+    return (
+      <LoadErrorView
+        message={loadError}
+        onRetry={() => {
+          setLoading(true)
+          setLoadError("")
+          void api<{ items: ApiKey[] }>("/api/keys")
+            .then((value) => setKeys(value.items ?? []))
+            .catch((cause) =>
+              setLoadError(
+                cause instanceof Error ? cause.message : "无法读取密钥"
+              )
+            )
+            .finally(() => setLoading(false))
+        }}
+      />
+    )
+  }
+
+  return <ConnectionGuide keys={keys} tenantModels={tenantModels} />
+}
+
+function UserOverview({
+  session,
+  onPageChange,
+}: {
+  session: Session
+  onPageChange: (page: Page) => void
+}) {
   const [usage, setUsage] = useState<UsageReport | null>(null)
   const [logs, setLogs] = useState<RequestLog[]>([])
   const [keys, setKeys] = useState<ApiKey[]>([])
@@ -109,7 +216,7 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
     try {
       const [usageValue, logsValue, keysValue] = await Promise.all([
         api<UsageReport>("/api/usage?days=30"),
-        api<{ items: RequestLog[] }>("/api/logs?limit=100"),
+        api<{ items: RequestLog[] }>("/api/logs?limit=8"),
         api<{ items: ApiKey[] }>("/api/keys"),
       ])
       setUsage(usageValue)
@@ -138,36 +245,9 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
     )
   }
 
-  if (page === "keys") {
-    return (
-      <KeysView
-        keys={keys}
-        tenantModels={session.tenant?.model_allowlist ?? []}
-        onChanged={load}
-      />
-    )
-  }
-  if (page === "logs") return <RequestLogsWorkbench />
-  if (page === "guide")
-    return (
-      <ConnectionGuide
-        keys={keys}
-        tenantModels={session.tenant?.model_allowlist ?? []}
-      />
-    )
-  if (page === "subscriptions") return <TenantSubscriptionsView />
-  if (page === "usage") {
-    return <UsageView initialReport={usage} />
-  }
-
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          你好，{session.tenant?.name}
-        </h1>
-        <p className="text-sm text-muted-foreground">模型访问与用量概况。</p>
-      </div>
+      <PageHeader title={`你好，${session.tenant?.name ?? ""}`} />
       <UsageMetrics report={usage} />
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <UsageChart report={usage} />
@@ -205,7 +285,18 @@ export function UserWorkspace({ page, session }: UserWorkspaceProps) {
           </CardContent>
         </Card>
       </div>
-      <LogsTable logs={logs.slice(0, 8)} />
+      <LogsTable
+        logs={logs}
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onPageChange("logs")}
+          >
+            全部日志
+          </Button>
+        }
+      />
     </div>
   )
 }
@@ -419,18 +510,14 @@ function KeysView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">API Keys</h1>
-          <p className="text-sm text-muted-foreground">
-            为不同应用创建独立密钥与限制。
-          </p>
-        </div>
-        <Button onClick={openCreateDialog}>
-          <PlusIcon data-icon="inline-start" />
-          创建 Key
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={openCreateDialog}>
+            <PlusIcon data-icon="inline-start" />
+            创建 Key
+          </Button>
+        }
+      />
 
       <Card>
         <CardHeader>

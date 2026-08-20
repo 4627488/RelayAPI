@@ -11,7 +11,6 @@ RUN pnpm build
 FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-COPY third_party/cpaexecutor/go.mod third_party/cpaexecutor/go.sum ./third_party/cpaexecutor/
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/relayapi ./cmd/relayapi

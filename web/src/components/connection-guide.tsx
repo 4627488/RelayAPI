@@ -57,7 +57,7 @@ import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 type Platform = "bash" | "powershell"
-type ClientChoice = "all" | "codex" | "claude" | "opencode"
+type ClientChoice = "all" | "codex" | "opencode"
 
 interface SetupResponse {
   expires_at: string
@@ -88,8 +88,6 @@ export function ConnectionGuide({
   const [openCodeProtocol, setOpenCodeProtocol] = useState("responses")
   const [installMissing, setInstallMissing] = useState(true)
   const [verifyConnection, setVerifyConnection] = useState(true)
-  const [gatewayDiscovery, setGatewayDiscovery] = useState(true)
-  const [disableExtraTraffic, setDisableExtraTraffic] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [pending, setPending] = useState(false)
@@ -163,8 +161,6 @@ export function ConnectionGuide({
     openCodeProtocol,
     installMissing,
     verifyConnection,
-    gatewayDiscovery,
-    disableExtraTraffic,
   ])
 
   async function generateSetup() {
@@ -173,14 +169,12 @@ export function ConnectionGuide({
     try {
       const value = await postJSON<SetupResponse>("/api/agent-setup", {
         key_id: keyID,
-        agents: client === "all" ? ["codex", "claude", "opencode"] : [client],
+        agents: client === "all" ? ["codex", "opencode"] : [client],
         model,
         reasoning_effort: reasoningEffort,
         opencode_protocol: openCodeProtocol,
         install_missing: installMissing,
         verify_connection: verifyConnection,
-        claude_gateway_discovery: gatewayDiscovery,
-        claude_disable_extra_traffic: disableExtraTraffic,
       })
       setSetup(value)
       toast.success("接入命令已生成")
@@ -202,16 +196,10 @@ export function ConnectionGuide({
       : setup.powershell_check_command
     : ""
   const includesCodex = client === "all" || client === "codex"
-  const includesClaude = client === "all" || client === "claude"
   const includesOpenCode = client === "all" || client === "opencode"
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">接入向导</h1>
-        <p className="text-sm text-muted-foreground">生成客户端配置命令。</p>
-      </header>
-
       {!usableKeys.length ? (
         <Alert>
           <KeyRoundIcon />
@@ -225,7 +213,9 @@ export function ConnectionGuide({
       <Card>
         <CardHeader>
           <CardTitle>配置客户端</CardTitle>
-          <CardDescription>脚本会备份现有配置，失败时自动恢复。</CardDescription>
+          <CardDescription>
+            已有配置会先备份；脚本失败时自动恢复。
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <FieldGroup>
@@ -251,13 +241,12 @@ export function ConnectionGuide({
 
             <ChoiceField
               label="客户端"
-              description="“全部”会同时配置 Codex、Claude Code 和 OpenCode。"
+              description="“全部”会同时配置 Codex 和 OpenCode。"
               value={client}
               onChange={(value) => setClient(value as ClientChoice)}
               options={[
                 { value: "all", label: "全部" },
                 { value: "codex", label: "Codex" },
-                { value: "claude", label: "Claude Code" },
                 { value: "opencode", label: "OpenCode" },
               ]}
             />
@@ -340,34 +329,6 @@ export function ConnectionGuide({
                       />
                     </FieldGroup>
                   </FieldSet>
-
-                  {includesClaude ? (
-                    <FieldSet>
-                      <FieldLegend variant="label">Claude Code</FieldLegend>
-                      <FieldGroup className="gap-3">
-                        <SwitchField
-                          id="setup-claude-discovery"
-                          label="网关模型发现"
-                          description="让 Claude Code 从 RelayAPI 获取可用模型。"
-                          checked={gatewayDiscovery}
-                          onCheckedChange={(checked) => {
-                            setGatewayDiscovery(checked)
-                            if (checked) setDisableExtraTraffic(false)
-                          }}
-                        />
-                        <SwitchField
-                          id="setup-claude-traffic"
-                          label="禁用非必要外联"
-                          description="同时关闭自动更新和网关模型发现。"
-                          checked={disableExtraTraffic}
-                          onCheckedChange={(checked) => {
-                            setDisableExtraTraffic(checked)
-                            if (checked) setGatewayDiscovery(false)
-                          }}
-                        />
-                      </FieldGroup>
-                    </FieldSet>
-                  ) : null}
                 </FieldGroup>
               </CollapsibleContent>
             </Collapsible>
@@ -446,12 +407,6 @@ export function ConnectionGuide({
                   <div className="flex flex-col gap-3 text-sm">
                     {includesCodex ? (
                       <WriteTarget title="Codex" path="~/.codex/config.toml" />
-                    ) : null}
-                    {includesClaude ? (
-                      <WriteTarget
-                        title="Claude Code"
-                        path="~/.claude/settings.json"
-                      />
                     ) : null}
                     {includesOpenCode ? (
                       <WriteTarget
@@ -651,8 +606,7 @@ function WriteTarget({ title, path }: { title: string; path: string }) {
 }
 
 function clientLabel(client: ClientChoice) {
-  if (client === "all") return "三个客户端"
-  if (client === "claude") return "Claude Code"
+  if (client === "all") return "两个客户端"
   if (client === "opencode") return "OpenCode"
   return "Codex"
 }

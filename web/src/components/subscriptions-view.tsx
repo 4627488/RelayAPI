@@ -42,11 +42,6 @@ export function TenantSubscriptionsView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">我的订阅</h1>
-        <p className="text-sm text-muted-foreground">模型账户、结算方式与可用范围。</p>
-      </div>
-
       {loading ? (
         <div className="flex justify-center py-12">
           <Spinner />
@@ -64,7 +59,9 @@ export function TenantSubscriptionsView() {
               <PackageOpenIcon />
             </EmptyMedia>
             <EmptyTitle>尚未获得订阅授权</EmptyTitle>
-            <EmptyDescription>请联系管理员分配模型账户。</EmptyDescription>
+            <EmptyDescription>
+              管理员分配模型账户后，你可以在这里查看结算方式和可用范围。
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       )}

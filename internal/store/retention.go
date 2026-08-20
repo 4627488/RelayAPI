@@ -107,10 +107,10 @@ func (s Store) scrubLifecyclePayloads(ctx context.Context, batch int) (int64, er
 	}
 	return retentionTx(ctx, s.DB, func(tx *gorm.DB) (int64, error) {
 		result := tx.Exec(`WITH selected AS (
-			SELECT id FROM cpa_lifecycle_events WHERE processed = true AND
+			SELECT id FROM upstream_lifecycle_events WHERE processed = true AND
 				(headers <> '{}' OR response_headers <> '{}' OR body <> '' OR original_request <> '' OR request_body <> '' OR raw_json <> '')
 			ORDER BY processed_at LIMIT ? FOR UPDATE SKIP LOCKED
-		) UPDATE cpa_lifecycle_events AS event SET headers = '{}', response_headers = '{}', body = '',
+		) UPDATE upstream_lifecycle_events AS event SET headers = '{}', response_headers = '{}', body = '',
 			original_request = '', request_body = '', raw_json = '' FROM selected WHERE event.id = selected.id`, batch)
 		return result.RowsAffected, result.Error
 	})
@@ -176,7 +176,7 @@ func (s Store) deleteLifecycle(ctx context.Context, now time.Time, policy Retent
 		var ids []string
 		successCutoff := now.Add(-time.Duration(policy.LifecycleSuccessHours) * time.Hour)
 		errorCutoff := now.AddDate(0, 0, -policy.LifecycleErrorDays)
-		err := tx.Raw(`SELECT id FROM cpa_lifecycle_events WHERE
+		err := tx.Raw(`SELECT id FROM upstream_lifecycle_events WHERE
 			((processed = false AND created_at < ?)
 			 OR (processed = true AND (((outcome = '' OR outcome = 'succeeded') AND status_code < 400 AND created_at < ?)
 			 OR (((outcome <> '' AND outcome <> 'succeeded') OR status_code >= 400) AND created_at < ?))))
@@ -184,7 +184,7 @@ func (s Store) deleteLifecycle(ctx context.Context, now time.Time, policy Retent
 		if err != nil || len(ids) == 0 {
 			return 0, err
 		}
-		result := tx.Where("id IN ?", ids).Delete(&db.CPALifecycleEvent{})
+		result := tx.Where("id IN ?", ids).Delete(&db.UpstreamLifecycleEvent{})
 		return result.RowsAffected, result.Error
 	})
 }
@@ -262,7 +262,7 @@ func (s Store) compactRequestLogs(ctx context.Context, cutoff time.Time, batch i
 		if err := tx.Where("request_log_id IN ?", ids).Delete(&db.RequestLogDetail{}).Error; err != nil {
 			return 0, err
 		}
-		if err := tx.Where("request_log_id IN ?", ids).Delete(&db.CPALifecycleEvent{}).Error; err != nil {
+		if err := tx.Where("request_log_id IN ?", ids).Delete(&db.UpstreamLifecycleEvent{}).Error; err != nil {
 			return 0, err
 		}
 		result := tx.Where("id IN ?", ids).Delete(&db.RequestLog{})

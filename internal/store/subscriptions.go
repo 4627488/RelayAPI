@@ -68,8 +68,8 @@ type Admission struct {
 	RequestID              string
 	ParentSubscriptionID   string
 	ChildSubscriptionID    string
-	CPAAuthID              string
-	CPAAuthIndex           string
+	UpstreamCredentialID   string
+	UpstreamAuthIndex      string
 	BalanceReservedNanoUSD int64
 	QuotaReservedNanoUSD   int64
 }
@@ -100,26 +100,17 @@ func (s Store) GetParentSubscription(ctx context.Context, id string) (ParentSubs
 	return item, notFound(err)
 }
 
-func (s Store) GetParentSubscriptionByCPAAuthIndex(ctx context.Context, authIndex string) (ParentSubscription, error) {
-	var item ParentSubscription
-	err := scoped(ctx, s.DB).Where("status <> ?", "missing").First(&item, "cpa_auth_index = ?", strings.TrimSpace(authIndex)).Error
-	return item, notFound(err)
-}
-
 func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscription) (ParentSubscription, error) {
 	if item.ID == "" {
 		item.ID = identity.NewID()
 	}
-	item.CPAAuthID = strings.TrimSpace(item.CPAAuthID)
-	item.CPAAuthIndex = strings.TrimSpace(item.CPAAuthIndex)
-	if item.CPAAuthIndex == "" {
-		item.CPAAuthIndex = item.CPAAuthID
-	}
-	item.CPAAuthName = strings.TrimSpace(item.CPAAuthName)
+	item.UpstreamCredentialID = strings.TrimSpace(item.UpstreamCredentialID)
+	item.UpstreamAuthIndex = item.UpstreamCredentialID
+	item.UpstreamCredentialName = strings.TrimSpace(item.UpstreamCredentialName)
 	item.Name = strings.TrimSpace(item.Name)
 	item.Provider = strings.TrimSpace(item.Provider)
 	if item.Name == "" {
-		item.Name = firstNonEmpty(item.CPAAuthName, item.CPAAuthID)
+		item.Name = firstNonEmpty(item.UpstreamCredentialName, item.UpstreamCredentialID)
 	}
 	if item.CapacityMode == "" {
 		item.CapacityMode = db.ParentCapacityUnmetered
@@ -134,9 +125,9 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 		item.QuotaSnapshot = json.RawMessage(`{}`)
 	}
 	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "cpa_auth_index"}},
+		Columns: []clause.Column{{Name: "upstream_credential_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"cpa_auth_id", "cpa_auth_name", "name", "provider", "plan_type", "status", "cpa_unavailable", "capacity_mode",
+			"upstream_auth_index", "upstream_credential_name", "name", "provider", "plan_type", "status", "upstream_unavailable", "capacity_mode",
 			"allocation_limit_ppm", "enabled", "model_allowlist", "metadata", "last_synced_at", "updated_at",
 		}),
 	}).Create(&item).Error
@@ -144,64 +135,22 @@ func (s Store) UpsertParentSubscription(ctx context.Context, item ParentSubscrip
 		return ParentSubscription{}, err
 	}
 	var result ParentSubscription
-	err = scoped(ctx, s.DB).First(&result, "cpa_auth_index = ?", item.CPAAuthIndex).Error
-	return result, err
-}
-
-func (s Store) SyncParentSubscription(ctx context.Context, item ParentSubscription) (ParentSubscription, error) {
-	if item.ID == "" {
-		item.ID = identity.NewID()
-	}
-	item.CPAAuthID = strings.TrimSpace(item.CPAAuthID)
-	item.CPAAuthIndex = strings.TrimSpace(item.CPAAuthIndex)
-	if item.CPAAuthIndex == "" {
-		item.CPAAuthIndex = item.CPAAuthID
-	}
-	item.CPAAuthName = strings.TrimSpace(item.CPAAuthName)
-	item.Name = strings.TrimSpace(item.Name)
-	if item.Name == "" {
-		item.Name = firstNonEmpty(item.CPAAuthName, item.CPAAuthID)
-	}
-	if len(item.Metadata) == 0 {
-		item.Metadata = json.RawMessage(`{}`)
-	}
-	if len(item.QuotaSnapshot) == 0 {
-		item.QuotaSnapshot = json.RawMessage(`{}`)
-	}
-	if item.CapacityMode == "" {
-		item.CapacityMode = db.ParentCapacityUnmetered
-	}
-	if item.AllocationLimitPPM == 0 {
-		item.AllocationLimitPPM = 1_000_000
-	}
-	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "cpa_auth_index"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"cpa_auth_id", "cpa_auth_name", "provider", "plan_type", "status", "cpa_unavailable", "cpa_model_allowlist", "metadata", "last_synced_at", "updated_at",
-		}),
-	}).Create(&item).Error
-	if err != nil {
-		return ParentSubscription{}, err
-	}
-	var result ParentSubscription
-	err = scoped(ctx, s.DB).First(&result, "cpa_auth_index = ?", item.CPAAuthIndex).Error
+	err = scoped(ctx, s.DB).First(&result, "upstream_credential_id = ?", item.UpstreamCredentialID).Error
 	return result, err
 }
 
 // SyncNativeParentSubscription uses the credential ID as the durable identity.
-// Native credentials do not have the separate scheduler auth index used by the
-// legacy external CPA control plane.
 func (s Store) SyncNativeParentSubscription(ctx context.Context, item ParentSubscription) (ParentSubscription, error) {
 	if item.ID == "" {
 		item.ID = identity.NewID()
 	}
-	item.CPAAuthID = strings.TrimSpace(item.CPAAuthID)
-	if item.CPAAuthID == "" {
+	item.UpstreamCredentialID = strings.TrimSpace(item.UpstreamCredentialID)
+	if item.UpstreamCredentialID == "" {
 		return ParentSubscription{}, fmt.Errorf("native parent credential id is required")
 	}
-	item.CPAAuthIndex = item.CPAAuthID
-	item.CPAAuthName = firstNonEmpty(strings.TrimSpace(item.CPAAuthName), item.CPAAuthID)
-	item.Name = firstNonEmpty(strings.TrimSpace(item.Name), item.CPAAuthName)
+	item.UpstreamAuthIndex = item.UpstreamCredentialID
+	item.UpstreamCredentialName = firstNonEmpty(strings.TrimSpace(item.UpstreamCredentialName), item.UpstreamCredentialID)
+	item.Name = firstNonEmpty(strings.TrimSpace(item.Name), item.UpstreamCredentialName)
 	item.Provider = strings.TrimSpace(item.Provider)
 	if len(item.Metadata) == 0 {
 		item.Metadata = json.RawMessage(`{}`)
@@ -210,16 +159,16 @@ func (s Store) SyncNativeParentSubscription(ctx context.Context, item ParentSubs
 		item.QuotaSnapshot = json.RawMessage(`{}`)
 	}
 	err := scoped(ctx, s.DB).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "cpa_auth_id"}},
+		Columns: []clause.Column{{Name: "upstream_credential_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"cpa_auth_index", "cpa_auth_name", "provider", "status", "cpa_unavailable", "cpa_model_allowlist", "metadata", "last_synced_at", "updated_at",
+			"upstream_auth_index", "upstream_credential_name", "provider", "status", "upstream_unavailable", "upstream_model_allowlist", "metadata", "last_synced_at", "updated_at",
 		}),
 	}).Create(&item).Error
 	if err != nil {
 		return ParentSubscription{}, err
 	}
 	var result ParentSubscription
-	err = scoped(ctx, s.DB).First(&result, "cpa_auth_id = ?", item.CPAAuthID).Error
+	err = scoped(ctx, s.DB).First(&result, "upstream_credential_id = ?", item.UpstreamCredentialID).Error
 	return result, err
 }
 
@@ -228,7 +177,7 @@ func (s Store) MarkMissingParentSubscriptions(ctx context.Context, seen []string
 		query := tx.Model(&ParentSubscription{}).
 			Where("last_synced_at IS NOT NULL AND last_synced_at < ?", syncStartedAt)
 		if len(seen) > 0 {
-			query = query.Where("cpa_auth_index NOT IN ?", seen)
+			query = query.Where("upstream_credential_id NOT IN ?", seen)
 		}
 		var missingIDs []string
 		if err := query.Pluck("id", &missingIDs).Error; err != nil || len(missingIDs) == 0 {
@@ -236,10 +185,10 @@ func (s Store) MarkMissingParentSubscriptions(ctx context.Context, seen []string
 		}
 		now := time.Now()
 		if err := tx.Model(&ParentSubscription{}).Where("id IN ?", missingIDs).Updates(map[string]any{
-			"cpa_unavailable": true,
-			"enabled":         false,
-			"status":          "missing",
-			"updated_at":      now,
+			"upstream_unavailable": true,
+			"enabled":              false,
+			"status":               "missing",
+			"updated_at":           now,
 		}).Error; err != nil {
 			return err
 		}
@@ -499,7 +448,7 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 					if err := tx.Model(&db.RequestLog{}).Select(
 						"COALESCE(sum(CASE WHEN pricing_complete = true THEN cost_nano_usd ELSE 0 END),0) AS cost, "+
 							"COALESCE(sum(CASE WHEN pricing_complete = false AND status_code >= 200 AND status_code < 300 AND model <> '' THEN 1 ELSE 0 END),0) AS incomplete",
-					).Where("auth_index = ? AND settled = ? AND completed_at > ? AND completed_at <= ?", parent.CPAAuthIndex, true, baseline.ObservedAt, observedAt).
+					).Where("auth_index = ? AND settled = ? AND completed_at > ? AND completed_at <= ?", parent.UpstreamAuthIndex, true, baseline.ObservedAt, observedAt).
 						Scan(&total).Error; err != nil {
 						return err
 					}
@@ -695,7 +644,7 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 		if parent.CapacityMode == db.ParentCapacityUnmetered {
 			item = canonicalBalanceGrant(parent, item)
 		}
-		if item.Enabled && (!parent.Enabled || parent.CPAUnavailable) {
+		if item.Enabled && (!parent.Enabled || parent.UpstreamUnavailable) {
 			return errors.New("enabled child subscription requires an available parent")
 		}
 		var tenant Tenant
@@ -732,7 +681,7 @@ func (s Store) UpdateChildSubscription(ctx context.Context, item ChildSubscripti
 			item = canonicalBalanceGrant(parent, item)
 			item.StartsAt = current.StartsAt
 		}
-		if item.Enabled && (!parent.Enabled || parent.CPAUnavailable) {
+		if item.Enabled && (!parent.Enabled || parent.UpstreamUnavailable) {
 			return errors.New("enabled child subscription requires an available parent")
 		}
 		return tx.Model(&current).Updates(map[string]any{
@@ -803,7 +752,7 @@ func (s Store) GrantBalanceSubscriptionAccess(ctx context.Context, parentID stri
 		if parent.CapacityMode != db.ParentCapacityUnmetered {
 			return errors.New("bulk access grants require a balance-settled parent")
 		}
-		if !parent.Enabled || parent.CPAUnavailable {
+		if !parent.Enabled || parent.UpstreamUnavailable {
 			return errors.New("balance-settled parent is unavailable")
 		}
 
@@ -867,14 +816,14 @@ func canonicalBalanceGrant(parent ParentSubscription, item ChildSubscription) Ch
 
 func (s Store) ActiveSubscriptionModelGrants(ctx context.Context, tenantID string, now time.Time) ([]SubscriptionModelGrant, error) {
 	type grantRow struct {
-		ChildModels  pq.StringArray `gorm:"column:child_models;type:text[]"`
-		ParentModels pq.StringArray `gorm:"column:parent_models;type:text[]"`
-		CPAModels    pq.StringArray `gorm:"column:cpa_models;type:text[]"`
-		CapacityMode string         `gorm:"column:capacity_mode"`
+		ChildModels    pq.StringArray `gorm:"column:child_models;type:text[]"`
+		ParentModels   pq.StringArray `gorm:"column:parent_models;type:text[]"`
+		UpstreamModels pq.StringArray `gorm:"column:upstream_models;type:text[]"`
+		CapacityMode   string         `gorm:"column:capacity_mode"`
 	}
 	var rows []grantRow
 	err := scoped(ctx, s.DB).Table("child_subscriptions").
-		Select("child_subscriptions.model_allowlist AS child_models, parent_subscriptions.model_allowlist AS parent_models, parent_subscriptions.cpa_model_allowlist AS cpa_models, parent_subscriptions.capacity_mode AS capacity_mode").
+		Select("child_subscriptions.model_allowlist AS child_models, parent_subscriptions.model_allowlist AS parent_models, parent_subscriptions.upstream_model_allowlist AS upstream_models, parent_subscriptions.capacity_mode AS capacity_mode").
 		Joins("JOIN parent_subscriptions ON parent_subscriptions.id = child_subscriptions.parent_subscription_id").
 		Where("child_subscriptions.tenant_id = ?", tenantID).
 		Where("child_subscriptions.enabled = ? AND child_subscriptions.starts_at <= ? AND (child_subscriptions.expires_at IS NULL OR child_subscriptions.expires_at > ?)", true, now, now).
@@ -889,14 +838,14 @@ func (s Store) ActiveSubscriptionModelGrants(ctx context.Context, tenantID strin
 			childModels = nil
 		}
 		grants = append(grants, SubscriptionModelGrant{
-			ChildModels: childModels, ParentModels: row.ParentModels, CPAModels: row.CPAModels,
+			ChildModels: childModels, ParentModels: row.ParentModels, UpstreamModels: row.UpstreamModels,
 		})
 	}
 	return grants, nil
 }
 
 func (grant SubscriptionModelGrant) AllowsModel(model string) bool {
-	return modelAllowed(model, grant.ChildModels, grant.ParentModels, grant.CPAModels)
+	return modelAllowed(model, grant.ChildModels, grant.ParentModels, grant.UpstreamModels)
 }
 
 // AllowsModel treats active subscription assignments as additions to the
@@ -959,11 +908,11 @@ func (s Store) SubscriptionCandidates(ctx context.Context, tenantID, model strin
 		if parent.CapacityMode == db.ParentCapacityUnmetered {
 			childModels = nil
 		}
-		if !modelAllowed(model, childModels, parent.ModelAllowlist, parent.CPAModelAllowlist) {
+		if !modelAllowed(model, childModels, parent.ModelAllowlist, parent.UpstreamModelAllowlist) {
 			continue
 		}
 		hasModelAssignment = true
-		if !parent.Enabled || parent.CPAUnavailable || parent.Status == "missing" {
+		if !parent.Enabled || parent.UpstreamUnavailable || parent.Status == "missing" {
 			hasUnavailableAssignment = true
 			continue
 		}
@@ -1070,13 +1019,13 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 			}
 			var parent ParentSubscription
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&parent,
-				"id = ? AND enabled = ? AND cpa_unavailable = ?", child.ParentSubscriptionID, true, false).Error; err != nil {
+				"id = ? AND enabled = ? AND upstream_unavailable = ?", child.ParentSubscriptionID, true, false).Error; err != nil {
 				return ErrSubscriptionUnavailable
 			}
 			reservation.ChildSubscriptionID = &child.ID
 			reservation.ParentSubscriptionID = &parent.ID
-			reservation.CPAAuthID = parent.CPAAuthID
-			reservation.CPAAuthIndex = parent.CPAAuthIndex
+			reservation.UpstreamCredentialID = parent.UpstreamCredentialID
+			reservation.UpstreamAuthIndex = parent.UpstreamAuthIndex
 			if parent.CapacityMode != db.ParentCapacityUnmetered {
 				if input.QuotaReserve <= 0 {
 					return ErrSubscriptionPrice
@@ -1520,14 +1469,14 @@ func (s Store) HasActiveChildSubscriptions(ctx context.Context, now time.Time) (
 	err := scoped(ctx, s.DB).Model(&ChildSubscription{}).
 		Joins("JOIN parent_subscriptions ON parent_subscriptions.id = child_subscriptions.parent_subscription_id").
 		Where("child_subscriptions.enabled = ? AND child_subscriptions.starts_at <= ? AND (child_subscriptions.expires_at IS NULL OR child_subscriptions.expires_at > ?)", true, now, now).
-		Where("parent_subscriptions.enabled = ? AND parent_subscriptions.cpa_unavailable = ? AND parent_subscriptions.status <> ?", true, false, "missing").
+		Where("parent_subscriptions.enabled = ? AND parent_subscriptions.upstream_unavailable = ? AND parent_subscriptions.status <> ?", true, false, "missing").
 		Count(&count).Error
 	return count > 0, err
 }
 
 func admissionFromReservation(value RequestReservation) Admission {
 	result := Admission{
-		RequestID: value.RequestID, CPAAuthID: value.CPAAuthID, CPAAuthIndex: value.CPAAuthIndex,
+		RequestID: value.RequestID, UpstreamCredentialID: value.UpstreamCredentialID, UpstreamAuthIndex: value.UpstreamAuthIndex,
 		BalanceReservedNanoUSD: value.BalanceReservedNanoUSD,
 		QuotaReservedNanoUSD:   value.QuotaReservedNanoUSD,
 	}

@@ -55,7 +55,16 @@ jobs:
 
       - name: Check formatting
         shell: bash
-        run: test -z "$(gofmt -l ./cmd ./internal)"
+        run: |
+          set -euo pipefail
+          files="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$files" ]; then
+            echo "These files need gofmt:" >&2
+            echo "$files" >&2
+            echo >&2
+            gofmt -d ./cmd ./internal >&2
+            exit 1
+          fi
 
       - name: Vet
         run: go vet ./...
@@ -94,6 +103,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
 
+      - name: Typecheck
+        run: pnpm typecheck
+
       - name: Lint
         run: pnpm lint
 
@@ -103,6 +115,9 @@ jobs:
   images:
     name: Build RelayAPI image
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    needs:
+      - backend
+      - frontend
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

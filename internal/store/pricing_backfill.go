@@ -37,20 +37,28 @@ type HistoricalModelPrice struct {
 }
 
 type AvailableModelPrice struct {
-	Model                           string  `json:"model"`
-	Priced                          bool    `json:"priced"`
-	PricedModel                     string  `json:"priced_model"`
-	InputNanoUSDPerToken            int64   `json:"input_nano_usd_per_token"`
-	OutputNanoUSDPerToken           int64   `json:"output_nano_usd_per_token"`
-	CachedInputNanoUSDPerToken      int64   `json:"cached_input_nano_usd_per_token"`
-	CacheWriteNanoUSDPerToken       int64   `json:"cache_write_nano_usd_per_token"`
-	ReasoningNanoUSDPerToken        int64   `json:"reasoning_nano_usd_per_token"`
-	ImageInputNanoUSDPerToken       int64   `json:"image_input_nano_usd_per_token"`
-	CachedImageInputNanoUSDPerToken int64   `json:"cached_image_input_nano_usd_per_token"`
-	ImageOutputNanoUSDPerToken      int64   `json:"image_output_nano_usd_per_token"`
-	Source                          string  `json:"source"`
-	Version                         string  `json:"version"`
-	PriceMultiplier                 float64 `json:"price_multiplier"`
+	Model                           string   `json:"model"`
+	Priced                          bool     `json:"priced"`
+	PricedModel                     string   `json:"priced_model"`
+	InputNanoUSDPerToken            int64    `json:"input_nano_usd_per_token"`
+	OutputNanoUSDPerToken           int64    `json:"output_nano_usd_per_token"`
+	CachedInputNanoUSDPerToken      int64    `json:"cached_input_nano_usd_per_token"`
+	CacheWriteNanoUSDPerToken       int64    `json:"cache_write_nano_usd_per_token"`
+	ReasoningNanoUSDPerToken        int64    `json:"reasoning_nano_usd_per_token"`
+	ImageInputNanoUSDPerToken       int64    `json:"image_input_nano_usd_per_token"`
+	CachedImageInputNanoUSDPerToken int64    `json:"cached_image_input_nano_usd_per_token"`
+	ImageOutputNanoUSDPerToken      int64    `json:"image_output_nano_usd_per_token"`
+	Source                          string   `json:"source"`
+	Version                         string   `json:"version"`
+	PriceMultiplier                 float64  `json:"price_multiplier"`
+	DisplayName                     string   `json:"display_name,omitempty"`
+	ContextWindow                   int      `json:"context_window,omitempty"`
+	MaxOutputTokens                 int      `json:"max_output_tokens,omitempty"`
+	ReasoningEfforts                []string `json:"reasoning_efforts,omitempty"`
+	DefaultReasoningLevel           string   `json:"default_reasoning_level,omitempty"`
+	InputModalities                 []string `json:"input_modalities,omitempty"`
+	PreferWebSockets                *bool    `json:"prefer_websockets,omitempty"`
+	CapabilitySource                string   `json:"capability_source,omitempty"`
 }
 
 func (s *Store) AvailableModelPrices(ctx context.Context, models []string) ([]AvailableModelPrice, error) {

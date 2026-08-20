@@ -1,26 +1,29 @@
 package app
 
 import (
-	"crypto/tls"
 	"encoding/json"
-	"io"
-	"net/http/httptrace"
-	"net/textproto"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
-const latencyTraceVersion = 3
+const latencyTraceVersion = 4
+
+const (
+	bucketUser     = "user"
+	bucketRelay    = "relay"
+	bucketUpstream = "upstream"
+	bucketMixed    = "mixed"
+)
 
 type latencySegment struct {
 	ID          string  `json:"id"`
 	Label       string  `json:"label"`
 	Owner       string  `json:"owner"`
 	Track       string  `json:"track"`
+	Bucket      string  `json:"bucket,omitempty"`
 	StartMS     float64 `json:"start_ms"`
 	DurationMS  float64 `json:"duration_ms"`
 	Description string  `json:"description,omitempty"`
@@ -40,23 +43,50 @@ type latencyMark struct {
 	OffsetMS float64 `json:"offset_ms"`
 }
 
-type latencyTrace struct {
-	Version  int              `json:"version"`
-	TotalMS  float64          `json:"total_ms"`
-	Boundary string           `json:"boundary"`
-	Segments []latencySegment `json:"segments"`
-	Marks    []latencyMark    `json:"marks,omitempty"`
+type latencyTransfer struct {
+	UpstreamReadWaitMS float64 `json:"upstream_read_wait_ms"`
+	ClientWriteWaitMS  float64 `json:"client_write_wait_ms"`
+	BytesRead          int64   `json:"bytes_read"`
+	BytesWritten       int64   `json:"bytes_written"`
+	ReadCount          int     `json:"read_count"`
+	WriteCount         int     `json:"write_count"`
+	FirstReadMS        float64 `json:"first_read_ms,omitempty"`
+	LastReadMS         float64 `json:"last_read_ms,omitempty"`
+	FirstWriteMS       float64 `json:"first_write_ms,omitempty"`
+	LastWriteMS        float64 `json:"last_write_ms,omitempty"`
+	WallMS             float64 `json:"wall_ms,omitempty"`
+	LocalCopyMS        float64 `json:"local_copy_ms,omitempty"`
 }
 
-// latencyTimeline records only timestamps Relay can observe. The upstream
-// provider is behind embedded CPA, so time after the request is written and
-// before CPA returns headers is deliberately reported as one opaque upstream
-// span instead of presenting guessed DNS/TLS timings as facts.
+type latencyAttribution struct {
+	UserNetworkMS  float64          `json:"user_network_ms"`
+	RelayMS        float64          `json:"relay_ms"`
+	UpstreamMS     float64          `json:"upstream_ms"`
+	UnattributedMS float64          `json:"unattributed_ms"`
+	ObservedSumMS  float64          `json:"observed_sum_ms"`
+	OverlapMS      float64          `json:"overlap_ms"`
+	Transfer       *latencyTransfer `json:"transfer,omitempty"`
+	Notes          []string         `json:"notes,omitempty"`
+}
+
+type latencyTrace struct {
+	Version     int                `json:"version"`
+	TotalMS     float64            `json:"total_ms"`
+	Boundary    string             `json:"boundary"`
+	Attribution latencyAttribution `json:"attribution"`
+	Segments    []latencySegment   `json:"segments"`
+	Marks       []latencyMark      `json:"marks,omitempty"`
+}
+
+// latencyTimeline records only timestamps Relay can observe: client
+// Read/Write blocks, in-process work, and provider connect / Body.Read
+// blocks. Provider-internal queues are not visible.
 type latencyTimeline struct {
 	started  time.Time
 	last     time.Time
 	segments []latencySegment
 	marks    []latencyMark
+	transfer upstream.TraceTransfer
 }
 
 func newLatencyTimeline(started time.Time) *latencyTimeline {
@@ -93,33 +123,61 @@ func (t *latencyTimeline) JSON(completed time.Time) string {
 		completed = t.started
 	}
 	payload := latencyTrace{
-		Version: latencyTraceVersion, TotalMS: elapsedMilliseconds(t.started, completed),
-		Boundary: "Relay、内嵌 CPA 与供应商网络均使用进程内实测时间戳；供应商服务端内部阶段止于响应首包",
-		Segments: append([]latencySegment(nil), t.segments...), Marks: append([]latencyMark(nil), t.marks...),
+		Version:     latencyTraceVersion,
+		TotalMS:     elapsedMilliseconds(t.started, completed),
+		Boundary:    "Relay 只记录本进程时钟：客户端 Read/Write 阻塞、进程内计算、供应商连接与 Body.Read 阻塞。供应商机房内部阶段不可见。读与写在同一拷贝循环中交替，观测合计可以大于墙钟。",
+		Attribution: t.attribution(elapsedMilliseconds(t.started, completed)),
+		Segments:    append([]latencySegment(nil), t.segments...),
+		Marks:       append([]latencyMark(nil), t.marks...),
 	}
 	raw, _ := json.Marshal(payload)
 	return string(raw)
 }
 
-// AddCPATrace overlays executor attempts observed inside embedded CPA. These
-// spans intentionally use parallel tracks: they explain the opaque CPA phase
-// on the critical path without being added to its duration a second time.
-func (t *latencyTimeline) AddCPATrace(trace relaybridge.RequestTrace) {
+func (t *latencyTimeline) addSegment(start, end time.Time, id, label, owner, track, description string) {
+	if start.Before(t.started) {
+		start = t.started
+	}
+	segment := latencySegment{
+		ID: id, Label: label, Owner: owner, Track: track,
+		StartMS: elapsedMilliseconds(t.started, start), DurationMS: elapsedMilliseconds(start, end),
+		Description: description,
+	}
+	segment.Bucket = bucketForSegment(segment)
+	t.segments = append(t.segments, segment)
+}
+
+func elapsedMilliseconds(start, end time.Time) float64 {
+	return float64(end.Sub(start).Microseconds()) / 1000
+}
+
+func durationMilliseconds(value time.Duration) float64 {
+	if value <= 0 {
+		return 0
+	}
+	return float64(value.Microseconds()) / 1000
+}
+
+func (t *latencyTimeline) AddUpstreamTrace(trace upstream.RequestTrace) {
 	if t == nil || trace.RequestID == "" {
 		return
 	}
 	attempts := trace.Attempts
 	if len(attempts) == 0 {
 		if !trace.StartedAt.IsZero() && !trace.CompletedAt.IsZero() && !trace.CompletedAt.Before(trace.StartedAt) {
-			t.addSegment(trace.StartedAt, trace.CompletedAt, "cpa_dispatch", "CPA 路由与凭据选择", "cpa", "cpa",
-				"请求未进入供应商 executor；通常是路由、凭据可用性或请求翻译阶段返回")
+			t.addSegment(trace.StartedAt, trace.CompletedAt, "runtime_dispatch", "路由、翻译与凭据选择", "runtime", "runtime",
+				"请求未进入供应商执行；通常是路由、凭据可用性或请求翻译阶段返回")
 		}
+		t.addTransferSpans(trace.Transfer)
 		return
 	}
 	firstStarted := attempts[0].StartedAt
 	if !trace.StartedAt.IsZero() && !firstStarted.IsZero() && !firstStarted.Before(trace.StartedAt) {
-		t.addSegment(trace.StartedAt, firstStarted, "cpa_dispatch", "路由、翻译与凭据选择", "cpa", "cpa",
-			"CPA 解析协议、路由模型并从可用凭据中完成本次选择")
+		description := "原生运行时解析协议、路由模型并完成本次凭据选择"
+		if trace.Translation != "" && trace.Translation != "passthrough" {
+			description += " · " + trace.Translation
+		}
+		t.addSegment(trace.StartedAt, firstStarted, "runtime_dispatch", "路由、翻译与凭据选择", "runtime", "runtime", description)
 	}
 	for index, attempt := range attempts {
 		end := attempt.CompletedAt
@@ -138,59 +196,188 @@ func (t *latencyTimeline) AddCPATrace(trace relaybridge.RequestTrace) {
 			label = "上游尝试 " + strconv.Itoa(attempt.Number)
 		}
 		segment := latencySegment{
-			ID: "cpa_attempt_" + strconv.Itoa(attempt.Number), Label: label, Owner: "upstream", Track: "attempt",
+			ID: "runtime_attempt_" + strconv.Itoa(attempt.Number), Label: label, Owner: "upstream", Track: "attempt",
 			StartMS: elapsedMilliseconds(t.started, attemptStarted), DurationMS: elapsedMilliseconds(attemptStarted, end),
 			Description: attemptDescription(attempt), Attempt: attempt.Number, Status: attempt.Status,
 			Provider: attempt.Provider, Model: attempt.Model, Credential: attempt.CredentialID, Error: attempt.Error,
 		}
+		segment.Bucket = bucketForSegment(segment)
 		t.segments = append(t.segments, segment)
 		if !attempt.HeadersAt.IsZero() {
 			t.Mark(attempt.HeadersAt, segment.ID+"_headers", "上游响应头")
 		}
-		if !attempt.FirstChunkAt.IsZero() {
-			t.Mark(attempt.FirstChunkAt, segment.ID+"_first_chunk", "CPA 首数据")
-		}
 		t.addAttemptNetworkSpans(attempt)
-
 		if index+1 < len(attempts) {
 			next := attempts[index+1]
 			if !end.IsZero() && !next.StartedAt.IsZero() && next.StartedAt.After(end) {
-				t.addSegment(end, next.StartedAt, "cpa_retry_wait_"+strconv.Itoa(attempt.Number), "重试等待", "queue", "attempt",
-					"等待凭据冷却、Retry-After 或下一轮调度")
+				t.addSegment(end, next.StartedAt, "runtime_retry_wait_"+strconv.Itoa(attempt.Number), "重试等待", "queue", "attempt",
+					"等待下一轮调度或令牌刷新")
 			}
 		}
 	}
+	t.addTransferSpans(trace.Transfer)
 }
 
-func (t *latencyTimeline) addAttemptNetworkSpans(attempt relaybridge.ExecutionAttempt) {
+func (t *latencyTimeline) addTransferSpans(transfer upstream.TraceTransfer) {
+	t.transfer = transfer
+	if transfer.UpstreamReadWait > 0 && !transfer.FirstReadAt.IsZero() {
+		t.addSegment(transfer.FirstReadAt, transfer.FirstReadAt.Add(transfer.UpstreamReadWait),
+			"upstream_read_wait", "读上游阻塞", "upstream", "upstream",
+			"response.Body.Read() 从进入到返回的累计时间。含供应商继续推送的等待，不含本进程翻译 CPU。")
+	}
+	if transfer.ClientWriteWait > 0 && !transfer.FirstWriteAt.IsZero() {
+		t.addSegment(transfer.FirstWriteAt, transfer.FirstWriteAt.Add(transfer.ClientWriteWait),
+			"client_write_wait", "写客户端阻塞", "downstream", "user",
+			"http.ResponseWriter.Write 与 Flush 从进入到返回的累计时间。含客户端接收窗口与中间网络回压。")
+	}
+}
+
+func (t *latencyTimeline) addAttemptNetworkSpans(attempt upstream.ExecutionAttempt) {
 	add := func(start, end time.Time, suffix, label, description string) {
 		if start.IsZero() || end.IsZero() || end.Before(start) {
 			return
 		}
 		reused := attempt.ConnectionReused
-		t.segments = append(t.segments, latencySegment{
-			ID: "cpa_attempt_" + strconv.Itoa(attempt.Number) + "_" + suffix, Label: label, Owner: "upstream", Track: "network",
+		segment := latencySegment{
+			ID: "runtime_attempt_" + strconv.Itoa(attempt.Number) + "_" + suffix, Label: label, Owner: "upstream", Track: "network",
 			StartMS: elapsedMilliseconds(t.started, start), DurationMS: elapsedMilliseconds(start, end), Description: description,
 			Attempt: attempt.Number, Provider: attempt.Provider, Model: attempt.Model, Credential: attempt.CredentialID,
 			Reused: &reused, RemoteAddr: attempt.RemoteAddr,
-		})
+		}
+		segment.Bucket = bucketForSegment(segment)
+		t.segments = append(t.segments, segment)
 	}
-	connectionDescription := "CPA 获取供应商连接"
+	connectionDescription := "获取供应商连接"
 	if attempt.ConnectionReused {
-		connectionDescription = "CPA 复用供应商连接"
+		connectionDescription = "复用供应商连接"
 	}
 	if attempt.RemoteAddr != "" {
 		connectionDescription += " · " + attempt.RemoteAddr
 	}
 	add(attempt.GetConnAt, attempt.GotConnAt, "connection", "连接池等待", connectionDescription)
-	add(attempt.DNSStartedAt, attempt.DNSCompletedAt, "dns", "供应商 DNS", "CPA 解析供应商域名")
-	add(attempt.ConnectStartedAt, attempt.ConnectCompletedAt, "tcp", "供应商 TCP", "CPA 到供应商的 TCP 建连")
-	add(attempt.TLSStartedAt, attempt.TLSCompletedAt, "tls", "供应商 TLS", "CPA 与供应商完成 TLS 握手")
+	add(attempt.DNSStartedAt, attempt.DNSCompletedAt, "dns", "供应商 DNS", "解析供应商域名")
+	add(attempt.ConnectStartedAt, attempt.ConnectCompletedAt, "tcp", "供应商 TCP", "到供应商的 TCP 建连")
+	add(attempt.TLSStartedAt, attempt.TLSCompletedAt, "tls", "供应商 TLS", "与供应商完成 TLS 握手")
 	add(attempt.GotConnAt, attempt.RequestWrittenAt, "request_write", "发送上游请求", "写入供应商请求头与正文")
 	add(attempt.RequestWrittenAt, attempt.FirstResponseAt, "wait_first_byte", "供应商首包等待", "供应商接收请求后到返回首个响应字节")
 }
 
-func attemptDescription(attempt relaybridge.ExecutionAttempt) string {
+func (t *latencyTimeline) attribution(totalMS float64) latencyAttribution {
+	var user, relay, up, mixed float64
+	for _, segment := range t.segments {
+		switch segment.Bucket {
+		case bucketUser:
+			user += segment.DurationMS
+		case bucketRelay:
+			relay += segment.DurationMS
+		case bucketUpstream:
+			up += segment.DurationMS
+		case bucketMixed:
+			mixed += segment.DurationMS
+		}
+	}
+	observed := user + relay + up
+	overlap := observed - totalMS
+	if overlap < 0 {
+		overlap = 0
+	}
+	unattributed := totalMS - observed
+	if unattributed < 0 {
+		unattributed = 0
+	}
+	if mixed > 0 && unattributed < mixed {
+		unattributed = mixed
+	}
+	result := latencyAttribution{
+		UserNetworkMS:  user,
+		RelayMS:        relay,
+		UpstreamMS:     up,
+		UnattributedMS: unattributed,
+		ObservedSumMS:  observed,
+		OverlapMS:      overlap,
+		Notes: []string{
+			"user_network_ms = 读取客户端请求体 + ResponseWriter.Write/Flush 累计阻塞",
+			"relay_ms = 鉴权、排队、解析、计费、路由翻译等进程内步骤，不含 Serve 等待",
+			"upstream_ms = 连接/DNS/TCP/TLS/发请求/首包等待 + Body.Read 累计阻塞",
+			"尝试整段墙钟不计入三桶，避免与网络子段和读写阻塞重复",
+			"读写在同一 goroutine 的 Copy 循环中交替；观测合计与墙钟的差为重叠或未覆盖",
+		},
+	}
+	if transfer := encodeTransfer(t.started, t.transfer); transfer != nil {
+		result.Transfer = transfer
+	}
+	return result
+}
+
+func encodeTransfer(started time.Time, transfer upstream.TraceTransfer) *latencyTransfer {
+	if transfer.ReadCount == 0 && transfer.WriteCount == 0 && transfer.BytesRead == 0 && transfer.BytesWritten == 0 {
+		return nil
+	}
+	encoded := &latencyTransfer{
+		UpstreamReadWaitMS: durationMilliseconds(transfer.UpstreamReadWait),
+		ClientWriteWaitMS:  durationMilliseconds(transfer.ClientWriteWait),
+		BytesRead:          transfer.BytesRead,
+		BytesWritten:       transfer.BytesWritten,
+		ReadCount:          transfer.ReadCount,
+		WriteCount:         transfer.WriteCount,
+	}
+	if !transfer.FirstReadAt.IsZero() {
+		encoded.FirstReadMS = elapsedMilliseconds(started, transfer.FirstReadAt)
+	}
+	if !transfer.LastReadAt.IsZero() {
+		encoded.LastReadMS = elapsedMilliseconds(started, transfer.LastReadAt)
+	}
+	if !transfer.FirstWriteAt.IsZero() {
+		encoded.FirstWriteMS = elapsedMilliseconds(started, transfer.FirstWriteAt)
+	}
+	if !transfer.LastWriteAt.IsZero() {
+		encoded.LastWriteMS = elapsedMilliseconds(started, transfer.LastWriteAt)
+	}
+	windowStart := firstNonZeroTime(transfer.FirstReadAt, transfer.FirstWriteAt)
+	windowEnd := transfer.LastReadAt
+	if transfer.LastWriteAt.After(windowEnd) {
+		windowEnd = transfer.LastWriteAt
+	}
+	if !windowStart.IsZero() && !windowEnd.IsZero() && !windowEnd.Before(windowStart) {
+		encoded.WallMS = elapsedMilliseconds(windowStart, windowEnd)
+		local := encoded.WallMS - encoded.UpstreamReadWaitMS - encoded.ClientWriteWaitMS
+		if local > 0 {
+			encoded.LocalCopyMS = local
+		}
+	}
+	return encoded
+}
+
+func bucketForSegment(segment latencySegment) string {
+	switch segment.ID {
+	case "read_request_body", "client_write_wait":
+		return bucketUser
+	case "upstream_read_wait":
+		return bucketUpstream
+	case "response_transfer", "runtime_response_headers", "runtime_first_body", "websocket_session", "websocket_turn":
+		return bucketMixed
+	}
+	if strings.Contains(segment.ID, "wait_first_byte") || segment.Track == "network" {
+		return bucketUpstream
+	}
+	if strings.Contains(segment.ID, "retry_wait") {
+		return bucketRelay
+	}
+	if segment.Track == "attempt" {
+		return ""
+	}
+	switch segment.Owner {
+	case "relay", "queue", "billing", "runtime":
+		return bucketRelay
+	case "upstream":
+		return bucketUpstream
+	case "downstream":
+		return bucketMixed
+	}
+	return ""
+}
+
+func attemptDescription(attempt upstream.ExecutionAttempt) string {
 	parts := make([]string, 0, 4)
 	if attempt.Provider != "" {
 		parts = append(parts, attempt.Provider)
@@ -207,125 +394,13 @@ func attemptDescription(attempt relaybridge.ExecutionAttempt) string {
 	return strings.Join(parts, " · ")
 }
 
-func (t *latencyTimeline) addSegment(start, end time.Time, id, label, owner, track, description string) {
-	if start.Before(t.started) {
-		start = t.started
-	}
-	if end.Before(start) {
+func (a *App) addNativeRuntimeTrace(timeline *latencyTimeline, requestID string) {
+	if a == nil || a.nativeRuntime == nil || timeline == nil {
 		return
 	}
-	t.segments = append(t.segments, latencySegment{
-		ID: id, Label: label, Owner: owner, Track: track,
-		StartMS: elapsedMilliseconds(t.started, start), DurationMS: elapsedMilliseconds(start, end),
-		Description: description,
-	})
-}
-
-func elapsedMilliseconds(start, end time.Time) float64 {
-	return float64(end.Sub(start).Microseconds()) / 1000
-}
-
-type clientHTTPTrace struct {
-	mu sync.Mutex
-
-	getConn, gotConn, wroteHeaders, wroteRequest, firstResponseByte time.Time
-	dnsStart, dnsDone, connectStart, connectDone                    time.Time
-	tlsStart, tlsDone                                               time.Time
-	reused                                                          bool
-	remoteAddr                                                      string
-}
-
-func newClientHTTPTrace() (*clientHTTPTrace, *httptrace.ClientTrace) {
-	state := &clientHTTPTrace{}
-	trace := &httptrace.ClientTrace{
-		GetConn: func(string) { state.setTime(&state.getConn, time.Now()) },
-		GotConn: func(info httptrace.GotConnInfo) {
-			state.mu.Lock()
-			state.gotConn = time.Now()
-			state.reused = info.Reused
-			if info.Conn != nil && info.Conn.RemoteAddr() != nil {
-				state.remoteAddr = info.Conn.RemoteAddr().String()
-			}
-			state.mu.Unlock()
-		},
-		DNSStart: func(httptrace.DNSStartInfo) { state.setTime(&state.dnsStart, time.Now()) },
-		DNSDone:  func(httptrace.DNSDoneInfo) { state.setTime(&state.dnsDone, time.Now()) },
-		ConnectStart: func(_, _ string) {
-			state.setTime(&state.connectStart, time.Now())
-		},
-		ConnectDone:       func(_, _ string, _ error) { state.setTime(&state.connectDone, time.Now()) },
-		TLSHandshakeStart: func() { state.setTime(&state.tlsStart, time.Now()) },
-		TLSHandshakeDone: func(tls.ConnectionState, error) {
-			state.setTime(&state.tlsDone, time.Now())
-		},
-		WroteHeaders: func() { state.setTime(&state.wroteHeaders, time.Now()) },
-		WroteRequest: func(httptrace.WroteRequestInfo) {
-			state.setTime(&state.wroteRequest, time.Now())
-		},
-		GotFirstResponseByte: func() { state.setTime(&state.firstResponseByte, time.Now()) },
-		Got1xxResponse:       func(int, textproto.MIMEHeader) error { return nil },
+	if trace, ok := a.nativeRuntime.TakeRequestTrace(requestID); ok {
+		timeline.AddUpstreamTrace(trace)
 	}
-	return state, trace
-}
-
-func (t *clientHTTPTrace) setTime(target *time.Time, value time.Time) {
-	t.mu.Lock()
-	if target.IsZero() {
-		*target = value
-	}
-	t.mu.Unlock()
-}
-
-type clientHTTPTraceSnapshot struct {
-	getConn, gotConn, wroteHeaders, wroteRequest, firstResponseByte time.Time
-	dnsStart, dnsDone, connectStart, connectDone                    time.Time
-	tlsStart, tlsDone                                               time.Time
-	reused                                                          bool
-	remoteAddr                                                      string
-}
-
-func (t *clientHTTPTrace) snapshot() clientHTTPTraceSnapshot {
-	if t == nil {
-		return clientHTTPTraceSnapshot{}
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return clientHTTPTraceSnapshot{
-		getConn: t.getConn, gotConn: t.gotConn, wroteHeaders: t.wroteHeaders, wroteRequest: t.wroteRequest,
-		firstResponseByte: t.firstResponseByte, dnsStart: t.dnsStart, dnsDone: t.dnsDone,
-		connectStart: t.connectStart, connectDone: t.connectDone, tlsStart: t.tlsStart, tlsDone: t.tlsDone,
-		reused: t.reused, remoteAddr: t.remoteAddr,
-	}
-}
-
-func (t *latencyTimeline) AddHTTPTrace(state *clientHTTPTrace, completed time.Time) {
-	if t == nil {
-		return
-	}
-	snapshot := state.snapshot()
-	connectionEnd := snapshot.gotConn
-	if connectionEnd.IsZero() {
-		connectionEnd = firstNonZeroTime(snapshot.wroteRequest, completed)
-	}
-	detail := "获取 Relay 到 CPA 的 HTTP 连接"
-	if snapshot.reused {
-		detail = "复用 Relay 到 CPA 的空闲连接"
-	}
-	if snapshot.remoteAddr != "" {
-		detail += " · " + snapshot.remoteAddr
-	}
-	t.Step(connectionEnd, "cpa_connection", "连接 CPA", "cpa", detail)
-	requestWritten := firstNonZeroTime(snapshot.wroteRequest, snapshot.wroteHeaders, connectionEnd)
-	t.Step(requestWritten, "cpa_request_write", "写入 CPA 请求", "cpa", "请求头与正文已写入 CPA")
-	firstHeader := firstNonZeroTime(snapshot.firstResponseByte, completed)
-	t.Step(firstHeader, "upstream_wait_headers", "CPA / 上游处理", "upstream", "包含 CPA 路由、凭据选择、重试，以及供应商生成响应头前的内部耗时")
-	t.Step(completed, "cpa_response_headers", "读取响应头", "cpa", "Relay 已收到 CPA 响应头")
-
-	t.Span(snapshot.getConn, snapshot.gotConn, "http_connection_pool", "连接池等待", "cpa", detail)
-	t.Span(snapshot.dnsStart, snapshot.dnsDone, "http_dns", "DNS 查询", "cpa", "Relay 到 CPA 的域名解析")
-	t.Span(snapshot.connectStart, snapshot.connectDone, "http_tcp", "TCP 连接", "cpa", "Relay 到 CPA 的 TCP 建连")
-	t.Span(snapshot.tlsStart, snapshot.tlsDone, "http_tls", "TLS 握手", "cpa", "Relay 到 CPA 的 TLS 握手")
-	t.Span(snapshot.gotConn, snapshot.wroteRequest, "http_request_write", "HTTP 请求写入", "cpa", "底层 Transport 写入请求")
 }
 
 func firstNonZeroTime(values ...time.Time) time.Time {
@@ -335,36 +410,4 @@ func firstNonZeroTime(values ...time.Time) time.Time {
 		}
 	}
 	return time.Time{}
-}
-
-func (a *App) addEmbeddedCPATrace(timeline *latencyTimeline, requestID string) {
-	if a == nil || a.nativeCPARuntime == nil || timeline == nil {
-		return
-	}
-	if trace, ok := a.nativeCPARuntime.TakeRequestTrace(requestID); ok {
-		timeline.AddCPATrace(trace)
-	}
-}
-
-func (a *App) addEmbeddedCPATraceSnapshot(timeline *latencyTimeline, requestID string) {
-	if a == nil || a.nativeCPARuntime == nil || timeline == nil {
-		return
-	}
-	if trace, ok := a.nativeCPARuntime.RequestTraceSnapshot(requestID); ok {
-		timeline.AddCPATrace(trace)
-	}
-}
-
-type observedReader struct {
-	io.Reader
-	onFirstByte func()
-}
-
-func (r *observedReader) Read(payload []byte) (int, error) {
-	n, err := r.Reader.Read(payload)
-	if n > 0 && r.onFirstByte != nil {
-		r.onFirstByte()
-		r.onFirstByte = nil
-	}
-	return n, err
 }

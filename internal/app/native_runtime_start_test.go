@@ -1,0 +1,73 @@
+package app
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/4627488/RelayAPI/internal/store"
+)
+
+func TestRuntimeCredentialsDisablesProviderWebSocketsInRelayMode(t *testing.T) {
+	rows := []store.UpstreamCredentialSnapshot{{
+		ID: "codex", Provider: "codex", Enabled: true,
+		Document: json.RawMessage(`{"type":"codex","access_token":"secret","websockets":true}`),
+	}}
+
+	credentials := runtimeCredentials(rows, false, nil)
+	var document map[string]any
+	if len(credentials) != 1 || json.Unmarshal(credentials[0].Document, &document) != nil {
+		t.Fatalf("compiled credentials = %#v", credentials)
+	}
+	if enabled, ok := document["websockets"].(bool); !ok || enabled {
+		t.Fatalf("websockets = %#v, want false", document["websockets"])
+	}
+	var stored map[string]any
+	if json.Unmarshal(rows[0].Document, &stored) != nil || stored["websockets"] != true {
+		t.Fatalf("stored credential was mutated: %#v", stored)
+	}
+}
+
+func TestRuntimeCredentialsEnablesProviderWebSocketsInRelayMode(t *testing.T) {
+	for _, original := range []string{
+		`{"type":"xai","api_key":"secret"}`,
+		`{"type":"xai","api_key":"secret","websockets":false}`,
+	} {
+		rows := []store.UpstreamCredentialSnapshot{{
+			ID: "xai", Provider: "xai", Enabled: true, Document: json.RawMessage(original),
+		}}
+		credentials := runtimeCredentials(rows, true, nil)
+		var document map[string]any
+		if len(credentials) != 1 || json.Unmarshal(credentials[0].Document, &document) != nil || document["websockets"] != true {
+			t.Fatalf("compiled credentials = %#v document=%#v", credentials, document)
+		}
+		if string(rows[0].Document) != original {
+			t.Fatalf("stored credential was mutated: %s", rows[0].Document)
+		}
+	}
+}
+
+func TestRuntimeCredentialsDropsUnsupportedProvider(t *testing.T) {
+	rows := []store.UpstreamCredentialSnapshot{{
+		ID: "gemini", Provider: "gemini", Enabled: true,
+		Document: json.RawMessage(`{"type":"gemini","api_key":"secret"}`),
+	}}
+	credentials := runtimeCredentials(rows, true, nil)
+	if len(credentials) != 0 {
+		t.Fatalf("unsupported provider reached runtime: %#v", credentials)
+	}
+}
+
+func TestRuntimeCredentialsUsesSelectedProxyOrExplicitDirect(t *testing.T) {
+	proxyID := "proxy-1"
+	rows := []store.UpstreamCredentialSnapshot{
+		{ID: "proxied", Provider: "openai", Enabled: true, ProxyID: &proxyID, Document: json.RawMessage(`{"type":"openai"}`)},
+		{ID: "direct", Provider: "openai", Enabled: true, Document: json.RawMessage(`{"type":"openai","proxy_url":"http://legacy"}`)},
+	}
+	credentials := runtimeCredentials(rows, true, map[string]string{proxyID: "socks5h://proxy.test:1080"})
+	for index, want := range []string{"socks5h://proxy.test:1080", "direct"} {
+		var document map[string]any
+		if json.Unmarshal(credentials[index].Document, &document) != nil || document["proxy_url"] != want {
+			t.Fatalf("credential %d proxy = %#v, want %q", index, document["proxy_url"], want)
+		}
+	}
+}

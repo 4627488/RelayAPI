@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
 import {
   ActivityIcon,
@@ -45,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api, type UsageReport, type User } from "@/lib/api"
 import { cacheHitRateLabel, compact, compactTokens, money } from "@/lib/format"
@@ -543,19 +544,22 @@ function DimensionTable({
 export function UsageView({
   initialReport,
   admin = false,
-  users = [],
+  users: initialUsers = [],
 }: {
-  initialReport: UsageReport
+  initialReport?: UsageReport
   admin?: boolean
   users?: User[]
 }) {
-  const [report, setReport] = useState(initialReport)
+  const [report, setReport] = useState<UsageReport | null>(
+    initialReport ?? null
+  )
+  const [users, setUsers] = useState(initialUsers)
   const [days, setDays] = useState<Period>(30)
   const [userID, setUserID] = useState("all")
   const [dimension, setDimension] = useState<Dimension>(
     admin ? "users" : "models"
   )
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(!initialReport)
   const requestID = useRef(0)
 
   async function load(nextDays: Period, nextUserID = userID) {
@@ -579,6 +583,53 @@ export function UsageView({
     }
   }
 
+  useEffect(() => {
+    let active = true
+    if (!initialReport) {
+      const params = new URLSearchParams({ days: "30" })
+      void api<UsageReport>(
+        `${admin ? "/api/admin/usage" : "/api/usage"}?${params}`
+      )
+        .then((next) => {
+          if (active) setReport(next)
+        })
+        .catch((cause) => {
+          if (active)
+            toast.error(cause instanceof Error ? cause.message : "读取用量失败")
+        })
+        .finally(() => {
+          if (active) setLoading(false)
+        })
+    }
+    if (admin && initialUsers.length === 0) {
+      void api<{ items: User[] }>("/api/admin/tenants")
+        .then((value) => {
+          if (active) setUsers(value.items ?? [])
+        })
+        .catch(() => {})
+    }
+    return () => {
+      active = false
+    }
+  }, [admin, initialReport, initialUsers.length])
+
+  if (!report) {
+    return (
+      <div className="flex min-h-56 flex-col items-center justify-center gap-3">
+        {loading ? (
+          <Spinner />
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">无法读取用量</p>
+            <Button variant="outline" onClick={() => void load(days, userID)}>
+              重试
+            </Button>
+          </>
+        )}
+      </div>
+    )
+  }
+
   const hasRows =
     dimension === "users"
       ? report.users.length > 0
@@ -588,44 +639,46 @@ export function UsageView({
 
   return (
     <div className="relative flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {admin ? "全局用量" : "用量"}
-        </h1>
-        <div className="flex flex-wrap items-center gap-2">
-          {admin ? (
-            <Select
-              value={userID}
-              onValueChange={(value) => void load(days, value ?? "all")}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {admin ? (
+          <Select
+            items={[
+              { value: "all", label: "全部用户" },
+              ...users.map((user) => ({
+                value: user.id,
+                label: user.name,
+              })),
+            ]}
+            value={userID}
+            onValueChange={(value) => void load(days, value ?? "all")}
+          >
+            <SelectTrigger className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              <SelectGroup>
+                <SelectItem value="all">全部用户</SelectItem>
+                {users.map((user) => (
+                  <SelectItem key={user.id} value={user.id}>
+                    {user.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        ) : null}
+        <div className="flex rounded-lg border bg-background p-0.5">
+          {periods.map((period) => (
+            <Button
+              key={period.value}
+              size="sm"
+              variant={days === period.value ? "secondary" : "ghost"}
+              className="h-7 px-2.5"
+              onClick={() => void load(period.value)}
             >
-              <SelectTrigger className="w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                <SelectGroup>
-                  <SelectItem value="all">全部用户</SelectItem>
-                  {users.map((user) => (
-                    <SelectItem key={user.id} value={user.id}>
-                      {user.name}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          ) : null}
-          <div className="flex rounded-lg border bg-background p-0.5">
-            {periods.map((period) => (
-              <Button
-                key={period.value}
-                size="sm"
-                variant={days === period.value ? "secondary" : "ghost"}
-                className="h-7 px-2.5"
-                onClick={() => void load(period.value)}
-              >
-                {period.label}
-              </Button>
-            ))}
-          </div>
+              {period.label}
+            </Button>
+          ))}
         </div>
       </div>
 

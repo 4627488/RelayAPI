@@ -32,7 +32,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -66,6 +65,7 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
+import { InfoBar, PageHeader, StatStrip } from "@/components/workspace-ui"
 import {
   api,
   deleteRequest,
@@ -194,37 +194,27 @@ export function ProxiesView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">代理</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            集中维护出站代理，再按用途绑定到系统或模型账户。
-          </p>
-        </div>
-        <Button onClick={() => setEditor({ item: null, open: true })}>
-          <PlusIcon />
-          添加代理
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button onClick={() => setEditor({ item: null, open: true })}>
+            <PlusIcon data-icon="inline-start" />
+            添加代理
+          </Button>
+        }
+      />
 
-      <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg border bg-border">
-        {[
-          ["代理条目", items.length],
-          ["账户绑定", accountUses],
-          ["本次已测", tested],
-        ].map(([label, value]) => (
-          <div key={label} className="bg-background px-4 py-3">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
-          </div>
-        ))}
-      </div>
+      <StatStrip
+        className="grid-cols-3"
+        items={[
+          { label: "代理条目", value: items.length },
+          { label: "账户绑定", value: accountUses },
+          { label: "本次已测", value: tested },
+        ]}
+      />
 
-      <Alert>
-        <ShieldCheckIcon />
-        <AlertTitle>凭据不会回显</AlertTitle>
-        <AlertDescription>代理测试仅访问固定的出口信息服务。</AlertDescription>
-      </Alert>
+      <InfoBar icon={ShieldCheckIcon}>
+        地址与认证信息加密保存且不回显；连通性测试固定访问出口信息服务。
+      </InfoBar>
 
       {items.length ? (
         <div className="grid items-stretch gap-3 lg:grid-cols-2">
@@ -272,15 +262,18 @@ export function ProxiesView() {
                   </div>
                   {result ? (
                     result.ok ? (
-                      <Alert>
+                      <div className="space-y-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3">
                         <div className="flex items-center justify-between gap-3">
-                          <AlertTitle className="flex items-center gap-2"><CircleCheckIcon />代理可用</AlertTitle>
+                          <span className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                            <CircleCheckIcon className="size-4" />
+                            代理可用
+                          </span>
                           <Badge variant="outline">
                             <Clock3Icon />
                             {result.latency_ms} ms
                           </Badge>
                         </div>
-                        <AlertDescription className="grid gap-2 sm:grid-cols-2">
+                        <div className="grid gap-2 text-sm sm:grid-cols-2">
                           <p className="flex min-w-0 items-center gap-2">
                             <Globe2Icon className="size-4 shrink-0 text-muted-foreground" />
                             <span
@@ -308,14 +301,13 @@ export function ProxiesView() {
                               {result.asn ? ` · AS${result.asn}` : ""}
                             </span>
                           </p>
-                        </AlertDescription>
-                      </Alert>
+                        </div>
+                      </div>
                     ) : (
-                      <Alert variant="destructive">
-                        <TriangleAlertIcon />
-                        <AlertTitle>代理测试失败</AlertTitle>
-                        <AlertDescription>{result.error}</AlertDescription>
-                      </Alert>
+                      <div className="flex gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive">
+                        <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+                        <span>{result.error || "代理测试失败"}</span>
+                      </div>
                     )
                   ) : (
                     <div className="flex flex-1 items-center gap-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">

@@ -1,11 +1,11 @@
 package app
 
 import (
-	"context"
-	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/4627488/RelayAPI/internal/config"
@@ -24,29 +24,6 @@ func TestSanitizedHeadersRedactsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(value, "visible") || !strings.Contains(value, "[REDACTED]") {
 		t.Fatalf("unexpected sanitized headers: %s", value)
-	}
-}
-
-func TestClassifyCPATransportError(t *testing.T) {
-	tests := []struct {
-		name, message, code string
-		err                 error
-		requestErr          error
-		status              int
-	}{
-		{name: "client canceled", err: context.Canceled, requestErr: context.Canceled, code: "client_canceled", status: 499},
-		{name: "timeout", err: context.DeadlineExceeded, code: "cpa_timeout", status: http.StatusGatewayTimeout},
-		{name: "reset", err: errors.New("read: connection reset by peer"), code: "cpa_connection_lost", status: http.StatusServiceUnavailable},
-		{name: "unexpected eof", err: errors.New("unexpected EOF"), code: "cpa_connection_lost", status: http.StatusServiceUnavailable},
-		{name: "refused", err: errors.New("dial tcp: connection refused"), code: "cpa_unavailable", status: http.StatusServiceUnavailable},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := classifyCPATransportError(test.err, test.requestErr, "models")
-			if got.Code != test.code || got.Status != test.status || got.Phase != "models" {
-				t.Fatalf("classification = %+v", got)
-			}
-		})
 	}
 }
 
@@ -123,8 +100,6 @@ func TestRequestTypeRecognizesSupportedSurfaces(t *testing.T) {
 	tests := map[string]string{
 		"/v1/responses":        "responses",
 		"/v1/chat/completions": "chat.completions",
-		"/v1/messages":         "messages",
-		"/v1beta/models/gemini:streamGenerateContent": "gemini.streamGenerateContent",
 	}
 	for path, expected := range tests {
 		if got := requestType(path, false); got != expected {
@@ -140,18 +115,6 @@ func TestUpstreamErrorMessageExtractsStructuredMessage(t *testing.T) {
 	got := upstreamErrorMessage(http.StatusBadRequest, []byte(`{"error":{"message":"invalid model"}}`))
 	if got != "invalid model" {
 		t.Fatalf("message = %q", got)
-	}
-}
-
-func TestDescribeUpstreamErrorPreservesProviderDiagnostics(t *testing.T) {
-	got := describeUpstreamError(http.StatusBadRequest, []byte(`{"error":{"type":"invalid_request_error","code":"reasoning_missing","message":"reasoning_content must be passed back"}}`))
-	if got.Code != "reasoning_missing" || got.Type != "invalid_request_error" || got.Message != "reasoning_content must be passed back" {
-		t.Fatalf("upstream error = %+v", got)
-	}
-	for _, value := range []string{"upstream HTTP 400", "reasoning_missing/invalid_request_error", "reasoning_content must be passed back"} {
-		if !strings.Contains(got.Summary, value) {
-			t.Fatalf("summary %q does not contain %q", got.Summary, value)
-		}
 	}
 }
 
@@ -193,7 +156,7 @@ func TestMaybeCaptureForwardedRequestSkipsSuccessfulUnsampledBodies(t *testing.T
 	}
 
 	logContext = requestLogContext{requestBytes: int64(len(body))}
-	logContext.maybeCaptureUpstream(http.StatusOK, http.Header{"X-CPA-TRACE-ID": []string{"trace"}}, []byte(`{"ok":true}`), false, 11, false)
+	logContext.maybeCaptureUpstream(http.StatusOK, http.Header{"X-Upstream-TRACE-ID": []string{"trace"}}, []byte(`{"ok":true}`), false, 11, false)
 	if logContext.detail != nil || logContext.responseBytes != 11 {
 		t.Fatalf("unsampled upstream capture = detail=%v bytes=%d", logContext.detail, logContext.responseBytes)
 	}
@@ -204,5 +167,51 @@ func TestCaptureWebSocketRequestStoresFirstFrame(t *testing.T) {
 	captureWebSocketRequest(detail, []byte(`{"type":"response.create","model":"gpt-5.6"}`))
 	if !strings.Contains(detail.RequestBody, "response.create") || detail.RequestBodyBytes == 0 || detail.RequestBodyTruncated {
 		t.Fatalf("captured websocket request = %+v", detail)
+	}
+}
+
+func TestFinalizeResponseIsBoundedAndAsynchronous(t *testing.T) {
+	a := &App{finalizationSlots: make(chan struct{}, 1)}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	a.finalizeResponse(func() {
+		close(started)
+		<-release
+	})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("finalizer did not start")
+	}
+
+	fallbackRan := false
+	a.finalizeResponse(func() { fallbackRan = true })
+	if !fallbackRan {
+		t.Fatal("saturated finalizer did not apply synchronous backpressure")
+	}
+	close(release)
+	a.wg.Wait()
+}
+
+func TestRequestLogUsesResponseBoundaryInsteadOfFinalizerTime(t *testing.T) {
+	started := time.Now().Add(-2 * time.Second).Truncate(time.Millisecond)
+	completed := started.Add(750 * time.Millisecond)
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	input := requestLogInput(store.KeyContext{}, "request", store.Admission{}, requestMeta{}, request,
+		http.StatusOK, started, nil, false, true, 0, "", requestLogContext{completedAt: completed})
+	if input.LatencyMS != 750 || !input.CompletedAt.Equal(completed) {
+		t.Fatalf("logged boundary = %d ms at %s, want 750 ms at %s", input.LatencyMS, input.CompletedAt, completed)
+	}
+}
+
+func TestRejectedRequestDetailMarksUnreadBody(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("request body"))
+	request.Header.Set("X-Goog-Api-Key", "relay_gemini_secret")
+	detail := rejectedRequestDetail(request, nil, "upstream_overloaded", "Upstream overloaded", time.Now())
+	if detail.RequestBodyBytes != request.ContentLength || !detail.RequestBodyTruncated {
+		t.Fatalf("unread body metadata = bytes %d, truncated %v", detail.RequestBodyBytes, detail.RequestBodyTruncated)
+	}
+	if strings.Contains(detail.RequestHeaders, "relay_gemini_secret") || detail.ErrorName != "upstream_overloaded" {
+		t.Fatalf("rejected detail = %+v", detail)
 	}
 }

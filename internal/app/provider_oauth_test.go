@@ -44,7 +44,7 @@ func TestProviderOAuthSessionsRejectProviderMismatch(t *testing.T) {
 
 func TestMergeOAuthCredentialSettingsPreservesNonNetworkOptions(t *testing.T) {
 	merged, err := mergeOAuthCredentialSettings(
-		json.RawMessage(`{"type":"codex","access_token":"old","proxy_url":"socks5://proxy","prefix":"team","websockets":true,"headers":{"X-Team":"one"}}`),
+		json.RawMessage(`{"type":"codex","access_token":"old","proxy_url":"socks5://proxy","websockets":true,"headers":{"X-Team":"one"}}`),
 		json.RawMessage(`{"type":"codex","access_token":"new","email":"new@example.com"}`),
 	)
 	if err != nil {
@@ -54,7 +54,7 @@ func TestMergeOAuthCredentialSettingsPreservesNonNetworkOptions(t *testing.T) {
 	if err = json.Unmarshal(merged, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document["access_token"] != "new" || document["prefix"] != "team" || document["websockets"] != true {
+	if document["access_token"] != "new" || document["websockets"] != true {
 		t.Fatalf("unexpected merged OAuth document: %#v", document)
 	}
 	if _, exists := document["proxy_url"]; exists {
@@ -63,7 +63,7 @@ func TestMergeOAuthCredentialSettingsPreservesNonNetworkOptions(t *testing.T) {
 }
 
 func TestNormalizedOAuthProvider(t *testing.T) {
-	tests := map[string]string{"anthropic": "claude", "openai": "codex", "grok": "xai", "kimi": "kimi"}
+	tests := map[string]string{"anthropic": "anthropic", "openai": "codex", "grok": "xai", "kimi": "kimi"}
 	for input, want := range tests {
 		if got := normalizedOAuthProvider(input); got != want {
 			t.Errorf("normalizedOAuthProvider(%q) = %q, want %q", input, got, want)

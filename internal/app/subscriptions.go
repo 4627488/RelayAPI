@@ -78,21 +78,20 @@ func (a *App) adminParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		CPAAuthID    string `json:"cpa_auth_id"`
-		CPAAuthIndex string `json:"cpa_auth_index"`
-		CPAAuthName  string `json:"cpa_auth_name"`
-		Provider     string `json:"provider"`
+		UpstreamCredentialID   string `json:"upstream_credential_id"`
+		UpstreamCredentialName string `json:"upstream_credential_name"`
+		Provider               string `json:"provider"`
 		parentSubscriptionInput
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if strings.TrimSpace(input.CPAAuthID) == "" || !validCapacityMode(input.CapacityMode) {
-		writeError(w, 400, "validation_error", "CPA AuthID 和有效容量模式必填")
+	if strings.TrimSpace(input.UpstreamCredentialID) == "" || !validCapacityMode(input.CapacityMode) {
+		writeError(w, 400, "validation_error", "Upstream AuthID 和有效容量模式必填")
 		return
 	}
 	item, err := a.store.UpsertParentSubscription(r.Context(), store.ParentSubscription{
-		CPAAuthID: input.CPAAuthID, CPAAuthIndex: input.CPAAuthIndex, CPAAuthName: input.CPAAuthName, Provider: input.Provider,
+		UpstreamCredentialID: input.UpstreamCredentialID, UpstreamCredentialName: input.UpstreamCredentialName, Provider: input.Provider,
 		Name: input.Name, PlanType: input.PlanType, CapacityMode: input.CapacityMode,
 		AllocationLimitPPM: 1_000_000, Enabled: input.Enabled, ModelAllowlist: input.ModelAllowlist,
 	})
@@ -251,10 +250,6 @@ func (a *App) adminParentObservations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, item)
 }
 
-func (a *App) adminSyncParentSubscriptions(w http.ResponseWriter, r *http.Request) {
-	a.syncNativeParentSubscriptions(w, r)
-}
-
 func (a *App) syncNativeParentSubscriptions(w http.ResponseWriter, r *http.Request) {
 	items, err := a.syncNativeParentSubscriptionRows(r.Context())
 	if err != nil {
@@ -279,9 +274,9 @@ func (a *App) syncNativeParentSubscriptionRows(ctx context.Context) ([]store.Par
 		}
 		now := time.Now()
 		item, syncErr := a.store.SyncNativeParentSubscription(ctx, store.ParentSubscription{
-			CPAAuthID: row.ID, CPAAuthIndex: row.ID, CPAAuthName: row.ID, Name: row.Name, Provider: row.Provider,
+			UpstreamCredentialID: row.ID, UpstreamCredentialName: row.ID, Name: row.Name, Provider: row.Provider,
 			PlanType: "native", Status: status, CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
-			Enabled: true, CPAUnavailable: !row.Enabled, CPAModelAllowlist: row.Models, Metadata: json.RawMessage(`{"source":"native"}`), LastSyncedAt: &now,
+			Enabled: true, UpstreamUnavailable: !row.Enabled, UpstreamModelAllowlist: row.Models, Metadata: json.RawMessage(`{"source":"native"}`), LastSyncedAt: &now,
 		})
 		if syncErr != nil {
 			return nil, syncErr
@@ -451,7 +446,7 @@ func tenantSubscriptionAvailability(parent store.ParentSubscription, child store
 		return false, "子订阅已过期"
 	case !parent.Enabled:
 		return false, "父订阅已停用"
-	case parent.CPAUnavailable:
+	case parent.UpstreamUnavailable:
 		return false, "上游账户当前不可用"
 	default:
 		return true, ""

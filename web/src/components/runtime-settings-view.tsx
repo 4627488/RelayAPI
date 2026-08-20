@@ -1,17 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import {
-  ActivityIcon,
-  ImageIcon,
-  NetworkIcon,
-  RotateCcwIcon,
-  SaveIcon,
-  ServerCogIcon,
-  ShieldCheckIcon,
-  WavesIcon,
-} from "lucide-react"
+import { RotateCcwIcon, SaveIcon } from "lucide-react"
 import { toast } from "sonner"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -22,11 +12,9 @@ import {
 } from "@/components/ui/card"
 import {
   Field,
-  FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
-  FieldTitle,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -38,44 +26,28 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
-import { Switch } from "@/components/ui/switch"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { StatStrip } from "@/components/workspace-ui"
 import { api, type OutboundProxy } from "@/lib/api"
 
 type RuntimeSettings = {
-  request_retry: number
-  max_retry_credentials: number
-  max_retry_interval: number
   routing_strategy: "round-robin" | "fill-first"
+  credential_failure_threshold: number
+  credential_cooldown_seconds: number
   system_proxy_id: string
-  passthrough_headers: boolean
-  image_generation_mode: "enabled" | "disabled" | "chat" | "passthrough"
-  gpt_image_base_model: string
-  video_result_auth_cache_ttl: string
-  force_model_prefix: boolean
-  stream_keepalive_seconds: number
-  stream_bootstrap_retries: number
-  nonstream_keepalive_interval: number
-  disable_credential_cooling: boolean
+  request_timeout_seconds: number
+  max_request_mib: number
+  request_bytes_in_flight_mib: number
+  memory_reclaim_threshold_mib: number
+  unpriced_model_policy: "allow" | "deny"
+  upstream_websockets: boolean
 }
 
 type RuntimeInfo = {
   ready: boolean
   credentials: number
   models: number
-  request_timeout_seconds: number
   max_in_flight: number
   max_queue: number
-  queue_timeout_seconds: number
-  max_request_bytes: number
-  request_bytes_in_flight: number
-  circuit_failure_threshold: number
-  circuit_open_seconds: number
-  executor_cache_pressure_bytes: number
-  unpriced_model_policy: string
-  request_log_retention_days: number
-  request_success_detail_days: number
-  request_error_detail_days: number
 }
 
 type SettingsResponse = {
@@ -91,6 +63,7 @@ function NumberField({
   value,
   min,
   max,
+  suffix,
   onChange,
 }: {
   id: string
@@ -99,49 +72,27 @@ function NumberField({
   value: number
   min: number
   max: number
+  suffix: string
   onChange: (value: number) => void
 }) {
   return (
     <Field>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input
-        id={id}
-        type="number"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
+      <div className="relative">
+        <Input
+          id={id}
+          type="number"
+          min={min}
+          max={max}
+          value={value}
+          className="pr-14 tabular-nums"
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
+          {suffix}
+        </span>
+      </div>
       <FieldDescription>{description}</FieldDescription>
-    </Field>
-  )
-}
-
-function SwitchField({
-  id,
-  title,
-  description,
-  checked,
-  onCheckedChange,
-}: {
-  id: string
-  title: string
-  description: string
-  checked: boolean
-  onCheckedChange: (checked: boolean) => void
-}) {
-  return (
-    <Field orientation="horizontal">
-      <FieldContent>
-        <FieldTitle>{title}</FieldTitle>
-        <FieldDescription>{description}</FieldDescription>
-      </FieldContent>
-      <Switch
-        id={id}
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-        aria-label={title}
-      />
     </Field>
   )
 }
@@ -172,11 +123,12 @@ export function RuntimeSettingsView() {
     }
   }, [])
 
-  useEffect(() => {
-    void load()
-  }, [load])
+  useEffect(() => void load(), [load])
   const dirty = useMemo(
-    () => value && saved && JSON.stringify(value) !== JSON.stringify(saved),
+    () =>
+      Boolean(
+        value && saved && JSON.stringify(value) !== JSON.stringify(saved)
+      ),
     [saved, value]
   )
   const patch = <K extends keyof RuntimeSettings>(
@@ -197,12 +149,15 @@ export function RuntimeSettingsView() {
     try {
       const result = await api<SettingsResponse>(
         "/api/admin/runtime/settings",
-        { method: "PATCH", body: JSON.stringify(value) }
+        {
+          method: "PATCH",
+          body: JSON.stringify(value),
+        }
       )
       setValue(result.settings)
       setSaved(result.settings)
       setRuntime(result.runtime)
-      toast.success("native 运行配置已热更新")
+      toast.success("运行策略已热更新")
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "保存失败")
     } finally {
@@ -210,174 +165,57 @@ export function RuntimeSettingsView() {
     }
   }
 
-  if (loading || !value || !runtime)
+  if (loading || !value || !runtime) {
     return (
       <div className="flex min-h-56 items-center justify-center">
         <Spinner />
       </div>
     )
+  }
 
   return (
-    <div className="flex flex-col gap-5 pb-20">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">系统设置</h1>
-          <p className="mt-1 text-sm text-muted-foreground">配置内置推理引擎；更改作用于新请求。</p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={!dirty || saving}
-            onClick={() => saved && setValue(saved)}
-          >
-            <RotateCcwIcon />
-            撤销
-          </Button>
-          <Button disabled={!dirty || saving} onClick={() => void save()}>
-            {saving ? <Spinner /> : <SaveIcon />}
-            {dirty ? "保存更改" : "已保存"}
-          </Button>
-        </div>
-      </div>
+    <div className="flex flex-col gap-5">
+      <StatStrip
+        className="lg:grid-cols-4"
+        items={[
+          {
+            label: "运行状态",
+            value: runtime.ready ? "正常" : "异常",
+            tone: runtime.ready ? "positive" : "negative",
+          },
+          { label: "有效凭据", value: runtime.credentials },
+          { label: "发布模型", value: runtime.models },
+          {
+            label: "流量容量",
+            value: `${runtime.max_in_flight} + ${runtime.max_queue}`,
+          },
+        ]}
+      />
 
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border md:grid-cols-4">
-        {[
-          ["运行状态", runtime.ready ? "正常" : "异常"],
-          ["有效凭据", runtime.credentials],
-          ["已发布模型", runtime.models],
-          ["并发上限", runtime.max_in_flight],
-        ].map(([label, item]) => (
-          <div key={label} className="bg-background px-4 py-3">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums">{item}</p>
-          </div>
-        ))}
-      </div>
-
-      <Tabs defaultValue="reliability">
-        <TabsList className="w-full justify-start overflow-x-auto">
-          <TabsTrigger value="reliability">
-            <ActivityIcon />
-            可靠性
-          </TabsTrigger>
-          <TabsTrigger value="network">
-            <NetworkIcon />
-            网络
-          </TabsTrigger>
-          <TabsTrigger value="media">
-            <ImageIcon />
-            图像与视频
-          </TabsTrigger>
-          <TabsTrigger value="protocol">
-            <WavesIcon />
-            协议行为
-          </TabsTrigger>
-          <TabsTrigger value="limits">
-            <ServerCogIcon />
-            容量
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="reliability">
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,.65fr)]">
+        <div className="grid gap-5">
           <Card>
             <CardHeader>
-              <CardTitle>失败恢复与凭据调度</CardTitle>
+              <CardTitle>凭据调度</CardTitle>
               <CardDescription>
-                控制上游失败后如何切换凭据，以及多个可用账户如何分配请求。
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup className="grid md:grid-cols-2">
-                <SwitchField
-                  id="disable-credential-cooling"
-                  title="禁用凭据冷却"
-                  description="上游返回错误后仍允许后续请求立即使用同一凭据，不进入等待或黑屏状态。"
-                  checked={value.disable_credential_cooling}
-                  onCheckedChange={(next) =>
-                    patch("disable_credential_cooling", next)
-                  }
-                />
-                <NumberField
-                  id="request-retry"
-                  label="请求重试次数"
-                  description="单个请求失败后允许再次执行的次数。"
-                  value={value.request_retry}
-                  min={0}
-                  max={20}
-                  onChange={(next) => patch("request_retry", next)}
-                />
-                <NumberField
-                  id="retry-credentials"
-                  label="最大尝试凭据数"
-                  description="0 表示不限制；达到上限后停止切换账户。"
-                  value={value.max_retry_credentials}
-                  min={0}
-                  max={100}
-                  onChange={(next) => patch("max_retry_credentials", next)}
-                />
-                <NumberField
-                  id="retry-interval"
-                  label="最大等待时间（秒）"
-                  description="启用凭据冷却时，等待账户恢复的最长时间。"
-                  value={value.max_retry_interval}
-                  min={0}
-                  max={3600}
-                  onChange={(next) => patch("max_retry_interval", next)}
-                />
-                <Field>
-                  <FieldLabel>调度策略</FieldLabel>
-                  <Select
-                    value={value.routing_strategy}
-                    onValueChange={(next) => {
-                      if (next)
-                        patch(
-                          "routing_strategy",
-                          next as RuntimeSettings["routing_strategy"]
-                        )
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem value="round-robin">
-                          轮询 — 均匀分散请求
-                        </SelectItem>
-                        <SelectItem value="fill-first">
-                          顺序优先 — 优先使用首个可用凭据
-                        </SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <FieldDescription>
-                    账户优先级仍会先于此策略生效。
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="network">
-          <Card>
-            <CardHeader>
-              <CardTitle>系统请求代理</CardTitle>
-              <CardDescription>
-                仅用于模型元数据同步、系统级 OAuth 等 RelayAPI
-                自身发起的请求，不会成为模型账户的默认代理。
+                同一模型有多个账户时如何分流。上游错误原样返回，不会改写或重试。
               </CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel>系统代理</FieldLabel>
+                  <FieldLabel>调度方式</FieldLabel>
                   <Select
-                    value={value.system_proxy_id || "direct"}
+                    items={{
+                      "round-robin": "轮询均衡",
+                      "fill-first": "固定优先级",
+                    }}
+                    value={value.routing_strategy}
                     onValueChange={(next) =>
+                      next &&
                       patch(
-                        "system_proxy_id",
-                        next === "direct" || !next ? "" : next
+                        "routing_strategy",
+                        next as RuntimeSettings["routing_strategy"]
                       )
                     }
                   >
@@ -386,233 +224,235 @@ export function RuntimeSettingsView() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        <SelectItem value="direct">
-                          不使用代理（直连）
-                        </SelectItem>
-                        {proxies.map((item) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.name} · {item.endpoint}
-                          </SelectItem>
-                        ))}
+                        <SelectItem value="round-robin">轮询均衡</SelectItem>
+                        <SelectItem value="fill-first">固定优先级</SelectItem>
                       </SelectGroup>
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    代理条目请在左侧“代理”页面新增、测试和维护。模型账户是否使用代理需在账户中单独选择。
+                    轮询适合共享容量；固定优先级适合主账户加备用账户。
                   </FieldDescription>
                 </Field>
-                {!proxies.length ? (
-                  <Alert>
-                    <NetworkIcon />
-                    <AlertTitle>还没有代理条目</AlertTitle>
-                    <AlertDescription>
-                      当前系统请求保持直连。先到“代理”页面添加并测试代理，再返回选择。
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
               </FieldGroup>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        <TabsContent value="media">
-          <div className="grid gap-4 xl:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>图像生成</CardTitle>
-                <CardDescription>
-                  控制 image_generation 工具注入和 Images API 的可用范围。
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel>图像生成策略</FieldLabel>
-                    <Select
-                      value={value.image_generation_mode}
-                      onValueChange={(next) => {
-                        if (next)
-                          patch(
-                            "image_generation_mode",
-                            next as RuntimeSettings["image_generation_mode"]
-                          )
-                      }}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="enabled">完整启用</SelectItem>
-                          <SelectItem value="chat">仅 Images API</SelectItem>
-                          <SelectItem value="passthrough">
-                            仅客户端显式传入
-                          </SelectItem>
-                          <SelectItem value="disabled">全部禁用</SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="image-model">
-                      图像工具基础模型
-                    </FieldLabel>
-                    <Input
-                      id="image-model"
-                      value={value.gpt_image_base_model}
-                      onChange={(event) =>
-                        patch("gpt_image_base_model", event.target.value)
-                      }
-                      placeholder="gpt-5.4-mini"
-                      className="font-mono"
-                    />
-                    <FieldDescription>
-                      用于兼容模式下托管的 image_generation 工具路径。
-                    </FieldDescription>
-                  </Field>
-                </FieldGroup>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>视频结果绑定</CardTitle>
-                <CardDescription>
-                  视频任务创建后，将结果查询固定到同一上游凭据。
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="video-ttl">绑定时长</FieldLabel>
-                    <Input
-                      id="video-ttl"
-                      value={value.video_result_auth_cache_ttl}
-                      onChange={(event) =>
-                        patch("video_result_auth_cache_ttl", event.target.value)
-                      }
-                      placeholder="3h"
-                    />
-                    <FieldDescription>
-                      Go duration 格式，例如 30m、3h、24h。
-                    </FieldDescription>
-                  </Field>
-                  <SwitchField
-                    id="force-prefix"
-                    title="强制模型前缀"
-                    description="带前缀的凭据只接受显式前缀模型，降低误路由风险。"
-                    checked={value.force_model_prefix}
-                    onCheckedChange={(next) =>
-                      patch("force_model_prefix", next)
-                    }
-                  />
-                </FieldGroup>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="protocol">
           <Card>
             <CardHeader>
-              <CardTitle>响应与连接行为</CardTitle>
+              <CardTitle>凭据故障隔离</CardTitle>
               <CardDescription>
-                这些设置会影响客户端兼容性。保活值为 0 时表示关闭。
+                连续失败的账户会暂时离开候选池，冷却后再由下一次请求验证。
               </CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup className="grid md:grid-cols-2">
-                <SwitchField
-                  id="headers"
-                  title="透传上游响应头"
-                  description="向客户端保留速率限制和追踪等上游响应头。"
-                  checked={value.passthrough_headers}
-                  onCheckedChange={(next) => patch("passthrough_headers", next)}
-                />
                 <NumberField
-                  id="stream-keepalive"
-                  label="流式心跳（秒）"
-                  description="SSE 长连接的 keep-alive 间隔。"
-                  value={value.stream_keepalive_seconds}
-                  min={0}
-                  max={300}
-                  onChange={(next) => patch("stream_keepalive_seconds", next)}
-                />
-                <NumberField
-                  id="bootstrap-retry"
-                  label="流式启动重试"
-                  description="发送首字节前允许透明重试的次数。"
-                  value={value.stream_bootstrap_retries}
-                  min={0}
-                  max={10}
-                  onChange={(next) => patch("stream_bootstrap_retries", next)}
-                />
-                <NumberField
-                  id="nonstream-keepalive"
-                  label="非流式保活（秒）"
-                  description="等待较慢非流式响应时发送空行的间隔。"
-                  value={value.nonstream_keepalive_interval}
-                  min={0}
-                  max={300}
+                  id="failure-threshold"
+                  label="连续失败阈值"
+                  suffix="次"
+                  description="达到阈值后仅隔离该凭据，不影响同模型下的其他账户。"
+                  value={value.credential_failure_threshold}
+                  min={1}
+                  max={20}
                   onChange={(next) =>
-                    patch("nonstream_keepalive_interval", next)
+                    patch("credential_failure_threshold", next)
+                  }
+                />
+                <NumberField
+                  id="failure-cooldown"
+                  label="隔离冷却时间"
+                  suffix="秒"
+                  description="0 表示不隔离。非 0 时冷却结束后回到候选池。"
+                  value={value.credential_cooldown_seconds}
+                  min={0}
+                  max={3600}
+                  onChange={(next) =>
+                    patch("credential_cooldown_seconds", next)
                   }
                 />
               </FieldGroup>
             </CardContent>
           </Card>
-        </TabsContent>
+        </div>
 
-        <TabsContent value="limits">
-          <Alert>
-            <ShieldCheckIcon />
-            <AlertTitle>容量参数由部署环境控制</AlertTitle>
-            <AlertDescription>
-              并发、队列、请求体和熔断参数影响内存布局与准入控制，修改环境变量并重启后生效。
-            </AlertDescription>
-          </Alert>
-          <Card className="mt-4">
+        <div className="grid gap-5">
+          <Card>
             <CardHeader>
-              <CardTitle>当前启动参数</CardTitle>
+              <CardTitle>系统网络</CardTitle>
               <CardDescription>
-                用于核对部署配置，不可在运行中修改。
+                仅供 OAuth、公共价格目录等 Relay
+                自身请求使用。推理流量在账户页单独选代理。
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-                {[
-                  ["请求超时", `${runtime.request_timeout_seconds}s`],
-                  ["最大并发", runtime.max_in_flight],
-                  ["排队上限", runtime.max_queue],
-                  ["排队超时", `${runtime.queue_timeout_seconds}s`],
-                  [
-                    "单请求上限",
-                    `${Math.round(runtime.max_request_bytes / 1024 / 1024)} MiB`,
-                  ],
-                  [
-                    "在途请求体",
-                    `${Math.round(runtime.request_bytes_in_flight / 1024 / 1024)} MiB`,
-                  ],
-                  [
-                    "执行器缓存阈值",
-                    `${Math.round(runtime.executor_cache_pressure_bytes / 1024 / 1024)} MiB`,
-                  ],
-                  ["熔断阈值", runtime.circuit_failure_threshold],
-                  ["熔断时长", `${runtime.circuit_open_seconds}s`],
-                  ["未定价模型", runtime.unpriced_model_policy],
-                  ["请求摘要保留", `${runtime.request_log_retention_days} 天`],
-                  ["成功详情保留", `${runtime.request_success_detail_days} 天`],
-                  ["错误详情保留", `${runtime.request_error_detail_days} 天`],
-                ].map(([label, item]) => (
-                  <div key={label}>
-                    <dt className="text-xs text-muted-foreground">{label}</dt>
-                    <dd className="mt-1 font-medium tabular-nums">{item}</dd>
-                  </div>
-                ))}
-              </dl>
+              <Field>
+                <FieldLabel>系统代理</FieldLabel>
+                <Select
+                  items={[
+                    { value: "direct", label: "直连" },
+                    ...proxies.map((item) => ({
+                      value: item.id,
+                      label: `${item.name} · ${item.endpoint}`,
+                    })),
+                  ]}
+                  value={value.system_proxy_id || "direct"}
+                  onValueChange={(next) =>
+                    patch(
+                      "system_proxy_id",
+                      next === "direct" || !next ? "" : next
+                    )
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="direct">直连</SelectItem>
+                      {proxies.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name} · {item.endpoint}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  账户代理在「出站代理」里维护，再到模型账户上绑定。
+                </FieldDescription>
+              </Field>
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>进程边界</CardTitle>
+              <CardDescription>
+                保存后立即生效，不必改环境变量或重启。默认按宽松上限运行。
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <FieldGroup>
+                <NumberField
+                  id="request-timeout"
+                  label="响应头超时"
+                  suffix="秒"
+                  description="只限制等待上游响应头，不会打断已经开始的 SSE 或 WebSocket。"
+                  value={value.request_timeout_seconds}
+                  min={1}
+                  max={86400}
+                  onChange={(next) => patch("request_timeout_seconds", next)}
+                />
+                <NumberField
+                  id="max-request-mib"
+                  label="请求体上限"
+                  suffix="MiB"
+                  description="单个推理请求体的上限。"
+                  value={value.max_request_mib}
+                  min={1}
+                  max={65536}
+                  onChange={(next) => patch("max_request_mib", next)}
+                />
+                <NumberField
+                  id="in-flight-mib"
+                  label="在途内存预算"
+                  suffix="MiB"
+                  description="所有在途请求体合计上限，必须不小于请求体上限。"
+                  value={value.request_bytes_in_flight_mib}
+                  min={value.max_request_mib}
+                  max={262144}
+                  onChange={(next) =>
+                    patch("request_bytes_in_flight_mib", next)
+                  }
+                />
+                <NumberField
+                  id="reclaim-mib"
+                  label="内存回收阈值"
+                  suffix="MiB"
+                  description="堆占用超过该值时才主动回收。调高可减少回收打扰。"
+                  value={value.memory_reclaim_threshold_mib}
+                  min={64}
+                  max={524288}
+                  onChange={(next) =>
+                    patch("memory_reclaim_threshold_mib", next)
+                  }
+                />
+                <Field>
+                  <FieldLabel>未定价模型</FieldLabel>
+                  <Select
+                    items={{ allow: "允许", deny: "拒绝" }}
+                    value={value.unpriced_model_policy}
+                    onValueChange={(next) =>
+                      next &&
+                      patch(
+                        "unpriced_model_policy",
+                        next as RuntimeSettings["unpriced_model_policy"]
+                      )
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="allow">允许</SelectItem>
+                        <SelectItem value="deny">拒绝</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    允许时，尚未配置价格的模型仍可调用，只是不预留余额。
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel>上游 WebSocket</FieldLabel>
+                  <Select
+                    items={{ enabled: "已启用", disabled: "已关闭" }}
+                    value={
+                      value.upstream_websockets ? "enabled" : "disabled"
+                    }
+                    onValueChange={(next) =>
+                      next && patch("upstream_websockets", next === "enabled")
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="enabled">已启用</SelectItem>
+                        <SelectItem value="disabled">已关闭</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FieldDescription>
+                    关闭后目录不再推荐 WebSocket，客户端改走 HTTP 流式。
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {dirty ? (
+        <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background px-4 py-3">
+          <p className="text-sm">有未保存的更改</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => saved && setValue(saved)}
+            >
+              <RotateCcwIcon /> 撤销
+            </Button>
+            <Button disabled={saving} onClick={() => void save()}>
+              {saving ? <Spinner /> : <SaveIcon />}
+              保存
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

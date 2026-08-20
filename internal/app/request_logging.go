@@ -4,38 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"hash/fnv"
-	"io"
-	"net"
+	"log/slog"
 	"net/http"
 	"strings"
-	"syscall"
+	"time"
 	"unicode/utf8"
 
+	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/store"
 )
-
-type upstreamErrorInfo struct {
-	Code    string
-	Type    string
-	Message string
-	Summary string
-}
 
 // Raw bodies are diagnostic data, not accounting data. Keep the error detail
 // ceiling small enough that a burst of bad requests cannot become a storage
 // incident; request_logs still retains the complete structured summary.
 const requestLogDetailLimit = 32 << 10
-
-type cpaTransportError struct {
-	Status    int
-	Code      string
-	Message   string
-	Phase     string
-	Retryable bool
-}
 
 var sensitiveLogHeaders = map[string]struct{}{
 	"api-key": {}, "authorization": {}, "cookie": {}, "set-cookie": {},
@@ -107,12 +90,6 @@ func requestType(path string, websocket bool) string {
 		return "responses"
 	case strings.Contains(path, "/chat/completions"):
 		return "chat.completions"
-	case strings.Contains(path, "/messages"):
-		return "messages"
-	case strings.Contains(path, ":streamGenerateContent"):
-		return "gemini.streamGenerateContent"
-	case strings.Contains(path, ":generateContent"):
-		return "gemini.generateContent"
 	case strings.Contains(path, "/embeddings"):
 		return "embeddings"
 	case strings.Contains(path, "/images"):
@@ -217,26 +194,6 @@ func upstreamErrorMessage(status int, payload []byte) string {
 	return "upstream request failed"
 }
 
-func describeUpstreamError(status int, payload []byte) upstreamErrorInfo {
-	code, errorType, message := upstreamErrorFields(payload)
-	if message == "" {
-		message = upstreamErrorMessage(status, payload)
-	}
-	descriptor := code
-	if errorType != "" && !strings.EqualFold(errorType, code) {
-		descriptor = strings.TrimSpace(descriptor + "/" + errorType)
-	}
-	prefix := fmt.Sprintf("upstream HTTP %d", status)
-	if descriptor != "" {
-		prefix += " " + descriptor
-	}
-	summary := prefix
-	if message != "" {
-		summary += ": " + message
-	}
-	return upstreamErrorInfo{Code: code, Type: errorType, Message: message, Summary: boundedErrorText(summary)}
-}
-
 func boundedErrorText(value string) string {
 	const limit = 2048
 	value = strings.ToValidUTF8(strings.TrimSpace(value), "\uFFFD")
@@ -250,62 +207,141 @@ func boundedErrorText(value string) string {
 	return value
 }
 
-func classifyCPATransportError(err error, requestContextError error, phase string) cpaTransportError {
-	result := cpaTransportError{Status: http.StatusServiceUnavailable, Code: "cpa_unavailable", Message: "CPA 暂时不可用，请稍后重试", Phase: phase, Retryable: true}
-	if err == nil {
-		return result
-	}
-	if errors.Is(requestContextError, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-		result.Status = http.StatusGatewayTimeout
-		result.Code = "cpa_timeout"
-		result.Message = "CPA 响应超时，请稍后重试"
-		return result
-	}
-	if errors.Is(requestContextError, context.Canceled) || errors.Is(err, context.Canceled) {
-		result.Status = 499
-		result.Code = "client_canceled"
-		result.Message = "请求已由客户端取消"
-		result.Retryable = false
-		return result
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		result.Status = http.StatusGatewayTimeout
-		result.Code = "cpa_timeout"
-		result.Message = "CPA 响应超时，请稍后重试"
-		return result
-	}
-	lower := strings.ToLower(err.Error())
-	switch {
-	case errors.Is(err, io.EOF), errors.Is(err, syscall.ECONNRESET), errors.Is(err, syscall.EPIPE),
-		strings.Contains(lower, "unexpected eof"), strings.Contains(lower, "connection reset"),
-		strings.Contains(lower, "server closed idle connection"):
-		result.Code = "cpa_connection_lost"
-		result.Message = "与 CPA 的连接提前中断；CPA 可能刚刚重启或触发了内存保护，请重试"
-	case errors.Is(err, syscall.ECONNREFUSED), strings.Contains(lower, "connection refused"), strings.Contains(lower, "no such host"):
-		result.Code = "cpa_unavailable"
-		result.Message = "无法连接 CPA 服务；服务可能正在启动或恢复，请稍后重试"
-	}
-	return result
+type requestLogContext struct {
+	price           *store.ResolvedPrice
+	detail          *store.LogDetailInput
+	ttftMS          *int64
+	upstreamTraceID string
+	errorCode       string
+	requestBytes    int64
+	forwardedBytes  int64
+	responseBytes   int64
+	stageTimings    string
+	completedAt     time.Time
 }
 
-func writeCPATransportError(w http.ResponseWriter, r *http.Request, err error, phase, requestID string) cpaTransportError {
-	var requestErr error
-	if r != nil {
-		requestErr = r.Context().Err()
+func rejectedRequestDetail(r *http.Request, body []byte, code, message string, started time.Time, timeline ...*latencyTimeline) *store.LogDetailInput {
+	detail := baseRequestDetail(r, body)
+	if r.ContentLength > detail.RequestBodyBytes {
+		detail.RequestBodyBytes = r.ContentLength
+		detail.RequestBodyTruncated = true
 	}
-	classified := classifyCPATransportError(err, requestErr, phase)
-	details := map[string]any{"phase": classified.Phase, "retryable": classified.Retryable}
-	if requestID != "" {
-		details["request_id"] = requestID
+	detail.ErrorName = code
+	detail.ErrorMessage = boundedErrorText(message)
+	completed := time.Now()
+	if len(timeline) > 0 && timeline[0] != nil {
+		timeline[0].Step(completed, "relay_rejection", "Relay 返回错误", "relay", "请求在进入上游前被 Relay 拒绝")
+		detail.StageTimings = timeline[0].JSON(completed)
+	} else {
+		fallback := newLatencyTimeline(started)
+		fallback.Step(completed, "relay_rejection", "Relay 返回错误", "relay", "请求在进入上游前被 Relay 拒绝")
+		detail.StageTimings = fallback.JSON(completed)
 	}
-	if classified.Retryable {
-		details["retry_after_seconds"] = 5
-		w.Header().Set("Retry-After", "5")
+	return detail
+}
+
+func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta,
+	r *http.Request, status int, started time.Time, code, message string, detail *store.LogDetailInput) {
+	requestBytes := int64(0)
+	stageTimings := "{}"
+	if detail != nil {
+		requestBytes = detail.RequestBodyBytes
+		stageTimings = detail.StageTimings
 	}
-	w.Header().Set("X-Relay-Error-Code", classified.Code)
-	writeJSON(w, classified.Status, map[string]any{"error": map[string]any{
-		"code": classified.Code, "type": "service_unavailable", "message": classified.Message, "details": details,
-	}})
-	return classified
+	a.writeRequestLog(key, requestID, admission, meta, r, status, started, nil, false, true, 0,
+		boundedErrorText(message), requestLogContext{detail: detail, errorCode: code, requestBytes: requestBytes, stageTimings: stageTimings})
+}
+
+func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
+	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) {
+	input := requestLogInput(key, requestID, admission, meta, r, status, started, parsed, pricingComplete, settled, cost, errorMessage, logContext)
+	if !shouldRetainRequestDetail(requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
+		input.Detail = nil
+	}
+	if err := a.store.WriteLog(context.WithoutCancel(r.Context()), input); err != nil {
+		slog.Error("write request log", "request_id", requestID, "error", err)
+	}
+}
+
+func (a *App) finalizeResponse(task func()) {
+	if task == nil {
+		return
+	}
+	if a.finalizationSlots == nil {
+		task()
+		return
+	}
+	select {
+	case a.finalizationSlots <- struct{}{}:
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			defer func() {
+				<-a.finalizationSlots
+				if value := recover(); value != nil {
+					slog.Error("finalize response panic", "value", value)
+				}
+			}()
+			task()
+		}()
+	default:
+		// A saturated finalizer means the database is already behind. Preserve
+		// accounting correctness and apply backpressure instead of creating an
+		// unbounded goroutine queue.
+		task()
+	}
+}
+
+func requestLogInput(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
+	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) store.LogInput {
+	client := identifyClientUserAgent(r.UserAgent())
+	usage := store.Usage{}
+	upstreamID := ""
+	if parsed != nil {
+		usage = parsed.Usage
+		upstreamID = parsed.RequestID
+	}
+	var costPointer *int64
+	if pricingComplete {
+		costPointer = &cost
+	}
+	detail := logContext.detail
+	if detail != nil {
+		if logContext.requestBytes == 0 {
+			logContext.requestBytes = detail.RequestBodyBytes
+		}
+		if logContext.forwardedBytes == 0 {
+			logContext.forwardedBytes = detail.ForwardedBodyBytes
+		}
+		if logContext.responseBytes == 0 {
+			logContext.responseBytes = detail.UpstreamBodyBytes
+		}
+	}
+	completedAt := logContext.completedAt
+	if completedAt.IsZero() {
+		completedAt = time.Now()
+	}
+	return store.LogInput{
+		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, UpstreamRequestID: upstreamID, Model: meta.Model,
+		UpstreamTraceID: logContext.upstreamTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
+		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),
+		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
+		ClientName: client.Name, ClientVersion: client.Version, UserAgent: client.UserAgent,
+		AuthIndex: admissionAuthIndex(admission), ParentSubscriptionID: admission.ParentSubscriptionID,
+		ChildSubscriptionID: admission.ChildSubscriptionID,
+		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
+		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
+		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: completedAt.Sub(started).Milliseconds(),
+		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
+		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
+		StageTimings: logContext.stageTimings,
+		StartedAt:    started, CompletedAt: completedAt, Detail: detail,
+	}
+}
+
+func parsedResponseServiceTier(parsed *billing.Result) string {
+	if parsed == nil {
+		return ""
+	}
+	return parsed.ResponseServiceTier
 }

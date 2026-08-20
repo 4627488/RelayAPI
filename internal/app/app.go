@@ -18,13 +18,13 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/config"
-	"github.com/4627488/RelayAPI/internal/cpa"
-	"github.com/4627488/RelayAPI/internal/cpaimport"
 	"github.com/4627488/RelayAPI/internal/db"
+	"github.com/4627488/RelayAPI/internal/egress"
+	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 type App struct {
@@ -35,13 +35,13 @@ type App struct {
 	wg                sync.WaitGroup
 	pricingSyncMu     sync.Mutex
 	setupBox          identity.SecretBox
-	nativeCPA         *cpa.Client
-	nativeCPARuntime  *relaybridge.Runtime
-	nativeCPAServer   *http.Server
-	nativeCPAServeErr atomic.Value
+	nativeAdmission   atomic.Pointer[gateway.Client]
+	nativeRuntime     upstream.Runtime
 	providerOAuth     providerOAuthSessions
 	nativeSettings    settingsState
 	memoryReclaiming  atomic.Bool
+	finalizationSlots chan struct{}
+	capabilities      atomic.Pointer[pricing.CapabilityIndex]
 }
 
 type contextKey string
@@ -62,39 +62,102 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	importGlobalProxy := ""
-	if cfg.CPAImportAuthDir != "" || cfg.CPAImportConfigPath != "" {
-		report, importErr := cpaimport.Import(ctx, dataStore, cfg.CPAImportAuthDir, cfg.CPAImportConfigPath, false)
-		if importErr != nil {
-			return nil, fmt.Errorf("import CPA credentials: %w", importErr)
-		}
-		importGlobalProxy = report.GlobalProxyURL
-		slog.Info("CPA credentials imported", "imported", report.Imported, "unchanged", report.Skipped)
+	finalizationCapacity := cfg.GatewayMaxInFlight
+	if finalizationCapacity < 1 {
+		finalizationCapacity = 16
 	}
 	a := &App{
 		cfg: cfg, store: dataStore, mux: http.NewServeMux(), stop: make(chan struct{}), setupBox: setupBox,
-		providerOAuth: newProviderOAuthSessions(),
+		providerOAuth:     newProviderOAuthSessions(),
+		finalizationSlots: make(chan struct{}, finalizationCapacity),
 	}
 	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
 		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
 	}
-	if err := a.startEmbeddedCPA(ctx, importGlobalProxy); err != nil {
+	if err := a.startNativeRuntime(ctx); err != nil {
 		return nil, err
 	}
 	a.routes()
+	a.loadCapabilitiesFromStore(ctx)
 	a.wg.Add(1)
 	go a.maintenance()
 	return a, nil
 }
 
-func (a *App) Close() {
-	if a.nativeCPAServer != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = a.nativeCPAServer.Shutdown(ctx)
-		cancel()
+func (a *App) setCapabilities(index *pricing.CapabilityIndex) {
+	if a == nil || index == nil {
+		return
 	}
-	if a.nativeCPARuntime != nil {
-		_ = a.nativeCPARuntime.Close(context.Background())
+	a.capabilities.Store(index)
+}
+
+func (a *App) capabilityIndex() *pricing.CapabilityIndex {
+	if a == nil {
+		return nil
+	}
+	return a.capabilities.Load()
+}
+
+func (a *App) codexCatalogRevisionToken() string {
+	token := codexCatalogRevisionToken
+	if a != nil && !a.upstreamWebSockets() {
+		token += "|http"
+	}
+	if version := a.capabilityIndex().Version(); version != "" {
+		return token + "|" + version
+	}
+	return token
+}
+
+func (a *App) loadCapabilitiesFromStore(ctx context.Context) {
+	if a == nil || a.store.DB == nil {
+		return
+	}
+	rows, err := a.store.ListCatalogPrices(ctx)
+	if err != nil {
+		rows = nil
+	}
+	capabilities := make([]pricing.Capability, 0, len(rows))
+	version := ""
+	for _, row := range rows {
+		if version == "" {
+			version = row.Version
+		}
+		if capability, ok := pricing.CapabilityFromRawJSON(row.SourceModelID, row.RawJSON); ok {
+			capabilities = append(capabilities, capability)
+		}
+	}
+	a.setCapabilities(a.mergeCapabilityIndex(ctx, version, capabilities))
+}
+
+func (a *App) mergeCapabilityIndex(ctx context.Context, version string, fetched []pricing.Capability) *pricing.CapabilityIndex {
+	settings, err := a.store.ListModelSettings(ctx)
+	if err != nil {
+		settings = nil
+	}
+	capabilities := append([]pricing.Capability(nil), fetched...)
+	latest := ""
+	for _, item := range settings {
+		capabilities = append(capabilities, store.ModelSettingCapability(item))
+		if stamp := item.UpdatedAt.UTC().Format(time.RFC3339Nano); stamp > latest {
+			latest = stamp
+		}
+	}
+	if latest != "" {
+		if version == "" {
+			version = "admin"
+		}
+		version = version + "|admin:" + latest
+	}
+	if len(capabilities) == 0 && version == "" {
+		return pricing.NewCapabilityIndex("", nil)
+	}
+	return pricing.NewCapabilityIndex(version, capabilities)
+}
+
+func (a *App) Close() {
+	if a.nativeRuntime != nil {
+		_ = a.nativeRuntime.Close(context.Background())
 	}
 	if a.stop != nil {
 		close(a.stop)
@@ -114,6 +177,8 @@ func (a *App) maintenance() {
 	defer quotaTicker.Stop()
 	initialQuotaSync := time.NewTimer(15 * time.Second)
 	defer initialQuotaSync.Stop()
+	initialCatalog := time.NewTimer(3 * time.Second)
+	defer initialCatalog.Stop()
 	retentionTicker := time.NewTicker(time.Hour)
 	defer retentionTicker.Stop()
 	initialRetention := time.NewTimer(30 * time.Second)
@@ -121,7 +186,7 @@ func (a *App) maintenance() {
 	for {
 		select {
 		case <-ticker.C:
-			a.reclaimExecutorCachesUnderPressure()
+			a.reclaimRuntimeMemoryUnderPressure()
 			if count, err := a.store.DeleteExpiredAgentSetups(context.Background(), time.Now()); err != nil {
 				slog.Error("delete expired agent setups", "error", err)
 			} else if count > 0 {
@@ -134,6 +199,10 @@ func (a *App) maintenance() {
 			}
 		case <-initialRetention.C:
 			a.runRetention(context.Background())
+		case <-initialCatalog.C:
+			if err := a.refreshPricingCatalog(context.Background(), false); err != nil {
+				slog.Warn("refresh models.dev catalog", "error", err)
+			}
 		case <-initialQuotaSync.C:
 			a.refreshParentQuotas(context.Background())
 		case <-quotaTicker.C:
@@ -148,16 +217,17 @@ func (a *App) maintenance() {
 
 const largeRequestMemoryReleaseBytes = 8 << 20
 
-func (a *App) reclaimExecutorCachesUnderPressure() {
-	if a == nil || a.cfg.ExecutorCachePressureBytes == 0 {
+func (a *App) reclaimRuntimeMemoryUnderPressure() {
+	threshold := a.memoryReclaimThreshold()
+	if a == nil || threshold == 0 {
 		return
 	}
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	if stats.HeapAlloc < a.cfg.ExecutorCachePressureBytes {
+	if stats.HeapAlloc < threshold {
 		return
 	}
-	a.reclaimExecutorMemory("heap_pressure", stats.HeapAlloc)
+	a.reclaimRuntimeMemory("heap_pressure", stats.HeapAlloc)
 }
 
 func (a *App) reclaimAfterLargeRequest(requestBytes int) {
@@ -166,19 +236,18 @@ func (a *App) reclaimAfterLargeRequest(requestBytes int) {
 	}
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	a.reclaimExecutorMemory("large_request_complete", stats.HeapAlloc)
+	a.reclaimRuntimeMemory("large_request_complete", stats.HeapAlloc)
 }
 
-func (a *App) reclaimExecutorMemory(reason string, heapAlloc uint64) {
+func (a *App) reclaimRuntimeMemory(reason string, heapAlloc uint64) {
 	if !a.memoryReclaiming.CompareAndSwap(false, true) {
 		return
 	}
 	defer a.memoryReclaiming.Store(false)
-	relaybridge.ClearReasoningCaches()
 	debug.FreeOSMemory()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	slog.Info("released executor memory", "reason", reason,
+	slog.Info("released runtime memory", "reason", reason,
 		"heap_alloc_bytes_before", heapAlloc, "heap_alloc_bytes_after", after.HeapAlloc)
 }
 
@@ -218,7 +287,7 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	if err != nil {
 		return err
 	}
-	client, err := cpa.OutboundHTTPClient(proxyURL, 30*time.Second)
+	client, err := egress.OutboundHTTPClient(proxyURL, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -226,7 +295,11 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 	if err != nil {
 		return err
 	}
-	return a.store.ApplyCatalog(ctx, result)
+	if err := a.store.ApplyCatalog(ctx, result); err != nil {
+		return err
+	}
+	a.setCapabilities(a.mergeCapabilityIndex(ctx, result.Version, result.Capabilities))
+	return nil
 }
 
 func (a *App) Handler() http.Handler {
@@ -270,6 +343,8 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/prices", a.withAdmin(http.HandlerFunc(a.adminPrices)))
 	a.mux.Handle("PUT /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceUpdate)))
 	a.mux.Handle("DELETE /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceDelete)))
+	a.mux.Handle("PUT /api/admin/model-settings/{model}", a.withAdmin(http.HandlerFunc(a.adminModelSettingUpdate)))
+	a.mux.Handle("DELETE /api/admin/model-settings/{model}", a.withAdmin(http.HandlerFunc(a.adminModelSettingDelete)))
 	a.mux.Handle("GET /api/admin/pricing/aliases", a.withAdmin(http.HandlerFunc(a.adminPricingAliases)))
 	a.mux.Handle("PUT /api/admin/pricing/aliases", a.withAdmin(http.HandlerFunc(a.adminPricingAliases)))
 	a.mux.Handle("GET /api/admin/pricing/rules", a.withAdmin(http.HandlerFunc(a.adminPricingRules)))
@@ -279,6 +354,7 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("POST /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/models", a.withAdmin(http.HandlerFunc(a.adminProviderModels)))
+	a.mux.Handle("POST /api/admin/providers/accounts/{name}/test", a.withAdmin(http.HandlerFunc(a.adminProviderAccountTest)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
 	a.mux.Handle("POST /api/admin/providers/oauth/sessions", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthStart)))
@@ -307,7 +383,7 @@ func (a *App) routes() {
 	a.mux.Handle("PUT /api/admin/subscriptions/parents/{id}/windows", a.withAdmin(http.HandlerFunc(a.adminParentWindows)))
 	a.mux.Handle("GET /api/admin/subscriptions/parents/{id}/observations", a.withAdmin(http.HandlerFunc(a.adminParentObservations)))
 	a.mux.Handle("POST /api/admin/subscriptions/parents/{id}/observations", a.withAdmin(http.HandlerFunc(a.adminParentObservations)))
-	a.mux.Handle("POST /api/admin/subscriptions/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentSubscriptions)))
+	a.mux.Handle("POST /api/admin/subscriptions/sync", a.withAdmin(http.HandlerFunc(a.syncNativeParentSubscriptions)))
 	a.mux.Handle("POST /api/admin/subscriptions/quota/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentQuotas)))
 	a.mux.Handle("POST /api/admin/subscriptions/parents/{id}/quota/sync", a.withAdmin(http.HandlerFunc(a.adminSyncParentQuota)))
 	a.mux.Handle("GET /api/admin/subscriptions/children", a.withAdmin(http.HandlerFunc(a.adminChildSubscriptions)))
@@ -316,7 +392,7 @@ func (a *App) routes() {
 	a.mux.Handle("DELETE /api/admin/subscriptions/children/{id}", a.withAdmin(http.HandlerFunc(a.adminChildSubscription)))
 
 	for _, pattern := range []string{"/v1/", "/backend-api/codex/", "/openai/v1/", "/v1beta/"} {
-		a.mux.Handle(pattern, http.HandlerFunc(a.proxy))
+		a.mux.Handle(pattern, http.HandlerFunc(a.handlePublic))
 	}
 	a.mux.HandleFunc("/", a.frontend)
 }
@@ -370,22 +446,26 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = sqlDB.PingContext(ctx)
 	}
-	var cpaErr error
+	var runtimeErr error
 	activeSubscriptions, subscriptionErr := a.store.HasActiveChildSubscriptions(ctx, time.Now())
 	var credentialErr error
-	if a.nativeCPARuntime == nil || a.nativeCPARuntime.CredentialCount() == 0 {
-		credentialErr = errors.New("no enabled upstream credentials")
+	if a.nativeRuntime == nil || a.nativeRuntime.CredentialCount() == 0 {
+		credentialErr = errors.New("no enabled runtime credentials")
 	}
-	if serveErr := a.nativeCPAServeErr.Load(); serveErr != nil {
-		cpaErr, _ = serveErr.(error)
+	if a.nativeRuntime == nil {
+		runtimeErr = errors.New("native runtime is not available")
 	}
 	status := http.StatusOK
-	if err != nil || cpaErr != nil || credentialErr != nil || subscriptionErr != nil {
+	if err != nil || runtimeErr != nil || credentialErr != nil || subscriptionErr != nil {
 		status = http.StatusServiceUnavailable
 	}
+	admissionStatus := gateway.AdmissionStatus{}
+	if admission := a.admission(); admission != nil {
+		admissionStatus = admission.AdmissionStatus()
+	}
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "data_plane": "embedded_cpa", "upstream_credentials": errorText(credentialErr), "cpa": errorText(cpaErr),
-		"cpa_admission": a.inferenceCPA().AdmissionStatus(), "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
+		"database": errorText(err), "data_plane": "native_runtime", "runtime_credentials": errorText(credentialErr), "runtime": errorText(runtimeErr),
+		"runtime_admission": admissionStatus, "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
 }
 
 func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {

@@ -1,147 +1,110 @@
-# RelayAPI rewrite architecture
+# RelayAPI architecture
 
-## Goal
+RelayAPI is a Codex-first, multi-tenant policy and accounting gateway. It owns
+the provider runtime for Codex, Kimi, xAI/Grok and OpenAI-compatible services
+such as Aliyun Bailian. There is no external or embedded third-party proxy
+runtime.
 
-RelayAPI is a multi-tenant policy and accounting gateway in front of
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). CLIProxyAPI owns
-provider credentials, protocol translation, model aliases, retries, and
-provider selection. RelayAPI must not contain a provider/model registry.
+## Request boundary
 
-The backend also owns the product-facing user lifecycle: first-user setup,
-single-use invitations, invited registration, user sessions, user-created API
-keys, administrator capabilities, and administrator/user usage reports. An
-administrator is a normal user with an additional permission flag, not a
-separate account or access-key session. The Go process serves the Vite SPA from
-`RELAY_WEB_DIST_DIR` (the production image embeds `web/dist`).
+The public layer authenticates the tenant key, resolves aliases, checks model
+policy, reserves balance/quota and strips untrusted `X-Relay-*` headers. The
+native runtime then selects the pinned encrypted credential, translates the
+wire protocol when needed, lowers unsupported tool declarations, performs
+OAuth refresh and sends the provider request. Terminal usage is persisted and
+settled before the response is considered complete.
 
-## Request flow
+Supported public protocols are Responses, Chat Completions, the OpenAI Images
+API (`/v1/images/generations` and `/v1/images/edits`), the OpenAI model
+catalog, Codex-compatible paths and Responses WebSocket. Anthropic Messages and
+Gemini-native `/v1beta/*` remain intentionally unsupported.
 
-```text
-OpenAI / Anthropic / Gemini client
-              |
-              v
- RelayAPI: tenant key -> policy -> optional balance reservation
-              |
-              v
- embedded CPA: protocol adapter -> model/alias router -> provider credential
-              |
-              v
- RelayAPI: usage parser -> settlement -> audit log
-```
+Images follow the current CPA split: Codex `gpt-image-1.5` and `gpt-image-2`
+proxy the ChatGPT backend `/images/*` endpoints instead of wrapping Responses;
+xAI `grok-imagine-*` maps OpenAI `size`/`quality` onto `aspect_ratio` and
+`resolution`; OpenAI-compatible credentials pass Images through unchanged.
+Image-only slugs stay hidden in the Codex picker and are still callable on
+the Images API. The Responses wrap that older CPA builds used for
+`gpt-image-2` is not implemented.
 
-RelayAPI forwards the public inference surfaces without translating payloads:
+## Codex interoperability
 
-- OpenAI-compatible `/v1/*`, including chat, responses, images and models
-- Anthropic Messages API on `/v1/messages`
-- Gemini native API on `/v1beta/*`
-- compatibility paths used by Codex and other CLI clients (`/backend-api/*`,
-  `/openai/v1/*`)
+Codex model catalogs advertise a complete `ModelInfo` per published slug so
+the client does not fall back to `model_info_from_slug`. Relay's tenant, key,
+and subscription allowlists decide visibility: allowed models are `list`,
+denied official slugs stay as `hide` tombstones (dropping them would let
+Codex's bundled copy reappear). Each row includes reasoning levels, both
+context windows, `shell_type`, `supported_in_api`, `priority`,
+`base_instructions`, and the full agent surface: freeform `apply_patch`, web
+search, parallel tools, image input, reasoning summaries, skills/plugins/apps
+instructions, WebSocket preference and multi-agent v2. Image-only slugs such
+as `gpt-image-*` stay hidden in the Codex picker. Optimistic capability
+advertising is the product default; adapters lower unsupported wire details.
 
-The caller's Relay key is replaced with the private CLIProxyAPI API key. Query
-strings, request bodies, status codes, SSE events, and end-to-end headers are
-preserved. Hop-by-hop headers are removed. WebSocket upgrades are tunneled.
+Context windows, input modalities, and advertised reasoning levels for
+non-OpenAI slugs are overlaid from [models.dev](https://models.dev/api.json),
+the same catalog Relay already fetches for prices. The snapshot loads from
+stored `RawJSON` on boot and refreshes a few seconds later, or immediately
+after an admin catalog sync. First-party rows win (`openai`, `xai`,
+`deepseek`, `moonshotai`, then `moonshotai-cn`); aggregator copies of the
+same slug are ignored. Official OpenAI slugs keep Relay's Codex template so
+the bundled picker contract stays stable. Moonshot and DeepSeek overlays
+turn off `prefer_websockets` (Relay's WebSocket path is Responses-native and
+those providers are Chat-only) plus verbosity and multi-agent flags those
+APIs do not have. `apply_patch` stays freeform; adapters still lower it for
+Chat. models.dev is not a permission source, and Relay does not fetch CPA's
+`models.json` or embed the official Codex catalog. Administrators can
+correct or fill gaps on the 模型设置 page; those rows win over
+models.dev. `kimi-k3-256k` is seeded that way: it is the Kimi Coding
+Plan 256k window of the same always-on K3 family (`low`/`high`/`max`),
+which models.dev does not publish.
 
-## Model and pricing policy
+Provider adapters preserve that client contract. For example, xAI and generic
+Chat Completions backends receive a JSON-schema string-input function when
+Codex sends a freeform custom tool. Relay restores the provider's function call
+to the original `custom_tool_call`, including call IDs and namespaces. Kimi and
+other Chat-only endpoints are translated bidirectionally between Responses and
+Chat Completions: parallel tool calls stay on one assistant message, reasoning
+summary maps to `reasoning_content`, structured `text.format` maps to
+`response_format`, missing `call_id`s are synthesized, and streams still emit
+`response.completed` when upstream only sends `[DONE]`. Custom tools lowered
+for Chat are restored on the way back.
 
-`GET /v1/models` is dynamically served by CLIProxyAPI, so a newly configured
-model is immediately available. Empty tenant/key allowlists mean all models;
-allowlists support exact names, `*`, and glob patterns.
+WebSocket sessions support multiple turns. A completed turn may release its
+upstream connection while retaining the downstream session; the next complete
+turn reconnects with the same credential. `generate:false` prewarm is answered
+locally without consuming provider capacity.
 
-Prices are local accounting metadata, not a model allowlist. Resolution is
-administrator override > synced Models.dev catalog > bundled last-known-good
-catalog. Aliases are resolved before lookup, and CPA dimensions may apply
-validated multipliers for API group, auth index, service tier, reasoning
-effort, endpoint, executor, or model alias. The resolved modality-aware integer
-price and catalog version are snapshotted with every request. Text uses input,
-cached-input, cache-write, output, and reasoning rates. Image generation adds
-image-input, cached-image-input, and image-output rates; provider-reported
-modality token counts are authoritative, so quality and size are reflected by
-actual output tokens instead of a lossy per-image estimate:
+Bailian credentials are first-class: Chat Completions is translated to the
+DashScope Responses path so prefix cache can attach, and requests that share
+`prompt_cache_key`, `previous_response_id`, or `user` stay on the same
+credential for an hour.
 
-- `UNPRICED_MODEL_POLICY=allow` (default): forward an unknown model, record its
-  usage, mark pricing incomplete, and charge zero.
-- `UNPRICED_MODEL_POLICY=deny`: reject billable calls whose model has no local
-  price.
-
-This separation is what lets the gateway support every model exposed by
-CLIProxyAPI without silently inventing prices.
+Request logs keep a version-3 latency trace. Relay records admission and
+in-process runtime timing; the native runtime overlays routing, each provider
+attempt, and provider DNS/TCP/TLS spans on parallel tracks so they are not
+added twice into the critical path.
 
 ## Reliability and security
 
-- Inference admission is bounded before Relay reads the request body. A full
-  CPA bulkhead waits for a short, bounded interval and then returns a
-  retryable `503`, preventing an unbounded request queue from becoming an
-  implicit memory queue.
-- CPA transport failures feed a circuit breaker. After repeated failures the
-  circuit rejects traffic for a cooldown period and permits only one recovery
-  probe, so an OOM-restarting CPA is not flooded as soon as its port reopens.
-- Request bodies default to 32 MiB (configurable up to 64 GiB), aggregate
-  in-flight request bodies have a separate 32 MiB budget (configurable up to
-  256 GiB), response-log captures
-  remain bounded, and the CPA connection pool cannot exceed the inference
-  concurrency limit.
-- SSE and WebSocket operations have no whole-request client timeout. Only the
-  wait for CPA response headers is bounded, so long Codex and Claude Code
-  generations are not terminated by the gateway.
-- Inference and control traffic use separate HTTP transports. Long-lived
-  inference streams cannot exhaust the connections used by readiness checks,
-  management, OAuth, or quota probes and trigger a false watchdog restart.
-- PostgreSQL row locks make balance reservation/settlement atomic.
-- A request is settled only after usage is found; upstream errors are refunded.
-- Responses without usage are refunded and remain visibly marked as
-  pricing-incomplete, so missing provider usage cannot lock tenant funds.
-- Request bodies and captured response tails are bounded.
-- Routine management endpoints expose typed, validated credential/OAuth and
-  runtime-policy operations using CPA's redacted responses. Full configuration
-  access is explicitly confined to authenticated Relay administrators.
-- Health checks test PostgreSQL, the embedded runtime and configured upstream
-  credentials.
+- Admission bounds concurrency, queue depth and aggregate buffered request
+  bytes before the body is read.
+- Process-wide circuit breaking is off by default. Consecutive credential
+  failures can still isolate one account without taking the whole process down.
+- Provider errors and Relay errors are returned as written and recorded on the
+  request log. There is no transparent retry of 408/429/502/503/504.
+- OAuth tokens refresh proactively near expiry. A 401 still refreshes the
+  stored token for later requests but is returned as-is.
+- HTTP, HTTPS, SOCKS5 and SOCKS5H proxies are implemented in Relay and apply to
+  inference, WebSocket, discovery, OAuth, quota and system requests.
+- Provider credentials remain encrypted in PostgreSQL. The native runtime
+  is called in-process; there is no loopback HTTP hop or process-local API key.
+- PostgreSQL row locks make reservation and settlement idempotent and atomic.
 
-## Deployment boundary
+## Models and pricing
 
-The embedded CPA listener binds to an ephemeral loopback address and uses a
-random process-local key. Tenant clients receive only `relay_*` keys. Provider
-credentials are encrypted in PostgreSQL and loaded directly into the embedded
-runtime.
-
-## Embedded CPA boundary
-
-Relay does not call provider executors directly. HTTP, SSE and WebSocket
-requests enter CPA's complete public handler through a loopback connection, so
-prewarm, replay, compaction, credential pinning and multi-turn state retain CPA
-semantics. Relay observes terminal response events only for accounting and
-does not translate protocol frames.
-
-## Request observability
-
-Every inference request has one Relay request ID across the public handler,
-loopback CPA handler and provider executor. Relay records a versioned trace in
-`stage_timings`; version 3 keeps four separate tracks so overlapping spans are
-never added together as if they were a serial critical path:
-
-- `critical` is the end-to-end path through Relay admission, CPA dispatch,
-  downstream transfer and settlement.
-- `cpa` measures protocol routing, translation and credential selection before
-  an executor begins. A CPA rejection with no provider attempt remains visible.
-- `attempt` records every real executor call plus the gaps between calls, making
-  credential rotation, model-pool fallback, OAuth replay and retry waits
-  distinguishable from model latency.
-- `network` uses Go HTTP trace callbacks for connection-pool wait, DNS, TCP,
-  TLS, request write and provider first-response-byte timing. Relay-to-CPA
-  loopback spans and CPA-to-provider spans retain separate identities.
-
-CPA traces stay in a bounded in-memory registry only until Relay finishes the
-request and merges them into the existing log row. No additional database write
-or synchronous export sits on the forwarding path. Trace errors contain only a
-classified code/status; credentials, headers, tokens and provider bodies are
-never copied into timing metadata. The UI reads both legacy version 2 traces and
-version 3 traces, so deployment does not require a data migration.
-
-Relay request logs have separate summary and detail retention. Sensitive
-headers are redacted; bodies carry original byte counts and truncation flags.
-Successful requests retain summaries only by default. Error bodies are capped
-at 32 KiB, and identical client/forwarded bodies are stored only once.
-The summary stores tenant/key display snapshots, CPA execution identity, TTFT,
-token and modality breakdown, errors, and the immutable pricing snapshot. Detail
-stores client and translated requests, upstream response, stage timings, and
-structured error context.
+OpenAI-compatible accounts discover `GET {base_url}/models`; native providers
+use controlled defaults and credential-scoped discovery where supported.
+Tenant and key allowlists are applied after runtime discovery. Prices remain
+local accounting metadata rather than a model allowlist. Each request snapshots
+its resolved modality-aware integer price and catalog version.

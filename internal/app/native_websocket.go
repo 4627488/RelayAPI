@@ -21,6 +21,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
+	nativeruntime "github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/gorilla/websocket"
 )
 
@@ -64,7 +65,7 @@ type nativeWebSocketSessionState struct {
 
 const nativeWebSocketHeartbeatInterval = 30 * time.Second
 
-func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
+func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext, timeline *latencyTimeline) {
 	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
 	accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
@@ -96,7 +97,7 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	if accounting.turnsSeen == 0 && accounting.price != nil && accounting.result.ResponseServiceTier != "" {
 		if resolved, resolveErr := a.store.ResolvePrice(context.Background(), pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admission.CPAAuthIndex,
+			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(admission),
 			ServiceTier: meta.ServiceTier, ResponseServiceTier: accounting.result.ResponseServiceTier,
 			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
 		}); resolveErr == nil {
@@ -137,7 +138,6 @@ func (a *App) proxyNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	completed := time.Now()
 	timeline.Step(completed, "websocket_settlement", "WebSocket 结算", "billing", "结算会话内已完成的计费用量")
 	timeline.Mark(completed, "complete", "会话结束")
-	a.addEmbeddedCPATrace(timeline, requestID)
 	logContext.requestBytes = accounting.requestBytes
 	logContext.forwardedBytes = accounting.forwardedBytes
 	logContext.responseBytes = accounting.responseBytes
@@ -167,7 +167,7 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	turn, meta := entry.Result, entry.Meta
 	var turnPrice *store.ResolvedPrice
 	if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
-		APIGroupKey: key.ID, Model: meta.Model, AuthIndex: accounting.admission.CPAAuthIndex,
+		APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(accounting.admission),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
 		ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
 	}); err == nil {
@@ -199,7 +199,6 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	turnTimeline := newLatencyTimeline(entry.StartedAt)
 	turnTimeline.Step(turnCompleted, "websocket_turn", "WebSocket 请求轮次", "downstream", "从 response.create 到终止事件的完整轮次")
 	turnTimeline.Mark(turnCompleted, "complete", "轮次结束")
-	a.addEmbeddedCPATraceSnapshot(turnTimeline, requestID)
 	logContext.stageTimings = turnTimeline.JSON(turnCompleted)
 	logID := requestID
 	if accounting.turnsSeen > 0 {
@@ -231,10 +230,10 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	return true, nil
 }
 
-// serveNativeWebSocket is a billing-aware gateway in front of the embedded CPA
-// server. Relay only inspects the first request for admission and terminal
-// response events for usage; all protocol behavior remains owned by CPA's
-// complete Responses WebSocket handler.
+// serveNativeWebSocket is a billing-aware gateway in front of the native runtime
+// server. Relay inspects request boundaries for admission and terminal response
+// events for durable usage accounting; the provider runtime owns wire-format
+// adaptation, reconnection and credential affinity.
 func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext,
 	meta requestMeta, requestID string, logDetail *store.LogDetailInput, accounting *nativeWebSocketAccounting) (nativeWebSocketSessionState, requestMeta, error) {
 	var session nativeWebSocketSessionState
@@ -250,7 +249,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	session.upgraded = true
 	defer downstream.Close()
-	downstream.SetReadLimit(a.cfg.CPAMaxRequestBytes)
+	downstream.SetReadLimit(a.maxRequestBytes())
 	_ = downstream.SetReadDeadline(time.Now().Add(30 * time.Second))
 	messageType, firstFrame, err := downstream.ReadMessage()
 	_ = downstream.SetReadDeadline(time.Time{})
@@ -301,8 +300,8 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		accounting.price = price
 		accounting.billable = true
 	}
-	if a.nativeCPARuntime != nil {
-		upstreamModel := a.nativeCPARuntime.ResolveCredentialModel(accounting.admission.CPAAuthID, meta.Model)
+	if a.nativeRuntime != nil {
+		upstreamModel := a.nativeRuntime.ResolveCredentialModel(accounting.admission.UpstreamCredentialID, meta.Model)
 		if upstreamModel != "" && upstreamModel != frameMeta.Model {
 			firstFrame, err = rewriteRequestModel(firstFrame, r.URL, frameMeta.Model, upstreamModel)
 			if err != nil {
@@ -317,26 +316,27 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	accounting.currentForwarded = int64(len(firstFrame))
 	accounting.currentResponse = 0
 
-	upstream, response, err := a.dialEmbeddedCPAWebSocket(r.Context(), r, accounting.admission, requestID)
+	upstream, response, err := a.dialNativeRuntimeWebSocket(r.Context(), r, accounting.admission, requestID)
 	if err != nil {
-		classified := userFacingError{Status: http.StatusServiceUnavailable, Code: "model_account_unavailable", Message: "无法连接当前订阅的模型账户，请稍后重试或联系管理员", Retryable: true}
+		status, code, message := http.StatusBadGateway, "upstream_connection_failed", err.Error()
 		if response != nil {
-			classified.UpstreamStatus = response.StatusCode
+			status = response.StatusCode
+			payload := []byte(nil)
 			if response.Body != nil {
-				payload, _ := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+				payload, _ = io.ReadAll(io.LimitReader(response.Body, 2<<20))
 				_ = response.Body.Close()
-				classified = a.classifyUpstreamError(response.StatusCode, payload, accounting.admission)
 			}
+			code, message = observedError(status, payload)
 		}
-		accounting.errorHTTP, accounting.errorCode = classified.Status, classified.Code
-		writeNativeWebSocketError(downstream, classified.Status, classified.Code, classified.Message)
+		accounting.errorHTTP, accounting.errorCode = status, code
+		writeNativeWebSocketError(downstream, status, code, message)
 		return session, meta, err
 	}
 	if response != nil && response.Body != nil {
 		_ = response.Body.Close()
 	}
 	defer upstream.Close()
-	upstream.SetReadLimit(a.cfg.CPAMaxRequestBytes)
+	upstream.SetReadLimit(a.maxRequestBytes())
 	if err = upstream.WriteMessage(messageType, firstFrame); err != nil {
 		return session, meta, err
 	}
@@ -488,38 +488,16 @@ func nativeWebSocketAdmissionError(code string) (int, string) {
 	}
 }
 
-func (a *App) dialEmbeddedCPAWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (
+func (a *App) dialNativeRuntimeWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (
 	*websocket.Conn, *http.Response, error) {
-	if a.nativeCPA == nil || a.nativeCPA.BaseURL == nil {
-		return nil, nil, fmt.Errorf("embedded CPA runtime is not available")
+	if a.nativeRuntime == nil {
+		return nil, nil, fmt.Errorf("native runtime is not available")
 	}
-	target, err := url.Parse(a.nativeCPA.URL(embeddedCPAWebSocketPath(r.URL)))
-	if err != nil {
-		return nil, nil, err
-	}
-	switch target.Scheme {
-	case "http":
-		target.Scheme = "ws"
-	case "https":
-		target.Scheme = "wss"
-	default:
-		return nil, nil, fmt.Errorf("embedded CPA URL uses unsupported scheme %q", target.Scheme)
-	}
-	header := embeddedCPAWebSocketHeaders(r.Header)
-	header.Set("Authorization", "Bearer "+a.nativeCPA.APIKey)
-	header.Set("X-Relay-Request-ID", requestID)
-	if admission.CPAAuthID != "" {
-		header.Set("X-Relay-CPA-Auth-ID", admission.CPAAuthID)
-	}
-	dialer := websocket.Dialer{
-		HandshakeTimeout:  30 * time.Second,
-		EnableCompression: true,
-		Subprotocols:      websocket.Subprotocols(r),
-	}
-	return dialer.DialContext(ctx, target.String(), header)
+	header := nativeRuntimeWebSocketHeaders(r.Header, requestID, admission.UpstreamCredentialID)
+	return nativeruntime.DialWebSocket(ctx, a.nativeRuntime.Handler(), nativeRuntimeWebSocketPath(r.URL), header, websocket.Subprotocols(r))
 }
 
-func embeddedCPAWebSocketPath(requestURL *url.URL) string {
+func nativeRuntimeWebSocketPath(requestURL *url.URL) string {
 	if requestURL == nil {
 		return "/v1/responses"
 	}
@@ -533,11 +511,11 @@ func embeddedCPAWebSocketPath(requestURL *url.URL) string {
 	return path
 }
 
-func embeddedCPAWebSocketHeaders(source http.Header) http.Header {
+func nativeRuntimeWebSocketHeaders(source http.Header, requestID, credentialID string) http.Header {
 	header := source.Clone()
-	stripRelayHeaders(header)
+	prepareRuntimeHeaders(header, requestID, credentialID)
 	for _, name := range []string{
-		"Authorization", "Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version",
+		"Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version",
 		"Sec-WebSocket-Extensions", "Sec-WebSocket-Protocol",
 	} {
 		header.Del(name)
@@ -572,8 +550,8 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, requestURL *url.URL,
 	}
 	nextMeta.Stream = true
 	forwarded := payload
-	if frameMeta.Model != "" && a.nativeCPARuntime != nil {
-		upstreamModel := a.nativeCPARuntime.ResolveCredentialModel(accounting.admission.CPAAuthID, nextMeta.Model)
+	if frameMeta.Model != "" && a.nativeRuntime != nil {
+		upstreamModel := a.nativeRuntime.ResolveCredentialModel(accounting.admission.UpstreamCredentialID, nextMeta.Model)
 		if upstreamModel != "" && upstreamModel != frameMeta.Model {
 			requestCopy := url.URL{}
 			if requestURL != nil {
@@ -688,7 +666,7 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 		ReasoningEffort: meta.ReasoningEffort, Endpoint: endpoint}
 	price, priceErr := a.store.ResolvePrice(ctx, dimensions)
 	priceConfigured := priceErr == nil
-	if !priceConfigured && a.cfg.UnpricedModelPolicy == "deny" {
+	if !priceConfigured && a.unpricedModelPolicy() == "deny" {
 		return store.Admission{}, nil, "pricing_unavailable", fmt.Errorf("该模型尚未配置价格，请联系管理员完善计费配置")
 	}
 	reserve := int64(0)
@@ -707,7 +685,7 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 	if !priceConfigured {
 		return admission, nil, "", nil
 	}
-	dimensions.AuthIndex = admission.CPAAuthIndex
+	dimensions.AuthIndex = admissionAuthIndex(admission)
 	if resolved, resolveErr := a.store.ResolvePrice(ctx, dimensions); resolveErr == nil {
 		resolvedSnapshot := store.EncodePriceSnapshot(resolved)
 		if !bytes.Equal(resolvedSnapshot, store.EncodePriceSnapshot(price)) {

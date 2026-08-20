@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/egress"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -38,7 +38,7 @@ func (a *App) adminProxies(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &input) {
 			return
 		}
-		if err := cpa.ValidateProxyURL(input.URL); err != nil {
+		if err := egress.ValidateProxyURL(input.URL); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_proxy_url", err.Error())
 			return
 		}
@@ -110,7 +110,7 @@ func (a *App) adminProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_proxy_name", "代理名称不能为空")
 		return
 	}
-	if err := cpa.ValidateProxyURL(rawURL); err != nil {
+	if err := egress.ValidateProxyURL(rawURL); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_proxy_url", err.Error())
 		return
 	}
@@ -119,12 +119,12 @@ func (a *App) adminProxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "proxy_update_failed", boundedErrorText(err.Error()))
 		return
 	}
-	if a.nativeCPARuntime != nil {
+	if a.nativeRuntime != nil {
 		a.nativeSettings.RLock()
 		settings := a.nativeSettings.value
 		a.nativeSettings.RUnlock()
 		if settings.SystemProxyID == id {
-			err = a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(settings, item.URL))
+			err = a.nativeRuntime.ApplySettings(r.Context(), runtimeSettings(settings, item.URL))
 		}
 		if err == nil {
 			err = a.reloadNativeCredentials(r.Context())
@@ -132,7 +132,7 @@ func (a *App) adminProxy(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			_, _ = a.store.UpdateOutboundProxy(r.Context(), current.ID, current.Name, current.URL)
 			if settings.SystemProxyID == id {
-				_ = a.nativeCPARuntime.ApplySettings(r.Context(), runtimeBridgeSettings(settings, current.URL))
+				_ = a.nativeRuntime.ApplySettings(r.Context(), runtimeSettings(settings, current.URL))
 			}
 			_ = a.reloadNativeCredentials(r.Context())
 			writeError(w, http.StatusBadGateway, "proxy_reload_failed", err.Error())
@@ -152,7 +152,7 @@ func (a *App) adminProxyTest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "proxy_unavailable", "无法读取代理")
 		return
 	}
-	client, err := cpa.OutboundHTTPClient(item.URL, 15*time.Second)
+	client, err := egress.OutboundHTTPClient(item.URL, 15*time.Second)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "proxy_invalid", err.Error())
 		return
@@ -208,7 +208,7 @@ func (a *App) proxyView(ctx context.Context, item store.OutboundProxy) proxyView
 	a.nativeSettings.RLock()
 	systemUse := a.nativeSettings.value.SystemProxyID == item.ID
 	a.nativeSettings.RUnlock()
-	return proxyView{ID: item.ID, Name: item.Name, Endpoint: cpa.RedactProxyURL(item.URL), Scheme: parsed.Scheme, Host: parsed.Host, AccountUse: accountUse, SystemUse: systemUse, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	return proxyView{ID: item.ID, Name: item.Name, Endpoint: egress.RedactProxyURL(item.URL), Scheme: parsed.Scheme, Host: parsed.Host, AccountUse: accountUse, SystemUse: systemUse, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }
 
 func (a *App) proxyURL(ctx context.Context, id string) (string, error) {
@@ -271,7 +271,7 @@ func (a *App) migrateLegacyProxies(ctx context.Context, rows []store.UpstreamCre
 		if raw == "" || strings.EqualFold(raw, "direct") || strings.EqualFold(raw, "none") {
 			return nil, nil
 		}
-		if err := cpa.ValidateProxyURL(raw); err != nil {
+		if err := egress.ValidateProxyURL(raw); err != nil {
 			return nil, err
 		}
 		if id := byURL[raw]; id != "" {

@@ -66,9 +66,9 @@ export interface RequestLog {
   executor_type?: string
   auth_type?: string
   auth_index?: string
-  cpa_request_id?: string
-  cpa_trace_id?: string
-  cpa_execution_id?: string
+  upstream_request_id?: string
+  upstream_trace_id?: string
+  upstream_execution_id?: string
   tenant_name?: string
   api_key_name?: string
   api_key_prefix?: string
@@ -184,6 +184,14 @@ export interface ModelPrice {
   version: string
   price_multiplier: number
   updated_at?: string
+  display_name?: string
+  context_window?: number
+  max_output_tokens?: number
+  reasoning_efforts?: string[]
+  default_reasoning_level?: string
+  input_modalities?: string[]
+  prefer_websockets?: boolean | null
+  capability_source?: string
 }
 
 export interface ModelAlias {
@@ -304,7 +312,6 @@ export interface ProviderAccount {
   config_path?: string
   config_index?: number
   base_url?: string
-  prefix?: string
   models?: string[]
   key_count?: number
   can_inspect?: boolean
@@ -343,6 +350,16 @@ export interface ProxyTestResult {
   organization?: string
   isp?: string
   domain?: string
+  error?: string
+}
+
+export interface ProviderAccountTestResult {
+  ok: boolean
+  model: string
+  provider: string
+  status_code: number
+  latency_ms: number
+  preview?: string
   error?: string
 }
 
@@ -387,17 +404,17 @@ export interface ParentQuotaWindow {
 
 export interface ParentSubscription {
   id: string
-  cpa_auth_id: string
-  cpa_auth_index: string
-  cpa_auth_name: string
+  upstream_credential_id: string
+  upstream_auth_index: string
+  upstream_credential_name: string
   name: string
   provider: string
   plan_type: string
   status: string
-  cpa_unavailable: boolean
+  upstream_unavailable: boolean
   capacity_mode: CapacityMode
   enabled: boolean
-  cpa_model_allowlist: string[]
+  upstream_model_allowlist: string[]
   model_allowlist: string[]
   last_synced_at?: string | null
   quota_supported: boolean
@@ -450,7 +467,7 @@ export interface ChildSubscription {
   capacity_mode?: CapacityMode
   model_allowlist: string[]
   effective_model_allowlist?: string[]
-  model_source?: "child" | "parent" | "cpa"
+  model_source?: "child" | "parent" | "upstream"
   parent_name?: string
   parent_plan_type?: string
   available?: boolean

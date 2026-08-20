@@ -22,9 +22,26 @@ type modelsDevProvider struct {
 	Models map[string]modelsDevModel `json:"models"`
 }
 type modelsDevModel struct {
-	ID     string        `json:"id"`
-	Status string        `json:"status"`
-	Cost   modelsDevCost `json:"cost"`
+	ID               string                  `json:"id"`
+	Name             string                  `json:"name"`
+	Status           string                  `json:"status"`
+	Reasoning        bool                    `json:"reasoning"`
+	ReasoningOptions []modelsDevReasoningOpt `json:"reasoning_options"`
+	Limit            modelsDevLimit          `json:"limit"`
+	Modalities       modelsDevModalities     `json:"modalities"`
+	Cost             modelsDevCost           `json:"cost"`
+}
+type modelsDevReasoningOpt struct {
+	Type   string   `json:"type"`
+	Values []string `json:"values"`
+}
+type modelsDevLimit struct {
+	Context int `json:"context"`
+	Output  int `json:"output"`
+}
+type modelsDevModalities struct {
+	Input  []string `json:"input"`
+	Output []string `json:"output"`
 }
 type modelsDevCost struct {
 	Input      *float64 `json:"input"`
@@ -45,10 +62,11 @@ type modelsDevCatalogCandidate struct {
 }
 
 type SyncResult struct {
-	Source  string         `json:"source"`
-	Version string         `json:"version"`
-	URL     string         `json:"url"`
-	Entries []CatalogEntry `json:"entries"`
+	Source       string         `json:"source"`
+	Version      string         `json:"version"`
+	URL          string         `json:"url"`
+	Entries      []CatalogEntry `json:"entries"`
+	Capabilities []Capability   `json:"capabilities,omitempty"`
 }
 
 func FetchModelsDev(ctx context.Context, client *http.Client, rawURL string) (SyncResult, error) {
@@ -81,20 +99,29 @@ func FetchModelsDev(ctx context.Context, client *http.Client, rawURL string) (Sy
 	hash := sha256.Sum256(raw)
 	version := "sha256:" + hex.EncodeToString(hash[:])
 	candidates := make(map[string]modelsDevCatalogCandidate, 1024)
+	capabilityCandidates := make(map[string]Capability, 1024)
 	for providerKey, provider := range providers {
 		providerID := strings.TrimSpace(provider.ID)
 		if providerID == "" {
 			providerID = strings.TrimSpace(providerKey)
 		}
 		for modelKey, model := range provider.Models {
-			if strings.EqualFold(model.Status, "deprecated") || model.Cost.Input == nil || model.Cost.Output == nil {
+			if strings.EqualFold(model.Status, "deprecated") {
 				continue
 			}
 			modelID := strings.TrimSpace(model.ID)
 			if modelID == "" {
 				modelID = strings.TrimSpace(modelKey)
 			}
-			if modelID == "" || !validCatalogCost(*model.Cost.Input) || !validCatalogCost(*model.Cost.Output) {
+			if modelID == "" {
+				continue
+			}
+			capability := capabilityFromModelsDev(providerID, modelID, model)
+			capKey := strings.ToLower(capability.ID)
+			if current, ok := capabilityCandidates[capKey]; !ok || preferCapability(capability, current) {
+				capabilityCandidates[capKey] = capability
+			}
+			if model.Cost.Input == nil || model.Cost.Output == nil || !validCatalogCost(*model.Cost.Input) || !validCatalogCost(*model.Cost.Output) {
 				continue
 			}
 			cacheRead := *model.Cost.Input
@@ -142,7 +169,12 @@ func FetchModelsDev(ctx context.Context, client *http.Client, rawURL string) (Sy
 	if len(entries) < 10 {
 		return SyncResult{}, fmt.Errorf("models.dev catalog contains only %d priced models", len(entries))
 	}
-	return SyncResult{Source: SourceCatalog, Version: version, URL: rawURL, Entries: entries}, nil
+	capabilities := make([]Capability, 0, len(capabilityCandidates))
+	for _, capability := range capabilityCandidates {
+		capabilities = append(capabilities, capability)
+	}
+	sort.Slice(capabilities, func(i, j int) bool { return capabilities[i].ID < capabilities[j].ID })
+	return SyncResult{Source: SourceCatalog, Version: version, URL: rawURL, Entries: entries, Capabilities: capabilities}, nil
 }
 
 func preferCatalogCandidate(candidate, current modelsDevCatalogCandidate) bool {

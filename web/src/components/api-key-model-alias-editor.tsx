@@ -30,12 +30,7 @@ export interface ModelAliasPreset {
   target: string
 }
 
-const grokTargetNames = [
-  "grok-4.6",
-  "xai/grok-4.6",
-  "grok-4.5",
-  "xai/grok-4.5",
-]
+const grokTargetNames = ["grok-4.6", "xai/grok-4.6", "grok-4.5", "xai/grok-4.5"]
 
 const clientPresets = [
   {
@@ -43,20 +38,6 @@ const clientPresets = [
     label: "Codex → Grok",
     description: "将 Codex 当前 GPT-5.6 模型入口统一路由到最新可用 Grok。",
     aliases: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6"],
-  },
-  {
-    id: "claude-code-grok-latest",
-    label: "Claude Code → Grok",
-    description: "覆盖当前及近期 Claude Code 的 Sonnet、Opus、Haiku 模型入口。",
-    aliases: [
-      "claude-sonnet-5",
-      "claude-opus-5",
-      "claude-haiku-4-5",
-      "claude-haiku-4-5-20251001",
-      "claude-sonnet-4-6",
-      "claude-opus-4-8",
-      "claude-opus-4-6",
-    ],
   },
 ] as const
 
@@ -157,6 +138,7 @@ export function ApiKeyModelAliasEditor({
                 required
               />
               <Select
+                items={options.map((model) => ({ value: model, label: model }))}
                 value={item.model || null}
                 onValueChange={(value) =>
                   update(item.clientId, "model", value ?? "")

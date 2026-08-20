@@ -8,10 +8,14 @@ import { LoadingView } from "@/components/loading-view"
 import { api, type Session } from "@/lib/api"
 
 const AdminWorkspace = lazy(() =>
-  import("@/components/admin-workspace").then((module) => ({ default: module.AdminWorkspace })),
+  import("@/components/admin-workspace").then((module) => ({
+    default: module.AdminWorkspace,
+  }))
 )
 const UserWorkspace = lazy(() =>
-  import("@/components/user-workspace").then((module) => ({ default: module.UserWorkspace })),
+  import("@/components/user-workspace").then((module) => ({
+    default: module.UserWorkspace,
+  }))
 )
 
 export function App() {
@@ -31,9 +35,14 @@ export function App() {
     try {
       await api("/api/auth/logout", { method: "POST" })
       try {
-        for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+        for (
+          let index = window.sessionStorage.length - 1;
+          index >= 0;
+          index -= 1
+        ) {
           const key = window.sessionStorage.key(index)
-          if (key?.startsWith("relayapi.latest-")) window.sessionStorage.removeItem(key)
+          if (key?.startsWith("relayapi.latest-"))
+            window.sessionStorage.removeItem(key)
         }
       } catch {
         // Session storage may be disabled; logout must still succeed.
@@ -48,11 +57,23 @@ export function App() {
   }
 
   if (checking) {
-    return <main className="p-6"><LoadingView /></main>
+    return (
+      <main className="p-6">
+        <LoadingView />
+      </main>
+    )
   }
 
   if (!session) {
-    return <AuthPage onAuthenticated={(value) => { setSession(value); setPage("overview"); setWorkspace("user") }} />
+    return (
+      <AuthPage
+        onAuthenticated={(value) => {
+          setSession(value)
+          setPage("overview")
+          setWorkspace("user")
+        }}
+      />
+    )
   }
 
   if (session.tenant.must_change_password) {
@@ -78,9 +99,13 @@ export function App() {
     >
       <Suspense fallback={<LoadingView />}>
         {workspace === "admin" && session.is_admin ? (
-          <AdminWorkspace page={page} currentUserId={session.tenant.id} />
+          <AdminWorkspace
+            page={page}
+            currentUserId={session.tenant.id}
+            onPageChange={setPage}
+          />
         ) : (
-          <UserWorkspace page={page} session={session} />
+          <UserWorkspace page={page} session={session} onPageChange={setPage} />
         )}
       </Suspense>
     </AppShell>

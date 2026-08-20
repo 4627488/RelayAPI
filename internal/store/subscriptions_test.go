@@ -42,8 +42,8 @@ func TestSubscriptionModelGrantExpandsTenantPoolButRespectsKeyPolicy(t *testing.
 		APIKey:       APIKey{ModelAllowlist: []string{"gpt-*", "grok-4.6"}},
 		TenantModels: []string{"gpt-5.6"},
 		SubscriptionModelGrants: []SubscriptionModelGrant{{
-			ParentModels: []string{"grok-*"},
-			CPAModels:    []string{"grok-4.6", "grok-4.5"},
+			ParentModels:   []string{"grok-*"},
+			UpstreamModels: []string{"grok-4.6", "grok-4.5"},
 		}},
 	}
 	if !key.AllowsModel("gpt-5.6") {

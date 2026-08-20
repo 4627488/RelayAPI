@@ -28,14 +28,19 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			APIKey   string          `json:"api_key"`
 			BaseURL  string          `json:"base_url"`
 			ProxyID  string          `json:"proxy_id"`
-			Prefix   string          `json:"prefix"`
 		}
 		if !decodeJSON(w, r, &input) {
 			return
 		}
 		input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
+		var supported bool
+		input.Provider, supported = normalizeSupportedProvider(input.Provider)
+		if !supported {
+			writeError(w, http.StatusBadRequest, "unsupported_provider", "仅支持 Codex、Kimi、xAI/Grok、OpenAI 和阿里云百炼")
+			return
+		}
 		input.Name = strings.TrimSpace(input.Name)
-		// New credentials always derive their initial public catalog from CPA.
+		// New credentials always derive their initial public catalog from Upstream.
 		// Ignore legacy client-supplied model text instead of letting it define
 		// provider capability.
 		input.Models = nil
@@ -50,6 +55,11 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				documentProvider = "openai-compatibility"
 			}
 			document := map[string]any{"type": documentProvider, "api_key": strings.TrimSpace(input.APIKey), "auth_kind": "api_key"}
+			if input.Provider == "aliyun-bailian" {
+				document["vendor"] = "aliyun-bailian"
+				document["session_affinity"] = true
+				document["cache_mode"] = "auto"
+			}
 			baseURL := strings.TrimSpace(input.BaseURL)
 			if baseURL == "" {
 				switch input.Provider {
@@ -66,18 +76,14 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				}
 				document["base_url"] = baseURL
 			}
-			if value := strings.TrimSpace(input.Prefix); value != "" {
-				value, prefixErr := normalizeNativePrefix(value)
-				if prefixErr != nil {
-					writeError(w, http.StatusBadRequest, "validation_error", prefixErr.Error())
-					return
-				}
-				document["prefix"] = value
-			}
 			input.Document, _ = json.Marshal(document)
 		}
 		if input.Provider == "" || input.Name == "" || !json.Valid(input.Document) {
 			writeError(w, http.StatusBadRequest, "validation_error", "名称、提供商和有效凭据 JSON 均为必填项")
+			return
+		}
+		if documentErr := validateSupportedCredentialDocument(input.Provider, input.Document); documentErr != nil {
+			writeError(w, http.StatusBadRequest, "unsupported_credential", documentErr.Error())
 			return
 		}
 		id := strings.TrimSpace(input.ID)
@@ -136,10 +142,10 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	parentsByCredential := make(map[string]store.ParentSubscription, len(parents)*2)
 	for _, parent := range parents {
-		if id := strings.TrimSpace(parent.CPAAuthID); id != "" {
+		if id := strings.TrimSpace(parent.UpstreamCredentialID); id != "" {
 			parentsByCredential[id] = parent
 		}
-		if index := strings.TrimSpace(parent.CPAAuthIndex); index != "" {
+		if index := strings.TrimSpace(parent.UpstreamAuthIndex); index != "" {
 			parentsByCredential[index] = parent
 		}
 	}
@@ -158,8 +164,8 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				item["plan_type"] = plan
 			}
 		}
-		if a.nativeCPARuntime != nil {
-			if status, ok := a.nativeCPARuntime.CredentialStatus(row.ID); ok {
+		if a.nativeRuntime != nil {
+			if status, ok := a.nativeRuntime.CredentialStatus(row.ID); ok {
 				item["status"] = status.Status
 				item["status_message"] = status.StatusMessage
 				item["unavailable"] = item["unavailable"].(bool) || status.Unavailable
@@ -191,7 +197,6 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	_ = json.Unmarshal(row.Document, &document)
 	email, _ := document["email"].(string)
 	baseURL, _ := document["base_url"].(string)
-	prefix, _ := document["prefix"].(string)
 	websockets, _ := document["websockets"].(bool)
 	expired := row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now())
 	result := map[string]any{"id": row.ID, "auth_index": row.ID, "name": row.ID, "label": row.Name, "provider": row.Provider, "type": row.Provider,
@@ -208,9 +213,6 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	}
 	if strings.TrimSpace(baseURL) != "" {
 		result["base_url"] = baseURL
-	}
-	if strings.TrimSpace(prefix) != "" {
-		result["prefix"] = prefix
 	}
 	if rawHeaders, ok := document["headers"].(map[string]any); ok && len(rawHeaders) > 0 {
 		names := make([]string, 0, len(rawHeaders))
@@ -287,7 +289,7 @@ func equalFoldedStrings(left, right []string) bool {
 
 func validateNativeCredentialModels(models, candidates []string) error {
 	if len(candidates) == 0 {
-		return errors.New("CPA 凭据目录为空")
+		return errors.New("Upstream 凭据目录为空")
 	}
 	allowedModels := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
@@ -295,7 +297,7 @@ func validateNativeCredentialModels(models, candidates []string) error {
 	}
 	for _, model := range models {
 		if _, ok := allowedModels[strings.ToLower(strings.TrimSpace(model))]; !ok {
-			return errors.New("模型 " + model + " 不在 CPA 凭据目录中")
+			return errors.New("模型 " + model + " 不在 Upstream 凭据目录中")
 		}
 	}
 	return nil
@@ -314,8 +316,8 @@ func (a *App) nativeProviderModels(w http.ResponseWriter, r *http.Request) {
 	models := append([]string(nil), row.Models...)
 	source := "configured"
 	var discoveryError string
-	if a.nativeCPARuntime != nil && row.Enabled {
-		discovered, discoveredSource, discoverErr := a.nativeCPARuntime.DiscoverCredentialModels(r.Context(), row.ID)
+	if a.nativeRuntime != nil && row.Enabled {
+		discovered, discoveredSource, discoverErr := a.nativeRuntime.DiscoverCredentialModels(r.Context(), row.ID)
 		if len(discovered) > 0 {
 			models = discovered
 			source = discoveredSource
@@ -331,11 +333,11 @@ func (a *App) nativeProviderModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-// activateNativeCredential installs a newly saved credential into CPA. When
-// no explicit public model list was supplied, CPA becomes the source of truth:
+// activateNativeCredential installs a newly saved credential into Upstream. When
+// no explicit public model list was supplied, Upstream becomes the source of truth:
 // native providers use its static registry and OpenAI-compatible providers
 // (including Alibaba Cloud Model Studio) enumerate the upstream /models API
-// through CPA's credential-aware executor.
+// through Relay's credential-aware provider adapter.
 func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCredentialSnapshot) (store.UpstreamCredentialSnapshot, string, error) {
 	if err := a.reloadNativeCredentials(ctx); err != nil {
 		return row, "", err
@@ -343,16 +345,16 @@ func (a *App) activateNativeCredential(ctx context.Context, row store.UpstreamCr
 	if len(row.Models) > 0 {
 		return row, "configured", nil
 	}
-	if a.nativeCPARuntime == nil {
-		return row, "", errors.New("embedded CPA runtime is unavailable")
+	if a.nativeRuntime == nil {
+		return row, "", errors.New("native runtime runtime is unavailable")
 	}
-	models, source, err := a.nativeCPARuntime.DiscoverCredentialModels(ctx, row.ID)
+	models, source, err := a.nativeRuntime.DiscoverCredentialModels(ctx, row.ID)
 	if err != nil && len(models) == 0 {
 		return row, "", err
 	}
 	models = uniqueStrings(models)
 	if len(models) == 0 {
-		return row, "", errors.New("CPA 未能枚举该凭据的模型；当前提供商暂不支持自动接入")
+		return row, "", errors.New("Upstream 未能枚举该凭据的模型；当前提供商暂不支持自动接入")
 	}
 	updated, err := a.store.UpsertUpstreamCredential(ctx, store.UpstreamCredentialInput{
 		ID: row.ID, Name: row.Name, Provider: row.Provider, Enabled: row.Enabled,
@@ -373,7 +375,6 @@ type nativeProviderUpdateInput struct {
 	Models     *[]string          `json:"models"`
 	BaseURL    *string            `json:"base_url"`
 	ProxyID    *string            `json:"proxy_id"`
-	Prefix     *string            `json:"prefix"`
 	APIKey     *string            `json:"api_key"`
 	WebSockets *bool              `json:"websockets"`
 	Headers    *map[string]string `json:"headers"`
@@ -382,7 +383,7 @@ type nativeProviderUpdateInput struct {
 
 func (input nativeProviderUpdateInput) empty() bool {
 	return input.Disabled == nil && input.Name == nil && input.Models == nil && input.BaseURL == nil &&
-		input.ProxyID == nil && input.Prefix == nil && input.APIKey == nil && input.WebSockets == nil &&
+		input.ProxyID == nil && input.APIKey == nil && input.WebSockets == nil &&
 		input.Headers == nil && input.Document == nil
 }
 
@@ -418,14 +419,7 @@ func updateNativeCredentialDocument(current json.RawMessage, source string, inpu
 	}
 	delete(document, "proxy_url")
 	delete(document, "_relay_proxy_url")
-	if input.Prefix != nil {
-		value, err := normalizeNativePrefix(*input.Prefix)
-		if err != nil {
-			return nil, err
-		}
-		input.Prefix = &value
-		setString("prefix", input.Prefix)
-	}
+	delete(document, "prefix")
 	if input.APIKey != nil {
 		if nativeCredentialAuthKind(document, source) != "api_key" {
 			return nil, errors.New("只有 API Key 账户可以轮换 API Key")
@@ -463,14 +457,6 @@ func validNativeBaseURL(value string) bool {
 	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
 }
 
-func normalizeNativePrefix(value string) (string, error) {
-	value = strings.Trim(strings.TrimSpace(value), "/")
-	if strings.Contains(value, "/") {
-		return "", errors.New("模型前缀只能是单个路径段")
-	}
-	return value, nil
-}
-
 func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request) {
 	var input nativeProviderUpdateInput
 	if !decodeJSON(w, r, &input) {
@@ -496,6 +482,10 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "validation_error", documentErr.Error())
 		return
 	}
+	if documentErr = validateSupportedCredentialDocument(row.Provider, document); documentErr != nil {
+		writeError(w, http.StatusBadRequest, "unsupported_credential", documentErr.Error())
+		return
+	}
 	name, models, enabled := row.Name, row.Models, row.Enabled
 	proxyID := row.ProxyID
 	if input.ProxyID != nil {
@@ -518,11 +508,11 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 	if input.Models != nil {
 		models = uniqueStrings(*input.Models)
 		if len(models) == 0 {
-			writeError(w, http.StatusBadRequest, "validation_error", "至少选择一个 CPA 模型")
+			writeError(w, http.StatusBadRequest, "validation_error", "至少选择一个 Upstream 模型")
 			return
 		}
 		if !enabled && !equalFoldedStrings(models, row.Models) {
-			writeError(w, http.StatusConflict, "credential_disabled", "请先启用账户，再从 CPA 选择模型")
+			writeError(w, http.StatusConflict, "credential_disabled", "请先启用账户，再从 Upstream 选择模型")
 			return
 		}
 	}
@@ -541,12 +531,12 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if input.Models != nil && enabled {
-		if a.nativeCPARuntime == nil {
+		if a.nativeRuntime == nil {
 			rollback()
-			writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", "embedded CPA runtime is unavailable")
+			writeError(w, http.StatusServiceUnavailable, "model_catalog_unavailable", "native runtime runtime is unavailable")
 			return
 		}
-		candidates, _, discoverErr := a.nativeCPARuntime.DiscoverCredentialModels(r.Context(), row.ID)
+		candidates, _, discoverErr := a.nativeRuntime.DiscoverCredentialModels(r.Context(), row.ID)
 		if discoverErr != nil && len(candidates) == 0 {
 			rollback()
 			writeError(w, http.StatusBadGateway, "model_catalog_unavailable", discoverErr.Error())
@@ -554,7 +544,7 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 		}
 		if err = validateNativeCredentialModels(models, candidates); err != nil {
 			rollback()
-			writeError(w, http.StatusBadRequest, "model_not_in_cpa_catalog", err.Error())
+			writeError(w, http.StatusBadRequest, "model_not_in_upstream_catalog", err.Error())
 			return
 		}
 	}

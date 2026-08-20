@@ -27,7 +27,9 @@ import { ProxiesView } from "@/components/proxies-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { RuntimeSettingsView } from "@/components/runtime-settings-view"
 import { AdminSubscriptionsView } from "@/components/admin-subscriptions-view"
+import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -100,13 +102,141 @@ import { useSessionStorage } from "@/hooks/use-session-storage"
 interface AdminWorkspaceProps {
   page: Page
   currentUserId: string
+  onPageChange: (page: Page) => void
 }
 
-export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
-  const [overview, setOverview] = useState<AdminOverview | null>(null)
-  const [usage, setUsage] = useState<UsageReport | null>(null)
+export function AdminWorkspace({
+  page,
+  currentUserId,
+  onPageChange,
+}: AdminWorkspaceProps) {
+  if (page === "users" || page === "invitations") {
+    return (
+      <UsersHub
+        currentUserId={currentUserId}
+        initialTab={page === "invitations" ? "invites" : "accounts"}
+      />
+    )
+  }
+  if (page === "providers") return <ProvidersView />
+  if (page === "settings" || page === "proxies") {
+    return (
+      <SettingsHub initialTab={page === "proxies" ? "proxies" : "runtime"} />
+    )
+  }
+  if (page === "subscriptions") return <AdminSubscriptionsView />
+  if (page === "logs") return <RequestLogsWorkbench admin />
+  if (page === "pricing") return <PricingView />
+  if (page === "usage") return <UsageView admin />
+  return <AdminOverviewPage onPageChange={onPageChange} />
+}
+
+function UsersHub({
+  currentUserId,
+  initialTab,
+}: {
+  currentUserId: string
+  initialTab: "accounts" | "invites"
+}) {
+  const [tab, setTab] = useState(initialTab)
   const [users, setUsers] = useState<User[]>([])
   const [invitations, setInvitations] = useState<Invitation[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
+  const [now] = useState(() => Date.now())
+
+  const load = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true)
+    setLoadError("")
+    try {
+      const [usersValue, invitationsValue] = await Promise.all([
+        api<{ items: User[] }>("/api/admin/tenants"),
+        api<{ items: Invitation[] }>("/api/admin/invitations"),
+      ])
+      setUsers(usersValue.items ?? [])
+      setInvitations(invitationsValue.items ?? [])
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : "无法读取用户数据"
+      setLoadError(message)
+      if (!showLoading) toast.error(message)
+    } finally {
+      if (showLoading) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load(true)
+  }, [load])
+
+  if (loading) return <LoadingView />
+  if (loadError && users.length === 0 && invitations.length === 0) {
+    return <LoadErrorView message={loadError} onRetry={() => void load(true)} />
+  }
+
+  const pendingInvites = invitations.filter((item) => {
+    const expired = new Date(item.expires_at).getTime() <= now
+    return !item.used_at && !item.revoked_at && !expired
+  }).length
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          if (value === "accounts" || value === "invites") setTab(value)
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="accounts">账号</TabsTrigger>
+          <TabsTrigger value="invites">
+            邀请
+            {pendingInvites > 0 ? (
+              <Badge variant="secondary">{pendingInvites}</Badge>
+            ) : null}
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {tab === "accounts" ? (
+        <UsersView
+          users={users}
+          currentUserId={currentUserId}
+          onChanged={() => load()}
+        />
+      ) : (
+        <InvitationsView items={invitations} onChanged={() => load()} />
+      )}
+    </div>
+  )
+}
+
+function SettingsHub({ initialTab }: { initialTab: "runtime" | "proxies" }) {
+  const [tab, setTab] = useState(initialTab)
+  return (
+    <div className="flex flex-col gap-4">
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          if (value === "runtime" || value === "proxies") setTab(value)
+        }}
+      >
+        <TabsList>
+          <TabsTrigger value="runtime">运行策略</TabsTrigger>
+          <TabsTrigger value="proxies">出站代理</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {tab === "runtime" ? <RuntimeSettingsView /> : <ProxiesView />}
+    </div>
+  )
+}
+
+function AdminOverviewPage({
+  onPageChange,
+}: {
+  onPageChange: (page: Page) => void
+}) {
+  const [overview, setOverview] = useState<AdminOverview | null>(null)
+  const [usage, setUsage] = useState<UsageReport | null>(null)
   const [logs, setLogs] = useState<RequestLog[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("")
@@ -115,23 +245,13 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
     if (showLoading) setLoading(true)
     setLoadError("")
     try {
-      const [
-        overviewValue,
-        usageValue,
-        usersValue,
-        invitationsValue,
-        logsValue,
-      ] = await Promise.all([
+      const [overviewValue, usageValue, logsValue] = await Promise.all([
         api<AdminOverview>("/api/admin/overview"),
         api<UsageReport>("/api/admin/usage?days=30"),
-        api<{ items: User[] }>("/api/admin/tenants"),
-        api<{ items: Invitation[] }>("/api/admin/invitations"),
-        api<{ items: RequestLog[] }>("/api/admin/logs?limit=100"),
+        api<{ items: RequestLog[] }>("/api/admin/logs?limit=8"),
       ])
       setOverview(overviewValue)
       setUsage(usageValue)
-      setUsers(usersValue.items ?? [])
-      setInvitations(invitationsValue.items ?? [])
       setLogs(logsValue.items ?? [])
     } catch (cause) {
       const message =
@@ -156,30 +276,9 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
       />
     )
   }
-  if (page === "users")
-    return (
-      <UsersView users={users} currentUserId={currentUserId} onChanged={load} />
-    )
-  if (page === "invitations")
-    return <InvitationsView items={invitations} onChanged={load} />
-  if (page === "providers") return <ProvidersView />
-  if (page === "proxies") return <ProxiesView />
-  if (page === "settings") return <RuntimeSettingsView />
-  if (page === "subscriptions") return <AdminSubscriptionsView />
-  if (page === "logs") return <RequestLogsWorkbench admin />
-  if (page === "pricing") return <PricingView />
-  if (page === "usage") {
-    return <UsageView initialReport={usage} admin users={users} />
-  }
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">管理总览</h1>
-        <p className="text-sm text-muted-foreground">
-          用户增长、系统负载和异常概况。
-        </p>
-      </div>
       <MetricGrid
         items={[
           {
@@ -215,7 +314,11 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
             <CardTitle>需要关注</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <div className="flex items-center justify-between rounded-lg bg-muted p-3">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between rounded-lg bg-muted p-3 text-left"
+              onClick={() => onPageChange("invitations")}
+            >
               <div className="flex items-center gap-3">
                 <SendIcon className="size-4 text-muted-foreground" />
                 <div>
@@ -224,8 +327,12 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
                 </div>
               </div>
               <Badge variant="secondary">{overview.pending_invitations}</Badge>
-            </div>
-            <div className="flex items-center justify-between rounded-lg bg-muted p-3">
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between rounded-lg bg-muted p-3 text-left"
+              onClick={() => onPageChange("users")}
+            >
               <div className="flex items-center gap-3">
                 <UserCheckIcon className="size-4 text-muted-foreground" />
                 <div>
@@ -236,11 +343,22 @@ export function AdminWorkspace({ page, currentUserId }: AdminWorkspaceProps) {
                 </div>
               </div>
               <Badge variant="secondary">{overview.enabled_users}</Badge>
-            </div>
+            </button>
           </CardContent>
         </Card>
       </div>
-      <LogsTable logs={logs.slice(0, 8)} />
+      <LogsTable
+        logs={logs}
+        action={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onPageChange("logs")}
+          >
+            全部日志
+          </Button>
+        }
+      />
     </div>
   )
 }
@@ -354,12 +472,6 @@ function UsersView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">用户</h1>
-        <p className="text-sm text-muted-foreground">
-          受邀注册账户与当前余额。
-        </p>
-      </div>
       <Card>
         <CardHeader>
           <CardTitle>全部用户</CardTitle>
@@ -737,23 +849,19 @@ function InvitationsView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">邀请</h1>
-          <p className="text-sm text-muted-foreground">
-            生成单次邀请并查看使用状态。
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setShowResult(false)
-            setOpen(true)
-          }}
-        >
-          <PlusIcon data-icon="inline-start" />
-          生成邀请
-        </Button>
-      </div>
+      <PageHeader
+        actions={
+          <Button
+            onClick={() => {
+              setShowResult(false)
+              setOpen(true)
+            }}
+          >
+            <PlusIcon data-icon="inline-start" />
+            生成邀请
+          </Button>
+        }
+      />
       {result ? (
         <Card>
           <CardHeader className="flex-row items-start justify-between gap-4">

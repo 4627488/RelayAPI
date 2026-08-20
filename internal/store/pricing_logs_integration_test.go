@@ -27,7 +27,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sqlDB.Close()
-	if err := database.Exec(`TRUNCATE cpa_lifecycle_events, request_log_details, request_reservations, usage_daily_rollups,
+	if err := database.Exec(`TRUNCATE upstream_lifecycle_events, request_log_details, request_reservations, usage_daily_rollups,
 		child_quota_windows, child_subscriptions, parent_quota_observations, parent_quota_windows,
 		parent_subscriptions, billing_ledgers, request_logs, model_price_rules, model_aliases,
 		model_catalog_prices, model_prices, api_keys, invitations, tenants CASCADE`).Error; err != nil {
@@ -79,7 +79,8 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	cost := int64(42)
 	if err := dataStore.WriteLog(ctx, LogInput{
 		ID: requestID, TenantID: tenantID, APIKeyID: keyID, Model: "alias-model",
-		RequestedModel: "alias-model", Method: "POST", Path: "/v1/responses", RequestType: "responses",
+		RequestedModel: "alias-model", ActualModel: "actual-model", Method: "POST", Path: "/v1/responses", RequestType: "responses",
+		UpstreamTraceID: "upstream-trace", UpstreamExecutionID: "upstream-execution",
 		StatusCode: 200, Usage: Usage{Prompt: 10, Completion: 2, Cached: 4, Reasoning: 1, Total: 12},
 		CostNanoUSD: &cost, Price: &resolved, PricingComplete: true, Settled: true,
 		StartedAt: started, CompletedAt: time.Now(), LatencyMS: 1000,
@@ -89,32 +90,20 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := dataStore.RecordCPALifecycleEvent(ctx, CPALifecycleInput{
-		RequestLogID: requestID, Event: "request.complete", CPAExecutionID: "cpa-execution",
-		CPATraceID: "cpa-trace", Model: "actual-model", RequestedModel: "alias-model",
-		Provider: "openai", ExecutorType: "codex", AuthIndex: "auth-priority",
-		Outcome: "succeeded",
-	}); err != nil {
-		t.Fatal(err)
-	}
 	detailed, err := dataStore.RequestLogDetail(ctx, requestID, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detailed.Log.CPAExecutionID != "cpa-execution" || detailed.Log.ActualModel != "actual-model" || detailed.Detail == nil {
-		t.Fatalf("lifecycle enrichment missing: %+v / %+v", detailed.Log, detailed.Detail)
+	if detailed.Log.UpstreamExecutionID != "upstream-execution" || detailed.Log.ActualModel != "actual-model" || detailed.Detail == nil {
+		t.Fatalf("upstream identity missing: %+v / %+v", detailed.Log, detailed.Detail)
 	}
 	if detailed.Log.RequestBodyBytes != 128 || detailed.Log.ForwardedBodyBytes != 144 || detailed.Log.ResponseBodyBytes != 512 {
 		t.Fatalf("payload sizes were not persisted in the request summary: %+v", detailed.Log)
 	}
-	var lifecycleCount int64
-	if err := database.Model(&db.CPALifecycleEvent{}).Where("request_log_id = ?", requestID).Count(&lifecycleCount).Error; err != nil || lifecycleCount != 0 {
-		t.Fatalf("temporary lifecycle rows = %d, err=%v", lifecycleCount, err)
-	}
 	if detailed.Log.ParentSubscriptionID != nil || detailed.Log.ChildSubscriptionID != nil {
 		t.Fatalf("empty subscription IDs must be stored as NULL: %+v", detailed.Log)
 	}
-	page, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Query: "cpa-trace", PageSize: 25})
+	page, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Query: "upstream-trace", PageSize: 25})
 	if err != nil || page.Total != 1 || page.Total != page.Summary.Requests || page.Summary.Tokens != 12 || page.Summary.PromptTokens != 10 || page.Summary.RequestBytes != 128 || page.Summary.ResponseBytes != 512 {
 		t.Fatalf("log query = %+v, err=%v", page, err)
 	}
@@ -264,7 +253,7 @@ func TestRetentionDeletesSuccessfulUnpricedDetails(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sqlDB.Close()
-	if err := database.Exec(`TRUNCATE cpa_lifecycle_events, request_log_details, request_reservations,
+	if err := database.Exec(`TRUNCATE upstream_lifecycle_events, request_log_details, request_reservations,
 		child_quota_windows, child_subscriptions, parent_quota_observations, parent_quota_windows,
 		parent_subscriptions, billing_ledgers, request_logs, api_keys, tenants CASCADE`).Error; err != nil {
 		t.Fatal(err)

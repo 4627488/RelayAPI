@@ -6,7 +6,9 @@ import {
   type FormEvent,
 } from "react"
 import {
+  ActivityIcon,
   CheckIcon,
+  CircleCheckIcon,
   ExternalLinkIcon,
   FileJson2Icon,
   KeyRoundIcon,
@@ -14,9 +16,9 @@ import {
   NetworkIcon,
   PlusIcon,
   RefreshCwIcon,
-  SearchIcon,
   ShieldCheckIcon,
   Trash2Icon,
+  TriangleAlertIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -33,15 +35,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
@@ -77,7 +71,21 @@ import {
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  InfoBar,
+  PageHeader,
+  SearchField,
+  StatStrip,
+} from "@/components/workspace-ui"
 import { Textarea } from "@/components/ui/textarea"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
 import {
@@ -86,17 +94,12 @@ import {
   postJSON,
   type OutboundProxy,
   type ProviderAccount,
+  type ProviderAccountTestResult,
 } from "@/lib/api"
 import { dateTime } from "@/lib/format"
 
 const oauthProviders = [
   { value: "codex", label: "OpenAI Codex", detail: "ChatGPT / Codex 订阅账户" },
-  { value: "claude", label: "Claude", detail: "Anthropic OAuth 账户" },
-  {
-    value: "antigravity",
-    label: "Antigravity",
-    detail: "Google Antigravity 账户",
-  },
   { value: "kimi", label: "Kimi", detail: "使用设备码连接" },
   { value: "xai", label: "xAI", detail: "使用设备码连接" },
 ]
@@ -105,21 +108,12 @@ const apiKeyProviders = [
   { value: "openai", label: "OpenAI" },
   { value: "aliyun-bailian", label: "阿里云百炼" },
   { value: "openai-compatibility", label: "OpenAI 兼容接口" },
-  { value: "claude", label: "Claude" },
-  { value: "gemini", label: "Gemini" },
-  { value: "gemini-interactions", label: "Gemini Interactions" },
-  { value: "aistudio", label: "Google AI Studio" },
   { value: "codex", label: "Codex API Key" },
   { value: "xai", label: "xAI" },
 ]
 
 const importProviders = [
-  ...new Set([
-    ...apiKeyProviders.map((item) => item.value),
-    "vertex",
-    "antigravity",
-    "kimi",
-  ]),
+  ...new Set([...apiKeyProviders.map((item) => item.value), "kimi"]),
 ]
 
 type OAuthStart = {
@@ -142,8 +136,7 @@ type ProviderAccountUpdate = {
   name: string
   models: string[]
   base_url?: string
-  prefix: string
-  websockets: boolean
+  websockets?: boolean
   proxy_id: string
   api_key?: string
   headers?: Record<string, string>
@@ -172,9 +165,64 @@ function isOAuthAccount(account: ProviderAccount) {
   return account.auth_kind === "oauth" || account.source === "oauth"
 }
 
+function accountKey(account: ProviderAccount) {
+  return account.id || account.name
+}
+
+function accountStatus(account: ProviderAccount) {
+  if (account.disabled)
+    return { label: "已停用", variant: "secondary" as const }
+  if (account.unavailable) {
+    if (account.quota_exceeded) {
+      return { label: "额度冷却", variant: "destructive" as const }
+    }
+    if (account.status === "cooldown") {
+      return { label: "故障冷却", variant: "destructive" as const }
+    }
+    return { label: "暂不可用", variant: "secondary" as const }
+  }
+  return { label: "可用", variant: "outline" as const }
+}
+
+function publishedModels(account: ProviderAccount) {
+  return account.models ?? []
+}
+
+function modelSummary(account: ProviderAccount) {
+  const models = publishedModels(account)
+  if (!models.length) return { primary: "未发布", extra: "" }
+  if (models.length === 1) return { primary: models[0], extra: "" }
+  return { primary: models[0], extra: `另 ${models.length - 1} 个` }
+}
+
+function quotaSummary(account: ProviderAccount) {
+  if (account.quota_exceeded) {
+    return account.quota_recover_at
+      ? `${dateTime(account.quota_recover_at)} 后可重试`
+      : "上游已限流"
+  }
+  const snapshot = account.quota_snapshot
+  const windows =
+    snapshot && "windows" in snapshot && Array.isArray(snapshot.windows)
+      ? snapshot.windows
+      : []
+  const window = windows.find((item) => typeof item.used_percent === "number")
+  if (window && typeof window.used_percent === "number") {
+    const label = window.label || window.kind || "额度"
+    return `${label} ${Math.round(window.used_percent)}%`
+  }
+  if (account.quota_probe_status === "unsupported") return "上游无自动额度"
+  if (account.quota_probe_status === "error") {
+    return account.quota_probe_error || "额度探测失败"
+  }
+  if (account.success || account.failed) {
+    return `${account.success ?? 0} 成功 / ${account.failed ?? 0} 失败`
+  }
+  return "尚未探测"
+}
+
 function normalizedOAuthProvider(provider: string) {
   const value = provider.trim().toLowerCase()
-  if (value === "anthropic") return "claude"
   if (value === "openai") return "codex"
   if (value === "grok" || value === "x.ai") return "xai"
   return value
@@ -192,6 +240,10 @@ export function ProvidersView() {
   const [reauthenticating, setReauthenticating] =
     useState<ProviderAccount | null>(null)
   const [selected, setSelected] = useState<ProviderAccount | null>(null)
+  const [testing, setTesting] = useState<ProviderAccount | null>(null)
+  const [testResults, setTestResults] = useState<
+    Record<string, ProviderAccountTestResult>
+  >({})
   const [deleting, setDeleting] = useState<ProviderAccount | null>(null)
 
   const load = useCallback(async () => {
@@ -284,7 +336,7 @@ export function ProvidersView() {
     value: ProviderAccountUpdate
   ) {
     if (!value.name.trim() || !value.models.length) {
-      toast.error("账户名称和至少一个 CPA 模型为必填项")
+      toast.error("账户名称和至少一个公开模型为必填项")
       return
     }
     setPending(true)
@@ -333,69 +385,63 @@ export function ProvidersView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">模型账户</h1>
-          <p className="mt-1 text-sm text-muted-foreground">连接凭据并设置可用模型。</p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            disabled={syncingQuota}
-            onClick={() => void syncQuota()}
-          >
-            {syncingQuota ? (
-              <Spinner />
-            ) : (
-              <RefreshCwIcon data-icon="inline-start" />
-            )}
-            刷新额度
-          </Button>
-          <Button
-            onClick={() => {
-              setReauthenticating(null)
-              setConnectOpen(true)
-            }}
-          >
-            <PlusIcon data-icon="inline-start" />
-            连接账户
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        actions={
+          <>
+            <Button
+              variant="outline"
+              disabled={syncingQuota}
+              onClick={() => void syncQuota()}
+            >
+              {syncingQuota ? (
+                <Spinner />
+              ) : (
+                <RefreshCwIcon data-icon="inline-start" />
+              )}
+              刷新额度
+            </Button>
+            <Button
+              onClick={() => {
+                setReauthenticating(null)
+                setConnectOpen(true)
+              }}
+            >
+              <PlusIcon data-icon="inline-start" />
+              连接账户
+            </Button>
+          </>
+        }
+      />
 
-      <div className="grid grid-cols-3 gap-px overflow-hidden rounded-lg border bg-border">
-        {[
-          ["账户", accounts.length],
-          ["可用", enabled],
-          ["公开模型", modelCount],
-        ].map(([label, value]) => (
-          <div key={label} className="bg-background px-4 py-3">
-            <p className="text-xs text-muted-foreground">{label}</p>
-            <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
-          </div>
-        ))}
-      </div>
+      <StatStrip
+        className="grid-cols-3"
+        items={[
+          { label: "账户", value: accounts.length },
+          { label: "可用", value: enabled },
+          { label: "公开模型", value: modelCount },
+        ]}
+      />
 
-      <Alert>
-        <ShieldCheckIcon />
-        <AlertTitle>Relay 托管凭据</AlertTitle>
-        <AlertDescription>
-          OAuth 授权后和 API Key
-          均整体加密保存。页面只展示账户元数据，不会返回令牌明文。
-        </AlertDescription>
-      </Alert>
+      <InfoBar icon={ShieldCheckIcon}>
+        一行一个上游账户。发布模型决定对外目录；测试会向该账户发一次最短推理，不走用户计费。
+      </InfoBar>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative flex-1">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="搜索账户或模型"
-            className="pl-9"
-          />
-        </div>
+        <SearchField
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onClear={() => setSearch("")}
+          placeholder="搜索账户或模型"
+          className="flex-1"
+        />
         <Select
+          items={[
+            { value: "all", label: "全部提供商" },
+            ...providerOptions.map((item) => ({
+              value: item,
+              label: providerLabel(item),
+            })),
+          ]}
           value={provider}
           onValueChange={(next) => {
             if (next) setProvider(next)
@@ -418,132 +464,118 @@ export function ProvidersView() {
       </div>
 
       {filtered.length ? (
-        <div className="grid gap-3 lg:grid-cols-2">
-          {filtered.map((account) => (
-            <Card
-              key={account.id || account.name}
-              className="flex h-full flex-col transition-colors hover:border-foreground/20"
-            >
-              <CardHeader>
-                <div className="min-w-0">
-                  <div className="mb-1.5 flex items-center gap-2">
-                    <CardTitle className="truncate text-base">
-                      {displayName(account)}
-                    </CardTitle>
-                    <Badge variant="outline">{sourceLabel(account)}</Badge>
-                    {account.plan_type ? (
-                      <Badge variant="secondary">{account.plan_type}</Badge>
-                    ) : null}
-                  </div>
-                  <CardDescription>
-                    {providerLabel(account.provider)}
-                  </CardDescription>
-                </div>
-                <CardAction>
-                  <Badge
-                    title={account.status_message}
-                    variant={
-                      account.disabled || account.unavailable
-                        ? "secondary"
-                        : "default"
-                    }
-                  >
-                    {account.disabled
-                      ? "已停用"
-                      : account.unavailable
-                        ? account.quota_exceeded
-                          ? "额度冷却"
-                          : "暂不可用"
-                        : "可用"}
-                  </Badge>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="flex flex-1 flex-col gap-4">
-                {isOAuthAccount(account) ? (
-                  <section
-                    className="flex flex-col gap-2"
-                    aria-label="OAuth 账户额度"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium">账户额度</p>
-                      {account.quota_exceeded ? (
-                        <Badge variant="destructive">
-                          {account.quota_recover_at
-                            ? `${dateTime(account.quota_recover_at)} 后重试`
-                            : "CPA 已限流"}
+        <Card>
+          <CardContent className="px-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>账户</TableHead>
+                  <TableHead>提供商</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>公开模型</TableHead>
+                  <TableHead>额度</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((account) => {
+                  const status = accountStatus(account)
+                  const models = modelSummary(account)
+                  const lastTest = testResults[accountKey(account)]
+                  const proxyName = account.proxy_configured
+                    ? (proxies.find((item) => item.id === account.proxy_id)
+                        ?.name ?? "独立代理")
+                    : "直连"
+                  return (
+                    <TableRow key={accountKey(account)}>
+                      <TableCell className="max-w-56 whitespace-normal">
+                        <p className="truncate font-medium">
+                          {displayName(account)}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {[account.email, proxyName]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      </TableCell>
+                      <TableCell className="whitespace-normal">
+                        <p>{providerLabel(account.provider)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {sourceLabel(account)}
+                          {account.plan_type ? ` · ${account.plan_type}` : ""}
+                        </p>
+                      </TableCell>
+                      <TableCell className="whitespace-normal">
+                        <Badge
+                          title={account.status_message}
+                          variant={status.variant}
+                        >
+                          {status.label}
                         </Badge>
-                      ) : null}
-                    </div>
-                    <QuotaSnapshot
-                      compact
-                      snapshot={account.quota_snapshot}
-                      status={account.quota_probe_status}
-                      error={account.quota_probe_error}
-                      observedAt={account.quota_observed_at}
-                    />
-                    {account.last_refreshed_at ||
-                    account.success ||
-                    account.failed ? (
-                      <p className="text-xs text-muted-foreground">
-                        {account.last_refreshed_at
-                          ? `令牌刷新于 ${dateTime(account.last_refreshed_at)}`
-                          : "CPA 运行时"}
-                        {" · "}请求 {account.success ?? 0} 成功 /{" "}
-                        {account.failed ?? 0} 失败
-                      </p>
-                    ) : null}
-                  </section>
-                ) : null}
-                <div className="flex flex-wrap gap-1.5">
-                  {(account.models ?? []).slice(0, 5).map((model) => (
-                    <Badge
-                      key={model}
-                      variant="outline"
-                      className="font-mono font-normal"
-                    >
-                      {model}
-                    </Badge>
-                  ))}
-                  {(account.models?.length ?? 0) > 5 ? (
-                    <Badge variant="secondary">
-                      +{(account.models?.length ?? 0) - 5}
-                    </Badge>
-                  ) : null}
-                  {!(account.models?.length ?? 0) ? (
-                    <span className="text-xs text-muted-foreground">
-                      CPA 尚未同步可用模型
-                    </span>
-                  ) : null}
-                </div>
-              </CardContent>
-              <CardFooter className="flex min-h-12 gap-3 text-xs text-muted-foreground">
-                {account.email ? (
-                  <span className="truncate">{account.email}</span>
-                ) : null}
-                {account.proxy_configured ? (
-                  <span className="flex items-center gap-1">
-                    <NetworkIcon className="size-3" />
-                    {proxies.find((item) => item.id === account.proxy_id)
-                      ?.name ?? "独立代理"}
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1">
-                    <NetworkIcon className="size-3" />
-                    直连
-                  </span>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="ml-auto"
-                  onClick={() => setSelected(account)}
-                >
-                  管理
-                </Button>
-              </CardFooter>
-            </Card>
-          ))}
-        </div>
+                        {lastTest ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            测试 {lastTest.ok ? "通过" : "失败"} ·{" "}
+                            {lastTest.latency_ms} ms
+                          </p>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="max-w-64 whitespace-normal">
+                        <p
+                          className={
+                            publishedModels(account).length
+                              ? "truncate font-mono text-xs"
+                              : "text-xs text-muted-foreground"
+                          }
+                          title={publishedModels(account).join("\n")}
+                        >
+                          {models.primary}
+                        </p>
+                        {models.extra ? (
+                          <p className="text-xs text-muted-foreground">
+                            {models.extra}
+                          </p>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="max-w-48 text-xs whitespace-normal text-muted-foreground">
+                        {quotaSummary(account)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <span className="inline-flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={
+                              account.disabled ||
+                              !publishedModels(account).length
+                            }
+                            title={
+                              account.disabled
+                                ? "启用后才能测试"
+                                : publishedModels(account).length
+                                  ? undefined
+                                  : "先发布至少一个模型"
+                            }
+                            onClick={() => setTesting(account)}
+                          >
+                            <ActivityIcon data-icon="inline-start" />
+                            测试
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setSelected(account)}
+                          >
+                            管理
+                          </Button>
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       ) : (
         <Card>
           <CardContent className="py-12">
@@ -600,7 +632,24 @@ export function ProvidersView() {
           setSelected(null)
           setReauthenticating(account)
         }}
+        onTest={(account) => {
+          setSelected(null)
+          setTesting(account)
+        }}
+        lastTest={selected ? testResults[accountKey(selected)] : undefined}
         proxies={proxies}
+      />
+      <TestAccountDialog
+        account={testing}
+        onOpenChange={(open) => {
+          if (!open) setTesting(null)
+        }}
+        onResult={(account, result) => {
+          setTestResults((current) => ({
+            ...current,
+            [accountKey(account)]: result,
+          }))
+        }}
       />
 
       <AlertDialog
@@ -654,7 +703,7 @@ function ConnectAccountDialog({
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus | null>(null)
   const [callbackURL, setCallbackURL] = useState("")
   const [name, setName] = useState("")
-  const [document, setDocument] = useState('{\n  "type": "vertex"\n}')
+  const [document, setDocument] = useState('{\n  "type": "codex"\n}')
   const [proxyID, setProxyID] = useState("")
 
   const cancelOAuth = useCallback(async (state: string) => {
@@ -811,7 +860,6 @@ function ConnectAccountDialog({
         api_key: String(form.get("api_key") ?? ""),
         base_url: String(form.get("base_url") ?? ""),
         proxy_id: proxyID,
-        prefix: String(form.get("prefix") ?? ""),
       }
     } else {
       let parsed: unknown
@@ -872,7 +920,7 @@ function ConnectAccountDialog({
                   {oauthStatus.email
                     ? `已连接 ${oauthStatus.email}`
                     : "账户身份已验证。"}{" "}
-                  保存后将由 CPA 按账户类型建立模型目录。
+                  保存后按账户类型建立模型目录。
                 </AlertDescription>
               </Alert>
               <Field>
@@ -887,6 +935,13 @@ function ConnectAccountDialog({
               <Field>
                 <FieldLabel>账户代理</FieldLabel>
                 <Select
+                  items={[
+                    { value: "direct", label: "不使用代理（直连）" },
+                    ...proxies.map((item) => ({
+                      value: item.id,
+                      label: `${item.name} · ${item.endpoint}`,
+                    })),
+                  ]}
                   value={proxyID || "direct"}
                   onValueChange={(next) =>
                     setProxyID(next === "direct" || !next ? "" : next)
@@ -913,7 +968,7 @@ function ConnectAccountDialog({
             </FieldGroup>
           </form>
         ) : oauth ? (
-          <div className="space-y-5">
+          <div className="flex flex-col gap-5">
             <div className="rounded-lg border p-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -1000,7 +1055,7 @@ function ConnectAccountDialog({
                   ? "codex"
                   : next === "api_key"
                     ? "openai"
-                    : "vertex"
+                    : "codex"
               )
             }}
           >
@@ -1018,10 +1073,11 @@ function ConnectAccountDialog({
                 导入
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="oauth" className="mt-5 space-y-5">
+            <TabsContent value="oauth" className="mt-5 flex flex-col gap-5">
               <Field>
                 <FieldLabel>提供商</FieldLabel>
                 <Select
+                  items={oauthProviders}
                   value={provider}
                   onValueChange={(next) => {
                     if (next) setProvider(next)
@@ -1149,6 +1205,7 @@ function CredentialFields({
         <Field>
           <FieldLabel>提供商</FieldLabel>
           <Select
+            items={options}
             value={provider}
             onValueChange={(next) => {
               if (next) setProvider(next)
@@ -1171,9 +1228,9 @@ function CredentialFields({
       </div>
       <Alert>
         <RefreshCwIcon />
-        <AlertTitle>模型由 CPA 提供</AlertTitle>
+        <AlertTitle>模型目录来自上游</AlertTitle>
         <AlertDescription>
-          连接成功后自动读取该凭据的模型目录，再到“管理账户”中勾选公开范围。
+          连接成功后自动读取该凭据的模型目录，再到“管理”里勾选要对外发布的范围。
         </AlertDescription>
       </Alert>
       {mode === "api_key" ? (
@@ -1210,6 +1267,13 @@ function CredentialFields({
           <Field>
             <FieldLabel>账户代理</FieldLabel>
             <Select
+              items={[
+                { value: "direct", label: "不使用代理（直连）" },
+                ...proxies.map((item) => ({
+                  value: item.id,
+                  label: `${item.name} · ${item.endpoint}`,
+                })),
+              ]}
               value={proxyID || "direct"}
               onValueChange={(next) =>
                 setProxyID(next === "direct" || !next ? "" : next)
@@ -1233,16 +1297,6 @@ function CredentialFields({
               只影响这个模型账户；未选择时始终直连，不会继承系统代理。
             </FieldDescription>
           </Field>
-          <Field>
-            <FieldLabel htmlFor="account-prefix">模型前缀（可选）</FieldLabel>
-            <Input
-              id="account-prefix"
-              name="prefix"
-              className="font-mono"
-              placeholder="team-a"
-              spellCheck={false}
-            />
-          </Field>
         </>
       ) : (
         <>
@@ -1258,13 +1312,20 @@ function CredentialFields({
               className="font-mono text-xs"
             />
             <FieldDescription>
-              用于 Vertex 服务账户或迁移现有 CPA 凭据。OAuth 账户请使用 OAuth
-              标签页。
+              用于导入 Codex、Kimi、xAI、OpenAI 或百炼凭据。OAuth 账户请使用
+              OAuth 标签页。
             </FieldDescription>
           </Field>
           <Field>
             <FieldLabel>账户代理</FieldLabel>
             <Select
+              items={[
+                { value: "direct", label: "不使用代理（直连）" },
+                ...proxies.map((item) => ({
+                  value: item.id,
+                  label: `${item.name} · ${item.endpoint}`,
+                })),
+              ]}
               value={proxyID || "direct"}
               onValueChange={(next) =>
                 setProxyID(next === "direct" || !next ? "" : next)
@@ -1302,6 +1363,8 @@ function ManageAccountDialog({
   onToggle,
   onDelete,
   onReauthenticate,
+  onTest,
+  lastTest,
   proxies,
 }: {
   account: ProviderAccount | null
@@ -1314,11 +1377,12 @@ function ManageAccountDialog({
   onToggle: (account: ProviderAccount, disabled: boolean) => Promise<void>
   onDelete: (account: ProviderAccount) => void
   onReauthenticate: (account: ProviderAccount) => void
+  onTest: (account: ProviderAccount) => void
+  lastTest?: ProviderAccountTestResult
   proxies: OutboundProxy[]
 }) {
   const [name, setName] = useState("")
   const [baseURL, setBaseURL] = useState("")
-  const [prefix, setPrefix] = useState("")
   const [websockets, setWebsockets] = useState(false)
   const [proxyID, setProxyID] = useState("")
   const [apiKey, setAPIKey] = useState("")
@@ -1348,20 +1412,20 @@ function ManageAccountDialog({
         setSelectedModels(retained.length ? retained : nextCandidates)
         if (announce) {
           if (result.warning)
-            toast.warning("CPA 已返回缓存目录", { description: result.warning })
+            toast.warning("已返回缓存目录", {
+              description: result.warning,
+            })
           else
             toast.success(
-              result.source === "cpa_upstream"
-                ? "已由 CPA 从上游枚举模型"
-                : "已读取 CPA 模型目录"
+              result.source === "upstream"
+                ? "已从上游枚举模型"
+                : "已读取模型目录"
             )
         }
       } catch (cause) {
         setCandidates([])
         setSelectedModels([])
-        toast.error(
-          cause instanceof Error ? cause.message : "无法从 CPA 获取模型"
-        )
+        toast.error(cause instanceof Error ? cause.message : "无法获取模型目录")
       } finally {
         setModelLoading(false)
       }
@@ -1373,7 +1437,6 @@ function ManageAccountDialog({
     if (!account) return
     setName(displayName(account))
     setBaseURL(account.base_url ?? "")
-    setPrefix(account.prefix ?? "")
     setWebsockets(account.websockets ?? false)
     setProxyID(account.proxy_id ?? "")
     setAPIKey("")
@@ -1431,8 +1494,9 @@ function ManageAccountDialog({
     void onSave(account, {
       name,
       models: selectedModels,
-      prefix: prefix.trim(),
-      websockets,
+      ...(["codex", "xai", "grok"].includes(account.provider.toLowerCase())
+        ? { websockets }
+        : {}),
       proxy_id: proxyID,
       ...(account.auth_kind !== "oauth" ? { base_url: baseURL.trim() } : {}),
       ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
@@ -1483,10 +1547,35 @@ function ManageAccountDialog({
                       </FieldDescription>
                     ) : null}
                   </Field>
+                  {isOAuthAccount(account) || account.quota_snapshot ? (
+                    <Field>
+                      <FieldLabel>账户额度</FieldLabel>
+                      <QuotaSnapshot
+                        snapshot={account.quota_snapshot}
+                        status={account.quota_probe_status}
+                        error={account.quota_probe_error}
+                        observedAt={account.quota_observed_at}
+                      />
+                      {lastTest ? (
+                        <FieldDescription>
+                          上次测试 {lastTest.ok ? "通过" : "失败"} ·{" "}
+                          {lastTest.model} · {lastTest.latency_ms} ms
+                        </FieldDescription>
+                      ) : null}
+                    </Field>
+                  ) : lastTest ? (
+                    <Field>
+                      <FieldLabel>上次测试</FieldLabel>
+                      <FieldDescription>
+                        {lastTest.ok ? "通过" : "失败"} · {lastTest.model} ·{" "}
+                        {lastTest.latency_ms} ms
+                      </FieldDescription>
+                    </Field>
+                  ) : null}
                   <Field>
                     <div className="flex items-center justify-between gap-3">
                       <FieldLabel htmlFor="manage-model-search">
-                        CPA 模型目录
+                        公开模型
                       </FieldLabel>
                       <Button
                         type="button"
@@ -1507,7 +1596,7 @@ function ManageAccountDialog({
                       id="manage-model-search"
                       value={modelSearch}
                       onChange={(event) => setModelSearch(event.target.value)}
-                      placeholder="筛选 CPA 模型"
+                      placeholder="筛选模型"
                       disabled={modelLoading || account.disabled}
                     />
                     <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -1539,11 +1628,11 @@ function ManageAccountDialog({
                       {modelLoading ? (
                         <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                           <Spinner />
-                          读取 CPA 模型目录…
+                          读取模型目录…
                         </div>
                       ) : visibleModels.length ? (
                         visibleModels.map((model, index) => {
-                          const id = `cpa-model-${index}`
+                          const id = `upstream-model-${index}`
                           return (
                             <Field key={model} orientation="horizontal">
                               <Checkbox
@@ -1567,7 +1656,7 @@ function ManageAccountDialog({
                         <p className="py-8 text-center text-sm text-muted-foreground">
                           {account.disabled
                             ? "账户已停用；启用后才能刷新模型目录"
-                            : "CPA 没有返回匹配模型"}
+                            : "没有匹配的模型"}
                         </p>
                       )}
                     </FieldGroup>
@@ -1604,6 +1693,13 @@ function ManageAccountDialog({
                   <Field>
                     <FieldLabel>账户代理</FieldLabel>
                     <Select
+                      items={[
+                        { value: "direct", label: "不使用代理（直连）" },
+                        ...proxies.map((item) => ({
+                          value: item.id,
+                          label: `${item.name} · ${item.endpoint}`,
+                        })),
+                      ]}
                       value={proxyID || "direct"}
                       onValueChange={(next) =>
                         setProxyID(next === "direct" || !next ? "" : next)
@@ -1629,34 +1725,25 @@ function ManageAccountDialog({
                       该选择用于此账户的推理、模型发现、令牌刷新与额度查询；未选择时明确直连。
                     </FieldDescription>
                   </Field>
-                  <Field>
-                    <FieldLabel htmlFor="manage-prefix">模型前缀</FieldLabel>
-                    <Input
-                      id="manage-prefix"
-                      className="font-mono"
-                      value={prefix}
-                      onChange={(event) => setPrefix(event.target.value)}
-                      placeholder="team-a"
-                      spellCheck={false}
-                    />
-                    <FieldDescription>
-                      可选的单段前缀，用于区分多个提供相同模型名的账户。
-                    </FieldDescription>
-                  </Field>
-                  <Field orientation="horizontal">
-                    <FieldContent>
-                      <FieldTitle>上游 WebSocket</FieldTitle>
-                      <FieldDescription>
-                        允许 CPA 对此账户使用原生 WebSocket 连接。
-                      </FieldDescription>
-                    </FieldContent>
-                    <Switch
-                      id="manage-websockets"
-                      checked={websockets}
-                      onCheckedChange={setWebsockets}
-                      aria-label="上游 WebSocket"
-                    />
-                  </Field>
+                  {["codex", "xai", "grok"].includes(
+                    account.provider.toLowerCase()
+                  ) ? (
+                    <Field orientation="horizontal">
+                      <FieldContent>
+                        <FieldTitle>上游 WebSocket</FieldTitle>
+                        <FieldDescription>
+                          对该账户启用原生多轮 Responses WebSocket；HTTP 与 SSE
+                          不受影响。
+                        </FieldDescription>
+                      </FieldContent>
+                      <Switch
+                        id="manage-websockets"
+                        checked={websockets}
+                        onCheckedChange={setWebsockets}
+                        aria-label="上游 WebSocket"
+                      />
+                    </Field>
+                  ) : null}
                   {account.auth_kind === "api_key" ? (
                     <Field>
                       <FieldLabel htmlFor="manage-api-key">
@@ -1784,6 +1871,18 @@ function ManageAccountDialog({
                     重新认证
                   </Button>
                 ) : null}
+                <Button
+                  variant="outline"
+                  disabled={
+                    pending ||
+                    account.disabled ||
+                    !publishedModels(account).length
+                  }
+                  onClick={() => onTest(account)}
+                >
+                  <ActivityIcon data-icon="inline-start" />
+                  测试
+                </Button>
               </div>
               <Button
                 disabled={pending || modelLoading || !selectedModels.length}
@@ -1794,6 +1893,137 @@ function ManageAccountDialog({
             </DialogFooter>
           </>
         ) : null}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function TestAccountDialog({
+  account,
+  onOpenChange,
+  onResult,
+}: {
+  account: ProviderAccount | null
+  onOpenChange: (open: boolean) => void
+  onResult: (
+    account: ProviderAccount,
+    result: ProviderAccountTestResult
+  ) => void
+}) {
+  const models = account ? publishedModels(account) : []
+  const [model, setModel] = useState("")
+  const [pending, setPending] = useState(false)
+  const [result, setResult] = useState<ProviderAccountTestResult | null>(null)
+
+  useEffect(() => {
+    if (!account) {
+      setModel("")
+      setPending(false)
+      setResult(null)
+      return
+    }
+    setModel(publishedModels(account)[0] ?? "")
+    setPending(false)
+    setResult(null)
+  }, [account])
+
+  async function run() {
+    if (!account || !model) return
+    setPending(true)
+    try {
+      const next = await api<ProviderAccountTestResult>(
+        `/api/admin/providers/accounts/${encodeURIComponent(accountKey(account))}/test`,
+        { method: "POST", body: JSON.stringify({ model }) }
+      )
+      setResult(next)
+      onResult(account, next)
+      if (next.ok) {
+        toast.success(`${model} 可用，${next.latency_ms} ms`)
+      } else {
+        toast.error(next.error || `${model} 测试失败`)
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "测试失败"
+      const failed: ProviderAccountTestResult = {
+        ok: false,
+        model,
+        provider: account.provider,
+        status_code: 0,
+        latency_ms: 0,
+        error: message,
+      }
+      setResult(failed)
+      onResult(account, failed)
+      toast.error(message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <Dialog open={Boolean(account)} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>测试模型</DialogTitle>
+          <DialogDescription>
+            {account
+              ? `${displayName(account)} · ${providerLabel(account.provider)}`
+              : ""}
+          </DialogDescription>
+        </DialogHeader>
+        <FieldGroup>
+          <Field>
+            <FieldLabel>公开模型</FieldLabel>
+            <Select
+              items={models.map((item) => ({ value: item, label: item }))}
+              value={model}
+              onValueChange={(next) => {
+                if (next) setModel(next)
+              }}
+            >
+              <SelectTrigger className="w-full font-mono text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {models.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              向该账户发送一次最短非流式请求。不经过用户计费，但会真实打到上游。
+            </FieldDescription>
+          </Field>
+          {result ? (
+            <div className="rounded-lg border px-3 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  {result.ok ? <CircleCheckIcon /> : <TriangleAlertIcon />}
+                  {result.ok ? "通过" : "失败"}
+                </p>
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {result.status_code || "—"} · {result.latency_ms} ms
+                </p>
+              </div>
+              <p className="mt-2 font-mono text-xs wrap-break-word text-muted-foreground">
+                {result.preview || result.error || "上游没有返回可读内容"}
+              </p>
+            </div>
+          ) : null}
+        </FieldGroup>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+          <Button disabled={pending || !model} onClick={() => void run()}>
+            {pending ? <Spinner /> : <ActivityIcon />}
+            {result ? "再测一次" : "发送测试"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
