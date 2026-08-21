@@ -48,8 +48,8 @@ func TestRuntimeXAIRewritesCodexAgentMessage(t *testing.T) {
 				return
 			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"resp_1","object":"response","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}`))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"created_at\":0,\"status\":\"completed\",\"model\":\"grok-4.5\",\"output\":[]}}\n\n"))
 	}))
 	t.Cleanup(server.Close)
 
@@ -77,6 +77,7 @@ func TestRuntimeXAIRewritesCodexAgentMessage(t *testing.T) {
 		}`),
 	}, cliproxyexecutor.Options{
 		SourceFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:       true,
 		Headers:      http.Header{"User-Agent": []string{"codex-tui/0.149.0 (Windows 10.0.26100; x86_64)"}},
 	})
 	if err != nil {
