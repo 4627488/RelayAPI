@@ -354,7 +354,7 @@ func convertCPATrace(trace relaybridge.RequestTrace) upstream.RequestTrace {
 			Number: attempt.Number, StartedAt: attempt.StartedAt, CompletedAt: attempt.CompletedAt,
 			HeadersAt: attempt.HeadersAt, RequestWrittenAt: attempt.RequestWrittenAt,
 			FirstResponseAt: firstNonZeroTime(attempt.FirstResponseAt, attempt.FirstChunkAt),
-			GetConnAt: attempt.GetConnAt, GotConnAt: attempt.GotConnAt,
+			GetConnAt:       attempt.GetConnAt, GotConnAt: attempt.GotConnAt,
 			DNSStartedAt: attempt.DNSStartedAt, DNSCompletedAt: attempt.DNSCompletedAt,
 			ConnectStartedAt: attempt.ConnectStartedAt, ConnectCompletedAt: attempt.ConnectCompletedAt,
 			TLSStartedAt: attempt.TLSStartedAt, TLSCompletedAt: attempt.TLSCompletedAt,

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,10 +13,84 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	"github.com/tidwall/gjson"
 )
+
+func TestRuntimeEnablesCodexMultiAgentV2(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+	if !runtime.cfg.Codex.OptimizeMultiAgentV2 {
+		t.Fatal("embedded CPA must rewrite official Codex multi-agent v2 input")
+	}
+}
+
+func TestRuntimeXAIRewritesCodexAgentMessage(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		for _, item := range gjson.GetBytes(gotBody, "input").Array() {
+			if item.Get("type").String() == "agent_message" {
+				http.Error(w, `{"error":{"message":"Unprocessable Entity","type":"invalid_request_error"}}`, http.StatusUnprocessableEntity)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"created_at\":0,\"status\":\"completed\",\"model\":\"grok-4.5\",\"output\":[]}}\n\n"))
+	}))
+	t.Cleanup(server.Close)
+
+	exec := executor.NewXAIExecutor(runtime.cfg)
+	_, err = exec.Execute(context.Background(), &coreauth.Auth{
+		Provider: "xai",
+		Attributes: map[string]string{
+			"base_url":  server.URL,
+			"auth_kind": "api_key",
+			"api_key":   "xai-test",
+		},
+	}, cliproxyexecutor.Request{
+		Model: "grok-4.5",
+		Payload: []byte(`{
+			"model":"grok-4.5",
+			"input":[{
+				"type":"agent_message",
+				"author":"/root",
+				"recipient":"/root/calc_product",
+				"content":[
+					{"type":"input_text","text":"Task:"},
+					{"type":"encrypted_content","encrypted_content":"multiply 3 and 5"}
+				]
+			}]
+		}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAIResponse,
+		Stream:       true,
+		Headers:      http.Header{"User-Agent": []string{"codex-tui/0.149.0 (Windows 10.0.26100; x86_64)"}},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v body=%s", err, gotBody)
+	}
+	message := gjson.GetBytes(gotBody, "input.0")
+	if message.Get("type").String() != "message" || message.Get("role").String() != "user" {
+		t.Fatalf("agent_message was forwarded to xAI: %s", gotBody)
+	}
+	if message.Get("content.1.type").String() != "input_text" || message.Get("content.1.text").String() != "multiply 3 and 5" {
+		t.Fatalf("encrypted spawn payload was not rewritten: %s", gotBody)
+	}
+}
 
 func TestRuntimeUsesCPAStaticModelsWhenCredentialModelsAreEmpty(t *testing.T) {
 	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
@@ -362,6 +437,9 @@ func TestRuntimeApplySettingsRebuildsCredentialsWithGlobalProxy(t *testing.T) {
 	}
 	if runtime.cfg.DisableImageGeneration.String() != "chat" {
 		t.Fatalf("image mode = %s", runtime.cfg.DisableImageGeneration.String())
+	}
+	if !runtime.cfg.Codex.OptimizeMultiAgentV2 {
+		t.Fatal("settings reload dropped Codex multi-agent v2 rewrite")
 	}
 }
 

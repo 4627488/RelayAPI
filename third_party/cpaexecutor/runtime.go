@@ -167,6 +167,10 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 		MaxRetryCredentials:           opts.MaxRetryCredentials,
 		MaxRetryInterval:              maxRetryInterval,
 		TransientErrorCooldownSeconds: credentialCooldownSeconds(opts.DisableCredentialCooling),
+		// Official Codex clients emit agent_message / collaboration items for
+		// collab_spawn. xAI (and other non-Codex Responses hosts) reject that
+		// shape as 422 Unprocessable Entity unless CPA rewrites it first.
+		Codex: internalconfig.CodexConfig{OptimizeMultiAgentV2: true},
 	}
 	cfg.DisableImageGeneration = imageGenerationMode(opts.DisableImageGeneration)
 	routingStrategy := normalizedRoutingStrategy(opts.RoutingStrategy)
