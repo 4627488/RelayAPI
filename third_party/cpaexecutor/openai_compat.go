@@ -80,6 +80,21 @@ func openAICompatUsesResponses(auth *cliproxyauth.Auth, opts cliproxyexecutor.Op
 	}
 }
 
+const responseAffinityIDMetadataKey = "response_affinity_id"
+
+func recordResponseAffinityID(metadata map[string]any, payload []byte) {
+	if metadata == nil || len(payload) == 0 {
+		return
+	}
+	for _, path := range []string{"response.id", "id"} {
+		responseID := strings.TrimSpace(gjson.GetBytes(payload, path).String())
+		if responseID != "" {
+			metadata[responseAffinityIDMetadataKey] = responseID
+			return
+		}
+	}
+}
+
 func applyOpenAICompatProviderHeaders(req *http.Request, auth *cliproxyauth.Auth, endpoint string) {
 	if req == nil || auth == nil || auth.Attributes == nil {
 		return
