@@ -212,7 +212,7 @@ func TestRuntimeDiscoversOpenAICompatibleModelsThroughCPAExecutor(t *testing.T) 
 	if auth.Attributes["vendor"] != "aliyun-bailian" || auth.Attributes["cache_mode"] != "auto" || auth.Attributes["session_affinity"] != "true" {
 		t.Fatalf("Bailian capabilities = vendor %q, cache %q, affinity %q", auth.Attributes["vendor"], auth.Attributes["cache_mode"], auth.Attributes["session_affinity"])
 	}
-	if _, ok := runtime.manager.Selector().(*coreauth.SessionAffinitySelector); !ok {
+	if _, ok := runtime.manager.Selector().(*credentialAffinitySelector); !ok {
 		t.Fatalf("credential selector = %T, want session affinity", runtime.manager.Selector())
 	}
 

@@ -265,8 +265,8 @@ func (r *Runtime) registerBaselineExecutors() {
 		executor.NewAIStudioExecutor(r.cfg, "aistudio", r.wsGateway),
 		executor.NewAntigravityExecutor(r.cfg),
 		executor.NewKimiExecutor(r.cfg),
-		executor.NewOpenAICompatExecutor("openai", r.cfg),
-		executor.NewOpenAICompatExecutor("openai-compatibility", r.cfg),
+		newOpenAICompatExecutor("openai", r.cfg),
+		newOpenAICompatExecutor("openai-compatibility", r.cfg),
 	} {
 		r.manager.RegisterExecutor(observeExecutor(exec, r.traces))
 	}
@@ -747,11 +747,7 @@ func newCredentialSelector(strategy string) coreauth.Selector {
 	if normalizedRoutingStrategy(strategy) == "fill-first" {
 		fallback = &coreauth.FillFirstSelector{}
 	}
-	return coreauth.NewSessionAffinitySelectorWithConfig(coreauth.SessionAffinityConfig{
-		Fallback:      fallback,
-		TTL:           credentialSessionAffinityTTL,
-		AuthAttribute: "session_affinity",
-	})
+	return newCredentialAffinitySelector(fallback, credentialSessionAffinityTTL, "session_affinity")
 }
 
 func credentialCooldownSeconds(disabled bool) int {
@@ -778,7 +774,7 @@ func (r *Runtime) ensureExecutor(provider string) {
 	if _, ok := r.manager.Executor(provider); ok {
 		return
 	}
-	r.manager.RegisterExecutor(observeExecutor(executor.NewOpenAICompatExecutor(provider, r.cfg), r.traces))
+	r.manager.RegisterExecutor(observeExecutor(newOpenAICompatExecutor(provider, r.cfg), r.traces))
 }
 
 func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, credentialRoute, []*registry.ModelInfo, error) {

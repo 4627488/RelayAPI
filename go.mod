@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.10.9
-	github.com/router-for-me/CLIProxyAPI/v7 v7.2.134
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.137
 	github.com/router-for-me/CLIProxyAPI/v7/relaybridge v0.0.0-00010101000000-000000000000
 	github.com/tidwall/gjson v1.18.0
 	golang.org/x/crypto v0.54.0
@@ -17,8 +17,6 @@ require (
 )
 
 replace github.com/router-for-me/CLIProxyAPI/v7/relaybridge => ./third_party/cpaexecutor
-
-replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260817121839-0f5a0a93c967
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
