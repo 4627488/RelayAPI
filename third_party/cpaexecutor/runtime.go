@@ -814,6 +814,8 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 			attrs["upstream_api"] = "auto"
 		}
 		if strings.TrimSpace(attrs["cache_mode"]) == "" {
+			// auto: session cache only when the request has previous_response_id.
+			// Full-replay Codex HTTP otherwise keeps DashScope implicit prefix cache.
 			attrs["cache_mode"] = "auto"
 		}
 	}

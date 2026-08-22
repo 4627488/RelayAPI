@@ -195,14 +195,14 @@ func (e *observedExecutor) Identifier() string { return e.inner.Identifier() }
 
 func (e *observedExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	state, traced := e.begin(ctx, auth, req, opts, "request")
-	response, err := e.inner.Execute(traced, auth, req, opts)
+	response, err := e.inner.Execute(traced, resolveBailianCacheAuth(auth, req, opts), req, opts)
 	state.finish(err, "complete")
 	return response, err
 }
 
 func (e *observedExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	state, traced := e.begin(ctx, auth, req, opts, "stream")
-	result, err := e.inner.ExecuteStream(traced, auth, req, opts)
+	result, err := e.inner.ExecuteStream(traced, resolveBailianCacheAuth(auth, req, opts), req, opts)
 	if err != nil || result == nil || result.Chunks == nil {
 		state.finish(err, "failed")
 		return result, err
