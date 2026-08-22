@@ -315,6 +315,51 @@ func TestCodexOAuthStartUsesPKCEAndStableCallback(t *testing.T) {
 	}
 }
 
+func TestXAIDropsCodexToolSearch(t *testing.T) {
+	observed := make(chan []byte, 1)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		observed <- body
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "resp_1", "object": "response", "status": "completed",
+			"output": []any{}, "usage": map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+		})
+	}))
+	t.Cleanup(provider.Close)
+	runtime := newTestRuntime(t, Credential{
+		ID: "xai", Provider: "xai", Enabled: true, Models: []string{"grok-4.6"},
+		Document: testJSON(t, map[string]any{"type": "xai", "api_key": "key", "base_url": provider.URL}),
+	})
+	response := runtimeRequest(t, runtime, http.MethodPost, "/v1/responses", `{
+		"model":"grok-4.6",
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+			{"type":"tool_search_call","id":"ts_1"}
+		],
+		"tools":[
+			{"type":"function","name":"exec_command","parameters":{"type":"object"}},
+			{"type":"tool_search"}
+		]
+	}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	body := <-observed
+	if bytes.Contains(body, []byte(`"tool_search"`)) || bytes.Contains(body, []byte(`"tool_search_call"`)) {
+		t.Fatalf("xAI still received tool_search: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"name":"exec_command"`)) {
+		t.Fatalf("function tool was dropped: %s", body)
+	}
+}
+
+func TestSanitizeXAIResponsesLeavesAllowedTools(t *testing.T) {
+	payload := []byte(`{"tools":[{"type":"web_search"},{"type":"function","name":"exec_command"}],"input":[{"type":"message","role":"user","content":"hi"}]}`)
+	if got := sanitizeXAIResponses(payload); !bytes.Equal(got, payload) {
+		t.Fatalf("allowed payload rewritten: %s", got)
+	}
+}
+
 func TestToolRestorerTracksStreamingApplyPatch(t *testing.T) {
 	payload, restore := lowerCodexTools([]byte(`{"tools":[{"type":"namespace","name":"editor","tools":[{"type":"custom","name":"apply_patch"}]}]}`))
 	if restore == nil || !bytes.Contains(payload, []byte(`"name":"editor__apply_patch"`)) {
