@@ -1,5 +1,3 @@
-param([switch]$Check)
-
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
@@ -11,6 +9,7 @@ $DoCodex = {{if .Codex}}$true{{else}}$false{{end}}
 $DoOpenCode = {{if .OpenCode}}$true{{else}}$false{{end}}
 $InstallMissing = {{if .InstallMissing}}$true{{else}}$false{{end}}
 $VerifyConnection = {{if .VerifyConnection}}$true{{else}}$false{{end}}
+$Check = {{if .Check}}$true{{else}}$false{{end}}
 
 function ConvertFrom-SetupBase64([string]$Value) {
   return [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))

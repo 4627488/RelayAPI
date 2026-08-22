@@ -16,6 +16,20 @@ import (
 	"github.com/4627488/RelayAPI/internal/identity"
 )
 
+func TestAgentSetupInstallCommands(t *testing.T) {
+	expires := time.Unix(1_700_000_000, 0).UTC()
+	commands := agentSetupInstallCommands("https://ai.example/", "setup_token", expires)
+	if commands["bash_command"] != "curl -fsSL 'https://ai.example/setup/setup_token/install.sh' | bash" {
+		t.Fatalf("bash = %v", commands["bash_command"])
+	}
+	if commands["powershell_command"] != "irm 'https://ai.example/setup/setup_token/install.ps1' | iex" {
+		t.Fatalf("powershell = %v", commands["powershell_command"])
+	}
+	if commands["powershell_check_command"] != "irm 'https://ai.example/setup/setup_token/install.ps1?check=1' | iex" {
+		t.Fatalf("powershell check = %v", commands["powershell_check_command"])
+	}
+}
+
 func TestNormalizeAgentSetup(t *testing.T) {
 	input := agentSetupInput{
 		KeyID: " key-1 ", Agents: []string{"Codex", "codex", "opencode"}, Model: " gpt-5.6-sol ",
@@ -118,6 +132,17 @@ func TestAgentSetupScriptsRenderAndParse(t *testing.T) {
 			t.Fatalf("%s script still contains the retired Claude Code setup path", platform)
 		}
 		if platform == "powershell" {
+			if !bytes.Contains(output.Bytes(), []byte("$Check = $false")) {
+				t.Fatal("powershell script is missing the default check flag")
+			}
+			data.Check = true
+			var checked bytes.Buffer
+			if err := agentSetupPowerShellTemplate.Execute(&checked, data); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(checked.Bytes(), []byte("$Check = $true")) {
+				t.Fatal("powershell check=1 did not enable $Check")
+			}
 			for _, unsafe := range []string{"$message.id", "$message.error", "$message.result", "$result.status"} {
 				if bytes.Contains(output.Bytes(), []byte(unsafe)) {
 					t.Fatalf("powershell script directly reads optional JSON property %q under strict mode", unsafe)
