@@ -57,6 +57,7 @@ type agentSetupTemplateData struct {
 	OpenCode            bool
 	InstallMissing      bool
 	VerifyConnection    bool
+	Check               bool
 }
 
 func normalizeAgentSetup(input *agentSetupInput) error {
@@ -111,6 +112,17 @@ func normalizeAgentSetup(input *agentSetupInput) error {
 	return nil
 }
 
+func agentSetupInstallCommands(publicURL, token string, expires time.Time) map[string]any {
+	base := strings.TrimRight(publicURL, "/") + "/setup/" + token
+	return map[string]any{
+		"expires_at":               expires,
+		"bash_command":             "curl -fsSL '" + base + "/install.sh' | bash",
+		"bash_check_command":       "curl -fsSL '" + base + "/install.sh' | bash -s -- --check",
+		"powershell_command":       "irm '" + base + "/install.ps1' | iex",
+		"powershell_check_command": "irm '" + base + "/install.ps1?check=1' | iex",
+	}
+}
+
 func (a *App) createAgentSetup(w http.ResponseWriter, r *http.Request) {
 	var input agentSetupInput
 	if !decodeJSON(w, r, &input) {
@@ -154,15 +166,8 @@ func (a *App) createAgentSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "setup_failed", "无法创建安装脚本")
 		return
 	}
-	base := strings.TrimRight(a.cfg.PublicURL, "/") + "/setup/" + token
 	setSensitiveNoStore(w)
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"expires_at":               expires,
-		"bash_command":             "curl -fsSL '" + base + "/install.sh' | bash",
-		"bash_check_command":       "curl -fsSL '" + base + "/install.sh' | bash -s -- --check",
-		"powershell_command":       "& ([scriptblock]::Create((irm '" + base + "/install.ps1')))",
-		"powershell_check_command": "& ([scriptblock]::Create((irm '" + base + "/install.ps1'))) -Check",
-	})
+	writeJSON(w, http.StatusCreated, agentSetupInstallCommands(a.cfg.PublicURL, token, expires))
 }
 
 func (a *App) agentSetupScript(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +207,7 @@ func (a *App) agentSetupScript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "setup_failed", "无法渲染安装脚本")
 		return
 	}
+	data.Check = r.URL.Query().Get("check") != ""
 	if platform == "powershell" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Disposition", `inline; filename="relayapi-setup.ps1"`)
