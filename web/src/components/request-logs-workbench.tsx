@@ -990,6 +990,7 @@ function LogOverview({
             ["总耗时", `${log.latency_ms} ms`],
           ]}
         />
+        <RequestLatencyTimeline value={latencyTrace} totalMS={log.latency_ms} />
       </DetailGroup>
 
       {turns.length ? (
@@ -1028,13 +1029,6 @@ function LogOverview({
           </Table>
         </DetailGroup>
       ) : null}
-
-      <RequestLatencyTimeline
-        value={latencyTrace}
-        totalMS={log.latency_ms}
-        ttftMS={log.ttft_ms}
-        stream={log.stream}
-      />
 
       {Object.keys(timings).length ? (
         <DetailGroup title="阶段耗时">

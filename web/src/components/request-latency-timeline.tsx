@@ -1,31 +1,9 @@
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from "recharts"
-
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { bytes } from "@/lib/format"
-import { StatStrip } from "@/components/workspace-ui"
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 
 type LatencyBucket = "user" | "relay" | "upstream" | "mixed" | "context"
 
@@ -53,36 +31,6 @@ type LatencySegment = {
   bucket: LatencyBucket
   start_ms: number
   duration_ms: number
-  description?: string
-  attempt?: number
-  status?: string
-  provider?: string
-  model?: string
-  credential?: string
-  error?: string
-  reused?: boolean
-  remote_addr?: string
-}
-
-type LatencyMark = {
-  id: string
-  label: string
-  offset_ms: number
-}
-
-type LatencyTransfer = {
-  upstream_read_wait_ms: number
-  client_write_wait_ms: number
-  bytes_read: number
-  bytes_written: number
-  read_count: number
-  write_count: number
-  first_read_ms?: number
-  last_read_ms?: number
-  first_write_ms?: number
-  last_write_ms?: number
-  wall_ms?: number
-  local_copy_ms?: number
 }
 
 type LatencyAttribution = {
@@ -92,300 +40,79 @@ type LatencyAttribution = {
   unattributed_ms: number
   observed_sum_ms: number
   overlap_ms: number
-  transfer?: LatencyTransfer
-  notes?: string[]
 }
 
 type LatencyTrace = {
   version: number
   total_ms: number
-  boundary?: string
   attribution: LatencyAttribution
   segments: LatencySegment[]
-  marks?: LatencyMark[]
 }
 
-const chartConfig = {
-  user: { label: "用户网络", color: "var(--chart-2)" },
-  relay: { label: "中转", color: "var(--chart-3)" },
-  upstream: { label: "上游", color: "var(--chart-4)" },
-  mixed: { label: "未拆分", color: "var(--muted-foreground)" },
-  wall: { label: "墙钟", color: "var(--foreground)" },
-  duration: { label: "耗时", color: "var(--chart-3)" },
-} satisfies ChartConfig
-
-const bucketLabel: Record<LatencyBucket, string> = {
-  user: "用户网络",
-  relay: "中转",
-  upstream: "上游",
-  mixed: "未拆分",
-  context: "参考",
-}
+const slices = [
+  { key: "user", label: "用户网络", className: "bg-chart-2" },
+  { key: "relay", label: "中转", className: "bg-chart-3" },
+  { key: "upstream", label: "上游", className: "bg-chart-4" },
+] as const
 
 export function RequestLatencyTimeline({
   value,
   totalMS,
-  ttftMS,
-  stream,
 }: {
   value?: string
   totalMS: number
-  ttftMS?: number
-  stream: boolean
 }) {
   const trace = parseTrace(value)
   if (!trace) return null
 
   const total = Math.max(trace.total_ms, totalMS, 0.001)
-  const attribution = trace.attribution
-  const attempts = trace.segments.filter(
-    (segment) => segment.track === "attempt" && !segment.id.includes("_retry_wait_")
-  ).length
-  const comparison = [
-    {
-      name: "观测累计",
-      user: attribution.user_network_ms,
-      relay: attribution.relay_ms,
-      upstream: attribution.upstream_ms,
-      mixed: 0,
-      wall: 0,
-    },
-    {
-      name: "墙钟",
-      user: 0,
-      relay: 0,
-      upstream: 0,
-      mixed: 0,
-      wall: total,
-    },
-  ]
-  const gantt = trace.segments
-    .filter((segment) => segment.bucket !== "context")
-    .sort((a, b) => a.start_ms - b.start_ms)
-    .map((segment) => ({
-      name: segment.label,
-      offset: segment.start_ms,
-      duration: segment.duration_ms,
-      bucket: segment.bucket,
-      fill: `var(--color-${segment.bucket})`,
+  const observed =
+    trace.attribution.user_network_ms +
+    trace.attribution.relay_ms +
+    trace.attribution.upstream_ms
+  const scale = observed > total ? total / observed : 1
+  const parts = slices
+    .map((slice) => ({
+      ...slice,
+      ms:
+        slice.key === "user"
+          ? trace.attribution.user_network_ms
+          : slice.key === "relay"
+            ? trace.attribution.relay_ms
+            : trace.attribution.upstream_ms,
     }))
-  const transfer = attribution.transfer
+    .filter((part) => part.ms > 0)
+    .map((part) => ({ ...part, width: (part.ms * scale) / total }))
+
+  if (!parts.length) return null
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>耗时测量</CardTitle>
-        <CardDescription>
-          {stream ? "流式" : "非流式"}
-          {attempts > 1 ? ` · ${attempts} 次上游尝试` : ""}
-          {` · 墙钟 ${formatMS(total)}`}
-          {` · 首字节 ${ttftMS != null ? formatMS(ttftMS) : "—"}`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-6">
-        <StatStrip
-          className="sm:grid-cols-3"
-          items={[
-            {
-              label: "用户网络",
-              value: formatMS(attribution.user_network_ms),
-              detail: formatPercent(attribution.user_network_ms / total),
-            },
-            {
-              label: "中转",
-              value: formatMS(attribution.relay_ms),
-              detail: formatPercent(attribution.relay_ms / total),
-            },
-            {
-              label: "上游",
-              value: formatMS(attribution.upstream_ms),
-              detail: formatPercent(attribution.upstream_ms / total),
-            },
-          ]}
-        />
-
-        <ChartContainer config={chartConfig} className="aspect-auto h-44 w-full">
-          <BarChart data={comparison} layout="vertical" accessibilityLayer>
-            <CartesianGrid horizontal={false} />
-            <XAxis
-              type="number"
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={formatMS}
-            />
-            <YAxis
-              type="category"
-              dataKey="name"
-              tickLine={false}
-              axisLine={false}
-              width={64}
-            />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value) => formatMS(Number(value))}
+    <div className="max-w-56">
+      <div
+        className="flex h-1.5 overflow-hidden rounded-full bg-muted"
+        role="img"
+        aria-label={parts
+          .map((part) => `${part.label} ${formatMS(part.ms)}`)
+          .concat(`合计 ${formatMS(total)}`)
+          .join("，")}
+      >
+        {parts.map((part) => (
+          <Tooltip key={part.key}>
+            <TooltipTrigger
+              render={
+                <span
+                  className={cn("h-full min-w-px", part.className)}
+                  style={{ width: `${part.width * 100}%` }}
                 />
               }
             />
-            <ChartLegend content={<ChartLegendContent />} />
-            <Bar dataKey="user" stackId="compare" fill="var(--color-user)" />
-            <Bar dataKey="relay" stackId="compare" fill="var(--color-relay)" />
-            <Bar
-              dataKey="upstream"
-              stackId="compare"
-              fill="var(--color-upstream)"
-            />
-            <Bar dataKey="wall" stackId="compare" fill="var(--color-wall)" />
-          </BarChart>
-        </ChartContainer>
-
-        <p className="text-xs text-muted-foreground tabular-nums">
-          三桶合计 {formatPercent(attribution.observed_sum_ms / total)} 墙钟
-          {attribution.overlap_ms > 0
-            ? ` · 重叠 ${formatMS(attribution.overlap_ms)}`
-            : ""}
-          {attribution.unattributed_ms > 0
-            ? ` · 未覆盖 ${formatMS(attribution.unattributed_ms)}`
-            : ""}
-        </p>
-
-        {transfer ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>首字节后</TableHead>
-                <TableHead className="text-right">测量</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow>
-                <TableCell>墙钟</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {transfer.wall_ms != null ? formatMS(transfer.wall_ms) : "—"}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Read() 阻塞</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatMS(transfer.upstream_read_wait_ms)} · {transfer.read_count}{" "}
-                  次 · {bytes(transfer.bytes_read)}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Write() 阻塞</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatMS(transfer.client_write_wait_ms)} · {transfer.write_count}{" "}
-                  次 · {bytes(transfer.bytes_written)}
-                </TableCell>
-              </TableRow>
-              {transfer.local_copy_ms && transfer.local_copy_ms > 0 ? (
-                <TableRow>
-                  <TableCell>读/写之外的本地处理</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMS(transfer.local_copy_ms)}
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
-        ) : null}
-
-        {gantt.length ? (
-          <ChartContainer
-            config={chartConfig}
-            className="aspect-auto w-full"
-            style={{ height: Math.max(220, gantt.length * 36) }}
-          >
-            <BarChart data={gantt} layout="vertical" accessibilityLayer>
-              <CartesianGrid horizontal={false} />
-              <XAxis
-                type="number"
-                domain={[0, total]}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={formatMS}
-              />
-              <YAxis
-                type="category"
-                dataKey="name"
-                tickLine={false}
-                axisLine={false}
-                width={112}
-              />
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent
-                    formatter={(value, name) =>
-                      name === "offset" ? null : formatMS(Number(value))
-                    }
-                  />
-                }
-              />
-              <Bar dataKey="offset" stackId="gantt" fill="transparent" />
-              <Bar dataKey="duration" stackId="gantt">
-                {gantt.map((row) => (
-                  <Cell key={row.name} fill={row.fill} />
-                ))}
-              </Bar>
-              {ttftMS != null && ttftMS >= 0 && ttftMS <= total ? (
-                <ReferenceLine
-                  x={ttftMS}
-                  stroke="var(--foreground)"
-                  strokeDasharray="3 3"
-                />
-              ) : null}
-            </BarChart>
-          </ChartContainer>
-        ) : null}
-
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>轨道</TableHead>
-              <TableHead>阶段</TableHead>
-              <TableHead className="text-right">开始</TableHead>
-              <TableHead className="text-right">耗时</TableHead>
-              <TableHead className="text-right">占墙钟</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {[...trace.segments]
-              .sort((a, b) => a.start_ms - b.start_ms)
-              .map((segment) => (
-                <TableRow key={segment.id}>
-                  <TableCell className="text-muted-foreground">
-                    {bucketLabel[segment.bucket]}
-                  </TableCell>
-                  <TableCell>
-                    <div>{segment.label}</div>
-                    {segment.description ? (
-                      <div className="mt-0.5 max-w-[36rem] text-xs text-muted-foreground">
-                        {segment.description}
-                      </div>
-                    ) : null}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    +{formatMS(segment.start_ms)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMS(segment.duration_ms)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatPercent(segment.duration_ms / total)}
-                  </TableCell>
-                </TableRow>
-              ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-      {trace.boundary ? (
-        <CardFooter>
-          <p className="text-xs leading-5 text-muted-foreground">
-            {trace.boundary}
-          </p>
-        </CardFooter>
-      ) : null}
-    </Card>
+            <TooltipContent>
+              {part.label} {formatMS(part.ms)}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -428,29 +155,19 @@ function parseTrace(value?: string): LatencyTrace | null {
         })
       return [
         {
-          ...(segment as LatencySegment),
           id: candidate.id,
           label: candidate.label,
           track,
           owner,
           bucket,
+          start_ms: candidate.start_ms,
+          duration_ms: candidate.duration_ms,
         },
       ]
     })
-    const marks = Array.isArray(parsed.marks)
-      ? parsed.marks.filter(
-          (mark): mark is LatencyMark =>
-            Boolean(mark) &&
-            typeof mark.id === "string" &&
-            typeof mark.label === "string" &&
-            typeof mark.offset_ms === "number"
-        )
-      : undefined
     return {
       version: parsed.version,
       total_ms: parsed.total_ms,
-      boundary: parsed.boundary,
-      marks,
       segments,
       attribution: normalizeAttribution(
         parsed.attribution,
@@ -485,8 +202,6 @@ function normalizeAttribution(
       unattributed_ms: value.unattributed_ms ?? Math.max(0, total - observed),
       observed_sum_ms: observed,
       overlap_ms: value.overlap_ms ?? Math.max(0, observed - total),
-      transfer: value.transfer,
-      notes: value.notes,
     }
   }
   let user = 0
@@ -601,9 +316,4 @@ function formatMS(value: number) {
   if (value >= 10) return `${value.toFixed(0)} ms`
   if (value >= 1) return `${value.toFixed(1)} ms`
   return `${Math.max(0, value).toFixed(3)} ms`
-}
-
-function formatPercent(value: number) {
-  if (!Number.isFinite(value)) return "—"
-  return `${(Math.max(0, value) * 100).toFixed(value >= 0.1 ? 1 : 2)}%`
 }
