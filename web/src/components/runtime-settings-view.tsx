@@ -77,8 +77,8 @@ type SettingsResponse = {
 type Choice<T extends string | number> = { value: T; label: string }
 
 const routingChoices: Choice<RoutingStrategy>[] = [
-  { value: "round-robin", label: "轮流用" },
-  { value: "fill-first", label: "先打满主账户" },
+  { value: "round-robin", label: "轮询" },
+  { value: "fill-first", label: "固定优先级" },
 ]
 
 const retryChoices: Choice<number>[] = [
@@ -129,7 +129,7 @@ const timeoutChoices: Choice<number>[] = [
   { value: 300, label: "5 分钟" },
   { value: 900, label: "15 分钟" },
   { value: 3600, label: "1 小时" },
-  { value: 86400, label: "等到流结束" },
+  { value: 86400, label: "24 小时" },
 ]
 
 const requestBodyChoices: Choice<number>[] = [
@@ -156,10 +156,10 @@ const reclaimChoices: Choice<number>[] = [
 ]
 
 const imageModeChoices: Choice<ImageGenerationMode>[] = [
-  { value: "enabled", label: "全部允许" },
-  { value: "disabled", label: "全部关闭" },
-  { value: "chat", label: "对话不注入" },
-  { value: "passthrough", label: "按客户端" },
+  { value: "enabled", label: "启用" },
+  { value: "disabled", label: "禁用" },
+  { value: "chat", label: "对话除外" },
+  { value: "passthrough", label: "透传" },
 ]
 
 const imageModelChoices: Choice<string>[] = [
@@ -179,11 +179,10 @@ const videoTtlChoices: Choice<string>[] = [
 ]
 
 const imageModeHelp: Record<ImageGenerationMode, string> = {
-  enabled: "对话里的出图工具和 /v1/images 都交给上游。",
-  disabled: "对话不出图，/v1/images 直接 404。",
-  chat: "对话里不再塞出图工具，/v1/images 仍可用。",
-  passthrough:
-    "对话里不增不删出图工具：客户端带了就转，没带就不加。/v1/images 仍可用。",
+  enabled: "对话出图工具与 /v1/images 均可用。",
+  disabled: "关闭出图工具，/v1/images 返回 404。",
+  chat: "对话不注入出图工具，/v1/images 仍可用。",
+  passthrough: "对话不增删出图工具，按客户端请求转发；/v1/images 仍可用。",
 }
 
 function withCurrent<T extends string | number>(
@@ -350,7 +349,7 @@ export function RuntimeSettingsView() {
       setValue(result.settings)
       setSaved(result.settings)
       setRuntime(result.runtime)
-      toast.success("运行策略已热更新")
+      toast.success("运行策略已更新")
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "保存失败")
     } finally {
@@ -384,8 +383,7 @@ export function RuntimeSettingsView() {
     (mode) => mode
   )
   const imageModeHelpText =
-    imageModeHelp[value.image_generation_mode] ??
-    "当前值不在常用选项里，选一项后才会按上面的规则生效。"
+    imageModeHelp[value.image_generation_mode] ?? "当前值不在预设选项中。"
 
   return (
     <div className="flex flex-col gap-5">
@@ -400,9 +398,9 @@ export function RuntimeSettingsView() {
           { label: "有效凭据", value: runtime.credentials },
           { label: "发布模型", value: runtime.models },
           {
-            label: "同时处理 / 排队",
+            label: "并发 / 排队",
             value: `${runtime.max_in_flight} / ${runtime.max_queue}`,
-            detail: "启动项，改环境变量后重启生效",
+            detail: "启动配置，修改后需重启",
           },
         ]}
       />
@@ -410,10 +408,8 @@ export function RuntimeSettingsView() {
       <div className="grid items-start gap-5 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>多账户怎么选</CardTitle>
-            <CardDescription>
-              同一模型有多个账户时的分流方式。不会改写用户请求。
-            </CardDescription>
+            <CardTitle>凭据调度</CardTitle>
+            <CardDescription>同一模型有多个账户时的分流方式。</CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup>
@@ -421,8 +417,8 @@ export function RuntimeSettingsView() {
                 label="调度方式"
                 description={
                   value.routing_strategy === "fill-first"
-                    ? "一直用优先级最高的可用账户，打满或失败后再换下一个。"
-                    : "同一模型下的可用账户轮流接请求，适合把额度摊开。"
+                    ? "优先使用优先级最高的可用账户，不可用后再切换。"
+                    : "同一模型下的可用账户轮流接请求。"
                 }
                 value={value.routing_strategy}
                 options={routingChoices}
@@ -430,8 +426,8 @@ export function RuntimeSettingsView() {
               />
               <SwitchField
                 id="credential-cooling"
-                label="失败后暂时移出账户"
-                description="打开后，连续失败的账户会短时间不再被选中。偶发 429 较多时建议关掉，避免把限流当成账户坏了。"
+                label="凭据冷却"
+                description="连续失败的账户会暂时移出候选。"
                 checked={!value.disable_credential_cooling}
                 onCheckedChange={(checked) =>
                   patch("disable_credential_cooling", !checked)
@@ -443,16 +439,16 @@ export function RuntimeSettingsView() {
 
         <Card>
           <CardHeader>
-            <CardTitle>失败怎么处理</CardTitle>
+            <CardTitle>失败重试</CardTitle>
             <CardDescription>
-              只在上游运行时内部换账户再试，不会让 Relay 把同一笔请求重放一遍。
+              仅在上游内部更换账户重试，不会重复提交同一请求。
             </CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup>
               <ChoiceField
-                label="同一请求再试几次"
-                description="针对 403、408、500、502、503、504。选「不重试」则失败立刻返回。"
+                label="请求重试"
+                description="适用于 403、408、500、502、503、504。"
                 value={value.request_retry}
                 options={withCurrent(
                   retryChoices,
@@ -462,8 +458,8 @@ export function RuntimeSettingsView() {
                 onChange={(next) => patch("request_retry", next)}
               />
               <ChoiceField
-                label="最多换几个账户"
-                description="0 表示能试的账户都试。有上限时，试满就停。"
+                label="最多尝试账户"
+                description="不限制时会尝试该模型下所有可用账户。"
                 value={value.max_retry_credentials}
                 options={withCurrent(
                   retryCredentialChoices,
@@ -473,8 +469,8 @@ export function RuntimeSettingsView() {
                 onChange={(next) => patch("max_retry_credentials", next)}
               />
               <ChoiceField
-                label="两次尝试间隔上限"
-                description="换账户再试之前最多等这么久。选「立即」表示不等冷却。"
+                label="重试间隔上限"
+                description="两次更换账户之间的最长等待时间。"
                 value={value.max_retry_interval}
                 options={withCurrent(
                   retryIntervalChoices,
@@ -484,8 +480,8 @@ export function RuntimeSettingsView() {
                 onChange={(next) => patch("max_retry_interval", next)}
               />
               <ChoiceField
-                label="出字前再试"
-                description="流式响应还没吐出第一个字节时，允许再换账户试几次。"
+                label="流式启动重试"
+                description="流式响应发出首字节前，允许再换账户。"
                 value={value.stream_bootstrap_retries}
                 options={withCurrent(
                   bootstrapRetryChoices,
@@ -500,16 +496,16 @@ export function RuntimeSettingsView() {
 
         <Card>
           <CardHeader>
-            <CardTitle>长连接怎么维持</CardTitle>
+            <CardTitle>长连接</CardTitle>
             <CardDescription>
-              只影响已经建立的 SSE 或 WebSocket，不会打断正在输出的内容。
+              已建立的 SSE 或 WebSocket 保活策略，不会中断正在输出的内容。
             </CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup>
               <ChoiceField
                 label="流式保活"
-                description="隔多久给客户端发一行空的保活。代理或浏览器容易因空闲断开时再打开。"
+                description="向客户端发送空行保活的间隔。"
                 value={value.stream_keepalive_seconds}
                 options={withCurrent(
                   streamKeepAliveChoices,
@@ -520,7 +516,7 @@ export function RuntimeSettingsView() {
               />
               <ChoiceField
                 label="非流式保活"
-                description="普通 JSON 响应等待期间的空闲保活。大多数部署保持关闭即可。"
+                description="非流式响应等待期间的保活间隔。"
                 value={value.nonstream_keepalive_interval}
                 options={withCurrent(
                   nonstreamKeepAliveChoices,
@@ -532,7 +528,7 @@ export function RuntimeSettingsView() {
               <SwitchField
                 id="upstream-websockets"
                 label="上游 WebSocket"
-                description="打开后，Codex / xAI 账户可以使用原生多轮 WebSocket。关掉则目录不再推荐，客户端改走 HTTP 流式。"
+                description="允许 Codex / xAI 使用原生 WebSocket。关闭后目录不再推荐，客户端改走 HTTP 流式。"
                 checked={value.upstream_websockets}
                 onCheckedChange={(checked) =>
                   patch("upstream_websockets", checked)
@@ -544,15 +540,13 @@ export function RuntimeSettingsView() {
 
         <Card>
           <CardHeader>
-            <CardTitle>出图与视频</CardTitle>
-            <CardDescription>
-              对应上游运行时对出图工具和视频结果绑定的处理方式。
-            </CardDescription>
+            <CardTitle>图像与视频</CardTitle>
+            <CardDescription>出图工具与视频结果绑定。</CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup>
               <ChoiceField
-                label="出图"
+                label="图像生成"
                 description={imageModeHelpText}
                 value={value.image_generation_mode}
                 options={imageModes}
@@ -560,7 +554,7 @@ export function RuntimeSettingsView() {
               />
               {value.image_generation_mode === "disabled" ? null : (
                 <Field>
-                  <FieldLabel>对话出图用哪颗模型垫底</FieldLabel>
+                  <FieldLabel>图像基础模型</FieldLabel>
                   <Select
                     items={imageModels}
                     value={value.gpt_image_base_model}
@@ -582,14 +576,13 @@ export function RuntimeSettingsView() {
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    只在对话里走旧版出图工具、又没直接打到 /v1/images
-                    时用到。必须是 gpt- 开头的模型。
+                    对话内出图工具使用的基础模型，须以 gpt- 开头。
                   </FieldDescription>
                 </Field>
               )}
               <ChoiceField
-                label="视频结果还绑在原账户多久"
-                description="生成视频后，结果会继续找当时那个账户。过期后再去取，可能换到别的账户。"
+                label="视频结果绑定"
+                description="视频结果与创建账户的绑定时长。过期后再次获取可能切换账户。"
                 value={value.video_result_auth_cache_ttl}
                 options={withCurrent(
                   videoTtlChoices,
@@ -606,8 +599,8 @@ export function RuntimeSettingsView() {
           <CardHeader>
             <CardTitle>系统网络</CardTitle>
             <CardDescription>
-              只给 OAuth、价格目录这些 Relay
-              自己的请求用。推理流量在模型账户上单独选代理。
+              用于 OAuth
+              与价格目录等系统请求。推理流量在模型账户上单独选择代理。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -638,13 +631,13 @@ export function RuntimeSettingsView() {
                   </SelectContent>
                 </Select>
                 <FieldDescription>
-                  账户代理在「出站代理」里维护，再到模型账户上绑定。
+                  账户代理在「出站代理」中维护，并在模型账户上绑定。
                 </FieldDescription>
               </Field>
               <SwitchField
                 id="passthrough-headers"
-                label="把上游响应头转给客户端"
-                description="打开后，上游允许转发的响应头会继续给到客户端。一般保持打开。"
+                label="转发上游响应头"
+                description="将允许转发的上游响应头交给客户端。"
                 checked={value.passthrough_headers}
                 onCheckedChange={(checked) =>
                   patch("passthrough_headers", checked)
@@ -652,8 +645,8 @@ export function RuntimeSettingsView() {
               />
               <SwitchField
                 id="force-model-prefix"
-                label="模型名必须带账户前缀"
-                description="打开后，必须写成「账户/模型」才能打到带前缀的账户。现有客户端都用裸模型名，保持关闭。"
+                label="强制模型前缀"
+                description="仅接受「账户/模型」形式的模型名。"
                 checked={value.force_model_prefix}
                 onCheckedChange={(checked) =>
                   patch("force_model_prefix", checked)
@@ -667,14 +660,14 @@ export function RuntimeSettingsView() {
           <CardHeader>
             <CardTitle>进程边界</CardTitle>
             <CardDescription>
-              保存后立即生效，不必改环境变量。同时处理路数仍由启动项决定。
+              保存后立即生效。并发路数仍由启动配置决定。
             </CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup>
               <ChoiceField
-                label="等多久才算上游没响应"
-                description="只限制等待响应头。已经开始的 SSE 或 WebSocket 不会被这个时间砍断。"
+                label="响应头超时"
+                description="仅限制等待响应头的时间，已开始的流不会中断。"
                 value={value.request_timeout_seconds}
                 options={withCurrent(
                   timeoutChoices,
@@ -684,8 +677,8 @@ export function RuntimeSettingsView() {
                 onChange={(next) => patch("request_timeout_seconds", next)}
               />
               <ChoiceField
-                label="单个请求体"
-                description="超过这个大小的推理请求会被拒绝。"
+                label="请求体上限"
+                description="单个推理请求体的上限。"
                 value={value.max_request_mib}
                 options={withCurrent(
                   requestBodyChoices,
@@ -708,8 +701,8 @@ export function RuntimeSettingsView() {
                 }}
               />
               <ChoiceField
-                label="在途请求体合计"
-                description="所有正在处理的请求体加起来不能超过这个数，必须不小于单个请求体。"
+                label="在途请求体"
+                description="所有在途请求体合计上限，且不得小于请求体上限。"
                 value={value.request_bytes_in_flight_mib}
                 options={withCurrent(
                   inFlightChoices.filter(
@@ -721,8 +714,8 @@ export function RuntimeSettingsView() {
                 onChange={(next) => patch("request_bytes_in_flight_mib", next)}
               />
               <ChoiceField
-                label="内存回收"
-                description="堆占用超过这个值才主动回收。调高会少打扰正在跑的请求。"
+                label="内存回收阈值"
+                description="堆占用超过该值时才主动回收。"
                 value={value.memory_reclaim_threshold_mib}
                 options={withCurrent(
                   reclaimChoices,
@@ -732,16 +725,16 @@ export function RuntimeSettingsView() {
                 onChange={(next) => patch("memory_reclaim_threshold_mib", next)}
               />
               <ChoiceField
-                label="还没标价的模型"
+                label="未定价模型"
                 description={
                   value.unpriced_model_policy === "deny"
-                    ? "没有价格的模型直接 503，需要先在价格页补上。"
-                    : "没有价格也能调用，只是不预留余额。"
+                    ? "未配置价格的模型返回 503。"
+                    : "未配置价格的模型仍可调用，不预留余额。"
                 }
                 value={value.unpriced_model_policy}
                 options={[
-                  { value: "allow", label: "允许调用" },
-                  { value: "deny", label: "拒绝调用" },
+                  { value: "allow", label: "允许" },
+                  { value: "deny", label: "拒绝" },
                 ]}
                 onChange={(next) => patch("unpriced_model_policy", next)}
               />
