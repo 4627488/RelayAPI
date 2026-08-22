@@ -40,6 +40,7 @@ import {
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
+  InputGroupTextarea,
 } from "@/components/ui/input-group"
 import {
   Select,
@@ -354,6 +355,20 @@ export function ConnectionGuide({
         </CardFooter>
       </Card>
 
+      {usableKeys.length && model ? (
+        <ManualConfigCard
+          endpoint={`${
+            typeof window === "undefined" ? "" : window.location.origin
+          }/v1`}
+          model={model}
+          platform={platform}
+          includesCodex={includesCodex}
+          includesOpenCode={includesOpenCode}
+          reasoningEffort={reasoningEffort}
+          openCodeProtocol={openCodeProtocol}
+        />
+      ) : null}
+
       {setup ? (
         <Card>
           <CardHeader>
@@ -553,6 +568,116 @@ function SwitchField({
   )
 }
 
+function ManualConfigCard({
+  endpoint,
+  model,
+  platform,
+  includesCodex,
+  includesOpenCode,
+  reasoningEffort,
+  openCodeProtocol,
+}: {
+  endpoint: string
+  model: string
+  platform: Platform
+  includesCodex: boolean
+  includesOpenCode: boolean
+  reasoningEffort: string
+  openCodeProtocol: string
+}) {
+  const keyPath =
+    platform === "powershell"
+      ? "$HOME\\.config\\relayapi\\api-key"
+      : "~/.config/relayapi/api-key"
+  const codexPath =
+    platform === "powershell"
+      ? "$HOME\\.codex\\config.toml"
+      : "~/.codex/config.toml"
+  const openCodePath =
+    platform === "powershell"
+      ? "$HOME\\.config\\opencode\\opencode.json"
+      : "~/.config/opencode/opencode.json"
+  const npmPackage =
+    openCodeProtocol === "chat" ? "@ai-sdk/openai-compatible" : "@ai-sdk/openai"
+  const codexAuth =
+    platform === "powershell"
+      ? `command = "powershell"
+args = ["-NoProfile", "-Command", "$p=Join-Path $HOME '.config\\relayapi\\api-key'; [IO.File]::ReadAllText($p)"]`
+      : `command = "sh"
+args = ["-c", "cat \\"$HOME/.config/relayapi/api-key\\""]`
+  const codexConfig = `model_provider = "relayapi"
+model = "${model}"
+model_reasoning_effort = "${reasoningEffort}"
+
+[model_providers.relayapi]
+name = "RelayAPI"
+base_url = "${endpoint}"
+wire_api = "responses"
+supports_websockets = true
+supports_standalone_web_search = true
+
+[model_providers.relayapi.auth]
+${codexAuth}`
+  const openCodeConfig = JSON.stringify(
+    {
+      $schema: "https://opencode.ai/config.json",
+      model: `relayapi/${model}`,
+      provider: {
+        relayapi: {
+          npm: npmPackage,
+          name: "RelayAPI",
+          options: {
+            baseURL: endpoint,
+            apiKey: "{file:~/.config/relayapi/api-key}",
+          },
+          models: { [model]: { name: model } },
+        },
+      },
+    },
+    null,
+    2
+  )
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>手动配置</CardTitle>
+        <CardDescription>
+          把 API Key 写入密钥文件，再把对应配置合并进客户端。
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <FieldGroup>
+          <CommandField
+            label="接口地址"
+            description="客户端的 base URL。"
+            command={endpoint}
+          />
+          <CommandField
+            label="密钥文件"
+            description="写入在 API Keys 页复制的密钥，一行即可。"
+            command={keyPath}
+          />
+          {includesCodex ? (
+            <CodeField
+              label="Codex"
+              description={codexPath}
+              value={codexConfig}
+            />
+          ) : null}
+          {includesOpenCode ? (
+            <CodeField
+              label="OpenCode"
+              description={openCodePath}
+              value={openCodeConfig}
+            />
+          ) : null}
+        </FieldGroup>
+      </CardContent>
+    </Card>
+  )
+}
+
 function CommandField({
   label,
   description,
@@ -587,6 +712,44 @@ function CommandField({
           >
             <ClipboardIcon data-icon={primary ? "inline-start" : undefined} />
             {primary ? "复制" : null}
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+    </Field>
+  )
+}
+
+function CodeField({
+  label,
+  description,
+  value,
+}: {
+  label: string
+  description: string
+  value: string
+}) {
+  const rows = Math.min(18, value.split("\n").length + 1)
+  return (
+    <Field>
+      <FieldLabel>{label}</FieldLabel>
+      <FieldDescription>{description}</FieldDescription>
+      <InputGroup className="h-auto items-start">
+        <InputGroupTextarea
+          readOnly
+          rows={rows}
+          value={value}
+          className="font-mono text-xs"
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <InputGroupAddon align="block-end" className="justify-end">
+          <InputGroupButton
+            variant="ghost"
+            size="sm"
+            aria-label={`复制${label}`}
+            onClick={() => void copy(value, label)}
+          >
+            <ClipboardIcon data-icon="inline-start" />
+            复制
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
