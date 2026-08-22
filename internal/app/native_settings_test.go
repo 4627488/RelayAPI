@@ -37,6 +37,12 @@ func TestNativeRuntimeSettingsValidation(t *testing.T) {
 		{"in_flight", func(value *nativeRuntimeSettings) { value.RequestBytesInFlightMiB = 8 }},
 		{"reclaim", func(value *nativeRuntimeSettings) { value.MemoryReclaimThresholdMiB = 8 }},
 		{"unpriced", func(value *nativeRuntimeSettings) { value.UnpricedModelPolicy = "maybe" }},
+		{"image_mode", func(value *nativeRuntimeSettings) { value.ImageGenerationMode = "off" }},
+		{"image_model", func(value *nativeRuntimeSettings) { value.GPTImageBaseModel = "claude-sonnet" }},
+		{"video_ttl", func(value *nativeRuntimeSettings) { value.VideoResultAuthCacheTTL = "3hours" }},
+		{"video_ttl_zero", func(value *nativeRuntimeSettings) { value.VideoResultAuthCacheTTL = "0s" }},
+		{"keepalive", func(value *nativeRuntimeSettings) { value.StreamKeepAliveSeconds = 301 }},
+		{"bootstrap", func(value *nativeRuntimeSettings) { value.StreamBootstrapRetries = -1 }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -89,5 +95,38 @@ func TestNormalizeNativeRuntimeSettingsKeepsStoredWebSocketPolicy(t *testing.T) 
 	}
 	if value.RequestRetry != 2 || !value.DisableCredentialCooling {
 		t.Fatalf("cpa defaults = %#v", value)
+	}
+}
+
+func TestNativeRuntimeSettingsAcceptsOperatorPresets(t *testing.T) {
+	for _, edit := range []func(*nativeRuntimeSettings){
+		func(value *nativeRuntimeSettings) { value.ImageGenerationMode = "chat" },
+		func(value *nativeRuntimeSettings) { value.ImageGenerationMode = "passthrough" },
+		func(value *nativeRuntimeSettings) { value.ImageGenerationMode = "disabled" },
+		func(value *nativeRuntimeSettings) { value.GPTImageBaseModel = "gpt-5.6-luna" },
+		func(value *nativeRuntimeSettings) { value.VideoResultAuthCacheTTL = "30m" },
+		func(value *nativeRuntimeSettings) { value.RequestRetry = 0 },
+		func(value *nativeRuntimeSettings) { value.MaxRetryInterval = 0 },
+		func(value *nativeRuntimeSettings) { value.StreamKeepAliveSeconds = 0 },
+		func(value *nativeRuntimeSettings) { value.StreamBootstrapRetries = 3 },
+		func(value *nativeRuntimeSettings) { value.RequestTimeoutSeconds = 120 },
+	} {
+		value := defaultNativeRuntimeSettings()
+		edit(&value)
+		if message := validateNativeRuntimeSettings(value); message != "" {
+			t.Fatalf("preset rejected (%s): %#v", message, value)
+		}
+	}
+}
+
+func TestRuntimeBridgeSettingsMapsImageModes(t *testing.T) {
+	value := defaultNativeRuntimeSettings()
+	value.ImageGenerationMode = "disabled"
+	if compiled := runtimeBridgeSettings(value, ""); compiled.DisableImageGeneration != "all" {
+		t.Fatalf("disabled mapped to %q", compiled.DisableImageGeneration)
+	}
+	value.ImageGenerationMode = "enabled"
+	if compiled := runtimeBridgeSettings(value, "direct"); compiled.DisableImageGeneration != "enabled" {
+		t.Fatalf("enabled mapped to %q", compiled.DisableImageGeneration)
 	}
 }
