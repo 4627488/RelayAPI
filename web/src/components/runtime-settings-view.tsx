@@ -182,7 +182,8 @@ const imageModeHelp: Record<ImageGenerationMode, string> = {
   enabled: "对话里的出图工具和 /v1/images 都交给上游。",
   disabled: "对话不出图，/v1/images 直接 404。",
   chat: "对话里不再塞出图工具，/v1/images 仍可用。",
-  passthrough: "对话里不增不删出图工具：客户端带了就转，没带就不加。/v1/images 仍可用。",
+  passthrough:
+    "对话里不增不删出图工具：客户端带了就转，没带就不加。/v1/images 仍可用。",
 }
 
 function withCurrent<T extends string | number>(
@@ -209,7 +210,9 @@ function formatCount(value: number, unit: string, zero = "不限制") {
 }
 
 function formatMib(value: number) {
-  return value >= 1024 && value % 1024 === 0 ? `${value / 1024} GiB` : `${value} MiB`
+  return value >= 1024 && value % 1024 === 0
+    ? `${value / 1024} GiB`
+    : `${value} MiB`
 }
 
 function nextInFlight(requestMiB: number, currentInFlight: number) {
@@ -451,8 +454,10 @@ export function RuntimeSettingsView() {
                 label="同一请求再试几次"
                 description="针对 403、408、500、502、503、504。选「不重试」则失败立刻返回。"
                 value={value.request_retry}
-                options={withCurrent(retryChoices, value.request_retry, (count) =>
-                  formatCount(count, "次", "不重试")
+                options={withCurrent(
+                  retryChoices,
+                  value.request_retry,
+                  (count) => formatCount(count, "次", "不重试")
                 )}
                 onChange={(next) => patch("request_retry", next)}
               />
@@ -522,9 +527,7 @@ export function RuntimeSettingsView() {
                   value.nonstream_keepalive_interval,
                   formatSeconds
                 )}
-                onChange={(next) =>
-                  patch("nonstream_keepalive_interval", next)
-                }
+                onChange={(next) => patch("nonstream_keepalive_interval", next)}
               />
               <SwitchField
                 id="upstream-websockets"
@@ -579,8 +582,8 @@ export function RuntimeSettingsView() {
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    只在对话里走旧版出图工具、又没直接打到 /v1/images 时用到。必须是
-                    gpt- 开头的模型。
+                    只在对话里走旧版出图工具、又没直接打到 /v1/images
+                    时用到。必须是 gpt- 开头的模型。
                   </FieldDescription>
                 </Field>
               )}
@@ -603,7 +606,8 @@ export function RuntimeSettingsView() {
           <CardHeader>
             <CardTitle>系统网络</CardTitle>
             <CardDescription>
-              只给 OAuth、价格目录这些 Relay 自己的请求用。推理流量在模型账户上单独选代理。
+              只给 OAuth、价格目录这些 Relay
+              自己的请求用。推理流量在模型账户上单独选代理。
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -714,9 +718,7 @@ export function RuntimeSettingsView() {
                   value.request_bytes_in_flight_mib,
                   formatMib
                 )}
-                onChange={(next) =>
-                  patch("request_bytes_in_flight_mib", next)
-                }
+                onChange={(next) => patch("request_bytes_in_flight_mib", next)}
               />
               <ChoiceField
                 label="内存回收"
@@ -727,9 +729,7 @@ export function RuntimeSettingsView() {
                   value.memory_reclaim_threshold_mib,
                   formatMib
                 )}
-                onChange={(next) =>
-                  patch("memory_reclaim_threshold_mib", next)
-                }
+                onChange={(next) => patch("memory_reclaim_threshold_mib", next)}
               />
               <ChoiceField
                 label="还没标价的模型"
