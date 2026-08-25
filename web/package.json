@@ -22,6 +22,13 @@
     "react-dom": "^19.2.6",
     "recharts": "3.8.0"
   },
+  "packageManager": "pnpm@10.34.5",
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@astryxdesign/cli",
+      "@astryxdesign/core"
+    ]
+  },
   "devDependencies": {
     "@eslint/js": "^10",
     "@types/node": "^24",

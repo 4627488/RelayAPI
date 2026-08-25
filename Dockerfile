@@ -2,7 +2,7 @@ FROM node:24-alpine AS web-build
 WORKDIR /web
 RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 COPY web/ ./
 ARG VITE_GIT_COMMIT=dev
 ENV VITE_GIT_COMMIT=$VITE_GIT_COMMIT
