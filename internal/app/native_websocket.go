@@ -490,45 +490,12 @@ func nativeWebSocketAdmissionError(code string) (int, string) {
 
 func (a *App) dialNativeRuntimeWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (
 	*websocket.Conn, *http.Response, error) {
-	if client := a.inferenceCPA(); client != nil && client.BaseURL != nil {
-		return a.dialEmbeddedCPAWebSocket(ctx, r, admission, requestID)
-	}
 	if a.nativeRuntime == nil {
 		return nil, nil, fmt.Errorf("embedded CPA runtime is not available")
 	}
 	header := nativeRuntimeWebSocketHeaders(r.Header, requestID, admission.UpstreamCredentialID)
+	applyEmbeddedCPAAuth(header, a.embeddedCPAKey, admission.UpstreamCredentialID)
 	return nativeruntime.DialWebSocket(ctx, a.nativeRuntime.Handler(), nativeRuntimeWebSocketPath(r.URL), header, websocket.Subprotocols(r))
-}
-
-func (a *App) dialEmbeddedCPAWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (
-	*websocket.Conn, *http.Response, error) {
-	client := a.inferenceCPA()
-	if client == nil || client.BaseURL == nil {
-		return nil, nil, fmt.Errorf("embedded CPA runtime is not available")
-	}
-	target, err := url.Parse(client.URL(nativeRuntimeWebSocketPath(r.URL)))
-	if err != nil {
-		return nil, nil, err
-	}
-	switch target.Scheme {
-	case "http":
-		target.Scheme = "ws"
-	case "https":
-		target.Scheme = "wss"
-	default:
-		return nil, nil, fmt.Errorf("embedded CPA URL uses unsupported scheme %q", target.Scheme)
-	}
-	header := nativeRuntimeWebSocketHeaders(r.Header, requestID, admission.UpstreamCredentialID)
-	header.Set("Authorization", "Bearer "+client.APIKey)
-	if admission.UpstreamCredentialID != "" {
-		header.Set("X-Relay-CPA-Auth-ID", admission.UpstreamCredentialID)
-	}
-	dialer := websocket.Dialer{
-		HandshakeTimeout:  30 * time.Second,
-		EnableCompression: true,
-		Subprotocols:      websocket.Subprotocols(r),
-	}
-	return dialer.DialContext(ctx, target.String(), header)
 }
 
 func nativeRuntimeWebSocketPath(requestURL *url.URL) string {

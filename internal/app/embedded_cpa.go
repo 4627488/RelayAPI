@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
@@ -69,6 +67,7 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 		return fmt.Errorf("stored embedded CPA settings are invalid: %s", message)
 	}
 	a.nativeSettings.value = settings
+	// CPA's mux still authenticates every request, including in-process ServeHTTP.
 	secretBytes := make([]byte, 32)
 	if _, err = rand.Read(secretBytes); err != nil {
 		return fmt.Errorf("generate embedded CPA key: %w", err)
@@ -93,42 +92,10 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 	if err != nil {
 		return fmt.Errorf("build embedded CPA runtime: %w", err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		_ = runtime.Close(context.Background())
-		return fmt.Errorf("listen for embedded CPA: %w", err)
-	}
-	server := &http.Server{
-		Handler:           runtime.Handler(),
-		ReadHeaderTimeout: 15 * time.Second,
-		IdleTimeout:       90 * time.Second,
-	}
-	client, err := cpa.NewWithOptions("http://"+listener.Addr().String(), secret, cpa.Options{
-		ResponseHeaderTimeout:   a.requestTimeout(),
-		MaxInFlight:             a.cfg.GatewayMaxInFlight,
-		MaxQueue:                a.cfg.GatewayMaxQueue,
-		MaxRequestBytesInFlight: a.requestBytesInFlight(),
-		QueueTimeout:            a.cfg.GatewayQueueTimeout,
-		CircuitFailureThreshold: a.cfg.GatewayCircuitFailureThreshold,
-		CircuitOpenDuration:     a.cfg.GatewayCircuitOpenDuration,
-	})
-	if err != nil {
-		_ = listener.Close()
-		_ = runtime.Close(context.Background())
-		return err
-	}
 	a.replaceAdmission(settings)
-	a.nativeCPA = client
+	a.embeddedCPAKey = secret
 	a.nativeCPARuntime = runtime
-	a.nativeCPAServer = server
 	a.nativeRuntime = &embeddedCPAAdapter{app: a}
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-		if serveErr := server.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			a.nativeCPAServeErr.Store(serveErr)
-		}
-	}()
 	return nil
 }
 
@@ -158,28 +125,15 @@ func toBridgeCredentials(rows []upstream.Credential) []relaybridge.Credential {
 	return credentials
 }
 
-func (a *App) inferenceCPA() *cpa.Client {
-	if a != nil && a.nativeCPA != nil {
-		return a.nativeCPA
-	}
-	return nil
-}
-
 func (a *App) closeEmbeddedCPA() {
 	if a == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if a.nativeCPAServer != nil {
-		_ = a.nativeCPAServer.Shutdown(ctx)
-	}
 	if a.nativeCPARuntime != nil {
 		_ = a.nativeCPARuntime.Close(context.Background())
 	}
-	a.nativeCPA = nil
+	a.embeddedCPAKey = ""
 	a.nativeCPARuntime = nil
-	a.nativeCPAServer = nil
 	a.nativeRuntime = nil
 }
 
@@ -204,11 +158,19 @@ func (e *embeddedCPAAdapter) Handler() http.Handler {
 }
 
 func (e *embeddedCPAAdapter) Serve(w http.ResponseWriter, r *http.Request, body []byte) {
-	e.app.proxyEmbeddedCPA(w, r, body, false)
+	if e == nil || e.app == nil {
+		http.Error(w, "embedded CPA is not available", http.StatusServiceUnavailable)
+		return
+	}
+	serveEmbeddedCPAHandler(e.Handler(), e.app.embeddedCPAKey, w, r, body)
 }
 
 func (e *embeddedCPAAdapter) ServeModels(w http.ResponseWriter, r *http.Request) {
-	e.app.proxyEmbeddedCPA(w, r, nil, true)
+	if e == nil || e.app == nil {
+		http.Error(w, "embedded CPA is not available", http.StatusServiceUnavailable)
+		return
+	}
+	serveEmbeddedCPAHandler(e.Handler(), e.app.embeddedCPAKey, w, r, nil)
 }
 
 func (e *embeddedCPAAdapter) CredentialCount() int {
@@ -366,58 +328,39 @@ func convertCPATrace(trace relaybridge.RequestTrace) upstream.RequestTrace {
 	return out
 }
 
-func (a *App) proxyEmbeddedCPA(w http.ResponseWriter, r *http.Request, body []byte, control bool) {
-	client := a.inferenceCPA()
-	if client == nil || r == nil {
+func serveEmbeddedCPAHandler(handler http.Handler, apiKey string, w http.ResponseWriter, r *http.Request, body []byte) {
+	if handler == nil || r == nil {
 		http.Error(w, "embedded CPA is not available", http.StatusServiceUnavailable)
 		return
 	}
-	var reader io.Reader
+	request := r.Clone(r.Context())
 	if len(body) > 0 {
-		reader = bytes.NewReader(body)
+		request.Body = io.NopCloser(bytes.NewReader(body))
+		request.ContentLength = int64(len(body))
+		request.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(body)), nil
+		}
+	} else {
+		request.Body = http.NoBody
+		request.ContentLength = 0
+		request.GetBody = func() (io.ReadCloser, error) {
+			return http.NoBody, nil
+		}
 	}
-	request, err := http.NewRequestWithContext(r.Context(), r.Method, client.URL(r.URL.RequestURI()), reader)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
+	applyEmbeddedCPAAuth(request.Header, apiKey, request.Header.Get("X-Relay-Upstream-Credential-ID"))
+	handler.ServeHTTP(w, request)
+}
+
+func applyEmbeddedCPAAuth(header http.Header, apiKey, credentialID string) {
+	if header == nil {
 		return
 	}
-	copyHeaders(request.Header, r.Header)
-	request.Header.Set("Authorization", "Bearer "+client.APIKey)
-	request.Header.Del("X-API-Key")
-	request.Header.Del("X-Goog-API-Key")
-	if cred := strings.TrimSpace(r.Header.Get("X-Relay-Upstream-Credential-ID")); cred != "" {
-		request.Header.Set("X-Relay-CPA-Auth-ID", cred)
+	if key := strings.TrimSpace(apiKey); key != "" {
+		header.Set("Authorization", "Bearer "+key)
 	}
-	if requestID := strings.TrimSpace(r.Header.Get("X-Relay-Request-ID")); requestID != "" {
-		request.Header.Set("X-Relay-Request-ID", requestID)
-	}
-	request.Host = client.BaseURL.Host
-	transport := client.HTTP
-	if control && client.ControlHTTP != nil {
-		transport = client.ControlHTTP
-	}
-	response, err := transport.Do(request)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer response.Body.Close()
-	copyHeaders(w.Header(), response.Header)
-	w.WriteHeader(response.StatusCode)
-	buf := make([]byte, 32<<10)
-	flusher, _ := w.(http.Flusher)
-	for {
-		n, readErr := response.Body.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				return
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-		if readErr != nil {
-			return
-		}
+	header.Del("X-API-Key")
+	header.Del("X-Goog-API-Key")
+	if cred := strings.TrimSpace(credentialID); cred != "" {
+		header.Set("X-Relay-CPA-Auth-ID", cred)
 	}
 }

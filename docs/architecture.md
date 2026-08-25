@@ -1,9 +1,9 @@
 # RelayAPI architecture
 
 RelayAPI is a Codex-first, multi-tenant policy and accounting gateway. It owns
-the provider runtime for Codex, Kimi, xAI/Grok and OpenAI-compatible services
-such as Aliyun Bailian. There is no external or embedded third-party proxy
-runtime.
+tenant auth, admission, and settlement. Provider inference for Codex, Kimi,
+xAI/Grok and OpenAI-compatible services such as Aliyun Bailian runs through
+official embedded CPA (`relaybridge`), invoked in-process.
 
 ## Request boundary
 
@@ -97,8 +97,10 @@ added twice into the critical path.
   stored token for later requests but is returned as-is.
 - HTTP, HTTPS, SOCKS5 and SOCKS5H proxies are implemented in Relay and apply to
   inference, WebSocket, discovery, OAuth, quota and system requests.
-- Provider credentials remain encrypted in PostgreSQL. The native runtime
-  is called in-process; there is no loopback HTTP hop or process-local API key.
+- Provider credentials remain encrypted in PostgreSQL. Embedded CPA is called
+  in-process through `Handler().ServeHTTP` and an in-memory WebSocket pipe;
+  there is no `127.0.0.1` listener. CPA's mux still requires a process-local
+  API key on those in-process calls.
 - PostgreSQL row locks make reservation and settlement idempotent and atomic.
 
 ## Models and pricing
