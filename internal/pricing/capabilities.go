@@ -95,11 +95,61 @@ func (idx *CapabilityIndex) add(capability Capability) {
 		if key == "" {
 			continue
 		}
-		if current, exists := idx.byKey[key]; exists && !preferCapability(capability, current) {
-			continue
+		if current, exists := idx.byKey[key]; exists {
+			if capability.Source == SourceAdmin && current.Source != SourceAdmin {
+				idx.byKey[key] = overlayAdminCapability(capability, current)
+				continue
+			}
+			if !preferCapability(capability, current) {
+				continue
+			}
 		}
 		idx.byKey[key] = capability
 	}
+}
+
+// overlayAdminCapability keeps catalog facts that the administrator row left
+// blank. Saving only context_window must not wipe reasoning levels or
+// modalities that models.dev already provided.
+func overlayAdminCapability(admin, catalog Capability) Capability {
+	merged := catalog
+	merged.ID = firstNonEmptyCapabilityString(admin.ID, catalog.ID)
+	merged.Source = SourceAdmin
+	if name := strings.TrimSpace(admin.Name); name != "" {
+		merged.Name = name
+	}
+	if provider := strings.TrimSpace(admin.Provider); provider != "" {
+		merged.Provider = provider
+	}
+	if admin.Context > 0 {
+		merged.Context = admin.Context
+	}
+	if admin.MaxOutput > 0 {
+		merged.MaxOutput = admin.MaxOutput
+	}
+	if len(admin.ReasoningOptions) > 0 {
+		merged.Reasoning = admin.Reasoning
+		merged.ReasoningOptions = admin.ReasoningOptions
+		merged.DefaultLevel = admin.DefaultLevel
+	} else if admin.DefaultLevel != "" {
+		merged.DefaultLevel = admin.DefaultLevel
+	}
+	if len(admin.InputModalities) > 0 {
+		merged.InputModalities = admin.InputModalities
+	}
+	if admin.PreferWebSockets != nil {
+		merged.PreferWebSockets = admin.PreferWebSockets
+	}
+	return merged
+}
+
+func firstNonEmptyCapabilityString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func CapabilityFromRawJSON(sourceModelID, raw string) (Capability, bool) {

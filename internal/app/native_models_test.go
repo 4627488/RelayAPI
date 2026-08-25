@@ -196,6 +196,33 @@ func TestPromoteOverlaysModelsDevCapabilities(t *testing.T) {
 	assertReasoningEfforts(t, gpt, []string{"none", "low", "medium", "high"}, "medium")
 }
 
+func TestPromoteCapsGrokContextAt200kFromAdminOverlay(t *testing.T) {
+	payload := []byte(`{"models":[{"slug":"grok-4.6","visibility":"list"},{"slug":"grok-4.5","visibility":"list"}]}`)
+	index := pricing.NewCapabilityIndex("v1", []pricing.Capability{
+		{ID: "xai/grok-4.6", Provider: "xai", Source: "models.dev", Context: 500000, MaxOutput: 500000},
+		{ID: "xai/grok-4.5", Provider: "xai", Source: "models.dev", Context: 500000, MaxOutput: 500000},
+		{ID: "grok-4.6", Provider: "xai", Source: pricing.SourceAdmin, Context: 200000, MaxOutput: 32768},
+		{ID: "grok-4.5", Provider: "xai", Source: pricing.SourceAdmin, Context: 200000, MaxOutput: 32768},
+	})
+	promoted, err := promoteCodexCatalogCapabilities(payload, index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(promoted, &document); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range document["models"].([]any) {
+		item := raw.(map[string]any)
+		if item["context_window"] != float64(200000) || item["max_context_window"] != float64(200000) {
+			t.Fatalf("%s context = %#v", item["slug"], item["context_window"])
+		}
+		if item["max_output_tokens"] != float64(32768) {
+			t.Fatalf("%s max_output = %#v", item["slug"], item["max_output_tokens"])
+		}
+	}
+}
+
 func TestPromoteOverlaysAdminKimiK3256k(t *testing.T) {
 	payload := []byte(`{"models":[{"slug":"kimi-k3-256k","visibility":"list"}]}`)
 	preferWS := false
