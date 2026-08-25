@@ -427,7 +427,7 @@ func (a *App) nativeRuntimeInfo() map[string]any {
 		models = len(a.nativeCPARuntime.Models())
 	}
 	return map[string]any{
-		"ready": a.nativeCPARuntime != nil, "credentials": credentials, "models": models,
+		"ready": a.nativeCPARuntime != nil && a.nativeCPA != nil, "credentials": credentials, "models": models,
 		"data_plane":                     "embedded_cpa",
 		"upstream_websockets":            settings.UpstreamWebSockets,
 		"request_timeout_seconds":        settings.RequestTimeoutSeconds,

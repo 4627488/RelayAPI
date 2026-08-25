@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/config"
+	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/cpaimport"
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/egress"
@@ -39,8 +40,10 @@ type App struct {
 	setupBox          identity.SecretBox
 	nativeAdmission   atomic.Pointer[gateway.Client]
 	nativeRuntime     upstream.Runtime
+	nativeCPA         *cpa.Client
 	nativeCPARuntime  *relaybridge.Runtime
-	embeddedCPAKey    string
+	nativeCPAServer   *http.Server
+	nativeCPAServeErr atomic.Value
 	providerOAuth     providerOAuthSessions
 	nativeSettings    settingsState
 	memoryReclaiming  atomic.Bool
@@ -463,8 +466,11 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	if a.nativeRuntime == nil || a.nativeRuntime.CredentialCount() == 0 {
 		credentialErr = errors.New("no enabled runtime credentials")
 	}
-	if a.nativeCPARuntime == nil {
+	if a.nativeCPARuntime == nil || a.nativeCPA == nil {
 		runtimeErr = errors.New("embedded CPA runtime is not available")
+	}
+	if serveErr, ok := a.nativeCPAServeErr.Load().(error); ok && serveErr != nil {
+		runtimeErr = serveErr
 	}
 	status := http.StatusOK
 	if err != nil || runtimeErr != nil || credentialErr != nil || subscriptionErr != nil {

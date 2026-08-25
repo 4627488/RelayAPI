@@ -21,5 +21,3 @@ Call `Runtime.Serve` with the already-read body and write the runtime response t
 ## Consequences
 
 Latency traces no longer invent Relay-to-runtime TCP/TLS spans. `/healthz` reports `runtime` instead of a loopback serve error. Tests that pointed `gateway.NewWithOptions` at `httptest.NewServer(runtime.Handler())` now hold a `Runtime` only.
-
-Embedded CPA later reintroduced a same-process loopback listener. That hop is removed again in [2026-08-25-embedded-cpa-no-loopback.md](2026-08-25-embedded-cpa-no-loopback.md) without dropping CPA.
