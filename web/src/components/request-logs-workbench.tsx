@@ -4,68 +4,62 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react"
+import { Banner } from "@astryxdesign/core/Banner"
+import { Button } from "@astryxdesign/core/Button"
+import { CodeBlock } from "@astryxdesign/core/CodeBlock"
+import { Collapsible } from "@astryxdesign/core/Collapsible"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { FormLayout } from "@astryxdesign/core/FormLayout"
+import { Grid } from "@astryxdesign/core/Grid"
 import {
-  AlertTriangleIcon,
-  ArrowRightIcon,
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  CopyIcon,
+  HStack,
+  Layout,
+  LayoutContent,
+  LayoutFooter,
+  LayoutHeader,
+  LayoutPanel,
+  StackItem,
+  VStack,
+} from "@astryxdesign/core/Layout"
+import { NumberInput } from "@astryxdesign/core/NumberInput"
+import { Pagination } from "@astryxdesign/core/Pagination"
+import { Section } from "@astryxdesign/core/Section"
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@astryxdesign/core/SegmentedControl"
+import { Selector } from "@astryxdesign/core/Selector"
+import { Tab, TabList } from "@astryxdesign/core/TabList"
+import { Table, pixel, proportional, type TablePlugin } from "@astryxdesign/core/Table"
+import { Heading, Text } from "@astryxdesign/core/Text"
+import { TextInput } from "@astryxdesign/core/TextInput"
+import { useToast } from "@astryxdesign/core/Toast"
+import { Token } from "@astryxdesign/core/Token"
+import {
+  ActivityIcon,
+  CircleDollarSignIcon,
+  Clock3Icon,
+  CoinsIcon,
+  DatabaseIcon,
   RefreshCwIcon,
   SearchIcon,
-  SlidersHorizontalIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react"
-import { toast } from "sonner"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { LoadingView } from "@/components/loading-view"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { SearchField, StatStrip } from "@/components/workspace-ui"
+  CopyField,
+  CountBadge,
+  MetricGrid,
+  PageHeader,
+  SearchField,
+  StatusLabel,
+} from "@/components/page-kit"
+import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
+import { CacheHitRateBadge } from "@/components/token-cache-rate"
 import {
   api,
   type RequestLog,
@@ -84,9 +78,6 @@ import {
   requestLogSucceeded,
   requestLogTransport,
 } from "@/lib/format"
-import { cn } from "@/lib/utils"
-import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
-import { CacheHitRateBadge } from "@/components/token-cache-rate"
 
 const emptyPage: RequestLogPage = {
   items: [],
@@ -111,19 +102,78 @@ const emptyPage: RequestLogPage = {
   },
 }
 
+const methodOptions = [
+  { value: "all", label: "全部方法" },
+  { value: "POST", label: "POST" },
+  { value: "GET", label: "GET" },
+  { value: "PUT", label: "PUT" },
+  { value: "PATCH", label: "PATCH" },
+  { value: "DELETE", label: "DELETE" },
+]
+
+const pageSizeOptions = [25, 50, 100, 200]
+
 type SelectedLog = {
   log: RequestLog
   detail: RequestLogDetail | null
   turns?: WebSocketTurn[]
 }
 
+type InspectorTab = "payload" | "headers" | "latency"
+
+interface LogRow extends Record<string, unknown> {
+  id: string
+  started_at: string
+  status: string
+  ok: boolean
+  transport: string
+  model: string
+  route: string
+  client: string
+  client_version: string
+  tenant: string
+  key_label: string
+  tokens: number
+  cached_tokens: number
+  prompt_tokens: number
+  request_bytes: number
+  response_bytes: number
+  latency_ms: number
+  ttft_ms?: number
+  cost: number | null
+  log: RequestLog
+}
+
+interface TurnRow extends Record<string, unknown> {
+  id: string
+  model: string
+  tokens: number
+  latency_ms: number
+  cost: number
+}
+
+interface CostRow extends Record<string, unknown> {
+  id: string
+  label: string
+  tokens: number
+  rate: number
+  cost: number
+}
+
+interface TimingRow extends Record<string, unknown> {
+  id: string
+  label: string
+  value: string
+}
+
 export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
+  const toast = useToast()
   const [data, setData] = useState<RequestLogPage>(emptyPage)
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("all")
   const [method, setMethod] = useState("all")
   const [model, setModel] = useState("")
-  const [minLatency, setMinLatency] = useState("")
+  const [minLatency, setMinLatency] = useState<number | undefined>(undefined)
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
   const [page, setPage] = useState(1)
@@ -132,6 +182,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   const [loading, setLoading] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [selected, setSelected] = useState<SelectedLog | null>(null)
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("payload")
   const detailRequest = useRef(0)
 
   const load = useCallback(async () => {
@@ -145,13 +196,16 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       if (status !== "all") params.set("status", status)
       if (method !== "all") params.set("method", method)
       if (model.trim()) params.set("model", model.trim())
-      if (minLatency) params.set("min_latency_ms", minLatency)
+      if (minLatency != null) params.set("min_latency_ms", String(minLatency))
       if (from) params.set("from", new Date(from).toISOString())
       if (to) params.set("to", new Date(to).toISOString())
       const prefix = admin ? "/api/admin/logs" : "/api/logs"
       setData(await api<RequestLogPage>(`${prefix}?${params}`))
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "读取请求日志失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "读取请求日志失败",
+      })
     } finally {
       setLoading(false)
     }
@@ -166,6 +220,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     query,
     status,
     to,
+    toast,
   ])
 
   useEffect(() => {
@@ -187,19 +242,25 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       } catch (cause) {
         if (detailRequest.current !== token) return
         setSelected(null)
-        toast.error(cause instanceof Error ? cause.message : "读取日志详情失败")
+        toast({
+          type: "error",
+          body: cause instanceof Error ? cause.message : "读取日志详情失败",
+        })
         if (logIdFromHash() === id) writeLogHash(null, "replace")
       } finally {
         if (detailRequest.current === token) setDetailLoading(false)
       }
     },
-    [admin]
+    [admin, toast]
   )
 
-  function openDetail(log: RequestLog) {
-    writeLogHash(log.id, "push")
-    void fetchDetail(log.id, log)
-  }
+  const openDetail = useCallback(
+    (log: RequestLog) => {
+      writeLogHash(log.id, "push")
+      void fetchDetail(log.id, log)
+    },
+    [fetchDetail]
+  )
 
   const closeDetail = useCallback(() => {
     detailRequest.current += 1
@@ -227,7 +288,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   }, [fetchDetail])
 
   useEffect(() => {
-    if (!selected) return
+    if (!selected && !detailLoading) return
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return
       event.preventDefault()
@@ -235,20 +296,19 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [closeDetail, selected])
+  }, [closeDetail, detailLoading, selected])
 
   function resetFilters() {
     setQuery("")
     setStatus("all")
     setMethod("all")
     setModel("")
-    setMinLatency("")
+    setMinLatency(undefined)
     setFrom("")
     setTo("")
     setPage(1)
   }
 
-  const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
   const cacheRate = cacheHitRateLabel(
     data.summary.cached_tokens,
     data.summary.prompt_tokens
@@ -256,582 +316,557 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   const advancedFilterCount = [
     method !== "all",
     model,
-    minLatency,
+    minLatency != null,
     from,
     to,
   ].filter(Boolean).length
   const hasFilters = Boolean(query || status !== "all" || advancedFilterCount)
+  const hashId = logIdFromHash()
+  const selectedId = selected?.log.id ?? ""
+  const showInspector = Boolean(selected || (detailLoading && hashId))
 
-  if (selected) {
-    return (
-      <LogDetailPage
-        value={selected}
-        loading={detailLoading}
-        onBack={closeDetail}
-      />
-    )
-  }
+  const rows: LogRow[] = data.items.map((log) => ({
+    id: log.id,
+    started_at: log.started_at,
+    status: requestLogStatus(log.status_code),
+    ok: requestLogSucceeded(log.status_code, log.error_code),
+    transport: requestLogTransport(log.request_type, log.stream),
+    model:
+      log.actual_model || log.requested_model || log.model || log.path,
+    route: [
+      requestLogTransport(log.request_type, log.stream),
+      log.request_type || `${log.method} ${log.path}`,
+      log.provider
+        ? `${log.provider}${log.auth_index ? ` / ${log.auth_index}` : ""}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    client: log.client_name || "未知客户端",
+    client_version: log.client_version || "—",
+    tenant: log.tenant_name || log.tenant_id,
+    key_label: log.api_key_name || log.api_key_prefix || "—",
+    tokens: log.total_tokens,
+    cached_tokens: log.cached_tokens,
+    prompt_tokens: log.prompt_tokens,
+    request_bytes: log.request_body_bytes,
+    response_bytes: log.response_body_bytes,
+    latency_ms: log.latency_ms,
+    ttft_ms: log.ttft_ms,
+    cost: log.cost_nano_usd,
+    log,
+  }))
 
-  if (detailLoading && logIdFromHash()) {
-    return (
-      <div className="flex w-full min-w-0 flex-col gap-4">
-        <Skeleton className="h-9 w-28" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-72 w-full" />
-      </div>
-    )
-  }
+  const rowPlugin = useMemo<TablePlugin<LogRow>>(
+    () => ({
+      transformBodyRow: (props, item) => ({
+        ...props,
+        htmlProps: {
+          ...props.htmlProps,
+          role: "button",
+          tabIndex: 0,
+          "aria-selected": item.id === selectedId,
+          onClick: () => openDetail(item.log),
+          onKeyDown: (event: ReactKeyboardEvent<HTMLTableRowElement>) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault()
+              openDetail(item.log)
+            }
+          },
+        },
+      }),
+    }),
+    [openDetail, selectedId]
+  )
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-4">
-      <StatStrip
-        className="sm:grid-cols-3 xl:grid-cols-6"
-        items={[
-          {
-            label: "请求",
-            value: compact(data.summary.requests),
-            detail: `${data.summary.errors} 个错误`,
-          },
-          {
-            label: "错误率",
-            value: data.summary.requests
-              ? `${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%`
-              : "0%",
-            detail: "HTTP 错误或中断",
-          },
-          {
-            label: "Tokens",
-            value: compactTokens(data.summary.tokens),
-            detail: `缓存命中 ${cacheRate}`,
-          },
-          {
-            label: "负载",
-            value: bytes(
-              data.summary.request_bytes + data.summary.response_bytes
-            ),
-            detail: `${bytes(data.summary.request_bytes)} ↑ · ${bytes(data.summary.response_bytes)} ↓`,
-          },
-          {
-            label: "总耗时",
-            value: data.summary.requests
-              ? `P50 ${formatMS(data.summary.latency_p50_ms)}`
-              : "无数据",
-            detail: data.summary.requests
-              ? `P95 ${formatMS(data.summary.latency_p95_ms)}`
-              : "当前筛选范围",
-          },
-          { label: "费用", value: money(data.summary.cost_nano_usd) },
-        ]}
-      />
-
-      <Card>
-        <CardHeader className="border-b">
-          <CardTitle>请求明细</CardTitle>
-          <CardDescription>
-            一条日志是一次对 Relay 的调用。SSE 仍是一条 HTTP 请求；WebSocket
-            按会话一行，轮次在详情里。
-          </CardDescription>
-          <FieldGroup className="grid min-w-0 gap-2 pt-2 md:grid-cols-[minmax(0,1fr)_9rem_auto_auto]">
-            <Field className="min-w-0">
-              <FieldLabel htmlFor="log-search" className="sr-only">
-                搜索日志
-              </FieldLabel>
-              <SearchField
-                id="log-search"
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value)
+    <Layout
+      height="fill"
+      defaultHasDividers
+      end={
+        showInspector ? (
+          <LayoutPanel width={420} label="日志详情" padding={4}>
+            {selected ? (
+              <LogInspector
+                value={selected}
+                loading={detailLoading}
+                tab={inspectorTab}
+                onTabChange={setInspectorTab}
+                onClose={closeDetail}
+              />
+            ) : (
+              <LoadingView />
+            )}
+          </LayoutPanel>
+        ) : undefined
+      }
+      header={
+        <LayoutHeader>
+          <VStack gap={4}>
+            <MetricGrid
+              items={[
+                {
+                  label: "请求",
+                  value: compact(data.summary.requests),
+                  hint: `${data.summary.errors} 个错误`,
+                  icon: ActivityIcon,
+                },
+                {
+                  label: "错误率",
+                  value: data.summary.requests
+                    ? `${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%`
+                    : "0%",
+                  hint: "HTTP 错误或中断",
+                  icon: TriangleAlertIcon,
+                },
+                {
+                  label: "Tokens",
+                  value: compactTokens(data.summary.tokens),
+                  hint: `缓存命中 ${cacheRate}`,
+                  icon: CoinsIcon,
+                },
+                {
+                  label: "负载",
+                  value: bytes(
+                    data.summary.request_bytes + data.summary.response_bytes
+                  ),
+                  hint: `${bytes(data.summary.request_bytes)} ↑ · ${bytes(data.summary.response_bytes)} ↓`,
+                  icon: DatabaseIcon,
+                },
+                {
+                  label: "总耗时",
+                  value: data.summary.requests
+                    ? `P50 ${formatMS(data.summary.latency_p50_ms)}`
+                    : "无数据",
+                  hint: data.summary.requests
+                    ? `P95 ${formatMS(data.summary.latency_p95_ms)}`
+                    : "当前筛选范围",
+                  icon: Clock3Icon,
+                },
+                {
+                  label: "费用",
+                  value: money(data.summary.cost_nano_usd),
+                  icon: CircleDollarSignIcon,
+                },
+              ]}
+            />
+            <PageHeader
+              title="请求明细"
+              actions={
+                <Button
+                  label="刷新"
+                  variant="secondary"
+                  size="sm"
+                  icon={<RefreshCwIcon />}
+                  isLoading={loading}
+                  onClick={() => void load()}
+                />
+              }
+            />
+            <Text color="secondary">
+              一条日志是一次对 Relay 的调用。SSE 仍是一条 HTTP 请求；WebSocket
+              按会话一行，轮次在详情里。
+            </Text>
+            <HStack gap={3} wrap="wrap" vAlign="end">
+              <StackItem size="fill">
+                <SearchField
+                  label="搜索日志"
+                  value={query}
+                  onChange={(value) => {
+                    setQuery(value)
+                    setPage(1)
+                  }}
+                  placeholder="搜索模型、路径、用户、Key、Trace ID 或错误"
+                />
+              </StackItem>
+              <SegmentedControl
+                label="状态"
+                size="sm"
+                value={status}
+                onChange={(value) => {
+                  setStatus(value)
                   setPage(1)
                 }}
-                onClear={() => setQuery("")}
-                placeholder="搜索模型、路径、用户、Key、Trace ID 或错误"
-              />
-            </Field>
-            <Field>
-              <FieldLabel className="sr-only">状态</FieldLabel>
-              <Select
-                items={{
-                  all: "全部状态",
-                  success: "成功",
-                  error: "错误",
-                  stream: "SSE",
-                  websocket: "WebSocket",
-                }}
-                value={status}
-                onValueChange={(value) => {
-                  if (value) {
-                    setStatus(value)
-                    setPage(1)
-                  }
-                }}
               >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="all">全部状态</SelectItem>
-                    <SelectItem value="success">成功</SelectItem>
-                    <SelectItem value="error">错误</SelectItem>
-                    <SelectItem value="stream">SSE</SelectItem>
-                    <SelectItem value="websocket">WebSocket</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
+                <SegmentedControlItem value="all" label="全部状态" />
+                <SegmentedControlItem value="success" label="成功" />
+                <SegmentedControlItem value="error" label="错误" />
+                <SegmentedControlItem value="stream" label="SSE" />
+                <SegmentedControlItem value="websocket" label="WebSocket" />
+              </SegmentedControl>
+            </HStack>
             <Collapsible
-              open={filtersOpen}
-              onOpenChange={setFiltersOpen}
-              className="contents"
-            >
-              <CollapsibleTrigger render={<Button variant="outline" />}>
-                <SlidersHorizontalIcon data-icon="inline-start" />
-                筛选{advancedFilterCount ? ` ${advancedFilterCount}` : ""}
-                <ChevronDownIcon
-                  data-icon="inline-end"
-                  className={cn(
-                    "transition-transform",
-                    filtersOpen && "rotate-180"
-                  )}
-                />
-              </CollapsibleTrigger>
-              <Button
-                variant="outline"
-                onClick={() => void load()}
-                disabled={loading}
-              >
-                {loading ? (
-                  <Spinner data-icon="inline-start" />
+              trigger={
+                advancedFilterCount ? (
+                  <HStack gap={2} vAlign="center">
+                    <Text>筛选</Text>
+                    <CountBadge value={advancedFilterCount} />
+                  </HStack>
                 ) : (
-                  <RefreshCwIcon data-icon="inline-start" />
-                )}
-                刷新
-              </Button>
-              <CollapsibleContent className="col-span-full pt-2">
-                <FieldGroup className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                  <Field>
-                    <FieldLabel>方法</FieldLabel>
-                    <Select
-                      items={[
-                        { value: "all", label: "全部方法" },
-                        ...["POST", "GET", "PUT", "PATCH", "DELETE"].map(
-                          (value) => ({ value, label: value })
-                        ),
-                      ]}
-                      value={method}
-                      onValueChange={(value) => {
-                        if (value) {
-                          setMethod(value)
-                          setPage(1)
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="all">全部方法</SelectItem>
-                          {["POST", "GET", "PUT", "PATCH", "DELETE"].map(
-                            (value) => (
-                              <SelectItem key={value} value={value}>
-                                {value}
-                              </SelectItem>
-                            )
-                          )}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="log-model">精确模型</FieldLabel>
-                    <Input
-                      id="log-model"
-                      value={model}
-                      onChange={(event) => {
-                        setModel(event.target.value)
-                        setPage(1)
-                      }}
-                      placeholder="例如 gpt-5.6"
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="log-latency">最小耗时</FieldLabel>
-                    <Input
-                      id="log-latency"
-                      value={minLatency}
-                      onChange={(event) => {
-                        setMinLatency(event.target.value)
-                        setPage(1)
-                      }}
-                      type="number"
-                      min="0"
-                      placeholder="毫秒"
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="log-from">开始时间</FieldLabel>
-                    <Input
-                      id="log-from"
-                      className="min-w-0"
-                      value={from}
-                      onChange={(event) => {
-                        setFrom(event.target.value)
-                        setPage(1)
-                      }}
-                      type="datetime-local"
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="log-to">结束时间</FieldLabel>
-                    <Input
-                      id="log-to"
-                      className="min-w-0"
-                      value={to}
-                      onChange={(event) => {
-                        setTo(event.target.value)
-                        setPage(1)
-                      }}
-                      type="datetime-local"
-                    />
-                  </Field>
-                </FieldGroup>
+                  "筛选"
+                )
+              }
+              isOpen={filtersOpen}
+              onOpenChange={setFiltersOpen}
+            >
+              <FormLayout>
+                <FormLayout direction="horizontal">
+                  <Selector
+                    label="方法"
+                    value={method}
+                    onChange={(value) => {
+                      setMethod(value)
+                      setPage(1)
+                    }}
+                    options={methodOptions}
+                  />
+                  <TextInput
+                    label="精确模型"
+                    value={model}
+                    onChange={(value) => {
+                      setModel(value)
+                      setPage(1)
+                    }}
+                    placeholder="例如 gpt-5.6"
+                  />
+                  <NumberInput
+                    label="最小耗时"
+                    value={minLatency}
+                    onChange={(value) => {
+                      setMinLatency(value ?? undefined)
+                      setPage(1)
+                    }}
+                    min={0}
+                    isIntegerOnly
+                    hasClear
+                    units="ms"
+                    placeholder="毫秒"
+                    isOptional
+                  />
+                  <TextInput
+                    label="开始时间"
+                    value={from}
+                    onChange={(value) => {
+                      setFrom(value)
+                      setPage(1)
+                    }}
+                    placeholder="2026-08-25T12:00"
+                    isOptional
+                  />
+                  <TextInput
+                    label="结束时间"
+                    value={to}
+                    onChange={(value) => {
+                      setTo(value)
+                      setPage(1)
+                    }}
+                    placeholder="2026-08-25T13:00"
+                    isOptional
+                  />
+                </FormLayout>
                 {hasFilters ? (
                   <Button
+                    label="清除全部筛选"
                     variant="ghost"
                     size="sm"
-                    className="mt-3"
+                    icon={<XIcon />}
                     onClick={resetFilters}
-                  >
-                    <XIcon data-icon="inline-start" />
-                    清除全部筛选
-                  </Button>
+                  />
                 ) : null}
-              </CollapsibleContent>
+              </FormLayout>
             </Collapsible>
-          </FieldGroup>
-        </CardHeader>
-
-        <CardContent className="px-0">
-          {data.items.length ? (
-            <Table className={cn(loading && "opacity-60")}>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="pl-4">时间</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>请求</TableHead>
-                  <TableHead>客户端</TableHead>
-                  {admin ? <TableHead>用户</TableHead> : null}
-                  <TableHead className="text-right">Token</TableHead>
-                  <TableHead className="text-right">负载</TableHead>
-                  <TableHead className="text-right">耗时</TableHead>
-                  <TableHead className="pr-4 text-right">费用</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.items.map((log) => (
-                  <TableRow
-                    key={log.id}
-                    role="button"
-                    tabIndex={0}
-                    className="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
-                    onClick={() => void openDetail(log)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault()
-                        void openDetail(log)
-                      }
-                    }}
-                  >
-                    <TableCell className="pl-4 whitespace-nowrap text-muted-foreground">
-                      {dateTime(log.started_at)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <Badge
-                          variant={
-                            requestLogSucceeded(log.status_code, log.error_code)
-                              ? "secondary"
-                              : "destructive"
-                          }
-                        >
-                          {requestLogStatus(log.status_code)}
-                        </Badge>
-                        {requestLogTransport(log.request_type, log.stream) !==
-                        "HTTP" ? (
-                          <span className="text-xs text-muted-foreground">
-                            {requestLogTransport(log.request_type, log.stream)}
-                          </span>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <p className="max-w-72 truncate font-mono text-xs">
-                        {log.actual_model ||
-                          log.requested_model ||
-                          log.model ||
-                          log.path}
-                      </p>
-                      <p className="max-w-72 truncate text-xs text-muted-foreground">
-                        {requestLogTransport(log.request_type, log.stream)}
-                        {log.request_type
-                          ? ` · ${log.request_type}`
-                          : ` · ${log.method} ${log.path}`}
-                        {log.provider
-                          ? ` · ${log.provider}${log.auth_index ? ` / ${log.auth_index}` : ""}`
-                          : ""}
-                      </p>
-                    </TableCell>
-                    <TableCell title={log.user_agent || undefined}>
-                      <p className="max-w-44 truncate text-sm">
-                        {log.client_name || "未知客户端"}
-                      </p>
-                      <p className="max-w-44 truncate font-mono text-xs text-muted-foreground">
-                        {log.client_version || "—"}
-                      </p>
-                    </TableCell>
-                    {admin ? (
-                      <TableCell>
-                        <p className="max-w-40 truncate text-sm">
-                          {log.tenant_name || log.tenant_id}
-                        </p>
-                        <p className="max-w-40 truncate text-xs text-muted-foreground">
-                          {log.api_key_name || log.api_key_prefix || "—"}
-                        </p>
-                      </TableCell>
-                    ) : null}
-                    <TableCell className="text-right tabular-nums">
-                      <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
-                        <span>{compactTokens(log.total_tokens)}</span>
-                        <CacheHitRateBadge
-                          cachedTokens={log.cached_tokens}
-                          promptTokens={log.prompt_tokens}
-                        />
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right text-xs whitespace-nowrap tabular-nums">
-                      <span>{bytes(log.request_body_bytes)}</span>
-                      <ArrowRightIcon className="mx-1 inline size-3 text-muted-foreground" />
-                      <span>{bytes(log.response_body_bytes)}</span>
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap tabular-nums">
-                      <p>{log.latency_ms} ms</p>
-                      {log.ttft_ms != null ? (
-                        <p className="text-xs text-muted-foreground">
-                          首字节 {log.ttft_ms} ms
-                        </p>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="pr-4 text-right tabular-nums">
-                      {money(log.cost_nano_usd)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <Empty className="min-h-72 rounded-none border-0">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <SearchIcon />
-                </EmptyMedia>
-                <EmptyTitle>
-                  {hasFilters ? "没有匹配的请求" : "暂无请求记录"}
-                </EmptyTitle>
-                <EmptyDescription>
-                  {hasFilters
+          </VStack>
+        </LayoutHeader>
+      }
+      content={
+        <LayoutContent padding={0}>
+          <Table
+            data={rows}
+            idKey="id"
+            density="compact"
+            hasHover
+            textOverflow="truncate"
+            rowIndexStart={(page - 1) * pageSize + 1}
+            rowCount={data.total}
+            plugins={{ inspect: rowPlugin }}
+            emptyState={
+              <EmptyState
+                title={hasFilters ? "没有匹配的请求" : "暂无请求记录"}
+                description={
+                  hasFilters
                     ? "调整或清除筛选条件后再试。"
-                    : "API 调用记录会显示在这里。"}
-                </EmptyDescription>
-              </EmptyHeader>
-              {hasFilters ? (
-                <Button variant="outline" size="sm" onClick={resetFilters}>
-                  清除筛选
-                </Button>
-              ) : null}
-            </Empty>
-          )}
-        </CardContent>
-
-        <CardFooter className="flex-wrap justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {data.total} 条 · 第 {data.page}/{totalPages} 页
-            </span>
-            <Select
-              items={[25, 50, 100, 200].map((value) => ({
-                value: String(value),
-                label: `${value} / 页`,
-              }))}
-              value={String(pageSize)}
-              onValueChange={(value) => {
-                if (value) {
-                  setPageSize(Number(value))
-                  setPage(1)
+                    : "API 调用记录会显示在这里。"
                 }
-              }}
-            >
-              <SelectTrigger size="sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {[25, 50, 100, 200].map((value) => (
-                    <SelectItem key={value} value={String(value)}>
-                      {value} / 页
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex gap-1">
-            <Button
-              variant="outline"
-              size="icon-sm"
-              disabled={page <= 1}
-              onClick={() => setPage((value) => value - 1)}
-              aria-label="上一页"
-            >
-              <ChevronLeftIcon />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              disabled={page >= totalPages}
-              onClick={() => setPage((value) => value + 1)}
-              aria-label="下一页"
-            >
-              <ChevronRightIcon />
-            </Button>
-          </div>
-        </CardFooter>
-      </Card>
-    </div>
+                icon={<SearchIcon />}
+                actions={
+                  hasFilters ? (
+                    <Button
+                      label="清除筛选"
+                      variant="secondary"
+                      size="sm"
+                      onClick={resetFilters}
+                    />
+                  ) : undefined
+                }
+              />
+            }
+            columns={[
+              {
+                key: "started_at",
+                header: "时间",
+                width: pixel(140),
+                renderCell: (row) => (
+                  <Text type="supporting">{dateTime(row.started_at)}</Text>
+                ),
+              },
+              {
+                key: "status",
+                header: "状态",
+                width: pixel(120),
+                renderCell: (row) => (
+                  <HStack gap={1} vAlign="center">
+                    <StatusLabel
+                      tone={row.ok ? "success" : "error"}
+                      label={row.status}
+                    />
+                    {row.transport !== "HTTP" ? (
+                      <Token label={row.transport} color="gray" size="sm" />
+                    ) : null}
+                  </HStack>
+                ),
+              },
+              {
+                key: "model",
+                header: "请求",
+                width: proportional(2),
+                renderCell: (row) => (
+                  <VStack gap={0}>
+                    <Text type="code">{row.model}</Text>
+                    <Text color="secondary" type="supporting">
+                      {row.route}
+                    </Text>
+                  </VStack>
+                ),
+              },
+              {
+                key: "client",
+                header: "客户端",
+                width: proportional(1),
+                renderCell: (row) => (
+                  <VStack gap={0}>
+                    <Text>{row.client}</Text>
+                    <Text type="code" color="secondary">
+                      {row.client_version}
+                    </Text>
+                  </VStack>
+                ),
+              },
+              ...(admin
+                ? [
+                    {
+                      key: "tenant",
+                      header: "用户",
+                      width: proportional(1),
+                      renderCell: (row: LogRow) => (
+                        <VStack gap={0}>
+                          <Text>{row.tenant}</Text>
+                          <Text color="secondary" type="supporting">
+                            {row.key_label}
+                          </Text>
+                        </VStack>
+                      ),
+                    },
+                  ]
+                : []),
+              {
+                key: "tokens",
+                header: "Token",
+                width: pixel(140),
+                align: "end",
+                renderCell: (row) => (
+                  <HStack gap={1} vAlign="center" hAlign="end">
+                    <Text>{compactTokens(row.tokens)}</Text>
+                    <CacheHitRateBadge
+                      cachedTokens={row.cached_tokens}
+                      promptTokens={row.prompt_tokens}
+                    />
+                  </HStack>
+                ),
+              },
+              {
+                key: "request_bytes",
+                header: "负载",
+                width: pixel(140),
+                align: "end",
+                renderCell: (row) => (
+                  <Text type="supporting">
+                    {bytes(row.request_bytes)} → {bytes(row.response_bytes)}
+                  </Text>
+                ),
+              },
+              {
+                key: "latency_ms",
+                header: "耗时",
+                width: pixel(110),
+                align: "end",
+                renderCell: (row) => (
+                  <VStack gap={0}>
+                    <Text>{row.latency_ms} ms</Text>
+                    {row.ttft_ms != null ? (
+                      <Text color="secondary" type="supporting">
+                        首字节 {row.ttft_ms} ms
+                      </Text>
+                    ) : null}
+                  </VStack>
+                ),
+              },
+              {
+                key: "cost",
+                header: "费用",
+                width: pixel(100),
+                align: "end",
+                renderCell: (row) => <Text>{money(row.cost)}</Text>,
+              },
+            ]}
+          />
+        </LayoutContent>
+      }
+      footer={
+        <LayoutFooter>
+          <Pagination
+            page={page}
+            onChange={setPage}
+            totalItems={data.total}
+            pageSize={pageSize}
+            pageSizeOptions={pageSizeOptions}
+            onPageSizeChange={(size) => {
+              setPageSize(size)
+              setPage(1)
+            }}
+            variant="count"
+            size="sm"
+          />
+        </LayoutFooter>
+      }
+    />
   )
 }
 
-function LogDetailPage({
+function LogInspector({
   value,
   loading,
-  onBack,
+  tab,
+  onTabChange,
+  onClose,
 }: {
   value: SelectedLog
   loading: boolean
-  onBack: () => void
+  tab: InspectorTab
+  onTabChange: (value: InspectorTab) => void
+  onClose: () => void
 }) {
   const log = value.log
   const detail = value.detail ?? null
   const turns = value.turns ?? []
-  const requestVisible = Boolean(
-    detail &&
-    (hasJSONObject(detail.request_headers) ||
-      detail.request_body ||
-      detail.request_body_bytes)
-  )
-  const forwardedVisible = Boolean(
-    detail &&
-    (hasJSONObject(detail.forwarded_headers) ||
-      detail.forwarded_body ||
-      detail.forwarded_body_bytes)
-  )
-  const responseVisible = Boolean(
-    detail &&
-    (detail.upstream_status ||
-      hasJSONObject(detail.upstream_headers) ||
-      detail.upstream_body ||
-      detail.upstream_body_bytes)
-  )
-  const detailSections =
-    Number(requestVisible) + Number(forwardedVisible) + Number(responseVisible)
+  const requestHeaders = hasJSONObject(detail?.request_headers)
+    ? prettyJSON(detail?.request_headers)
+    : ""
+  const forwardedHeaders = hasJSONObject(detail?.forwarded_headers)
+    ? prettyJSON(detail?.forwarded_headers)
+    : ""
+  const upstreamHeaders = hasJSONObject(detail?.upstream_headers)
+    ? prettyJSON(detail?.upstream_headers)
+    : ""
+  const requestBody =
+    detail && (detail.request_body || detail.request_body_bytes)
+      ? prettyJSON(detail.request_body)
+      : ""
+  const forwardedBody = detail?.forwarded_body
+    ? prettyJSON(detail.forwarded_body)
+    : ""
+  const upstreamBody =
+    detail && (detail.upstream_body || detail.upstream_body_bytes)
+      ? prettyJSON(detail.upstream_body)
+      : ""
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-4">
-      <div className="flex flex-wrap items-start gap-3">
-        <Button variant="outline" onClick={onBack}>
-          <ChevronLeftIcon data-icon="inline-start" />
-          返回列表
-        </Button>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge
-              variant={
+    <VStack gap={4}>
+      <HStack hAlign="between" vAlign="start" gap={2}>
+        <VStack gap={1}>
+          <HStack gap={2} vAlign="center" wrap="wrap">
+            <StatusLabel
+              tone={
                 requestLogSucceeded(log.status_code, log.error_code)
-                  ? "secondary"
-                  : "destructive"
+                  ? "success"
+                  : "error"
               }
-            >
-              {requestLogStatus(log.status_code)}
-            </Badge>
-            <h1 className="text-lg font-medium">
-              {modelRoute(log) || "请求详情"}
-            </h1>
-          </div>
-          <p className="mt-1 flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground">
-            <span className="truncate">{log.id}</span>
-            <CopyButton value={log.id} label="复制请求 ID" />
-            <span>
-              {requestLogTransport(log.request_type, log.stream)}
-              {` · ${dateTime(log.started_at)}`}
-            </span>
-          </p>
-        </div>
-      </div>
-
-      <Card>
-        {detailSections ? (
-          <Tabs defaultValue="overview" className="gap-0">
-            <div className="border-b px-4 pt-3">
-              <TabsList
-                variant="line"
-                className="w-full justify-start overflow-x-auto"
-              >
-                <TabsTrigger value="overview">概览</TabsTrigger>
-                {requestVisible ? (
-                  <TabsTrigger value="request">客户端请求</TabsTrigger>
-                ) : null}
-                {forwardedVisible ? (
-                  <TabsTrigger value="forwarded">上游转发</TabsTrigger>
-                ) : null}
-                {responseVisible ? (
-                  <TabsTrigger value="response">上游响应</TabsTrigger>
-                ) : null}
-              </TabsList>
-            </div>
-            <TabsContent value="overview">
-              <LogOverview
-                log={log}
-                detail={detail}
-                turns={turns}
-                loading={loading}
-              />
-            </TabsContent>
-            {requestVisible && detail ? (
-              <TabsContent value="request">
-                <RequestSection detail={detail} />
-              </TabsContent>
-            ) : null}
-            {forwardedVisible && detail ? (
-              <TabsContent value="forwarded">
-                <ForwardedSection detail={detail} />
-              </TabsContent>
-            ) : null}
-            {responseVisible && detail ? (
-              <TabsContent value="response">
-                <ResponseSection detail={detail} />
-              </TabsContent>
-            ) : null}
-          </Tabs>
-        ) : (
-          <LogOverview
-            log={log}
-            detail={detail}
-            turns={turns}
+              label={requestLogStatus(log.status_code)}
+            />
+            <Heading level={3}>{modelRoute(log) || "请求详情"}</Heading>
+          </HStack>
+          <Text color="secondary" type="supporting">
+            {requestLogTransport(log.request_type, log.stream)}
+            {` · ${dateTime(log.started_at)}`}
+          </Text>
+        </VStack>
+        <Button
+          label="关闭"
+          variant="ghost"
+          size="sm"
+          icon={<XIcon />}
+          onClick={onClose}
+        />
+      </HStack>
+      <CopyField id="request-log-id" label="请求 ID" value={log.id} />
+      <LogOverview log={log} detail={detail} turns={turns} loading={loading} />
+      <TabList
+        value={tab}
+        onChange={(value) => onTabChange(value as InspectorTab)}
+        role="tablist"
+        size="sm"
+        hasDivider
+      >
+        <Tab value="payload" label="正文" panelId="log-panel-payload" />
+        <Tab value="headers" label="Headers" panelId="log-panel-headers" />
+        <Tab value="latency" label="耗时" panelId="log-panel-latency" />
+      </TabList>
+      {tab === "payload" ? (
+        <Section id="log-panel-payload" variant="transparent" padding={0}>
+          <PayloadSection
+            requestBody={requestBody}
+            requestBytes={detail?.request_body_bytes}
+            requestTruncated={detail?.request_body_truncated}
+            forwardedBody={forwardedBody}
+            forwardedBytes={detail?.forwarded_body_bytes}
+            forwardedTruncated={detail?.forwarded_body_truncated}
+            upstreamBody={upstreamBody}
+            upstreamBytes={detail?.upstream_body_bytes}
+            upstreamTruncated={detail?.upstream_body_truncated}
+            errorCause={detail?.error_cause}
+            errorStack={detail?.error_stack}
             loading={loading}
+            hasDetail={Boolean(detail)}
           />
-        )}
-      </Card>
-    </div>
+        </Section>
+      ) : null}
+      {tab === "headers" ? (
+        <Section id="log-panel-headers" variant="transparent" padding={0}>
+          <HeadersSection
+            requestHeaders={requestHeaders}
+            forwardedHeaders={forwardedHeaders}
+            upstreamHeaders={upstreamHeaders}
+            upstreamStatus={detail?.upstream_status}
+            loading={loading}
+            hasDetail={Boolean(detail)}
+          />
+        </Section>
+      ) : null}
+      {tab === "latency" ? (
+        <Section id="log-panel-latency" variant="transparent" padding={0}>
+          <LatencySection log={log} detail={detail} />
+        </Section>
+      ) : null}
+    </VStack>
   )
 }
 
@@ -912,148 +947,138 @@ function LogOverview({
       [string, number, number]
     >
   }, [log])
-  const timings = parseNumberRecord(detail?.stage_timings)
-  const latencyTrace =
-    log.stage_timings && log.stage_timings !== "{}"
-      ? log.stage_timings
-      : detail?.stage_timings
   const errorTitle = log.error_code || detail?.error_name
   const errorMessage =
     detail?.error_detail || detail?.error_message || log.error_message
   const hasBilling = Boolean(
     costRows.length || log.cost_nano_usd != null || log.price_source
   )
+  const turnRows: TurnRow[] = turns.map((turn) => ({
+    id: turn.turn_id,
+    model: turn.model || "—",
+    tokens: turn.total_tokens,
+    latency_ms: turn.latency_ms,
+    cost: turn.cost_nano_usd,
+  }))
+  const billingRows: CostRow[] = costRows.map(([label, tokens, rate]) => ({
+    id: label,
+    label,
+    tokens,
+    rate,
+    cost: tokens * rate,
+  }))
 
   return (
-    <div className="flex flex-col gap-5 p-4 sm:p-5">
+    <VStack gap={4}>
       {errorTitle || errorMessage ? (
-        <Alert variant="destructive">
-          <AlertTriangleIcon />
-          <AlertTitle>{errorTitle || "请求失败"}</AlertTitle>
-          {errorMessage ? (
-            <AlertDescription className="break-words">
-              {errorMessage}
-            </AlertDescription>
-          ) : null}
-        </Alert>
+        <Banner
+          status="error"
+          title={errorTitle || "请求失败"}
+          description={errorMessage}
+          collapsible={false}
+        />
       ) : null}
 
-      <DetailGroup title="请求">
-        <Facts
-          items={[
-            ["入口", `${log.method} ${log.path}`],
-            ["传输", requestLogTransport(log.request_type, log.stream)],
-            ["类型", log.request_type],
-            ["模型", modelRoute(log)],
-            [
-              "客户端",
-              [log.client_name, log.client_version].filter(Boolean).join(" "),
-            ],
-            ["User-Agent", log.user_agent],
-            ["时间", dateTime(log.started_at)],
-          ]}
-        />
-      </DetailGroup>
-
-      <DetailGroup title="链路">
-        <Facts
-          items={[
-            ["提供商", log.provider],
-            [
-              "凭据",
-              log.credential_email || log.credential_name || log.auth_index,
-            ],
-            [
-              "订阅",
-              [
-                log.parent_subscription_name || log.channel_name,
-                log.child_subscription_name,
-              ]
-                .filter(Boolean)
-                .join(" / "),
-            ],
-            ["Upstream Trace", log.upstream_trace_id],
-            ["Upstream Execution", log.upstream_execution_id],
-          ]}
-        />
-      </DetailGroup>
-
-      <DetailGroup title="用量与性能">
-        <Facts
-          items={[
-            [
-              "Token",
-              `${compactTokens(log.total_tokens)}（输入 ${compactTokens(log.prompt_tokens)} · 输出 ${compactTokens(log.completion_tokens)}） · 缓存命中 ${cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}`,
-            ],
-            ["客户端请求体", bytes(log.request_body_bytes)],
-            ["上游转发体", bytes(log.forwarded_body_bytes)],
-            ["上游响应体", bytes(log.response_body_bytes)],
-            ["首字节", log.ttft_ms != null ? `${log.ttft_ms} ms` : ""],
-            ["总耗时", `${log.latency_ms} ms`],
-          ]}
-        />
-      </DetailGroup>
-
-      {turns.length ? (
-        <DetailGroup title={`会话轮次 · ${turns.length}`}>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>轮次</TableHead>
-                <TableHead>模型</TableHead>
-                <TableHead className="text-right">Token</TableHead>
-                <TableHead className="text-right">耗时</TableHead>
-                <TableHead className="text-right">费用</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {turns.map((turn) => (
-                <TableRow key={turn.turn_id}>
-                  <TableCell className="max-w-40 truncate font-mono text-xs">
-                    {turn.turn_id}
-                  </TableCell>
-                  <TableCell className="max-w-32 truncate text-xs">
-                    {turn.model || "—"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {compactTokens(turn.total_tokens)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {turn.latency_ms} ms
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {money(turn.cost_nano_usd)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </DetailGroup>
-      ) : null}
-
-      <RequestLatencyTimeline
-        value={latencyTrace}
-        totalMS={log.latency_ms}
-        ttftMS={log.ttft_ms}
-        stream={log.stream}
+      <FactGroup
+        title="请求"
+        items={[
+          ["入口", `${log.method} ${log.path}`],
+          ["传输", requestLogTransport(log.request_type, log.stream)],
+          ["类型", log.request_type],
+          ["模型", modelRoute(log)],
+          [
+            "客户端",
+            [log.client_name, log.client_version].filter(Boolean).join(" "),
+          ],
+          ["User-Agent", log.user_agent],
+          ["时间", dateTime(log.started_at)],
+        ]}
       />
 
-      {Object.keys(timings).length ? (
-        <DetailGroup title="阶段耗时">
-          <div className="grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-3">
-            {Object.entries(timings).map(([key, value]) => (
-              <Detail
-                key={key}
-                label={timingLabel(key)}
-                value={`${value} ms`}
-              />
-            ))}
-          </div>
-        </DetailGroup>
+      <FactGroup
+        title="链路"
+        items={[
+          ["提供商", log.provider],
+          [
+            "凭据",
+            log.credential_email || log.credential_name || log.auth_index,
+          ],
+          [
+            "订阅",
+            [
+              log.parent_subscription_name || log.channel_name,
+              log.child_subscription_name,
+            ]
+              .filter(Boolean)
+              .join(" / "),
+          ],
+          ["Upstream Trace", log.upstream_trace_id],
+          ["Upstream Execution", log.upstream_execution_id],
+        ]}
+      />
+
+      <FactGroup
+        title="用量与性能"
+        items={[
+          [
+            "Token",
+            `${compactTokens(log.total_tokens)}（输入 ${compactTokens(log.prompt_tokens)} · 输出 ${compactTokens(log.completion_tokens)}） · 缓存命中 ${cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}`,
+          ],
+          ["客户端请求体", bytes(log.request_body_bytes)],
+          ["上游转发体", bytes(log.forwarded_body_bytes)],
+          ["上游响应体", bytes(log.response_body_bytes)],
+          ["首字节", log.ttft_ms != null ? `${log.ttft_ms} ms` : ""],
+          ["总耗时", `${log.latency_ms} ms`],
+        ]}
+      />
+
+      {turnRows.length ? (
+        <VStack gap={2}>
+          <HStack hAlign="between" vAlign="center" gap={2}>
+            <Heading level={3}>会话轮次</Heading>
+            <CountBadge value={turnRows.length} />
+          </HStack>
+          <Table
+            data={turnRows}
+            idKey="id"
+            density="compact"
+            columns={[
+              {
+                key: "id",
+                header: "轮次",
+                width: proportional(1),
+                renderCell: (row) => <Text type="code">{row.id}</Text>,
+              },
+              { key: "model", header: "模型", width: proportional(1) },
+              {
+                key: "tokens",
+                header: "Token",
+                width: pixel(80),
+                align: "end",
+                renderCell: (row) => <Text>{compactTokens(row.tokens)}</Text>,
+              },
+              {
+                key: "latency_ms",
+                header: "耗时",
+                width: pixel(80),
+                align: "end",
+                renderCell: (row) => <Text>{row.latency_ms} ms</Text>,
+              },
+              {
+                key: "cost",
+                header: "费用",
+                width: pixel(80),
+                align: "end",
+                renderCell: (row) => <Text>{money(row.cost)}</Text>,
+              },
+            ]}
+          />
+        </VStack>
       ) : null}
 
       {hasBilling ? (
-        <DetailGroup title="计费">
+        <VStack gap={2}>
+          <Heading level={3}>计费</Heading>
           <Facts
             items={[
               [
@@ -1070,224 +1095,296 @@ function LogOverview({
               ["合计", money(log.cost_nano_usd)],
             ]}
           />
-          {costRows.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>成本项</TableHead>
-                  <TableHead className="text-right">Tokens</TableHead>
-                  <TableHead className="text-right">单价</TableHead>
-                  <TableHead className="text-right">成本</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {costRows.map(([label, tokens, rate]) => (
-                  <TableRow key={label}>
-                    <TableCell>{label}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {tokens}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {rate} nanoUSD
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {money(tokens * rate)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          {billingRows.length ? (
+            <Table
+              data={billingRows}
+              idKey="id"
+              density="compact"
+              columns={[
+                { key: "label", header: "成本项", width: proportional(1) },
+                {
+                  key: "tokens",
+                  header: "Tokens",
+                  width: pixel(80),
+                  align: "end",
+                },
+                {
+                  key: "rate",
+                  header: "单价",
+                  width: pixel(110),
+                  align: "end",
+                  renderCell: (row) => <Text>{row.rate} nanoUSD</Text>,
+                },
+                {
+                  key: "cost",
+                  header: "成本",
+                  width: pixel(90),
+                  align: "end",
+                  renderCell: (row) => <Text>{money(row.cost)}</Text>,
+                },
+              ]}
+            />
           ) : null}
-        </DetailGroup>
-      ) : null}
-
-      {detail?.error_cause || detail?.error_stack ? (
-        <DetailGroup title="错误诊断">
-          {detail.error_cause ? (
-            <Payload title="Cause" value={detail.error_cause} />
-          ) : null}
-          {detail.error_stack ? (
-            <Payload title="Stack" value={detail.error_stack} />
-          ) : null}
-        </DetailGroup>
+        </VStack>
       ) : null}
 
       {loading ? (
-        <div className="flex flex-col gap-2" aria-label="正在读取原始详情">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-14 w-full" />
-        </div>
+        <Text color="secondary" type="supporting">
+          正在读取原始详情
+        </Text>
       ) : !detail ? (
-        <p className="text-xs text-muted-foreground">
+        <Text color="secondary" type="supporting">
           原始 Headers 与正文未采样或已过保留期；上面的摘要、大小、Token
           和计费数据仍然完整。
-        </p>
+        </Text>
       ) : null}
-    </div>
+    </VStack>
   )
 }
 
-function RequestSection({ detail }: { detail: RequestLogDetail }) {
-  const headers = hasJSONObject(detail.request_headers)
-    ? prettyJSON(detail.request_headers)
-    : ""
-  return (
-    <div className="flex flex-col gap-5 p-4 sm:p-5">
-      {headers ? <Payload title="Headers" value={headers} /> : null}
-      {detail.request_body || detail.request_body_bytes ? (
-        <Payload
-          title="Body"
-          value={prettyJSON(detail.request_body)}
-          bytes={detail.request_body_bytes}
-          truncated={detail.request_body_truncated}
-        />
-      ) : null}
-    </div>
+function PayloadSection({
+  requestBody,
+  requestBytes,
+  requestTruncated,
+  forwardedBody,
+  forwardedBytes,
+  forwardedTruncated,
+  upstreamBody,
+  upstreamBytes,
+  upstreamTruncated,
+  errorCause,
+  errorStack,
+  loading,
+  hasDetail,
+}: {
+  requestBody: string
+  requestBytes?: number
+  requestTruncated?: boolean
+  forwardedBody: string
+  forwardedBytes?: number
+  forwardedTruncated?: boolean
+  upstreamBody: string
+  upstreamBytes?: number
+  upstreamTruncated?: boolean
+  errorCause?: string
+  errorStack?: string
+  loading: boolean
+  hasDetail: boolean
+}) {
+  if (loading && !hasDetail) return <LoadingView />
+  const hasPayload = Boolean(
+    requestBody || forwardedBody || upstreamBody || errorCause || errorStack
   )
-}
-
-function ForwardedSection({ detail }: { detail: RequestLogDetail }) {
-  const headers = hasJSONObject(detail.forwarded_headers)
-    ? prettyJSON(detail.forwarded_headers)
-    : ""
   return (
-    <div className="flex flex-col gap-5 p-4 sm:p-5">
-      {headers ? <Payload title="Headers" value={headers} /> : null}
-      {detail.forwarded_body ? (
-        <Payload
+    <VStack gap={4}>
+      <PayloadBlock
+        title="客户端请求"
+        code={requestBody}
+        bytes={requestBytes}
+        truncated={requestTruncated}
+      />
+      {forwardedBody ? (
+        <PayloadBlock
           title="转换后 Body"
-          value={prettyJSON(detail.forwarded_body)}
-          bytes={detail.forwarded_body_bytes}
-          truncated={detail.forwarded_body_truncated}
+          code={forwardedBody}
+          bytes={forwardedBytes}
+          truncated={forwardedTruncated}
         />
-      ) : detail.forwarded_body_bytes ? (
-        <p className="text-sm text-muted-foreground">
-          转发正文与客户端请求相同，未重复存储（
-          {bytes(detail.forwarded_body_bytes)}）。
-        </p>
+      ) : forwardedBytes ? (
+        <Text color="secondary">
+          转发正文与客户端请求相同，未重复存储（{bytes(forwardedBytes)}）。
+        </Text>
       ) : null}
-    </div>
+      <PayloadBlock
+        title="上游响应"
+        code={upstreamBody}
+        bytes={upstreamBytes}
+        truncated={upstreamTruncated}
+      />
+      {errorCause ? (
+        <CodeBlock
+          title="Cause"
+          language="plaintext"
+          code={errorCause}
+          width="100%"
+        />
+      ) : null}
+      {errorStack ? (
+        <CodeBlock
+          title="Stack"
+          language="plaintext"
+          code={errorStack}
+          width="100%"
+        />
+      ) : null}
+      {!hasPayload && hasDetail ? (
+        <EmptyState isCompact title="没有可展示的正文" />
+      ) : null}
+    </VStack>
   )
 }
 
-function ResponseSection({ detail }: { detail: RequestLogDetail }) {
-  const headers = hasJSONObject(detail.upstream_headers)
-    ? prettyJSON(detail.upstream_headers)
-    : ""
+function HeadersSection({
+  requestHeaders,
+  forwardedHeaders,
+  upstreamHeaders,
+  upstreamStatus,
+  loading,
+  hasDetail,
+}: {
+  requestHeaders: string
+  forwardedHeaders: string
+  upstreamHeaders: string
+  upstreamStatus?: number
+  loading: boolean
+  hasDetail: boolean
+}) {
+  if (loading && !hasDetail) return <LoadingView />
+  const hasHeaders = Boolean(
+    requestHeaders || forwardedHeaders || upstreamHeaders || upstreamStatus
+  )
   return (
-    <div className="flex flex-col gap-5 p-4 sm:p-5">
-      {detail.upstream_status ? (
-        <Badge variant="outline">HTTP {detail.upstream_status}</Badge>
-      ) : null}
-      {headers ? <Payload title="Headers" value={headers} /> : null}
-      {detail.upstream_body || detail.upstream_body_bytes ? (
-        <Payload
-          title="Body"
-          value={prettyJSON(detail.upstream_body)}
-          bytes={detail.upstream_body_bytes}
-          truncated={detail.upstream_body_truncated}
+    <VStack gap={4}>
+      {upstreamStatus ? (
+        <StatusLabel
+          tone={
+            upstreamStatus >= 200 && upstreamStatus < 400 ? "success" : "error"
+          }
+          label={`HTTP ${upstreamStatus}`}
         />
       ) : null}
-    </div>
+      {requestHeaders ? (
+        <CodeBlock
+          title="客户端 Headers"
+          language="json"
+          code={requestHeaders}
+          width="100%"
+        />
+      ) : null}
+      {forwardedHeaders ? (
+        <CodeBlock
+          title="上游转发 Headers"
+          language="json"
+          code={forwardedHeaders}
+          width="100%"
+        />
+      ) : null}
+      {upstreamHeaders ? (
+        <CodeBlock
+          title="上游响应 Headers"
+          language="json"
+          code={upstreamHeaders}
+          width="100%"
+        />
+      ) : null}
+      {!hasHeaders && hasDetail ? (
+        <EmptyState isCompact title="没有可展示的 Headers" />
+      ) : null}
+    </VStack>
   )
 }
 
-function DetailGroup({
+function LatencySection({
+  log,
+  detail,
+}: {
+  log: RequestLog
+  detail: RequestLogDetail | null
+}) {
+  const timings = parseNumberRecord(detail?.stage_timings)
+  const latencyTrace =
+    log.stage_timings && log.stage_timings !== "{}"
+      ? log.stage_timings
+      : detail?.stage_timings
+  const timingRows: TimingRow[] = Object.entries(timings).map(
+    ([key, value]) => ({
+      id: key,
+      label: timingLabel(key),
+      value: `${value} ms`,
+    })
+  )
+  return (
+    <VStack gap={4}>
+      <RequestLatencyTimeline
+        value={latencyTrace}
+        totalMS={log.latency_ms}
+        ttftMS={log.ttft_ms}
+        stream={log.stream}
+      />
+      {timingRows.length ? (
+        <VStack gap={2}>
+          <Heading level={3}>阶段耗时</Heading>
+          <Table
+            data={timingRows}
+            idKey="id"
+            density="compact"
+            columns={[
+              { key: "label", header: "阶段", width: proportional(1) },
+              { key: "value", header: "耗时", width: pixel(90), align: "end" },
+            ]}
+          />
+        </VStack>
+      ) : null}
+    </VStack>
+  )
+}
+
+function PayloadBlock({
   title,
-  children,
+  code,
+  bytes: byteCount,
+  truncated = false,
 }: {
   title: string
-  children: ReactNode
+  code: string
+  bytes?: number
+  truncated?: boolean
+}) {
+  if (!code) return null
+  return (
+    <VStack gap={2}>
+      <HStack gap={2} vAlign="center" wrap="wrap">
+        {byteCount != null ? (
+          <Text color="secondary" type="supporting">
+            {bytes(byteCount)}
+          </Text>
+        ) : null}
+        {truncated ? <Token label="已截断" color="orange" size="sm" /> : null}
+      </HStack>
+      <CodeBlock title={title} language="json" code={code} width="100%" />
+    </VStack>
+  )
+}
+
+function FactGroup({
+  title,
+  items,
+}: {
+  title: string
+  items: Array<[string, string | undefined]>
 }) {
   return (
-    <section className="flex flex-col gap-3">
-      <div className="flex items-center gap-3">
-        <h3 className="text-sm font-medium">{title}</h3>
-        <Separator className="flex-1" />
-      </div>
-      {children}
-    </section>
+    <VStack gap={2}>
+      <Heading level={3}>{title}</Heading>
+      <Facts items={items} />
+    </VStack>
   )
 }
 
 function Facts({ items }: { items: Array<[string, string | undefined]> }) {
   const visible = items.filter(([, value]) => Boolean(value))
+  if (!visible.length) return null
   return (
-    <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
+    <Grid columns={{ minWidth: 140, max: 2 }} gap={3}>
       {visible.map(([label, value]) => (
-        <Detail key={label} label={label} value={value ?? ""} />
+        <VStack key={label} gap={0}>
+          <Text color="secondary" type="supporting">
+            {label}
+          </Text>
+          <Text>{value}</Text>
+        </VStack>
       ))}
-    </dl>
-  )
-}
-
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 text-sm break-words">{value}</dd>
-    </div>
-  )
-}
-
-function Payload({
-  title,
-  value,
-  bytes: byteCount,
-  truncated = false,
-}: {
-  title: string
-  value: string
-  bytes?: number
-  truncated?: boolean
-}) {
-  if (!value) return null
-  return (
-    <section className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <h3 className="text-sm font-medium">{title}</h3>
-        {byteCount != null ? (
-          <span className="text-xs text-muted-foreground">
-            {bytes(byteCount)}
-          </span>
-        ) : null}
-        {truncated ? <Badge variant="outline">已截断</Badge> : null}
-        <CopyButton value={value} label={`复制 ${title}`} className="ml-auto" />
-      </div>
-      <pre className="max-h-[min(40rem,70vh)] overflow-auto rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed break-all whitespace-pre-wrap">
-        {value}
-      </pre>
-    </section>
-  )
-}
-
-function CopyButton({
-  value,
-  label,
-  className,
-}: {
-  value: string
-  label: string
-  className?: string
-}) {
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value)
-      toast.success("已复制")
-    } catch {
-      toast.error("复制失败")
-    }
-  }
-  return (
-    <Button
-      variant="ghost"
-      size="icon-xs"
-      className={className}
-      onClick={() => void copy()}
-      aria-label={label}
-    >
-      <CopyIcon />
-    </Button>
+    </Grid>
   )
 }
 

@@ -1,83 +1,43 @@
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Button } from "@astryxdesign/core/Button"
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { FormLayout } from "@astryxdesign/core/FormLayout"
 import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react"
+  HStack,
+  Layout,
+  LayoutContent,
+  LayoutFooter,
+  VStack,
+} from "@astryxdesign/core/Layout"
+import { NumberInput } from "@astryxdesign/core/NumberInput"
+import { Table, pixel, proportional } from "@astryxdesign/core/Table"
+import { Text } from "@astryxdesign/core/Text"
+import { TextInput } from "@astryxdesign/core/TextInput"
+import { useToast } from "@astryxdesign/core/Toast"
 import {
-  CheckIcon,
-  CopyIcon,
   EyeIcon,
-  EyeOffIcon,
   KeyRoundIcon,
+  MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
-  Trash2Icon,
 } from "lucide-react"
-import { toast } from "sonner"
 
-import { PageHeader } from "@/components/workspace-ui"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from "@/components/ui/input-group"
-import { Spinner } from "@/components/ui/spinner"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { LogsTable, UsageChart, UsageMetrics } from "@/components/data-views"
-import { UsageView } from "@/components/usage-view"
-import { LoadingView } from "@/components/loading-view"
-import { LoadErrorView } from "@/components/load-error-view"
-import { ModelSelector } from "@/components/model-selector"
 import {
   ApiKeyModelAliasEditor,
-  type ModelAliasPreset,
   type ModelAliasDraft,
+  type ModelAliasPreset,
 } from "@/components/api-key-model-alias-editor"
-import { TenantSubscriptionsView } from "@/components/subscriptions-view"
-import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { ConnectionGuide } from "@/components/connection-guide"
+import { LogsTable, LogsTableAction, UsageChart, UsageMetrics } from "@/components/data-views"
+import { LoadErrorView } from "@/components/load-error-view"
+import { LoadingView } from "@/components/loading-view"
+import { ModelSelector } from "@/components/model-selector"
+import { CopyField, PageHeader, SectionCard, StatusLabel } from "@/components/page-kit"
+import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
+import { TenantSubscriptionsView } from "@/components/subscriptions-view"
+import { UsageView } from "@/components/usage-view"
 import type { Page } from "@/components/app-shell"
 import {
   api,
@@ -89,8 +49,7 @@ import {
   type Session,
   type UsageReport,
 } from "@/lib/api"
-import { dateTime, money } from "@/lib/format"
-import { copyText } from "@/lib/clipboard"
+import { dateTime } from "@/lib/format"
 
 interface UserWorkspaceProps {
   page: Page
@@ -126,7 +85,6 @@ function KeysPage({ tenantModels }: { tenantModels: string[] }) {
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "无法读取密钥"
       setLoadError(message)
-      if (!showLoading) toast.error(message)
     } finally {
       if (showLoading) setLoading(false)
     }
@@ -140,14 +98,7 @@ function KeysPage({ tenantModels }: { tenantModels: string[] }) {
   if (loadError && keys.length === 0) {
     return <LoadErrorView message={loadError} onRetry={() => void load(true)} />
   }
-
-  return (
-    <KeysView
-      keys={keys}
-      tenantModels={tenantModels}
-      onChanged={() => load()}
-    />
-  )
+  return <KeysView keys={keys} tenantModels={tenantModels} onChanged={() => load()} />
 }
 
 function GuidePage({ tenantModels }: { tenantModels: string[] }) {
@@ -184,16 +135,13 @@ function GuidePage({ tenantModels }: { tenantModels: string[] }) {
           void api<{ items: ApiKey[] }>("/api/keys")
             .then((value) => setKeys(value.items ?? []))
             .catch((cause) =>
-              setLoadError(
-                cause instanceof Error ? cause.message : "无法读取密钥"
-              )
+              setLoadError(cause instanceof Error ? cause.message : "无法读取密钥")
             )
             .finally(() => setLoading(false))
         }}
       />
     )
   }
-
   return <ConnectionGuide keys={keys} tenantModels={tenantModels} />
 }
 
@@ -204,6 +152,7 @@ function UserOverview({
   session: Session
   onPageChange: (page: Page) => void
 }) {
+  const toast = useToast()
   const [usage, setUsage] = useState<UsageReport | null>(null)
   const [logs, setLogs] = useState<RequestLog[]>([])
   const [keys, setKeys] = useState<ApiKey[]>([])
@@ -225,11 +174,11 @@ function UserOverview({
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "无法读取数据"
       setLoadError(message)
-      if (!showLoading) toast.error(message)
+      if (!showLoading) toast({ type: "error", body: message })
     } finally {
       if (showLoading) setLoading(false)
     }
-  }, [])
+  }, [toast])
 
   useEffect(() => {
     void load(true)
@@ -246,59 +195,59 @@ function UserOverview({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <VStack gap={4}>
       <PageHeader title={`你好，${session.tenant?.name ?? ""}`} />
       <UsageMetrics report={usage} />
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-        <UsageChart report={usage} />
-        <Card>
-          <CardHeader>
-            <CardTitle>账户状态</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-5">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">状态</span>
-              <Badge variant="secondary">
-                <CheckIcon /> 正常
-              </Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">余额</span>
-              <span className="font-medium tabular-nums">
-                {money(session.tenant?.balance_nano_usd)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">有效 Keys</span>
-              <span className="font-medium tabular-nums">
-                {keys.filter((key) => key.enabled).length}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">模型范围</span>
-              <span className="font-medium">
-                {session.tenant?.model_allowlist?.length
+      <HStack gap={4} wrap="wrap" vAlign="stretch">
+        <StackFill>
+          <UsageChart report={usage} />
+        </StackFill>
+        <SectionCard title="账户状态">
+          <VStack gap={4} padding={4}>
+            <Fact label="状态" value={<StatusLabel tone="success" label="正常" />} />
+            <Fact label="余额" value={moneySafe(session.tenant?.balance_nano_usd)} />
+            <Fact
+              label="有效 Keys"
+              value={String(keys.filter((key) => key.enabled).length)}
+            />
+            <Fact
+              label="模型范围"
+              value={
+                session.tenant?.model_allowlist?.length
                   ? `${session.tenant.model_allowlist.length} 个`
-                  : "全部模型"}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                  : "全部模型"
+              }
+            />
+          </VStack>
+        </SectionCard>
+      </HStack>
       <LogsTable
         logs={logs}
-        action={
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onPageChange("logs")}
-          >
-            全部日志
-          </Button>
-        }
+        action={<LogsTableAction onOpen={() => onPageChange("logs")} />}
       />
-    </div>
+    </VStack>
   )
+}
+
+function StackFill({ children }: { children: React.ReactNode }) {
+  return <VStack gap={0} width="100%">{children}</VStack>
+}
+
+function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <HStack hAlign="between" gap={3}>
+      <Text color="secondary">{label}</Text>
+      {typeof value === "string" ? <Text weight="semibold">{value}</Text> : value}
+    </HStack>
+  )
+}
+
+function moneySafe(value: number | undefined) {
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 4,
+  }).format((value ?? 0) / 1_000_000_000)
 }
 
 function KeysView({
@@ -310,11 +259,16 @@ function KeysView({
   tenantModels: string[]
   onChanged: () => Promise<void>
 }) {
-  const [createOpen, setCreateOpen] = useState(false)
+  const toast = useToast()
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [revealed, setRevealed] = useState<{ id: string; value: string } | null>(
+    null
+  )
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null)
   const [pending, setPending] = useState(false)
-  const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({})
-  const [revealingKeyID, setRevealingKeyID] = useState("")
+  const [name, setName] = useState("")
+  const [rate, setRate] = useState<number | null>(null)
+  const [tokens, setTokens] = useState<number | null>(null)
   const [modelOptions, setModelOptions] = useState<string[]>(tenantModels)
   const [selectedModels, setSelectedModels] = useState<string[]>(() => [
     ...tenantModels,
@@ -336,13 +290,15 @@ function KeysView({
               (!item.expires_at || Date.parse(item.expires_at) > now)
           )
           .flatMap(
-            (item) =>
-              item.effective_model_allowlist ?? item.model_allowlist ?? []
+            (item) => item.effective_model_allowlist ?? item.model_allowlist ?? []
           )
-        const source = [...tenantModels, ...subscriptionModels]
         setModelOptions(
           Array.from(
-            new Set(source.map((model) => model.trim()).filter(Boolean))
+            new Set(
+              [...tenantModels, ...subscriptionModels]
+                .map((model) => model.trim())
+                .filter(Boolean)
+            )
           ).sort()
         )
       })
@@ -352,23 +308,23 @@ function KeysView({
     }
   }, [tenantModels])
 
-  useEffect(() => {
-    if (createOpen && !modelSelectionTouched.current) {
-      setSelectedModels([...modelOptions])
-    }
-  }, [createOpen, modelOptions])
-
-  function openCreateDialog() {
+  function openCreate() {
     modelSelectionTouched.current = false
     setEditingKey(null)
+    setName("")
+    setRate(null)
+    setTokens(null)
     setSelectedModels([...modelOptions])
     setModelAliases([])
-    setCreateOpen(true)
+    setEditorOpen(true)
   }
 
-  function openEditDialog(key: ApiKey) {
+  function openEdit(key: ApiKey) {
     modelSelectionTouched.current = true
     setEditingKey(key)
+    setName(key.name)
+    setRate(key.rate_limit_per_minute)
+    setTokens(key.token_limit_daily)
     setSelectedModels(key.model_allowlist ?? [])
     setModelAliases(
       (key.model_aliases ?? []).map((item) => ({
@@ -376,411 +332,327 @@ function KeysView({
         clientId: item.id ?? crypto.randomUUID(),
       }))
     )
-    setCreateOpen(true)
+    setEditorOpen(true)
   }
 
-  function changeSelectedModels(models: string[]) {
-    modelSelectionTouched.current = true
-    setSelectedModels(models)
-  }
-
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const data = new FormData(event.currentTarget)
+  async function save() {
     setPending(true)
     try {
-      const response = await postJSON<{ item: ApiKey; key: string }>(
-        "/api/keys",
-        {
-          name: String(data.get("name") ?? ""),
-          rateLimitPerMinute: numberOrNull(data.get("rate")),
-          tokenLimitDaily: numberOrNull(data.get("tokens")),
-          modelAllowlist: selectedModels,
-          modelAliases: modelAliases.map(({ alias, model }) => ({
-            alias,
-            model,
-          })),
-        }
-      )
-      setRevealedKeys((current) => ({
-        ...current,
-        [response.item.id]: response.key,
-      }))
-      setCreateOpen(false)
+      const payload = {
+        name,
+        rateLimitPerMinute: rate,
+        tokenLimitDaily: tokens,
+        modelAllowlist: selectedModels,
+        modelAliases: modelAliases.map(({ alias, model }) => ({ alias, model })),
+      }
+      if (editingKey) {
+        await api(`/api/keys/${editingKey.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ ...payload, enabled: editingKey.enabled }),
+        })
+        toast({ body: "API Key 已更新" })
+      } else {
+        const response = await postJSON<{ item: ApiKey; key: string }>(
+          "/api/keys",
+          payload
+        )
+        setRevealed({ id: response.item.id, value: response.key })
+        toast({ body: "API Key 已创建" })
+      }
+      setEditorOpen(false)
       await onChanged()
-      toast.success("API Key 已创建")
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "创建失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "保存失败",
+      })
     } finally {
       setPending(false)
     }
   }
 
-  function applyModelAliasPreset(preset: ModelAliasPreset) {
-    const presetAliases = new Set(
-      preset.aliases.map((alias) => alias.toLowerCase())
-    )
-    modelSelectionTouched.current = true
-    setSelectedModels((current) =>
-      Array.from(
-        new Set([
-          ...current.filter((model) => !presetAliases.has(model.toLowerCase())),
-          preset.target,
-        ])
-      )
-    )
-    setModelAliases((current) => [
-      ...current.filter(
-        (item) => !presetAliases.has(item.alias.trim().toLowerCase())
-      ),
-      ...preset.aliases.map((alias) => ({
-        clientId: crypto.randomUUID(),
-        alias,
-        model: preset.target,
-      })),
-    ])
+  interface KeyRow extends Record<string, unknown> {
+    id: string
+    name: string
+    prefix: string
+    last_used_at: string | null
+    models: string
+    enabled: boolean
+    recoverable: boolean
+    key: ApiKey
   }
 
-  async function update(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!editingKey) return
-    const data = new FormData(event.currentTarget)
-    setPending(true)
-    try {
-      await api<{ item: ApiKey }>(`/api/keys/${editingKey.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: String(data.get("name") ?? ""),
-          enabled: editingKey.enabled,
-          rateLimitPerMinute: numberOrNull(data.get("rate")),
-          tokenLimitDaily: numberOrNull(data.get("tokens")),
-          modelAllowlist: selectedModels,
-          modelAliases: modelAliases.map(({ alias, model }) => ({
-            alias,
-            model,
-          })),
-        }),
-      })
-      setCreateOpen(false)
-      setEditingKey(null)
-      await onChanged()
-      toast.success("API Key 已更新")
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "更新失败")
-    } finally {
-      setPending(false)
-    }
-  }
-
-  async function remove(id: string) {
-    try {
-      await deleteRequest(`/api/keys/${id}`)
-      setRevealedKeys((current) => {
-        const next = { ...current }
-        delete next[id]
-        return next
-      })
-      await onChanged()
-      toast.success("API Key 已删除")
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "删除失败")
-    }
-  }
-
-  async function toggleReveal(key: ApiKey) {
-    if (revealedKeys[key.id]) {
-      setRevealedKeys((current) => {
-        const next = { ...current }
-        delete next[key.id]
-        return next
-      })
-      return
-    }
-    setRevealingKeyID(key.id)
-    try {
-      const response = await api<{ key: string }>(`/api/keys/${key.id}/secret`)
-      setRevealedKeys((current) => ({ ...current, [key.id]: response.key }))
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取完整密钥")
-    } finally {
-      setRevealingKeyID("")
-    }
-  }
+  const rows: KeyRow[] = keys.map((key) => ({
+    id: key.id,
+    name: key.name,
+    prefix: key.prefix,
+    last_used_at: key.last_used_at,
+    models: `${key.model_allowlist?.length ? `${key.model_allowlist.length} 个模型` : "全部模型"} · ${key.model_aliases?.length ?? 0} 个别名`,
+    enabled: key.enabled,
+    recoverable: key.recoverable,
+    key,
+  }))
 
   return (
-    <div className="flex flex-col gap-4">
+    <VStack gap={4}>
       <PageHeader
         actions={
-          <Button onClick={openCreateDialog}>
-            <PlusIcon data-icon="inline-start" />
-            创建 Key
-          </Button>
+          <Button
+            label="创建 Key"
+            variant="primary"
+            icon={<PlusIcon />}
+            onClick={openCreate}
+          />
         }
       />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>你的密钥</CardTitle>
-          <CardDescription>
-            完整密钥加密保存；点击眼睛可按需查看或复制。
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {keys.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>名称</TableHead>
-                  <TableHead>前缀</TableHead>
-                  <TableHead>最后使用</TableHead>
-                  <TableHead>模型 / 别名</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {keys.map((key) => (
-                  <Fragment key={key.id}>
-                    <TableRow>
-                      <TableCell className="font-medium">{key.name}</TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {key.prefix}…
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {dateTime(key.last_used_at)}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {key.model_allowlist?.length
-                          ? `${key.model_allowlist.length} 个模型`
-                          : "全部模型"}{" "}
-                        · {key.model_aliases?.length ?? 0} 个别名
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">
-                          {key.enabled ? "有效" : "停用"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={
-                            revealedKeys[key.id]
-                              ? `隐藏 ${key.name}`
-                              : `查看 ${key.name}`
-                          }
-                          title={
-                            key.recoverable
-                              ? "查看完整密钥"
-                              : "旧版密钥无法恢复，请新建替换"
-                          }
-                          disabled={
-                            !key.recoverable || revealingKeyID === key.id
-                          }
-                          onClick={() => void toggleReveal(key)}
-                        >
-                          {revealingKeyID === key.id ? (
-                            <Spinner />
-                          ) : revealedKeys[key.id] ? (
-                            <EyeOffIcon />
-                          ) : (
-                            <EyeIcon />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`编辑 ${key.name}`}
-                          onClick={() => openEditDialog(key)}
-                        >
-                          <PencilIcon />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`删除 ${key.name}`}
-                          onClick={() => void remove(key.id)}
-                        >
-                          <Trash2Icon />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                    {revealedKeys[key.id] ? (
-                      <TableRow>
-                        <TableCell colSpan={6}>
-                          <PlainKeyField
-                            id={`plain-key-${key.id}`}
-                            value={revealedKeys[key.id]}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
-                  </Fragment>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <KeyRoundIcon />
-                </EmptyMedia>
-                <EmptyTitle>还没有 API Key</EmptyTitle>
-                <EmptyDescription>
-                  创建密钥后即可调用所有已授权模型。
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button onClick={openCreateDialog}>
-                  <PlusIcon data-icon="inline-start" />
-                  创建第一个 Key
-                </Button>
-              </EmptyContent>
-            </Empty>
-          )}
-        </CardContent>
-      </Card>
+      <SectionCard
+        title="你的密钥"
+        description="完整密钥加密保存；需要时再查看或复制。"
+      >
+        {rows.length ? (
+          <Table
+            data={rows}
+            idKey="id"
+            density="compact"
+            hasHover
+            columns={[
+              { key: "name", header: "名称", width: proportional(1) },
+              {
+                key: "prefix",
+                header: "前缀",
+                width: pixel(140),
+                renderCell: (row) => <Text type="code">{row.prefix}…</Text>,
+              },
+              {
+                key: "last_used_at",
+                header: "最后使用",
+                width: pixel(140),
+                renderCell: (row) => (
+                  <Text color="secondary">{dateTime(row.last_used_at)}</Text>
+                ),
+              },
+              { key: "models", header: "模型 / 别名", width: proportional(1) },
+              {
+                key: "enabled",
+                header: "状态",
+                width: pixel(90),
+                renderCell: (row) => (
+                  <StatusLabel
+                    tone={row.enabled ? "success" : "neutral"}
+                    label={row.enabled ? "有效" : "停用"}
+                  />
+                ),
+              },
+              {
+                key: "actions",
+                header: "操作",
+                width: pixel(72),
+                align: "end",
+                renderCell: (row) => (
+                  <DropdownMenu
+                    hasChevron={false}
+                    button={{
+                      label: `操作 ${row.name}`,
+                      variant: "ghost",
+                      isIconOnly: true,
+                      icon: <MoreHorizontalIcon />,
+                    }}
+                    items={[
+                      {
+                        label: "查看密钥",
+                        icon: <EyeIcon />,
+                        isDisabled: !row.recoverable,
+                        onClick: () => {
+                          void api<{ key: string }>(`/api/keys/${row.id}/secret`)
+                            .then((response) =>
+                              setRevealed({ id: row.id, value: response.key })
+                            )
+                            .catch((cause) =>
+                              toast({
+                                type: "error",
+                                body:
+                                  cause instanceof Error
+                                    ? cause.message
+                                    : "无法读取完整密钥",
+                              })
+                            )
+                        },
+                      },
+                      {
+                        label: "编辑",
+                        icon: <PencilIcon />,
+                        onClick: () => openEdit(row.key),
+                      },
+                      { type: "divider" },
+                      {
+                        label: "删除",
+                        variant: "destructive",
+                        onClick: () => {
+                          void deleteRequest(`/api/keys/${row.id}`)
+                            .then(async () => {
+                              await onChanged()
+                              toast({ body: "API Key 已删除" })
+                            })
+                            .catch((cause) =>
+                              toast({
+                                type: "error",
+                                body:
+                                  cause instanceof Error
+                                    ? cause.message
+                                    : "删除失败",
+                              })
+                            )
+                        },
+                      },
+                    ]}
+                  />
+                ),
+              },
+            ]}
+          />
+        ) : (
+          <EmptyState
+            title="还没有 API Key"
+            description="创建密钥后即可调用所有已授权模型。"
+            icon={<KeyRoundIcon />}
+            actions={
+              <Button
+                label="创建第一个 Key"
+                variant="primary"
+                icon={<PlusIcon />}
+                onClick={openCreate}
+              />
+            }
+          />
+        )}
+      </SectionCard>
 
       <Dialog
-        open={createOpen}
-        onOpenChange={(open) => {
-          setCreateOpen(open)
-          if (!open) {
-            setSelectedModels([])
-            setModelAliases([])
-            setEditingKey(null)
-          }
-        }}
+        isOpen={editorOpen}
+        onOpenChange={setEditorOpen}
+        width={640}
+        purpose="form"
       >
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {editingKey ? "编辑 API Key" : "创建 API Key"}
-            </DialogTitle>
-            <DialogDescription>
-              {editingKey
-                ? "修改模型范围和客户端可用的模型别名。"
-                : "限制留空表示继承账户策略。创建后可随时查看完整密钥。"}
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            id="key-form"
-            key={editingKey?.id ?? "create"}
-            onSubmit={editingKey ? update : create}
-          >
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="key-name">名称</FieldLabel>
-                <Input
-                  id="key-name"
-                  name="name"
-                  defaultValue={editingKey?.name ?? ""}
-                  placeholder="例如：开发环境"
-                  required
-                />
-              </Field>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field>
-                  <FieldLabel htmlFor="key-rate">每分钟请求</FieldLabel>
-                  <Input
-                    id="key-rate"
-                    name="rate"
-                    type="number"
-                    min="1"
-                    defaultValue={editingKey?.rate_limit_per_minute ?? ""}
-                    placeholder="不限"
+        <Layout
+          height="auto"
+          header={
+            <DialogHeader
+              title={editingKey ? "编辑 API Key" : "创建 API Key"}
+              subtitle={
+                editingKey
+                  ? "修改模型范围和客户端可用的模型别名。"
+                  : "限制留空表示继承账户策略。创建后可随时查看完整密钥。"
+              }
+              onOpenChange={setEditorOpen}
+            />
+          }
+          content={
+            <LayoutContent>
+              <FormLayout>
+                <TextInput label="名称" value={name} onChange={setName} isRequired />
+                <HStack gap={3}>
+                  <NumberInput
+                    label="每分钟请求"
+                    value={rate ?? undefined}
+                    onChange={(value) => setRate(value ?? null)}
+                    isOptional
                   />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="key-tokens">每日 Tokens</FieldLabel>
-                  <Input
-                    id="key-tokens"
-                    name="tokens"
-                    type="number"
-                    min="1"
-                    defaultValue={editingKey?.token_limit_daily ?? ""}
-                    placeholder="不限"
+                  <NumberInput
+                    label="每日 Tokens"
+                    value={tokens ?? undefined}
+                    onChange={(value) => setTokens(value ?? null)}
+                    isOptional
                   />
-                </Field>
-              </div>
-              <Field>
-                <FieldLabel htmlFor="key-models">模型范围</FieldLabel>
+                </HStack>
                 <ModelSelector
-                  id="key-models"
                   options={modelOptions}
                   value={selectedModels}
-                  onChange={changeSelectedModels}
-                  allLabel="全部可用模型"
+                  onChange={(models) => {
+                    modelSelectionTouched.current = true
+                    setSelectedModels(models)
+                  }}
                 />
-                <FieldDescription>
-                  新建 Key
-                  默认全选当前全部可用模型；可按需取消，不选择表示允许全部可用模型。
-                </FieldDescription>
-              </Field>
-              <ApiKeyModelAliasEditor
-                aliases={modelAliases}
-                models={selectedModels.length ? selectedModels : modelOptions}
-                availableModels={modelOptions}
-                onChange={setModelAliases}
-                onApplyPreset={applyModelAliasPreset}
-              />
-            </FieldGroup>
-          </form>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              取消
-            </Button>
-            <Button type="submit" form="key-form" disabled={pending}>
-              {pending ? (
-                <Spinner data-icon="inline-start" />
-              ) : editingKey ? (
-                <PencilIcon data-icon="inline-start" />
-              ) : (
-                <PlusIcon data-icon="inline-start" />
-              )}
-              {editingKey ? "保存" : "创建"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
+                <ApiKeyModelAliasEditor
+                  aliases={modelAliases}
+                  models={selectedModels.length ? selectedModels : modelOptions}
+                  availableModels={modelOptions}
+                  onChange={setModelAliases}
+                  onApplyPreset={(preset: ModelAliasPreset) => {
+                    const presetAliases = new Set(
+                      preset.aliases.map((alias) => alias.toLowerCase())
+                    )
+                    setSelectedModels((current) =>
+                      Array.from(
+                        new Set([
+                          ...current.filter(
+                            (model) => !presetAliases.has(model.toLowerCase())
+                          ),
+                          preset.target,
+                        ])
+                      )
+                    )
+                    setModelAliases((current) => [
+                      ...current.filter(
+                        (item) =>
+                          !presetAliases.has(item.alias.trim().toLowerCase())
+                      ),
+                      ...preset.aliases.map((alias) => ({
+                        clientId: crypto.randomUUID(),
+                        alias,
+                        model: preset.target,
+                      })),
+                    ])
+                  }}
+                />
+              </FormLayout>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack hAlign="end" gap={2}>
+                <Button label="取消" onClick={() => setEditorOpen(false)} />
+                <Button
+                  label={editingKey ? "保存" : "创建"}
+                  variant="primary"
+                  isLoading={pending}
+                  onClick={() => void save()}
+                />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
       </Dialog>
-    </div>
-  )
-}
 
-function PlainKeyField({ id, value }: { id: string; value: string }) {
-  return (
-    <FieldGroup>
-      <Field>
-        <FieldLabel htmlFor={id}>完整密钥</FieldLabel>
-        <InputGroup>
-          <InputGroupInput
-            id={id}
-            readOnly
-            value={value}
-            className="font-mono text-xs"
-          />
-          <InputGroupAddon align="inline-end">
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="复制密钥"
-              onClick={() => {
-                copyText(value)
-                  .then(() => toast.success("已复制"))
-                  .catch(() => toast.error("复制失败，请手动选择密钥"))
+      <Dialog
+        isOpen={Boolean(revealed)}
+        onOpenChange={(open) => {
+          if (!open) setRevealed(null)
+        }}
+        width={520}
+        purpose="info"
+      >
+        <Layout
+          height="auto"
+          header={
+            <DialogHeader
+              title="完整密钥"
+              subtitle="关闭后仍可再次查看可恢复的密钥。"
+              onOpenChange={(open) => {
+                if (!open) setRevealed(null)
               }}
-            >
-              <CopyIcon />
-            </Button>
-          </InputGroupAddon>
-        </InputGroup>
-      </Field>
-    </FieldGroup>
+            />
+          }
+          content={
+            <LayoutContent>
+              <CopyField
+                id="revealed-key"
+                label="API Key"
+                value={revealed?.value ?? ""}
+              />
+            </LayoutContent>
+          }
+        />
+      </Dialog>
+    </VStack>
   )
-}
-
-function numberOrNull(value: FormDataEntryValue | null) {
-  const text = String(value ?? "").trim()
-  return text ? Number(text) : null
 }

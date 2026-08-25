@@ -1,101 +1,58 @@
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { AlertDialog } from "@astryxdesign/core/AlertDialog"
+import { Banner } from "@astryxdesign/core/Banner"
+import { Button } from "@astryxdesign/core/Button"
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react"
+  DateTimeInput,
+  type ISODateTimeString,
+} from "@astryxdesign/core/DateTimeInput"
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { FormLayout } from "@astryxdesign/core/FormLayout"
 import {
-  AlertTriangleIcon,
-  EllipsisIcon,
-  GaugeIcon,
+  HStack,
+  Layout,
+  LayoutContent,
+  LayoutFooter,
+  LayoutHeader,
+  LayoutPanel,
+  VStack,
+} from "@astryxdesign/core/Layout"
+import { List, ListItem } from "@astryxdesign/core/List"
+import { MultiSelector } from "@astryxdesign/core/MultiSelector"
+import { NumberInput } from "@astryxdesign/core/NumberInput"
+import { ProgressBar } from "@astryxdesign/core/ProgressBar"
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@astryxdesign/core/SegmentedControl"
+import { Selector } from "@astryxdesign/core/Selector"
+import { Switch } from "@astryxdesign/core/Switch"
+import { Table, pixel, proportional } from "@astryxdesign/core/Table"
+import { Heading, Text } from "@astryxdesign/core/Text"
+import { TextInput } from "@astryxdesign/core/TextInput"
+import { useToast } from "@astryxdesign/core/Toast"
+import { Token } from "@astryxdesign/core/Token"
+import {
+  MoreHorizontalIcon,
   PackageOpenIcon,
   PlusIcon,
-  SearchIcon,
   Settings2Icon,
-  Trash2Icon,
   UserPlusIcon,
   UsersIcon,
-  WalletCardsIcon,
 } from "lucide-react"
-import { toast } from "sonner"
 
+import { LoadErrorView } from "@/components/load-error-view"
+import { LoadingView } from "@/components/loading-view"
 import { ModelSelector } from "@/components/model-selector"
+import {
+  CountBadge,
+  PageHeader,
+  SearchField,
+  StatusLabel,
+} from "@/components/page-kit"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
-import { PageHeader } from "@/components/workspace-ui"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Card } from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from "@/components/ui/input-group"
-import { Progress, ProgressLabel } from "@/components/ui/progress"
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Spinner } from "@/components/ui/spinner"
-import { Switch } from "@/components/ui/switch"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   api,
   deleteRequest,
@@ -131,16 +88,31 @@ const nominalAllocationPPM = 1_000_000
 type EditableWindow = {
   key: string
   kind: string
-  limit: string
+  limit: number | null
   reset: string
   automaticLimit?: number
 }
 
+interface ParentRow extends Record<string, unknown> {
+  id: string
+  name: string
+  provider: string
+  billing: string
+  statusKey: string
+  childCount: number
+  allocated: string
+  historical: boolean
+  selected: boolean
+  view: ParentSubscriptionView
+}
+
 export function AdminSubscriptionsView() {
+  const toast = useToast()
   const [parents, setParents] = useState<ParentSubscriptionView[]>([])
   const [children, setChildren] = useState<ChildSubscription[]>([])
   const [tenants, setTenants] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
   const [pending, setPending] = useState(false)
   const [query, setQuery] = useState("")
   const [selectedParentID, setSelectedParentID] = useState("")
@@ -149,8 +121,8 @@ export function AdminSubscriptionsView() {
   const [assignTenantID, setAssignTenantID] = useState("")
   const [assignTenantIDs, setAssignTenantIDs] = useState<string[]>([])
   const [assignName, setAssignName] = useState("")
-  const [assignPercent, setAssignPercent] = useState("10")
-  const [assignPriority, setAssignPriority] = useState("100")
+  const [assignPercent, setAssignPercent] = useState<number | null>(10)
+  const [assignPriority, setAssignPriority] = useState<number | null>(100)
   const [assignModels, setAssignModels] = useState<string[]>([])
   const [parentEditor, setParentEditor] =
     useState<ParentSubscriptionView | null>(null)
@@ -159,45 +131,52 @@ export function AdminSubscriptionsView() {
     null
   )
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [parentValue, childValue, tenantValue] = await Promise.all([
-        api<{ items: ParentSubscriptionView[] }>(
-          "/api/admin/subscriptions/parents"
-        ),
-        api<{ items: ChildSubscription[] }>(
-          "/api/admin/subscriptions/children"
-        ),
-        api<{ items: User[] }>("/api/admin/tenants"),
-      ])
-      const nextParents = parentValue.items ?? []
-      const nextChildren = childValue.items ?? []
-      const parentIDsWithChildren = new Set(
-        nextChildren.map((child) => child.parent_subscription_id)
-      )
-      const nextVisibleParents = nextParents.filter(
-        (view) =>
-          view.item.status !== "missing" ||
-          parentIDsWithChildren.has(view.item.id)
-      )
-      setParents(nextParents)
-      setChildren(nextChildren)
-      setTenants(tenantValue.items ?? [])
-      setSelectedParentID((current) =>
-        nextVisibleParents.some((view) => view.item.id === current)
-          ? current
-          : (nextVisibleParents[0]?.item.id ?? "")
-      )
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取订阅分配")
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const load = useCallback(
+    async (showLoading = false) => {
+      if (showLoading) setLoading(true)
+      setLoadError("")
+      try {
+        const [parentValue, childValue, tenantValue] = await Promise.all([
+          api<{ items: ParentSubscriptionView[] }>(
+            "/api/admin/subscriptions/parents"
+          ),
+          api<{ items: ChildSubscription[] }>(
+            "/api/admin/subscriptions/children"
+          ),
+          api<{ items: User[] }>("/api/admin/tenants"),
+        ])
+        const nextParents = parentValue.items ?? []
+        const nextChildren = childValue.items ?? []
+        const parentIDsWithChildren = new Set(
+          nextChildren.map((child) => child.parent_subscription_id)
+        )
+        const nextVisibleParents = nextParents.filter(
+          (view) =>
+            view.item.status !== "missing" ||
+            parentIDsWithChildren.has(view.item.id)
+        )
+        setParents(nextParents)
+        setChildren(nextChildren)
+        setTenants(tenantValue.items ?? [])
+        setSelectedParentID((current) =>
+          nextVisibleParents.some((view) => view.item.id === current)
+            ? current
+            : (nextVisibleParents[0]?.item.id ?? "")
+        )
+      } catch (cause) {
+        const message =
+          cause instanceof Error ? cause.message : "无法读取订阅分配"
+        setLoadError(message)
+        toast({ type: "error", body: message })
+      } finally {
+        if (showLoading) setLoading(false)
+      }
+    },
+    [toast]
+  )
 
   useEffect(() => {
-    void load()
+    void load(true)
   }, [load])
 
   const childCountByParent = useMemo(() => {
@@ -246,6 +225,10 @@ export function AdminSubscriptionsView() {
       )
     )
   }, [historicalParents, query])
+  const filteredParents = useMemo(
+    () => [...filteredCurrentParents, ...filteredHistoricalParents],
+    [filteredCurrentParents, filteredHistoricalParents]
+  )
 
   const selected =
     visibleParents.find((view) => view.item.id === selectedParentID) ??
@@ -261,8 +244,8 @@ export function AdminSubscriptionsView() {
     setAssignTenantID("")
     setAssignTenantIDs([])
     setAssignName(defaultChildName(view.item))
-    setAssignPercent("10")
-    setAssignPriority("100")
+    setAssignPercent(10)
+    setAssignPriority(100)
     setAssignModels([])
     setAssignOpen(true)
   }
@@ -271,25 +254,27 @@ export function AdminSubscriptionsView() {
     const view = currentParents.find((item) => item.item.id === parentID)
     setAssignParentID(parentID)
     setAssignName(defaultChildName(view?.item))
-    setAssignPercent("10")
+    setAssignPercent(10)
     setAssignModels([])
     setAssignTenantID("")
     setAssignTenantIDs([])
   }
 
-  async function createAssignment(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function createAssignment() {
     const view = currentParents.find((item) => item.item.id === assignParentID)
     const balanceMode = view?.item.capacity_mode === "unmetered"
     if (
       !view ||
       (balanceMode ? assignTenantIDs.length === 0 : !assignTenantID)
     ) {
-      toast.error(balanceMode ? "请至少选择一位用户" : "请选择模型账户和租户")
+      toast({
+        type: "error",
+        body: balanceMode ? "请至少选择一位用户" : "请选择模型账户和租户",
+      })
       return
     }
     if (!isAllocatable(view)) {
-      toast.error(accountBlockReason(view))
+      toast({ type: "error", body: accountBlockReason(view) })
       return
     }
     const allocationPPM =
@@ -300,7 +285,7 @@ export function AdminSubscriptionsView() {
       view.item.capacity_mode !== "unmetered" &&
       (!Number.isFinite(allocationPPM) || allocationPPM <= 0)
     ) {
-      toast.error("请输入有效的账户额度占比")
+      toast({ type: "error", body: "请输入有效的账户额度占比" })
       return
     }
     setPending(true)
@@ -325,12 +310,17 @@ export function AdminSubscriptionsView() {
             }
       )
       setAssignOpen(false)
-      toast.success(
-        balanceMode ? `已授权 ${assignTenantIDs.length} 位用户` : "已分配给租户"
-      )
+      toast({
+        body: balanceMode
+          ? `已授权 ${assignTenantIDs.length} 位用户`
+          : "已分配给租户",
+      })
       await load()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "分配失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "分配失败",
+      })
     } finally {
       setPending(false)
     }
@@ -353,10 +343,13 @@ export function AdminSubscriptionsView() {
           expires_at: child.expires_at ?? "",
         }),
       })
-      toast.success(child.enabled ? "授权已停用" : "授权已启用")
+      toast({ body: child.enabled ? "授权已停用" : "授权已启用" })
       await load()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "更新失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "更新失败",
+      })
     } finally {
       setPending(false)
     }
@@ -370,10 +363,13 @@ export function AdminSubscriptionsView() {
         `/api/admin/subscriptions/children/${deletingChild.id}`
       )
       setDeletingChild(null)
-      toast.success("租户授权已删除")
+      toast({ body: "租户授权已删除" })
       await load()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "删除失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "删除失败",
+      })
     } finally {
       setPending(false)
     }
@@ -394,102 +390,165 @@ export function AdminSubscriptionsView() {
   const balanceGrantTenants = tenants.filter(
     (tenant) => tenant.enabled && !alreadyAssignedTenantIDs.has(tenant.id)
   )
+  const parentRows: ParentRow[] = filteredParents.map((view) => ({
+    id: view.item.id,
+    name: view.item.name,
+    provider: [
+      view.item.provider || "未知提供商",
+      displayPlan(view.item.plan_type),
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    billing: billingLabel(view),
+    statusKey: accountStatusKey(view),
+    childCount: childCountByParent.get(view.item.id) ?? 0,
+    allocated:
+      view.item.capacity_mode === "observed"
+        ? percent(view.allocated_ppm)
+        : "—",
+    historical: view.item.status === "missing",
+    selected: view.item.id === selected?.item.id,
+    view,
+  }))
+
+  if (loading) return <LoadingView />
+  if (loadError && parents.length === 0) {
+    return (
+      <LoadErrorView message={loadError} onRetry={() => void load(true)} />
+    )
+  }
 
   return (
-    <div className="flex flex-col gap-5">
-      <PageHeader
-        actions={
-          <Button
-            disabled={
-              !selected ||
-              !isAllocatable(selected) ||
-              !tenants.some((tenant) => tenant.enabled)
-            }
-            onClick={() => selected && openAssignment(selected)}
-          >
-            <UserPlusIcon data-icon="inline-start" />
-            {selected?.item.capacity_mode === "unmetered"
-              ? "添加用户"
-              : "分配给租户"}
-          </Button>
-        }
-      />
-
-      {loading ? (
-        <AllocationSkeleton />
-      ) : !visibleParents.length ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <PackageOpenIcon />
-            </EmptyMedia>
-            <EmptyTitle>还没有可分配的模型账户</EmptyTitle>
-            <EmptyDescription>请先连接模型账户。</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <Card className="gap-0 py-0 lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
-          <aside className="border-b bg-muted/20 lg:border-r lg:border-b-0">
-            <div className="flex flex-col gap-3 p-4 lg:sticky lg:top-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-heading font-medium">模型账户</h2>
-                  <p className="text-xs text-muted-foreground">
-                    {currentParents.length} 个账户可用于分配
-                  </p>
-                </div>
-                <Badge variant="outline">{visibleParents.length}</Badge>
-              </div>
-              <InputGroup>
-                <InputGroupAddon>
-                  <SearchIcon />
-                </InputGroupAddon>
-                <InputGroupInput
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索账户"
-                  aria-label="搜索模型账户"
+    <>
+    <Layout
+      height="fill"
+      defaultHasDividers
+      header={
+        <LayoutHeader>
+          <VStack gap={3}>
+            <PageHeader
+              title="订阅分配"
+              accessory={<CountBadge value={visibleParents.length} />}
+              actions={
+                <Button
+                  label={
+                    selected?.item.capacity_mode === "unmetered"
+                      ? "添加用户"
+                      : "分配给租户"
+                  }
+                  variant="primary"
+                  icon={<UserPlusIcon />}
+                  isDisabled={
+                    !selected ||
+                    !isAllocatable(selected) ||
+                    !tenants.some((tenant) => tenant.enabled)
+                  }
+                  onClick={() => selected && openAssignment(selected)}
                 />
-              </InputGroup>
-              <div className="flex max-h-56 flex-col gap-1 overflow-y-auto pr-1 lg:max-h-[calc(100vh-14rem)]">
-                {filteredCurrentParents.map((view) => (
-                  <ParentListButton
-                    key={view.item.id}
-                    view={view}
-                    active={view.item.id === selected?.item.id}
-                    childCount={childCountByParent.get(view.item.id) ?? 0}
-                    onSelect={() => setSelectedParentID(view.item.id)}
-                  />
-                ))}
-                {filteredHistoricalParents.length ? (
-                  <>
-                    <Separator className="my-2" />
-                    <p className="px-2 text-xs font-medium text-muted-foreground">
-                      历史账户
-                    </p>
-                    {filteredHistoricalParents.map((view) => (
-                      <ParentListButton
-                        key={view.item.id}
-                        view={view}
-                        active={view.item.id === selected?.item.id}
-                        childCount={childCountByParent.get(view.item.id) ?? 0}
-                        onSelect={() => setSelectedParentID(view.item.id)}
+              }
+            />
+            <SearchField
+              label="搜索模型账户"
+              value={query}
+              onChange={setQuery}
+              placeholder="搜索账户"
+            />
+          </VStack>
+        </LayoutHeader>
+      }
+      content={
+        <LayoutContent padding={0} label="模型账户">
+          {!visibleParents.length ? (
+            <EmptyState
+              title="还没有可分配的模型账户"
+              description="请先连接模型账户。"
+              icon={<PackageOpenIcon />}
+            />
+          ) : parentRows.length ? (
+            <Table
+              data={parentRows}
+              idKey="id"
+              density="compact"
+              hasHover
+              textOverflow="truncate"
+              columns={[
+                {
+                  key: "name",
+                  header: "账户",
+                  width: proportional(2),
+                  renderCell: (row) => (
+                    <HStack gap={2} vAlign="center">
+                      <Button
+                        label={row.name}
+                        variant={row.selected ? "secondary" : "ghost"}
+                        onClick={() => setSelectedParentID(row.id)}
                       />
-                    ))}
-                  </>
-                ) : null}
-                {!filteredCurrentParents.length &&
-                !filteredHistoricalParents.length ? (
-                  <p className="py-6 text-center text-sm text-muted-foreground">
-                    没有匹配的账户
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </aside>
-
+                      {row.historical ? (
+                        <Token label="历史账户" color="gray" />
+                      ) : null}
+                    </HStack>
+                  ),
+                },
+                {
+                  key: "provider",
+                  header: "提供商",
+                  width: proportional(1),
+                  renderCell: (row) => (
+                    <Text color="secondary">{row.provider}</Text>
+                  ),
+                },
+                {
+                  key: "billing",
+                  header: "结算",
+                  width: pixel(110),
+                  renderCell: (row) => (
+                    <Token
+                      label={row.billing}
+                      color={row.historical ? "gray" : "default"}
+                    />
+                  ),
+                },
+                {
+                  key: "statusKey",
+                  header: "状态",
+                  width: pixel(130),
+                  renderCell: (row) => <AccountStatusLabel view={row.view} />,
+                },
+                {
+                  key: "childCount",
+                  header: "授权",
+                  width: pixel(80),
+                  renderCell: (row) => <CountBadge value={row.childCount} />,
+                },
+                {
+                  key: "allocated",
+                  header: "已分配",
+                  width: pixel(90),
+                  renderCell: (row) => (
+                    <Text color="secondary">{row.allocated}</Text>
+                  ),
+                },
+              ]}
+            />
+          ) : (
+            <EmptyState
+              title="没有匹配的账户"
+              description="换一个关键词，或清空搜索后再看全部账户。"
+              icon={<PackageOpenIcon />}
+            />
+          )}
+        </LayoutContent>
+      }
+      end={
+        <LayoutPanel
+          width={380}
+          hasDivider
+          isScrollable
+          padding={4}
+          label="账户详情"
+        >
           {selected ? (
-            <AccountAllocationPanel
+            <AccountInspector
               view={selected}
               children={selectedChildren}
               tenants={tenants}
@@ -500,317 +559,228 @@ export function AdminSubscriptionsView() {
               onToggle={(child) => void toggleChild(child)}
               onDelete={setDeletingChild}
             />
-          ) : null}
-        </Card>
-      )}
-
-      <Dialog
-        open={assignOpen}
-        onOpenChange={(open) => {
-          if (!pending) setAssignOpen(open)
-        }}
-      >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>
-              {assignParent?.item.capacity_mode === "unmetered"
+          ) : (
+            <EmptyState
+              title="选择一个模型账户"
+              description="从表格中选择账户，查看额度窗口和租户授权。"
+              icon={<PackageOpenIcon />}
+            />
+          )}
+        </LayoutPanel>
+      }
+    />
+    <Dialog
+      isOpen={assignOpen}
+      onOpenChange={(open) => {
+        if (!pending) setAssignOpen(open)
+      }}
+      width={560}
+      purpose="form"
+    >
+      <Layout
+        height="auto"
+        header={
+          <DialogHeader
+            title={
+              assignParent?.item.capacity_mode === "unmetered"
                 ? "授权用户"
-                : "分配共享额度"}
-            </DialogTitle>
-            <DialogDescription>
-              {assignParent?.item.capacity_mode === "unmetered"
+                : "分配共享额度"
+            }
+            subtitle={
+              assignParent?.item.capacity_mode === "unmetered"
                 ? "所选用户将获得该账户的全部模型权限，调用费用从各自余额扣除。"
-                : "为一个租户创建带独立份额的额度授权。"}
-            </DialogDescription>
-          </DialogHeader>
-          <form id="assign-subscription-form" onSubmit={createAssignment}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel>模型账户</FieldLabel>
-                <Select
-                  items={currentParents.map((view) => ({
-                    value: view.item.id,
-                    label: `${view.item.name} · ${billingLabel(view)}`,
-                  }))}
-                  value={assignParentID}
-                  onValueChange={(value) => changeAssignParent(value ?? "")}
-                  required
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择模型账户" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {currentParents.map((view) => (
-                        <SelectItem
-                          key={view.item.id}
-                          value={view.item.id}
-                          disabled={!isAllocatable(view)}
-                        >
-                          {view.item.name} · {billingLabel(view)}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                {assignParent ? (
-                  <FieldDescription>
-                    {isAllocatable(assignParent)
+                : "为一个租户创建带独立份额的额度授权。"
+            }
+            onOpenChange={(open) => {
+              if (!pending) setAssignOpen(open)
+            }}
+          />
+        }
+        content={
+          <LayoutContent>
+            <FormLayout>
+              <Selector
+                label="模型账户"
+                options={currentParents.map((view) => ({
+                  value: view.item.id,
+                  label: `${view.item.name} · ${billingLabel(view)}`,
+                  disabled: !isAllocatable(view),
+                }))}
+                value={assignParentID}
+                onChange={changeAssignParent}
+                placeholder="选择模型账户"
+                isRequired
+                width="100%"
+                description={
+                  assignParent
+                    ? isAllocatable(assignParent)
                       ? accountAllocationHint(assignParent)
-                      : accountBlockReason(assignParent)}
-                  </FieldDescription>
-                ) : null}
-              </Field>
-
+                      : accountBlockReason(assignParent)
+                    : undefined
+                }
+              />
               {assignParent?.item.capacity_mode === "unmetered" ? (
-                <Field>
-                  <FieldLabel>用户</FieldLabel>
-                  {balanceGrantTenants.length ? (
-                    <div className="flex max-h-64 flex-col gap-1 overflow-y-auto rounded-lg border p-2">
-                      {balanceGrantTenants.map((tenant) => {
-                        const checked = assignTenantIDs.includes(tenant.id)
-                        return (
-                          <label
-                            key={tenant.id}
-                            className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 hover:bg-muted/60"
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(value) =>
-                                setAssignTenantIDs((current) =>
-                                  value
-                                    ? [...current, tenant.id]
-                                    : current.filter((id) => id !== tenant.id)
-                                )
-                              }
-                            />
-                            <span className="min-w-0">
-                              <span className="block truncate text-sm font-medium">
-                                {tenant.name}
-                              </span>
-                              <span className="block truncate text-xs text-muted-foreground">
-                                {tenant.owner_email}
-                              </span>
-                            </span>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                      所有可用用户都已获得该账户权限。
-                    </div>
-                  )}
-                  <FieldDescription>
-                    已选择 {assignTenantIDs.length}{" "}
-                    位；以后仍可继续添加其他用户。
-                  </FieldDescription>
-                </Field>
+                balanceGrantTenants.length ? (
+                  <MultiSelector
+                    label="用户"
+                    options={balanceGrantTenants.map((tenant) => ({
+                      value: tenant.id,
+                      label: tenant.name,
+                      description: tenant.owner_email,
+                    }))}
+                    value={assignTenantIDs}
+                    onChange={setAssignTenantIDs}
+                    hasSearch={balanceGrantTenants.length > 8}
+                    searchPlaceholder="筛选用户"
+                    hasSelectAll
+                    selectAllLabel="全选可用用户"
+                    triggerDisplay="count"
+                    formatValue={(items) =>
+                      items.length ? `已选择 ${items.length} 位` : "选择用户"
+                    }
+                    description={`已选择 ${assignTenantIDs.length} 位；以后仍可继续添加其他用户。`}
+                    isRequired
+                    width="100%"
+                  />
+                ) : (
+                  <Text color="secondary">
+                    所有可用用户都已获得该账户权限。
+                  </Text>
+                )
               ) : (
-                <Field>
-                  <FieldLabel>租户</FieldLabel>
-                  <Select
-                    items={tenants
-                      .filter((tenant) => tenant.enabled)
-                      .map((tenant) => ({
-                        value: tenant.id,
-                        label: `${tenant.name} · ${tenant.owner_email}`,
-                      }))}
-                    value={assignTenantID}
-                    onValueChange={(value) => setAssignTenantID(value ?? "")}
-                    required
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="选择租户" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {tenants
-                          .filter((tenant) => tenant.enabled)
-                          .map((tenant) => (
-                            <SelectItem key={tenant.id} value={tenant.id}>
-                              {tenant.name} · {tenant.owner_email}
-                            </SelectItem>
-                          ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
+                <Selector
+                  label="租户"
+                  options={tenants
+                    .filter((tenant) => tenant.enabled)
+                    .map((tenant) => ({
+                      value: tenant.id,
+                      label: `${tenant.name} · ${tenant.owner_email}`,
+                    }))}
+                  value={assignTenantID}
+                  onChange={setAssignTenantID}
+                  placeholder="选择租户"
+                  isRequired
+                  width="100%"
+                />
               )}
-
               {assignParent?.item.capacity_mode !== "unmetered" ? (
-                <Field>
-                  <FieldLabel htmlFor="assign-name">授权名称</FieldLabel>
-                  <Input
-                    id="assign-name"
-                    value={assignName}
-                    onChange={(event) => setAssignName(event.target.value)}
-                    placeholder="例如：研发团队"
-                    required
-                  />
-                </Field>
+                <TextInput
+                  label="授权名称"
+                  value={assignName}
+                  onChange={setAssignName}
+                  placeholder="例如：研发团队"
+                  isRequired
+                  width="100%"
+                />
               ) : null}
-
               {assignParent?.item.capacity_mode === "observed" ? (
-                <Field>
-                  <FieldLabel htmlFor="assign-percent">账户额度占比</FieldLabel>
-                  <Input
-                    id="assign-percent"
-                    type="number"
-                    min="0.0001"
-                    step="0.0001"
-                    value={assignPercent}
-                    onChange={(event) => setAssignPercent(event.target.value)}
-                    required
+                <VStack gap={3}>
+                  <NumberInput
+                    label="账户额度占比"
+                    value={assignPercent ?? undefined}
+                    onChange={(value) => setAssignPercent(value)}
+                    min={0.0001}
+                    step={0.0001}
+                    units="%"
+                    isRequired
+                    isWheelEnabled={false}
+                    width="100%"
+                    description={`分配后总计 ${percent(projectedAllocationPPM)}；允许超过 100%。`}
                   />
-                  <FieldDescription>
-                    分配后总计 {percent(projectedAllocationPPM)}；允许超过
-                    100%。
-                  </FieldDescription>
                   {projectedAllocationPPM > nominalAllocationPPM ? (
                     <OversubscriptionWarning
                       allocatedPPM={projectedAllocationPPM}
                     />
                   ) : null}
-                </Field>
+                </VStack>
               ) : null}
-
               {assignParent?.item.capacity_mode !== "unmetered" ? (
-                <Field>
-                  <FieldLabel htmlFor="assign-priority">路由优先级</FieldLabel>
-                  <Input
-                    id="assign-priority"
-                    type="number"
-                    value={assignPriority}
-                    onChange={(event) => setAssignPriority(event.target.value)}
-                    required
-                  />
-                  <FieldDescription>
-                    同一租户有多个可用账户时，数值越大越优先。
-                  </FieldDescription>
-                </Field>
+                <NumberInput
+                  label="路由优先级"
+                  value={assignPriority ?? undefined}
+                  onChange={(value) => setAssignPriority(value)}
+                  isIntegerOnly
+                  isRequired
+                  isWheelEnabled={false}
+                  width="100%"
+                  description="同一租户有多个可用账户时，数值越大越优先。"
+                />
               ) : null}
-
               {assignParent?.item.capacity_mode !== "unmetered" ? (
-                <Field>
-                  <FieldLabel htmlFor="assign-models">可用模型</FieldLabel>
-                  <ModelSelector
-                    id="assign-models"
-                    options={parentModelOptions(assignParent)}
-                    value={assignModels}
-                    onChange={setAssignModels}
-                    allLabel="继承账户全部模型"
-                  />
-                </Field>
+                <ModelSelector
+                  options={parentModelOptions(assignParent)}
+                  value={assignModels}
+                  onChange={setAssignModels}
+                  allLabel="继承账户全部模型"
+                />
               ) : null}
-            </FieldGroup>
-          </form>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() => setAssignOpen(false)}
-            >
-              取消
-            </Button>
-            <Button
-              type="submit"
-              form="assign-subscription-form"
-              disabled={
-                pending ||
-                (assignParent?.item.capacity_mode === "unmetered" &&
-                  assignTenantIDs.length === 0)
-              }
-            >
-              {pending ? <Spinner /> : <PlusIcon data-icon="inline-start" />}
-              {assignParent?.item.capacity_mode === "unmetered"
-                ? "确认授权"
-                : "确认分配"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <ParentSettingsDialog
-        value={parentEditor}
-        pending={pending}
-        onPending={setPending}
-        onClose={() => setParentEditor(null)}
-        onSaved={load}
+            </FormLayout>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack hAlign="end" gap={2}>
+              <Button
+                label="取消"
+                isDisabled={pending}
+                onClick={() => setAssignOpen(false)}
+              />
+              <Button
+                label={
+                  assignParent?.item.capacity_mode === "unmetered"
+                    ? "确认授权"
+                    : "确认分配"
+                }
+                variant="primary"
+                icon={<PlusIcon />}
+                isLoading={pending}
+                isDisabled={
+                  assignParent?.item.capacity_mode === "unmetered" &&
+                  assignTenantIDs.length === 0
+                }
+                onClick={() => void createAssignment()}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
       />
-      <ChildSettingsDialog
-        value={childEditor}
-        parents={visibleParents}
-        pending={pending}
-        onPending={setPending}
-        onClose={() => setChildEditor(null)}
-        onSaved={load}
-      />
-
-      <AlertDialog
-        open={Boolean(deletingChild)}
-        onOpenChange={(open) => {
-          if (!open && !pending) setDeletingChild(null)
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>删除这条租户授权？</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deletingChild
-                ? `“${deletingChild.name}”将立即停止路由到这个模型账户。`
-                : "该授权将被删除。"}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={pending}>取消</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={pending}
-              onClick={() => void removeChild()}
-            >
-              {pending ? <Spinner /> : <Trash2Icon data-icon="inline-start" />}
-              删除授权
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+    </Dialog>
+    <ParentSettingsDialog
+      value={parentEditor}
+      pending={pending}
+      onPending={setPending}
+      onClose={() => setParentEditor(null)}
+      onSaved={() => load()}
+    />
+    <ChildSettingsDialog
+      value={childEditor}
+      parents={visibleParents}
+      pending={pending}
+      onPending={setPending}
+      onClose={() => setChildEditor(null)}
+      onSaved={() => load()}
+    />
+    <AlertDialog
+      isOpen={Boolean(deletingChild)}
+      onOpenChange={(open) => {
+        if (!open && !pending) setDeletingChild(null)
+      }}
+      title="删除这条租户授权？"
+      description={
+        deletingChild
+          ? `“${deletingChild.name}”将立即停止路由到这个模型账户。`
+          : "该授权将被删除。"
+      }
+      cancelLabel="取消"
+      actionLabel="删除授权"
+      isActionLoading={pending}
+      onAction={() => void removeChild()}
+    />
+    </>
   )
 }
 
-function ParentListButton({
-  view,
-  active,
-  childCount,
-  onSelect,
-}: {
-  view: ParentSubscriptionView
-  active: boolean
-  childCount: number
-  onSelect: () => void
-}) {
-  return (
-    <Button
-      variant={active ? "secondary" : "ghost"}
-      className="h-auto w-full justify-start px-2 py-2 text-left"
-      onClick={onSelect}
-    >
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-medium">{view.item.name}</p>
-        <p className="truncate text-xs text-muted-foreground">
-          {view.item.provider || "未知提供商"}
-          {displayPlan(view.item.plan_type)
-            ? ` · ${displayPlan(view.item.plan_type)}`
-            : ""}
-        </p>
-      </div>
-      <Badge variant="outline">{childCount}</Badge>
-    </Button>
-  )
-}
-
-function AccountAllocationPanel({
+function AccountInspector({
   view,
   children,
   tenants,
@@ -837,351 +807,221 @@ function AccountAllocationPanel({
     (view.allocated_ppm / nominalAllocationPPM) * 100
   )
   const oversubscribed = view.allocated_ppm > nominalAllocationPPM
+  const modelCount = parentModelOptions(view).length
 
   return (
-    <div className="flex min-w-0 flex-col">
-      <div className="flex flex-col gap-4 border-b px-4 py-4 sm:px-6 sm:py-5 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-heading text-xl leading-tight font-semibold">
-              {view.item.name}
-            </h2>
-            <AccountStatusBadge view={view} />
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {view.item.provider || "未知提供商"}
-            {displayPlan(view.item.plan_type)
-              ? ` · ${displayPlan(view.item.plan_type)}`
-              : ""}
-            {` · ${billingLabel(view)}`}
-          </p>
-        </div>
+    <VStack gap={6}>
+      <VStack gap={2}>
+        <HStack gap={2} wrap="wrap" vAlign="center">
+          <Heading level={2}>{view.item.name}</Heading>
+          <AccountStatusLabel view={view} />
+        </HStack>
+        <Text color="secondary">
+          {[
+            view.item.provider || "未知提供商",
+            displayPlan(view.item.plan_type),
+            billingLabel(view),
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </Text>
         {view.item.status !== "missing" ? (
-          <div className="shrink-0">
-            <Button size="sm" variant="outline" onClick={onConfigure}>
-              <Settings2Icon data-icon="inline-start" />
-              账户规则
-            </Button>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="flex flex-col gap-6 px-4 py-5 sm:px-6">
-        <div className="grid grid-cols-3 overflow-hidden rounded-lg border bg-muted/20">
-          <AccountFact
-            icon={<UsersIcon />}
-            label={
-              view.item.capacity_mode === "unmetered" ? "授权用户" : "租户授权"
-            }
-            value={`${children.length} ${view.item.capacity_mode === "unmetered" ? "人" : "条"}`}
+          <Button
+            label="账户规则"
+            variant="secondary"
+            size="sm"
+            icon={<Settings2Icon />}
+            onClick={onConfigure}
           />
-          <AccountFact
-            icon={<PackageOpenIcon />}
-            label="可用模型"
-            value={`${parentModelOptions(view).length} 个`}
-          />
-          <AccountFact
-            icon={
-              view.item.capacity_mode === "unmetered" ? (
-                <WalletCardsIcon />
-              ) : (
-                <GaugeIcon />
-              )
-            }
-            label="结算方式"
-            value={billingLabel(view)}
-          />
-        </div>
-
-        {view.item.capacity_mode === "observed" ? (
-          <section className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-medium">账户额度</h3>
-                <p className="text-xs text-muted-foreground">
-                  上游额度和租户分配使用同一份账户数据。
-                </p>
-              </div>
-              <Badge variant="outline">
-                已分配 {percent(view.allocated_ppm)}
-              </Badge>
-            </div>
-            <Progress value={allocationPercent}>
-              <ProgressLabel>已分配比例</ProgressLabel>
-              <span className="ml-auto text-sm text-muted-foreground tabular-nums">
-                {Math.round(allocationPercent)}%
-              </span>
-            </Progress>
-            {oversubscribed ? (
-              <OversubscriptionWarning allocatedPPM={view.allocated_ppm} />
-            ) : null}
-            <QuotaSnapshot
-              snapshot={view.item.quota_snapshot}
-              status={view.item.quota_probe_status}
-              error={view.item.quota_probe_error}
-              observedAt={view.item.quota_observed_at}
-              configuredWindows={view.windows}
-              compact
-            />
-          </section>
         ) : null}
+      </VStack>
 
-        {!isAllocatable(view) ? (
-          <Alert variant="destructive">
-            <AlertTriangleIcon />
-            <AlertTitle>当前账户不能继续分配</AlertTitle>
-            <AlertDescription>{accountBlockReason(view)}</AlertDescription>
-          </Alert>
-        ) : null}
+      <VStack gap={3}>
+        <Fact
+          label={
+            view.item.capacity_mode === "unmetered" ? "授权用户" : "租户授权"
+          }
+          value={`${children.length} ${view.item.capacity_mode === "unmetered" ? "人" : "条"}`}
+        />
+        <Fact label="可用模型" value={`${modelCount} 个`} />
+        <Fact label="结算方式" value={billingLabel(view)} />
+      </VStack>
 
-        <Separator />
+      {view.item.capacity_mode === "observed" ? (
+        <VStack gap={3}>
+          <HStack hAlign="between" gap={3} vAlign="center">
+            <VStack gap={1}>
+              <Text weight="semibold">账户额度</Text>
+              <Text color="secondary" type="supporting">
+                上游额度和租户分配使用同一份账户数据。
+              </Text>
+            </VStack>
+            <Token label={`已分配 ${percent(view.allocated_ppm)}`} color="gray" />
+          </HStack>
+          <ProgressBar
+            label="已分配比例"
+            value={allocationPercent}
+            hasValueLabel
+            formatValueLabel={() => `${Math.round(allocationPercent)}%`}
+          />
+          {oversubscribed ? (
+            <OversubscriptionWarning allocatedPPM={view.allocated_ppm} />
+          ) : null}
+          <QuotaSnapshot
+            snapshot={view.item.quota_snapshot}
+            status={view.item.quota_probe_status}
+            error={view.item.quota_probe_error}
+            observedAt={view.item.quota_observed_at}
+            configuredWindows={view.windows}
+            compact
+          />
+        </VStack>
+      ) : null}
 
-        <section className="flex flex-col gap-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="font-medium">租户授权</h3>
-              <p className="text-xs text-muted-foreground">
-                {view.item.capacity_mode === "unmetered"
-                  ? "授权用户继承账户全部模型，调用费用从各自余额扣除。"
-                  : "每条授权决定租户可以使用的模型、份额与路由优先级。"}
-              </p>
-            </div>
-            <Button
-              size="sm"
-              className="w-full sm:w-auto"
-              disabled={!isAllocatable(view)}
-              onClick={onAssign}
-            >
-              <PlusIcon data-icon="inline-start" />
+      {!isAllocatable(view) ? (
+        <Banner
+          status="error"
+          title="当前账户不能继续分配"
+          description={accountBlockReason(view)}
+          collapsible={false}
+        />
+      ) : null}
+
+      <VStack gap={3}>
+        <HStack hAlign="between" gap={3} vAlign="start" wrap="wrap">
+          <VStack gap={1}>
+            <Text weight="semibold">租户授权</Text>
+            <Text color="secondary" type="supporting">
               {view.item.capacity_mode === "unmetered"
-                ? "添加用户"
-                : "新增授权"}
-            </Button>
-          </div>
+                ? "授权用户继承账户全部模型，调用费用从各自余额扣除。"
+                : "每条授权决定租户可以使用的模型、份额与路由优先级。"}
+            </Text>
+          </VStack>
+          <Button
+            label={
+              view.item.capacity_mode === "unmetered" ? "添加用户" : "新增授权"
+            }
+            size="sm"
+            icon={<PlusIcon />}
+            isDisabled={!isAllocatable(view)}
+            onClick={onAssign}
+          />
+        </HStack>
 
-          {children.length ? (
-            <>
-              <div className="flex flex-col gap-2 md:hidden">
-                {children.map((child) => (
-                  <MobileChildGrant
-                    key={child.id}
-                    child={child}
-                    tenant={tenantByID.get(child.tenant_id)}
-                    view={view}
-                    pending={pending}
-                    onEdit={() => onEdit(child)}
-                    onToggle={() => onToggle(child)}
-                    onDelete={() => onDelete(child)}
-                  />
-                ))}
-              </div>
-              <div className="hidden md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>租户</TableHead>
-                      <TableHead>
-                        {view.item.capacity_mode === "unmetered"
-                          ? "可用模型"
-                          : "授权范围"}
-                      </TableHead>
-                      <TableHead>
-                        {view.item.capacity_mode === "unmetered"
-                          ? "结算"
-                          : "剩余额度"}
-                      </TableHead>
-                      {view.item.capacity_mode === "observed" ? (
-                        <TableHead>优先级</TableHead>
-                      ) : null}
-                      <TableHead>状态</TableHead>
-                      <TableHead className="w-12" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {children.map((child) => {
-                      const tenant = tenantByID.get(child.tenant_id)
-                      return (
-                        <TableRow key={child.id}>
-                          <TableCell>
-                            <p className="font-medium">
-                              {tenant?.name || child.tenant_id}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {tenant?.owner_email}
-                            </p>
-                          </TableCell>
-                          <TableCell>
-                            {view.item.capacity_mode === "unmetered" ? (
-                              <p>
-                                {parentModelOptions(view).length
-                                  ? `账户全部 ${parentModelOptions(view).length} 个模型`
-                                  : "账户全部模型"}
-                              </p>
-                            ) : (
-                              <>
-                                <p>{child.name}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {child.model_allowlist?.length
-                                    ? `限定 ${child.model_allowlist.length} 个模型`
-                                    : "继承账户全部模型"}
-                                </p>
-                              </>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <ChildQuotaProgress
-                              child={child}
-                              capacityMode={view.item.capacity_mode}
-                            />
-                          </TableCell>
-                          {view.item.capacity_mode === "observed" ? (
-                            <TableCell className="tabular-nums">
-                              {child.priority}
-                            </TableCell>
-                          ) : null}
-                          <TableCell>
-                            <ChildStatusBadge child={child} />
-                          </TableCell>
-                          <TableCell>
-                            <ChildGrantMenu
-                              child={child}
-                              capacityMode={view.item.capacity_mode}
-                              pending={pending}
-                              onEdit={() => onEdit(child)}
-                              onToggle={() => onToggle(child)}
-                              onDelete={() => onDelete(child)}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </>
-          ) : (
-            <Empty className="border">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <UsersIcon />
-                </EmptyMedia>
-                <EmptyTitle>尚未分配给任何租户</EmptyTitle>
-                <EmptyDescription>
-                  {view.item.capacity_mode === "unmetered"
-                    ? "添加用户后，他们会获得这个账户的全部模型权限。"
-                    : "新增授权后，租户请求会严格路由到这个模型账户。"}
-                </EmptyDescription>
-              </EmptyHeader>
-              <Button disabled={!isAllocatable(view)} onClick={onAssign}>
-                <UserPlusIcon data-icon="inline-start" />
-                {view.item.capacity_mode === "unmetered"
-                  ? "添加用户"
-                  : "分配给租户"}
-              </Button>
-            </Empty>
-          )}
-        </section>
-      </div>
+        {children.length ? (
+          <List density="compact" hasDividers>
+            {children.map((child) => {
+              const tenant = tenantByID.get(child.tenant_id)
+              return (
+                <ListItem
+                  key={child.id}
+                  label={tenant?.name || child.tenant_id}
+                  description={
+                    <ChildGrantDetails child={child} view={view} tenant={tenant} />
+                  }
+                  endContent={
+                    <HStack gap={2} vAlign="center">
+                      <ChildStatusLabel child={child} />
+                      <ChildGrantMenu
+                        child={child}
+                        capacityMode={view.item.capacity_mode}
+                        pending={pending}
+                        onEdit={() => onEdit(child)}
+                        onToggle={() => onToggle(child)}
+                        onDelete={() => onDelete(child)}
+                      />
+                    </HStack>
+                  }
+                />
+              )
+            })}
+          </List>
+        ) : (
+          <EmptyState
+            title="尚未分配给任何租户"
+            description={
+              view.item.capacity_mode === "unmetered"
+                ? "添加用户后，他们会获得这个账户的全部模型权限。"
+                : "新增授权后，租户请求会严格路由到这个模型账户。"
+            }
+            icon={<UsersIcon />}
+            actions={
+              <Button
+                label={
+                  view.item.capacity_mode === "unmetered"
+                    ? "添加用户"
+                    : "分配给租户"
+                }
+                variant="primary"
+                icon={<UserPlusIcon />}
+                isDisabled={!isAllocatable(view)}
+                onClick={onAssign}
+              />
+            }
+          />
+        )}
+      </VStack>
 
-      <div className="mt-auto flex items-center justify-between gap-3 border-t bg-muted/30 px-4 py-3 sm:px-6">
-        <p className="text-xs text-muted-foreground">
+      <HStack hAlign="between" gap={3} vAlign="center">
+        <Text color="secondary" type="supporting">
           账户与授权数据保存后立即生效。
-        </p>
-        <Badge variant="outline">无需同步</Badge>
-      </div>
-    </div>
+        </Text>
+        <Token label="无需同步" color="gray" />
+      </HStack>
+    </VStack>
   )
 }
 
-function MobileChildGrant({
+function ChildGrantDetails({
   child,
-  tenant,
   view,
-  pending,
-  onEdit,
-  onToggle,
-  onDelete,
+  tenant,
 }: {
   child: ChildSubscription
-  tenant?: User
   view: ParentSubscriptionView
-  pending: boolean
-  onEdit: () => void
-  onToggle: () => void
-  onDelete: () => void
+  tenant?: User
 }) {
   const balanceMode = view.item.capacity_mode === "unmetered"
   const modelCount = parentModelOptions(view).length
+  const scope = balanceMode
+    ? modelCount
+      ? `账户全部 ${modelCount} 个模型`
+      : "账户全部模型"
+    : child.model_allowlist?.length
+      ? `${child.name} · 限定 ${child.model_allowlist.length} 个模型`
+      : `${child.name} · 继承账户全部模型`
   return (
-    <div className="rounded-lg border p-3">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">
-            {tenant?.name || child.tenant_id}
-          </p>
-          <p className="truncate text-xs text-muted-foreground">
-            {tenant?.owner_email || "未找到租户资料"}
-          </p>
-        </div>
-        <ChildStatusBadge child={child} />
-        <ChildGrantMenu
-          child={child}
-          capacityMode={view.item.capacity_mode}
-          pending={pending}
-          onEdit={onEdit}
-          onToggle={onToggle}
-          onDelete={onDelete}
-        />
-      </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-muted/50 p-3">
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">
-            {balanceMode ? "可用模型" : "授权范围"}
-          </p>
-          <p className="mt-0.5 truncate text-sm font-medium">
-            {balanceMode
-              ? modelCount
-                ? `全部 ${modelCount} 个模型`
-                : "账户全部模型"
-              : child.model_allowlist?.length
-                ? `限定 ${child.model_allowlist.length} 个模型`
-                : "继承全部模型"}
-          </p>
-        </div>
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">
-            {balanceMode ? "结算方式" : "路由优先级"}
-          </p>
-          <p className="mt-0.5 truncate text-sm font-medium">
-            {balanceMode ? "租户余额" : child.priority}
-          </p>
-        </div>
-      </div>
-
-      {!balanceMode ? (
-        <div className="mt-3">
-          <p className="mb-2 text-xs text-muted-foreground">剩余额度</p>
-          <ChildQuotaProgress
-            child={child}
-            capacityMode={view.item.capacity_mode}
-          />
-        </div>
+    <VStack gap={2}>
+      <Text color="secondary" type="supporting">
+        {tenant?.owner_email || "未找到租户资料"}
+      </Text>
+      <Text color="secondary" type="supporting">
+        {scope}
+        {balanceMode
+          ? " · 租户余额结算"
+          : ` · 优先级 ${child.priority}`}
+      </Text>
+      {child.available === false && child.availability_message ? (
+        <Text color="secondary" type="supporting">
+          {child.availability_message}
+        </Text>
       ) : null}
-    </div>
+      <ChildQuotaProgress
+        child={child}
+        capacityMode={view.item.capacity_mode}
+      />
+    </VStack>
   )
 }
 
 function OversubscriptionWarning({ allocatedPPM }: { allocatedPPM: number }) {
   return (
-    <Alert>
-      <AlertTriangleIcon />
-      <AlertTitle>共享额度已超卖</AlertTitle>
-      <AlertDescription>
-        当前总分配为 {percent(allocatedPPM)}
-        。系统不会阻止继续分配，但多个租户同时高负载时可能提前耗尽上游额度。
-      </AlertDescription>
-    </Alert>
+    <Banner
+      status="warning"
+      title="共享额度已超卖"
+      description={`当前总分配为 ${percent(allocatedPPM)}。系统不会阻止继续分配，但多个租户同时高负载时可能提前耗尽上游额度。`}
+      collapsible={false}
+    />
   )
 }
 
@@ -1201,35 +1041,32 @@ function ChildGrantMenu({
   onDelete: () => void
 }) {
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label={`管理 ${child.name}`}
-          />
-        }
-      >
-        <EllipsisIcon />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuGroup>
-          {capacityMode === "observed" ? (
-            <DropdownMenuItem onClick={onEdit}>编辑授权</DropdownMenuItem>
-          ) : null}
-          <DropdownMenuItem disabled={pending} onClick={onToggle}>
-            {child.enabled ? "停用授权" : "启用授权"}
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuItem variant="destructive" onClick={onDelete}>
-            删除授权
-          </DropdownMenuItem>
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <DropdownMenu
+      hasChevron={false}
+      alignment="end"
+      button={{
+        label: `管理 ${child.name}`,
+        variant: "ghost",
+        isIconOnly: true,
+        icon: <MoreHorizontalIcon />,
+      }}
+      items={[
+        ...(capacityMode === "observed"
+          ? [{ label: "编辑授权", onClick: onEdit }]
+          : []),
+        {
+          label: child.enabled ? "停用授权" : "启用授权",
+          isDisabled: pending,
+          onClick: onToggle,
+        },
+        { type: "divider" as const },
+        {
+          label: "删除授权",
+          variant: "destructive" as const,
+          onClick: onDelete,
+        },
+      ]}
+    />
   )
 }
 
@@ -1242,30 +1079,28 @@ function ChildQuotaProgress({
 }) {
   if (capacityMode === "unmetered") {
     return (
-      <div className="min-w-0">
-        <p className="text-sm">租户余额结算</p>
-        <p className="text-xs text-muted-foreground">不占共享额度</p>
-      </div>
+      <Text color="secondary" type="supporting">
+        租户余额结算 · 不占共享额度
+      </Text>
     )
   }
   const windows = child.entitlement_windows ?? []
   if (!windows.length) {
     return (
-      <div className="min-w-0">
-        <p className="text-sm">{percent(child.allocation_ppm)} 份额</p>
-        <p className="text-xs text-muted-foreground">等待额度同步</p>
-      </div>
+      <Text color="secondary" type="supporting">
+        {percent(child.allocation_ppm)} 份额 · 等待额度同步
+      </Text>
     )
   }
   return (
-    <div className="flex min-w-0 flex-col gap-2">
+    <VStack gap={2}>
       {windows.map((window) => (
         <ChildQuotaWindowProgress
           key={`${child.id}:${window.kind}`}
           window={window}
         />
       ))}
-    </div>
+    </VStack>
   )
 }
 
@@ -1281,40 +1116,30 @@ function ChildQuotaWindowProgress({
           Math.max(0, (window.remaining_nano_usd / window.limit_nano_usd) * 100)
         )
       : 0
+  const roundedRemaining = Math.round(remainingPercent)
+  const variant =
+    roundedRemaining <= 10
+      ? "error"
+      : roundedRemaining <= 25
+        ? "warning"
+        : "accent"
   return (
-    <Progress
+    <ProgressBar
+      label={`${quotaWindowLabel(window.kind)} · ${money(window.remaining_nano_usd)}`}
       value={remainingPercent}
-      className="gap-1 [&_[data-slot=progress-track]]:h-1.5"
-    >
-      <ProgressLabel className="text-xs font-normal">
-        {quotaWindowLabel(window.kind)} · {money(window.remaining_nano_usd)}
-      </ProgressLabel>
-      <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-        {Math.round(remainingPercent)}%
-      </span>
-    </Progress>
+      variant={variant}
+      hasValueLabel
+      formatValueLabel={() => `${roundedRemaining}%`}
+    />
   )
 }
 
-function AccountFact({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode
-  label: string
-  value: string
-}) {
+function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1 border-r px-3 py-3 last:border-r-0 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-4">
-      <div className="hidden shrink-0 text-muted-foreground sm:block [&_svg]:size-5">
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <p className="truncate text-xs text-muted-foreground">{label}</p>
-        <p className="truncate text-sm font-medium sm:text-base">{value}</p>
-      </div>
-    </div>
+    <HStack hAlign="between" gap={3}>
+      <Text color="secondary">{label}</Text>
+      <Text weight="semibold">{value}</Text>
+    </HStack>
   )
 }
 
@@ -1331,6 +1156,8 @@ function ParentSettingsDialog({
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
+  const toast = useToast()
+  const [name, setName] = useState("")
   const [mode, setMode] = useState<CapacityMode>("unmetered")
   const [enabled, setEnabled] = useState(true)
   const [models, setModels] = useState<string[]>([])
@@ -1338,6 +1165,7 @@ function ParentSettingsDialog({
 
   useEffect(() => {
     if (!value) return
+    setName(value.item.name)
     setMode(value.item.capacity_mode)
     setEnabled(value.item.enabled)
     setModels(value.item.model_allowlist ?? [])
@@ -1347,27 +1175,28 @@ function ParentSettingsDialog({
   if (!value) return null
   const current = value
 
-  function changeMode(next: unknown) {
+  function changeMode(next: string) {
     if (next === "unmetered" || next === "observed") setMode(next)
   }
 
-  function updateWindow(key: string, limit: string) {
+  function updateWindow(key: string, limit: number | null) {
     setWindows((items) =>
       items.map((item) => (item.key === key ? { ...item, limit } : item))
     )
   }
 
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
+  async function save() {
     if (mode === "observed" && !windows.length) {
-      toast.error("这个账户没有可配置的额度窗口，请选择余额结算")
+      toast({
+        type: "error",
+        body: "这个账户没有可配置的额度窗口，请选择余额结算",
+      })
       return
     }
     onPending(true)
     try {
       const windowItems = windows
-        .filter((window) => window.limit.trim())
+        .filter((window) => window.limit != null)
         .map((window) => {
           const limit = Math.round(Number(window.limit) * 1_000_000_000)
           if (!Number.isFinite(limit) || limit <= 0) {
@@ -1378,7 +1207,7 @@ function ParentSettingsDialog({
       await api(`/api/admin/subscriptions/parents/${current.item.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          name: String(form.get("name") || ""),
+          name,
           capacity_mode: mode,
           enabled,
           model_allowlist: models,
@@ -1390,67 +1219,76 @@ function ParentSettingsDialog({
           { method: "PUT", body: JSON.stringify({ items: windowItems }) }
         )
       }
-      toast.success("账户分配规则已保存")
+      toast({ body: "账户分配规则已保存" })
       onClose()
       await onSaved()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "保存失败",
+      })
     } finally {
       onPending(false)
     }
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>账户分配规则</DialogTitle>
-          <DialogDescription>
-            {current.item.provider || "未知提供商"}
-            {displayPlan(current.item.plan_type)
-              ? ` · ${displayPlan(current.item.plan_type)}`
-              : ""}
-          </DialogDescription>
-        </DialogHeader>
-        <form id="parent-settings-form" onSubmit={save}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="parent-name">显示名称</FieldLabel>
-              <Input
-                id="parent-name"
-                name="name"
-                defaultValue={current.item.name}
-                required
+    <Dialog
+      isOpen
+      onOpenChange={(open) => {
+        if (!open && !pending) onClose()
+      }}
+      width={640}
+      purpose="form"
+    >
+      <Layout
+        height="auto"
+        header={
+          <DialogHeader
+            title="账户分配规则"
+            subtitle={[
+              current.item.provider || "未知提供商",
+              displayPlan(current.item.plan_type),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+            onOpenChange={(open) => {
+              if (!open && !pending) onClose()
+            }}
+          />
+        }
+        content={
+          <LayoutContent>
+            <FormLayout>
+              <TextInput
+                label="显示名称"
+                value={name}
+                onChange={setName}
+                isRequired
+                width="100%"
               />
-            </Field>
-
-            <Field>
-              <FieldLabel>结算方式</FieldLabel>
-              <ToggleGroup
-                value={[mode]}
-                onValueChange={(values) => changeMode(values[0])}
-                variant="outline"
-                className="w-full"
-              >
-                {capacityModes.map((item) => (
-                  <ToggleGroupItem
-                    key={item.value}
-                    value={item.value}
-                    className="flex-1"
-                  >
-                    {item.label}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-              <FieldDescription>
-                {capacityModes.find((item) => item.value === mode)?.description}
-              </FieldDescription>
-            </Field>
-
-            {mode === "observed" ? (
-              <>
-                <Field>
-                  <FieldLabel>账户额度</FieldLabel>
+              <VStack gap={2}>
+                <SegmentedControl
+                  label="结算方式"
+                  value={mode}
+                  onChange={changeMode}
+                  layout="fill"
+                >
+                  {capacityModes.map((item) => (
+                    <SegmentedControlItem
+                      key={item.value}
+                      value={item.value}
+                      label={item.label}
+                    />
+                  ))}
+                </SegmentedControl>
+                <Text color="secondary" type="supporting">
+                  {capacityModes.find((item) => item.value === mode)?.description}
+                </Text>
+              </VStack>
+              {mode === "observed" ? (
+                <VStack gap={3}>
+                  <Text weight="semibold">账户额度</Text>
                   <QuotaSnapshot
                     snapshot={current.item.quota_snapshot}
                     status={current.item.quota_probe_status}
@@ -1459,93 +1297,70 @@ function ParentSettingsDialog({
                     configuredWindows={current.windows}
                   />
                   {!windows.length ? (
-                    <Alert variant="destructive">
-                      <AlertTriangleIcon />
-                      <AlertTitle>没有可分配的额度窗口</AlertTitle>
-                      <AlertDescription>
-                        这个账户当前只能使用余额结算。
-                      </AlertDescription>
-                    </Alert>
+                    <Banner
+                      status="error"
+                      title="没有可分配的额度窗口"
+                      description="这个账户当前只能使用余额结算。"
+                      collapsible={false}
+                    />
                   ) : (
-                    <FieldGroup>
+                    <FormLayout>
                       {windows.map((window) => (
-                        <Field key={window.key} orientation="horizontal">
-                          <div className="min-w-0 flex-1">
-                            <FieldLabel htmlFor={`${window.key}-limit`}>
-                              {quotaWindowLabel(window.kind)}
-                            </FieldLabel>
-                            <FieldDescription>
-                              {dateTime(new Date(window.reset).toISOString())}{" "}
-                              重置
-                              {" · 留空则继续自动推测"}
-                            </FieldDescription>
-                          </div>
-                          <InputGroup className="w-40">
-                            <InputGroupInput
-                              id={`${window.key}-limit`}
-                              type="number"
-                              min="0.000001"
-                              step="0.000001"
-                              value={window.limit}
-                              onChange={(event) =>
-                                updateWindow(window.key, event.target.value)
-                              }
-                              placeholder={
-                                window.automaticLimit
-                                  ? quotaUSDInputValue(window.automaticLimit)
-                                  : "自动推测"
-                              }
-                            />
-                            <InputGroupAddon align="inline-end">
-                              USD
-                            </InputGroupAddon>
-                          </InputGroup>
-                        </Field>
+                        <NumberInput
+                          key={window.key}
+                          label={quotaWindowLabel(window.kind)}
+                          description={`${dateTime(new Date(window.reset).toISOString())} 重置 · 留空则继续自动推测`}
+                          value={window.limit ?? undefined}
+                          onChange={(value) =>
+                            updateWindow(window.key, value ?? null)
+                          }
+                          min={0.000001}
+                          step={0.000001}
+                          units="USD"
+                          placeholder={
+                            window.automaticLimit
+                              ? quotaUSDInputValue(window.automaticLimit)
+                              : "自动推测"
+                          }
+                          hasClear
+                          isWheelEnabled={false}
+                          width="100%"
+                        />
                       ))}
-                    </FieldGroup>
+                    </FormLayout>
                   )}
-                </Field>
-              </>
-            ) : null}
-
-            <Field>
-              <FieldLabel htmlFor="parent-models">账户模型范围</FieldLabel>
+                </VStack>
+              ) : null}
               <ModelSelector
-                id="parent-models"
                 options={current.item.upstream_model_allowlist ?? []}
                 value={models}
                 onChange={setModels}
               />
-              <FieldDescription>
-                不选择表示允许账户当前提供的全部模型。
-              </FieldDescription>
-            </Field>
-
-            <Field orientation="horizontal">
-              <div className="flex-1">
-                <FieldLabel htmlFor="parent-enabled">允许租户使用</FieldLabel>
-                <FieldDescription>
-                  关闭后，已有授权会保留，但请求不会路由到这个账户。
-                </FieldDescription>
-              </div>
               <Switch
-                id="parent-enabled"
-                checked={enabled}
-                onCheckedChange={setEnabled}
+                label="允许租户使用"
+                description="关闭后，已有授权会保留，但请求不会路由到这个账户。"
+                value={enabled}
+                onChange={setEnabled}
+                labelSpacing="spread"
+                width="100%"
               />
-            </Field>
-          </FieldGroup>
-        </form>
-        <DialogFooter>
-          <Button variant="outline" disabled={pending} onClick={onClose}>
-            取消
-          </Button>
-          <Button type="submit" form="parent-settings-form" disabled={pending}>
-            {pending ? <Spinner /> : null}
-            保存规则
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+            </FormLayout>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack hAlign="end" gap={2}>
+              <Button label="取消" isDisabled={pending} onClick={onClose} />
+              <Button
+                label="保存规则"
+                variant="primary"
+                isLoading={pending}
+                onClick={() => void save()}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   )
 }
@@ -1565,17 +1380,28 @@ function ChildSettingsDialog({
   onClose: () => void
   onSaved: () => Promise<void>
 }) {
+  const toast = useToast()
   const [parentID, setParentID] = useState("")
+  const [name, setName] = useState("")
   const [models, setModels] = useState<string[]>([])
   const [enabled, setEnabled] = useState(true)
-  const [allocationPercent, setAllocationPercent] = useState("")
+  const [allocationPercent, setAllocationPercent] = useState<number | null>(
+    null
+  )
+  const [priority, setPriority] = useState<number | null>(100)
+  const [startsAt, setStartsAt] = useState("")
+  const [expiresAt, setExpiresAt] = useState("")
 
   useEffect(() => {
     if (!value) return
     setParentID(value.parent_subscription_id)
+    setName(value.name)
     setModels(value.model_allowlist ?? [])
     setEnabled(value.enabled)
-    setAllocationPercent(String(value.allocation_ppm / 10_000))
+    setAllocationPercent(value.allocation_ppm / 10_000)
+    setPriority(value.priority)
+    setStartsAt(localDateTime(value.starts_at))
+    setExpiresAt(localDateTime(value.expires_at ?? undefined))
   }, [value])
 
   if (!value) return null
@@ -1597,13 +1423,11 @@ function ChildSettingsDialog({
         : 0)
     : 0
 
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function save() {
     if (!selectedParent) {
-      toast.error("请选择模型账户")
+      toast({ type: "error", body: "请选择模型账户" })
       return
     }
-    const form = new FormData(event.currentTarget)
     onPending(true)
     try {
       await api(`/api/admin/subscriptions/children/${current.id}`, {
@@ -1611,203 +1435,186 @@ function ChildSettingsDialog({
         body: JSON.stringify({
           tenant_id: current.tenant_id,
           parent_subscription_id: selectedParent.item.id,
-          name: String(form.get("name") || ""),
+          name,
           allocation_ppm:
             selectedParent.item.capacity_mode === "unmetered"
               ? 1_000_000
               : editedAllocationPPM,
-          priority: Number(form.get("priority") || 100),
+          priority: Number(priority || 100),
           enabled,
           model_allowlist: models,
-          starts_at: new Date(String(form.get("starts_at"))).toISOString(),
-          expires_at: form.get("expires_at")
-            ? new Date(String(form.get("expires_at"))).toISOString()
-            : "",
+          starts_at: new Date(startsAt).toISOString(),
+          expires_at: expiresAt ? new Date(expiresAt).toISOString() : "",
         }),
       })
-      toast.success("租户授权已保存")
+      toast({ body: "租户授权已保存" })
       onClose()
       await onSaved()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "保存失败",
+      })
     } finally {
       onPending(false)
     }
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>编辑租户授权</DialogTitle>
-          <DialogDescription>
-            修改模型范围、账户份额和路由优先级。
-          </DialogDescription>
-        </DialogHeader>
-        <form id="child-settings-form" onSubmit={save}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="child-name">授权名称</FieldLabel>
-              <Input
-                id="child-name"
-                name="name"
-                defaultValue={current.name}
-                required
+    <Dialog
+      isOpen
+      onOpenChange={(open) => {
+        if (!open && !pending) onClose()
+      }}
+      width={560}
+      purpose="form"
+    >
+      <Layout
+        height="auto"
+        header={
+          <DialogHeader
+            title="编辑租户授权"
+            subtitle="修改模型范围、账户份额和路由优先级。"
+            onOpenChange={(open) => {
+              if (!open && !pending) onClose()
+            }}
+          />
+        }
+        content={
+          <LayoutContent>
+            <FormLayout>
+              <TextInput
+                label="授权名称"
+                value={name}
+                onChange={setName}
+                isRequired
+                width="100%"
               />
-            </Field>
-
-            <Field>
-              <FieldLabel>模型账户</FieldLabel>
-              <Select
-                items={parents.map((view) => ({
+              <Selector
+                label="模型账户"
+                options={parents.map((view) => ({
                   value: view.item.id,
                   label: `${view.item.name} · ${billingLabel(view)}`,
+                  disabled: !isAllocatable(view),
                 }))}
                 value={parentID}
-                onValueChange={(value) => {
-                  setParentID(value ?? "")
+                onChange={(next) => {
+                  setParentID(next)
                   setModels([])
                 }}
-                required
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {parents.map((view) => (
-                      <SelectItem
-                        key={view.item.id}
-                        value={view.item.id}
-                        disabled={!isAllocatable(view)}
-                      >
-                        {view.item.name} · {billingLabel(view)}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            {selectedParent?.item.capacity_mode === "observed" ? (
-              <Field>
-                <FieldLabel htmlFor="child-percent">账户额度占比</FieldLabel>
-                <Input
-                  id="child-percent"
-                  name="percent"
-                  type="number"
-                  min="0.0001"
-                  step="0.0001"
-                  value={allocationPercent}
-                  onChange={(event) => setAllocationPercent(event.target.value)}
-                  required
-                />
-                <FieldDescription>
-                  保存后账户总计 {percent(projectedAllocationPPM)}；允许超过
-                  100%。
-                </FieldDescription>
-                {projectedAllocationPPM > nominalAllocationPPM ? (
-                  <OversubscriptionWarning
-                    allocatedPPM={projectedAllocationPPM}
+                isRequired
+                width="100%"
+              />
+              {selectedParent?.item.capacity_mode === "observed" ? (
+                <VStack gap={3}>
+                  <NumberInput
+                    label="账户额度占比"
+                    value={allocationPercent ?? undefined}
+                    onChange={(value) => setAllocationPercent(value)}
+                    min={0.0001}
+                    step={0.0001}
+                    units="%"
+                    isRequired
+                    isWheelEnabled={false}
+                    width="100%"
+                    description={`保存后账户总计 ${percent(projectedAllocationPPM)}；允许超过 100%。`}
                   />
-                ) : null}
-              </Field>
-            ) : null}
-
-            <Field>
-              <FieldLabel htmlFor="child-priority">路由优先级</FieldLabel>
-              <Input
-                id="child-priority"
-                name="priority"
-                type="number"
-                defaultValue={current.priority}
-                required
+                  {projectedAllocationPPM > nominalAllocationPPM ? (
+                    <OversubscriptionWarning
+                      allocatedPPM={projectedAllocationPPM}
+                    />
+                  ) : null}
+                </VStack>
+              ) : null}
+              <NumberInput
+                label="路由优先级"
+                value={priority ?? undefined}
+                onChange={(value) => setPriority(value)}
+                isIntegerOnly
+                isRequired
+                isWheelEnabled={false}
+                width="100%"
               />
-            </Field>
-
-            <Field>
-              <FieldLabel htmlFor="child-starts-at">生效时间</FieldLabel>
-              <Input
-                id="child-starts-at"
-                name="starts_at"
-                type="datetime-local"
-                step="1"
-                defaultValue={localDateTime(current.starts_at)}
-                required
+              <DateTimeInput
+                label="生效时间"
+                value={(startsAt || undefined) as ISODateTimeString | undefined}
+                onChange={(value) => setStartsAt(value ?? "")}
+                hasSeconds
+                hourFormat="24h"
+                isRequired
+                width="100%"
               />
-            </Field>
-
-            <Field>
-              <FieldLabel htmlFor="child-expires-at">到期时间</FieldLabel>
-              <Input
-                id="child-expires-at"
-                name="expires_at"
-                type="datetime-local"
-                step="1"
-                defaultValue={localDateTime(current.expires_at ?? undefined)}
+              <DateTimeInput
+                label="到期时间"
+                value={(expiresAt || undefined) as ISODateTimeString | undefined}
+                onChange={(value) => setExpiresAt(value ?? "")}
+                hasSeconds
+                hourFormat="24h"
+                hasClear
+                isOptional
+                width="100%"
               />
-            </Field>
-
-            <Field>
-              <FieldLabel htmlFor="child-models">可用模型</FieldLabel>
               <ModelSelector
-                id="child-models"
                 options={parentModelOptions(selectedParent)}
                 value={models}
                 onChange={setModels}
                 allLabel="继承账户全部模型"
               />
-            </Field>
-
-            <Field orientation="horizontal">
-              <div className="flex-1">
-                <FieldLabel htmlFor="child-enabled">启用授权</FieldLabel>
-                <FieldDescription>
-                  停用不会删除配置，可以随时重新启用。
-                </FieldDescription>
-              </div>
               <Switch
-                id="child-enabled"
-                checked={enabled}
-                onCheckedChange={setEnabled}
+                label="启用授权"
+                description="停用不会删除配置，可以随时重新启用。"
+                value={enabled}
+                onChange={setEnabled}
+                labelSpacing="spread"
+                width="100%"
               />
-            </Field>
-          </FieldGroup>
-        </form>
-        <DialogFooter>
-          <Button variant="outline" disabled={pending} onClick={onClose}>
-            取消
-          </Button>
-          <Button type="submit" form="child-settings-form" disabled={pending}>
-            {pending ? <Spinner /> : null}
-            保存授权
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+            </FormLayout>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack hAlign="end" gap={2}>
+              <Button label="取消" isDisabled={pending} onClick={onClose} />
+              <Button
+                label="保存授权"
+                variant="primary"
+                isLoading={pending}
+                onClick={() => void save()}
+              />
+            </HStack>
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   )
 }
 
-function AccountStatusBadge({ view }: { view: ParentSubscriptionView }) {
-  if (view.item.status === "missing")
-    return <Badge variant="outline">账户已删除</Badge>
-  if (!view.item.enabled) return <Badge variant="secondary">已停用</Badge>
-  if (view.item.upstream_unavailable)
-    return <Badge variant="destructive">账户不可用</Badge>
+function accountStatusKey(view: ParentSubscriptionView) {
+  if (view.item.status === "missing") return "missing"
+  if (!view.item.enabled) return "disabled"
+  if (view.item.upstream_unavailable) return "unavailable"
   if (view.item.capacity_mode === "observed" && !view.windows.length)
-    return <Badge variant="outline">额度学习中</Badge>
-  return <Badge variant="secondary">可分配</Badge>
+    return "learning"
+  return "ready"
 }
 
-function ChildStatusBadge({ child }: { child: ChildSubscription }) {
-  if (!child.enabled) return <Badge variant="outline">已停用</Badge>
+function AccountStatusLabel({ view }: { view: ParentSubscriptionView }) {
+  const key = accountStatusKey(view)
+  if (key === "missing")
+    return <StatusLabel tone="neutral" label="账户已删除" />
+  if (key === "disabled") return <StatusLabel tone="neutral" label="已停用" />
+  if (key === "unavailable")
+    return <StatusLabel tone="error" label="账户不可用" />
+  if (key === "learning")
+    return <StatusLabel tone="warning" label="额度学习中" />
+  return <StatusLabel tone="success" label="可分配" />
+}
+
+function ChildStatusLabel({ child }: { child: ChildSubscription }) {
+  if (!child.enabled) return <StatusLabel tone="neutral" label="已停用" />
   if (child.available === false)
-    return (
-      <Badge variant="destructive" title={child.availability_message}>
-        不可用
-      </Badge>
-    )
-  return <Badge variant="secondary">生效中</Badge>
+    return <StatusLabel tone="error" label="不可用" />
+  return <StatusLabel tone="success" label="生效中" />
 }
 
 function isAllocatable(view: ParentSubscriptionView) {
@@ -1873,8 +1680,8 @@ function observedEditableWindows(value: ParentSubscriptionView) {
       kind,
       limit:
         configured?.limit_nano_usd && configured.source === "manual_conversion"
-          ? String(configured.limit_nano_usd / 1_000_000_000)
-          : "",
+          ? configured.limit_nano_usd / 1_000_000_000
+          : null,
       reset: localDateTime(window.resets_at),
       automaticLimit:
         configured && configured.source !== "manual_conversion"
@@ -1927,28 +1734,4 @@ function localDateTime(value?: string) {
   const date = new Date(value)
   const offset = date.getTimezoneOffset() * 60_000
   return new Date(date.getTime() - offset).toISOString().slice(0, 19)
-}
-
-function AllocationSkeleton() {
-  return (
-    <Card className="gap-0 py-0 lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
-      <div className="flex flex-col gap-3 border-b bg-muted/20 p-4 lg:border-r lg:border-b-0">
-        <Skeleton className="h-5 w-24" />
-        <Skeleton className="h-8 w-full" />
-        {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-12 w-full" />
-        ))}
-      </div>
-      <div className="flex flex-col">
-        <div className="flex flex-col gap-2 border-b px-4 py-5 sm:px-6">
-          <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-4 w-64 max-w-full" />
-        </div>
-        <div className="flex flex-col gap-5 px-4 py-5 sm:px-6">
-          <Skeleton className="h-20 w-full" />
-          <Skeleton className="h-56 w-full" />
-        </div>
-      </div>
-    </Card>
-  )
 }

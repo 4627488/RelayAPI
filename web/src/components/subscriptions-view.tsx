@@ -1,25 +1,17 @@
 import { useEffect, useState } from "react"
-import { AlertTriangleIcon, GaugeIcon, PackageOpenIcon } from "lucide-react"
-import { toast } from "sonner"
+import { Banner } from "@astryxdesign/core/Banner"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { Grid } from "@astryxdesign/core/Grid"
+import { HStack, VStack } from "@astryxdesign/core/Layout"
+import { List, ListItem } from "@astryxdesign/core/List"
+import { ProgressBar } from "@astryxdesign/core/ProgressBar"
+import { Text } from "@astryxdesign/core/Text"
+import { Token } from "@astryxdesign/core/Token"
+import { useToast } from "@astryxdesign/core/Toast"
+import { PackageOpenIcon } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import { Progress, ProgressLabel } from "@/components/ui/progress"
-import { Spinner } from "@/components/ui/spinner"
+import { CountBadge, PageHeader, SectionCard, StatusLabel } from "@/components/page-kit"
+import { LoadingView } from "@/components/loading-view"
 import {
   api,
   type ChildSubscription,
@@ -28,6 +20,7 @@ import {
 import { dateTime, money } from "@/lib/format"
 
 export function TenantSubscriptionsView() {
+  const toast = useToast()
   const [items, setItems] = useState<ChildSubscription[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -35,37 +28,33 @@ export function TenantSubscriptionsView() {
     api<{ items: ChildSubscription[] }>("/api/subscriptions")
       .then((value) => setItems(value.items ?? []))
       .catch((cause) =>
-        toast.error(cause instanceof Error ? cause.message : "无法读取订阅")
+        toast({
+          type: "error",
+          body: cause instanceof Error ? cause.message : "无法读取订阅",
+        })
       )
       .finally(() => setLoading(false))
-  }, [])
+  }, [toast])
+
+  if (loading) return <LoadingView />
 
   return (
-    <div className="flex flex-col gap-4">
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <Spinner />
-        </div>
-      ) : items.length ? (
-        <div className="grid gap-4 xl:grid-cols-2">
+    <VStack gap={4}>
+      <PageHeader title="我的订阅" />
+      {items.length ? (
+        <VStack gap={4}>
           {items.map((item) => (
             <TenantSubscriptionCard key={item.id} item={item} />
           ))}
-        </div>
+        </VStack>
       ) : (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <PackageOpenIcon />
-            </EmptyMedia>
-            <EmptyTitle>尚未获得订阅授权</EmptyTitle>
-            <EmptyDescription>
-              管理员分配模型账户后，你可以在这里查看结算方式和可用范围。
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <EmptyState
+          title="尚未获得订阅授权"
+          description="管理员分配模型账户后，你可以在这里查看结算方式和可用范围。"
+          icon={<PackageOpenIcon />}
+        />
       )}
-    </div>
+    </VStack>
   )
 }
 
@@ -75,105 +64,92 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
   const available = item.available ?? item.enabled
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-muted/15">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle>{item.name}</CardTitle>
-            <CardDescription className="mt-1">
-              {item.parent_name || "模型账户"}
-              {item.parent_plan_type && item.parent_plan_type !== "native"
-                ? ` · ${item.parent_plan_type}`
-                : ""}
-              {item.expires_at
-                ? ` · 有效期至 ${dateTime(item.expires_at)}`
-                : ""}
-            </CardDescription>
-          </div>
-          <Badge
-            variant={available ? "secondary" : "destructive"}
-            title={item.availability_message}
-          >
-            {available ? "可用" : "不可用"}
-          </Badge>
-        </div>
-      </CardHeader>
-
-      <CardContent className="flex flex-col gap-5 pt-5">
+    <SectionCard
+      title={item.name}
+      description={[
+        item.parent_name || "模型账户",
+        item.parent_plan_type && item.parent_plan_type !== "native"
+          ? item.parent_plan_type
+          : null,
+        item.expires_at ? `有效期至 ${dateTime(item.expires_at)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+      actions={
+        <StatusLabel
+          tone={available ? "success" : "error"}
+          label={available ? "可用" : "不可用"}
+        />
+      }
+    >
+      <VStack gap={4}>
         {entitlementWindows.length ? (
-          <section className="flex flex-col gap-3">
-            <div>
-              <h3 className="text-sm font-medium">共享额度</h3>
-              <p className="text-xs text-muted-foreground">
+          <VStack gap={3}>
+            <VStack gap={1}>
+              <Text weight="semibold">共享额度</Text>
+              <Text color="secondary" type="supporting">
                 你在每个账户额度窗口中可使用的份额。
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+              </Text>
+            </VStack>
+            <Grid columns={{ minWidth: 240, max: 2 }} gap={3}>
               {entitlementWindows.map((window, index) => (
                 <EntitlementWindow
                   key={`${window.kind}:${index}`}
                   window={window}
                 />
               ))}
-            </div>
-          </section>
+            </Grid>
+          </VStack>
         ) : item.capacity_mode === "unmetered" ? (
-          <Alert>
-            <GaugeIcon />
-            <AlertTitle>按账户余额结算</AlertTitle>
-            <AlertDescription>
-              请求固定到这个模型账户，每次调用从你的 Relay 余额扣除。
-            </AlertDescription>
-          </Alert>
+          <Banner
+            status="info"
+            title="按账户余额结算"
+            description="请求固定到这个模型账户，每次调用从你的 Relay 余额扣除。"
+            collapsible={false}
+          />
         ) : item.parent_quota_probe_status === "unsupported" ? (
-          <Alert variant="destructive">
-            <AlertTriangleIcon />
-            <AlertTitle>额度不可用</AlertTitle>
-            <AlertDescription>
-              {item.availability_message ||
-                "这个模型账户没有可分配的额度窗口，请联系管理员调整结算方式。"}
-            </AlertDescription>
-          </Alert>
+          <Banner
+            status="error"
+            title="额度不可用"
+            description={
+              item.availability_message ||
+              "这个模型账户没有可分配的额度窗口，请联系管理员调整结算方式。"
+            }
+            collapsible={false}
+          />
         ) : (
-          <Alert>
-            <GaugeIcon />
-            <AlertTitle>当前按账户余额结算</AlertTitle>
-            <AlertDescription>
-              这条授权没有独立额度窗口，请求费用从你的 Relay 余额扣除。
-            </AlertDescription>
-          </Alert>
+          <Banner
+            status="info"
+            title="当前按账户余额结算"
+            description="这条授权没有独立额度窗口，请求费用从你的 Relay 余额扣除。"
+            collapsible={false}
+          />
         )}
 
-        <section className="flex flex-col gap-3 border-t pt-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-medium">可用模型</h3>
-              <p className="text-xs text-muted-foreground">
+        <VStack gap={3}>
+          <HStack hAlign="between" vAlign="center" gap={3}>
+            <VStack gap={1}>
+              <Text weight="semibold">可用模型</Text>
+              <Text color="secondary" type="supporting">
                 此授权当前允许访问的模型。
-              </p>
-            </div>
-            <Badge variant="secondary">{models.length} 个</Badge>
-          </div>
+              </Text>
+            </VStack>
+            <CountBadge value={models.length} />
+          </HStack>
           {models.length ? (
-            <div className="flex flex-wrap gap-2 rounded-lg border bg-muted/10 p-3">
+            <List density="compact" hasDividers>
               {models.map((model) => (
-                <Badge
-                  key={model}
-                  variant="outline"
-                  className="font-mono font-normal"
-                >
-                  {model}
-                </Badge>
+                <ListItem key={model} label={model} />
               ))}
-            </div>
+            </List>
           ) : (
-            <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            <Text color="secondary">
               此授权继承账户全部可用模型，或账户尚未提供可枚举的模型清单。
-            </div>
+            </Text>
           )}
-        </section>
-      </CardContent>
-    </Card>
+        </VStack>
+      </VStack>
+    </SectionCard>
   )
 }
 
@@ -190,36 +166,43 @@ function EntitlementWindow({
         )
       : 0
   const roundedRemaining = Math.round(remaining)
+  const variant =
+    roundedRemaining <= 10
+      ? "error"
+      : roundedRemaining <= 25
+        ? "warning"
+        : "accent"
 
   return (
-    <Progress
-      value={remaining}
-      className="gap-2.5 rounded-lg border bg-muted/10 p-4 [&_[data-slot=progress-track]]:h-2"
-    >
-      <ProgressLabel className="text-base">
-        {quotaWindowLabel(window.kind)}
-      </ProgressLabel>
-      <Badge
-        variant={
-          roundedRemaining <= 10
-            ? "destructive"
-            : roundedRemaining <= 25
-              ? "secondary"
-              : "outline"
+    <VStack gap={2}>
+      <HStack hAlign="between" vAlign="center" gap={3}>
+        <Text weight="semibold">{quotaWindowLabel(window.kind)}</Text>
+        <Token
+          label={
+            roundedRemaining === 0 ? "已用完" : `剩余 ${roundedRemaining}%`
+          }
+          color={
+            roundedRemaining <= 10
+              ? "red"
+              : roundedRemaining <= 25
+                ? "orange"
+                : "gray"
+          }
+        />
+      </HStack>
+      <ProgressBar
+        label={`${quotaWindowLabel(window.kind)}剩余额度`}
+        value={remaining}
+        variant={variant}
+        hasValueLabel
+        formatValueLabel={() =>
+          `${money(window.remaining_nano_usd)} / ${money(window.limit_nano_usd)}`
         }
-      >
-        {roundedRemaining === 0 ? "已用完" : `剩余 ${roundedRemaining}%`}
-      </Badge>
-      <p className="w-full text-lg font-semibold tabular-nums">
-        {money(window.remaining_nano_usd)}{" "}
-        <span className="text-sm font-normal text-muted-foreground">
-          / {money(window.limit_nano_usd)}
-        </span>
-      </p>
-      <p className="w-full text-xs text-muted-foreground">
+      />
+      <Text color="secondary" type="supporting">
         {resetDescription(window.resets_at)}
-      </p>
-    </Progress>
+      </Text>
+    </VStack>
   )
 }
 

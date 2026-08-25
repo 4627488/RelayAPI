@@ -1,14 +1,16 @@
-import { Skeleton } from "@/components/ui/skeleton"
+import { Grid } from "@astryxdesign/core/Grid"
+import { VStack } from "@astryxdesign/core/Layout"
+import { Skeleton } from "@astryxdesign/core/Skeleton"
 
 export function LoadingView() {
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <VStack gap={4} padding={4}>
+      <Grid columns={{ minWidth: 180, max: 4 }} gap={3}>
         {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-32" />
+          <Skeleton key={index} height={96} />
         ))}
-      </div>
-      <Skeleton className="h-96" />
-    </div>
+      </Grid>
+      <Skeleton height={320} />
+    </VStack>
   )
 }

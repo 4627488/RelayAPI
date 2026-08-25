@@ -1,5 +1,8 @@
-import { Badge } from "@/components/ui/badge"
-import { Progress, ProgressLabel } from "@/components/ui/progress"
+import { HStack, VStack } from "@astryxdesign/core/Layout"
+import { ProgressBar } from "@astryxdesign/core/ProgressBar"
+import { Text } from "@astryxdesign/core/Text"
+import { Token } from "@astryxdesign/core/Token"
+
 import {
   type ParentQuotaWindow,
   type UpstreamQuotaReport,
@@ -41,37 +44,32 @@ export function QuotaSnapshot({
             ? "已连接，等待额度窗口"
             : "尚未探测"
     return (
-      <span className="text-xs text-muted-foreground" title={error}>
+      <Text color="secondary" type="supporting">
         {message}
-      </span>
+      </Text>
     )
   }
 
   const shown = compact ? windows.slice(0, 3) : windows
   return (
-    <div
-      className={
-        compact ? "flex min-w-48 flex-col gap-1.5" : "flex flex-col gap-3"
-      }
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        {report?.plan_type ? (
-          <Badge variant="secondary">{report.plan_type}</Badge>
-        ) : null}
+    <VStack gap={compact ? 2 : 3}>
+      <HStack gap={2} wrap="wrap" vAlign="center">
+        {report?.plan_type ? <Token label={report.plan_type} color="gray" /> : null}
         {status === "error" ? (
-          <Badge variant="destructive" title={error}>
-            {report ? "快照可用" : "已有额度可用"} · 刷新失败
-          </Badge>
+          <Token
+            label={report ? "快照可用 · 刷新失败" : "已有额度可用 · 刷新失败"}
+            color="red"
+          />
         ) : null}
         {!compact && report?.source ? (
-          <Badge variant="outline">{report.source}</Badge>
+          <Token label={report.source} color="gray" />
         ) : null}
         {!compact && (report?.observed_at || observedAt) ? (
-          <span className="text-xs text-muted-foreground">
+          <Text color="secondary" type="supporting">
             观测于 {dateTime(report?.observed_at || observedAt || undefined)}
-          </span>
+          </Text>
         ) : null}
-      </div>
+      </HStack>
       {shown.map((window, index) =>
         compact ? (
           <CompactWindow
@@ -86,11 +84,11 @@ export function QuotaSnapshot({
         )
       )}
       {compact && windows.length > shown.length ? (
-        <span className="text-xs text-muted-foreground">
+        <Text color="secondary" type="supporting">
           另有 {windows.length - shown.length} 个窗口
-        </span>
+        </Text>
       ) : null}
-    </div>
+    </VStack>
   )
 }
 
@@ -98,27 +96,26 @@ function CompactWindow({ item }: { item: DisplayWindow }) {
   const { upstream: window, configured } = item
   const used = usedPercent(window)
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="truncate">{window.label || window.kind}</span>
-        <span className="text-muted-foreground tabular-nums">
+    <VStack gap={1}>
+      <HStack hAlign="between" gap={3} vAlign="center">
+        <Text type="supporting">{window.label || window.kind}</Text>
+        <Text color="secondary" type="supporting">
           {compactValue(window, configured, used)}
-        </span>
-      </div>
+        </Text>
+      </HStack>
       {used == null ? null : (
-        <div className="h-1 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full bg-primary"
-            style={{ width: `${Math.min(100, Math.max(0, used))}%` }}
-          />
-        </div>
+        <ProgressBar
+          label={`${window.label || window.kind}已用`}
+          isLabelHidden
+          value={Math.min(100, Math.max(0, used))}
+        />
       )}
       {window.resets_at || configured?.resets_at ? (
-        <span className="text-[11px] text-muted-foreground">
+        <Text color="secondary" type="supporting">
           {dateTime(window.resets_at || configured?.resets_at)} 重置
-        </span>
+        </Text>
       ) : null}
-    </div>
+    </VStack>
   )
 }
 
@@ -127,45 +124,41 @@ function DetailedWindow({ item }: { item: DisplayWindow }) {
   const used = usedPercent(window)
   if (used == null) {
     return (
-      <div className="rounded-md border bg-muted/30 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="font-medium">{window.label || window.kind}</span>
+      <VStack gap={2}>
+        <HStack hAlign="between" wrap="wrap" gap={2} vAlign="center">
+          <Text weight="semibold">{window.label || window.kind}</Text>
           {configured ? (
-            <CapacityBadge window={configured} />
+            <CapacityToken window={configured} />
           ) : (
-            <span className="text-sm text-muted-foreground tabular-nums">
-              {amount(window)}
-            </span>
+            <Text color="secondary">{amount(window)}</Text>
           )}
-        </div>
+        </HStack>
         <WindowMeta window={window} configured={configured} />
-      </div>
+      </VStack>
     )
   }
   return (
-    <Progress
-      value={Math.min(100, Math.max(0, used))}
-      className="rounded-md border bg-muted/20 p-3"
-    >
-      <ProgressLabel>{window.label || window.kind}</ProgressLabel>
-      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-        {configured ? <CapacityBadge window={configured} /> : null}
-        <span className="text-sm text-muted-foreground tabular-nums">
-          已用 {formatNumber(used)}%
-        </span>
-      </div>
+    <VStack gap={2}>
+      <HStack hAlign="between" wrap="wrap" gap={2} vAlign="center">
+        <Text weight="semibold">{window.label || window.kind}</Text>
+        <HStack gap={2} wrap="wrap" vAlign="center">
+          {configured ? <CapacityToken window={configured} /> : null}
+          <Text color="secondary">已用 {formatNumber(used)}%</Text>
+        </HStack>
+      </HStack>
+      <ProgressBar
+        label={`${window.label || window.kind}已用`}
+        isLabelHidden
+        value={Math.min(100, Math.max(0, used))}
+      />
       <WindowMeta window={window} configured={configured} />
-    </Progress>
+    </VStack>
   )
 }
 
-function CapacityBadge({ window }: { window: ParentQuotaWindow }) {
+function CapacityToken({ window }: { window: ParentQuotaWindow }) {
   const label = window.source === "manual_conversion" ? "手工容量" : "推测容量"
-  return (
-    <Badge variant="secondary">
-      {label} {money(window.limit_nano_usd)}
-    </Badge>
-  )
+  return <Token label={`${label} ${money(window.limit_nano_usd)}`} color="gray" />
 }
 
 function WindowMeta({
@@ -177,13 +170,13 @@ function WindowMeta({
 }) {
   const resetsAt = window.resets_at || configured?.resets_at
   return (
-    <p className="w-full text-xs text-muted-foreground">
+    <Text color="secondary" type="supporting">
       {window.enforceable ? "参与父订阅校准" : "仅展示，不参与总容量校准"}
       {resetsAt ? ` · ${dateTime(resetsAt)} 重置` : ""}
       {window.remaining != null || window.limit != null
         ? ` · ${amount(window)}`
         : ""}
-    </p>
+    </Text>
   )
 }
 
@@ -262,8 +255,8 @@ function formatNumber(value: number) {
 function isQuotaReport(value: Props["snapshot"]): value is UpstreamQuotaReport {
   return Boolean(
     value &&
-    typeof value === "object" &&
-    "supported" in value &&
-    Array.isArray((value as UpstreamQuotaReport).windows)
+      typeof value === "object" &&
+      "supported" in value &&
+      Array.isArray((value as UpstreamQuotaReport).windows)
   )
 }
