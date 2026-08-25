@@ -18,7 +18,7 @@ The methodology is ported from DeepSeek Harness `dsh-find-simplifications`. Bind
 
 - Read [README.md](../../../README.md), [docs/architecture.md](../../../docs/architecture.md), [docs/subscriptions.md](../../../docs/subscriptions.md), [docs/retention.md](../../../docs/retention.md), and [docs/distribution.md](../../../docs/distribution.md).
 - Read the Agent Note rules in [notes/README.md](../../notes/README.md). Treat notes as rationale, not golden truth; shipped code wins when they drift.
-- The native runtime is in-process (`Runtime.Serve`, `DialWebSocket`). Do not reintroduce a loopback HTTP proxy.
+- Embedded CPA is in-process (`Handler().ServeHTTP`, `DialWebSocket`). Do not reintroduce a loopback HTTP proxy.
 
 ## Protected Seams (Intentional By Default)
 

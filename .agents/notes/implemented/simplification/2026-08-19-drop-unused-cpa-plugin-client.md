@@ -24,4 +24,4 @@ Delete tests that only pinned the removed plugin/management API. Keep admission,
 
 ## Consequences
 
-The embedded client is only an inference and catalog HTTP client. A new CPA event/management bus must not assume `Client.Quota` or `QuotaReady` exist. Native `ProbeQuota` remains the quota path.
+The embedded HTTP client later lost its last production caller when in-process `Handler().ServeHTTP` replaced the loopback hop; see [2026-08-25-embedded-cpa-no-loopback.md](2026-08-25-embedded-cpa-no-loopback.md). `gateway.ProbeQuota` remains the quota path.
