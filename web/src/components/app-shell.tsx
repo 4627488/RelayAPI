@@ -358,13 +358,13 @@ export function AppShell({
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         <header className="flex h-14 shrink-0 items-center gap-3 px-4 sm:px-6">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-4" />
           <p className="text-sm font-medium">{navLabel(items, page)}</p>
         </header>
-        <main className="flex flex-1 flex-col p-4 pt-0 sm:p-6 sm:pt-0">
+        <main className="flex min-w-0 flex-1 flex-col p-4 pt-0 sm:p-6 sm:pt-0">
           {children}
         </main>
       </SidebarInset>
