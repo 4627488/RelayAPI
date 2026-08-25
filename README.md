@@ -97,6 +97,18 @@ Responses；百炼请求会在 Responses 与 Chat Completions 之间按上游能
 重复执行脚本会替换 RelayAPI 管理的模型集合，避免已撤销模型继续出现在选择器中。
 下面的片段仅作为无法执行脚本时的手动回退。
 
+`rai` 是 RelayAPI 的 Agent 启动器。登录一次后，用原来的 Codex / OpenCode 命令行启动客户端，并在当次启动注入 Relay 的模型、协议和凭据：
+
+```bash
+go install github.com/4627488/RelayAPI/cmd/rai@latest
+printf '%s\n' "$RELAY_API_KEY" | rai login --server http://localhost:8080 --api-key-stdin
+rai models
+rai codex -- --full-auto
+rai opencode
+```
+
+`rai login` 读取 `/.well-known/rai.json` 和 `/api/rai/session`，把 API Key 写入系统钥匙串，并在无钥匙串环境回退到 `~/.config/rai/credentials.json`（权限 0600）。`rai credential print` 供 Codex 的 command-based auth 刷新模型目录。
+
 Codex CLI 的 `~/.codex/config.toml`（`base_url` 必须包含 `/v1`）：
 
 ```toml

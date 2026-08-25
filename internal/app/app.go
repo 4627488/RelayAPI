@@ -322,6 +322,9 @@ func (a *App) Handler() http.Handler {
 
 func (a *App) routes() {
 	a.mux.HandleFunc("GET /healthz", a.health)
+	a.mux.HandleFunc("GET /.well-known/rai.json", a.raiDiscovery)
+	a.mux.HandleFunc("HEAD /.well-known/rai.json", a.raiDiscovery)
+	a.mux.HandleFunc("GET /api/rai/session", a.raiSession)
 	a.mux.HandleFunc("GET /setup/{token}/install.sh", a.agentSetupScript)
 	a.mux.HandleFunc("HEAD /setup/{token}/install.sh", a.agentSetupScript)
 	a.mux.HandleFunc("GET /setup/{token}/install.ps1", a.agentSetupScript)

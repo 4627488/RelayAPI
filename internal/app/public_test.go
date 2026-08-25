@@ -27,6 +27,8 @@ func TestRoutesCoverSupportedClientProtocols(t *testing.T) {
 		{name: "OpenCode", method: http.MethodPost, path: "/v1/chat/completions"},
 		{name: "Gemini native", method: http.MethodPost, path: "/v1beta/models/gemini:generateContent"},
 		{name: "Codex WebSocket", method: http.MethodGet, path: "/v1/responses/ws"},
+		{name: "rai discovery", method: http.MethodGet, path: "/.well-known/rai.json"},
+		{name: "rai session", method: http.MethodGet, path: "/api/rai/session"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path, nil)
