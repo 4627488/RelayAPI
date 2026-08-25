@@ -98,7 +98,7 @@ func TestPrepareRuntimeHeadersPinsCPAAndUpstreamCredential(t *testing.T) {
 	}
 	prepareRuntimeHeaders(header, "req-1", "cred-9")
 	if header.Get("Authorization") != "" {
-		t.Fatal("client authorization must be stripped before the in-process CPA call")
+		t.Fatal("client authorization must be stripped before the CPA hop")
 	}
 	if header.Get("X-Relay-Request-ID") != "req-1" {
 		t.Fatalf("request id = %q", header.Get("X-Relay-Request-ID"))

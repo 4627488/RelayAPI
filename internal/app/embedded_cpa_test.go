@@ -1,10 +1,6 @@
 package app
 
 import (
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -45,90 +41,6 @@ func TestConvertCPATraceKeepsAttemptTimes(t *testing.T) {
 	}
 	if trace.Attempts[0].CredentialID != "cred-1" || trace.Attempts[0].Provider != "codex" {
 		t.Fatalf("attempt = %#v", trace.Attempts[0])
-	}
-}
-
-func TestServeEmbeddedCPAHandlerCallsInProcessHandler(t *testing.T) {
-	var gotAuth, gotCred, gotBody, gotHost string
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
-		gotCred = r.Header.Get("X-Relay-CPA-Auth-ID")
-		gotHost = r.Host
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Errorf("read body: %v", err)
-		}
-		gotBody = string(body)
-		w.Header().Set("X-From-Handler", "ok")
-		w.WriteHeader(http.StatusTeapot)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	})
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("client-body"))
-	request.Header.Set("Authorization", "Bearer tenant-key")
-	request.Header.Set("X-Relay-Upstream-Credential-ID", "cred-9")
-	request.Header.Set("X-API-Key", "must-not-reach-cpa")
-	recorder := httptest.NewRecorder()
-	serveEmbeddedCPAHandler(handler, "process-key", recorder, request, []byte(`{"model":"gpt-5"}`))
-	if gotAuth != "Bearer process-key" {
-		t.Fatalf("authorization = %q", gotAuth)
-	}
-	if gotCred != "cred-9" {
-		t.Fatalf("cpa auth = %q", gotCred)
-	}
-	if gotBody != `{"model":"gpt-5"}` {
-		t.Fatalf("body = %q", gotBody)
-	}
-	if strings.Contains(gotHost, "127.0.0.1") {
-		t.Fatalf("in-process request must not target loopback, host=%q", gotHost)
-	}
-	if recorder.Code != http.StatusTeapot {
-		t.Fatalf("status = %d", recorder.Code)
-	}
-	if recorder.Header().Get("X-From-Handler") != "ok" || recorder.Body.String() != `{"ok":true}` {
-		t.Fatalf("response = %d %q %q", recorder.Code, recorder.Header().Get("X-From-Handler"), recorder.Body.String())
-	}
-}
-
-func TestServeEmbeddedCPAHandlerUnavailableWithoutHandler(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	serveEmbeddedCPAHandler(nil, "process-key", recorder, httptest.NewRequest(http.MethodGet, "/v1/models", nil), nil)
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d", recorder.Code)
-	}
-}
-
-func TestApplyEmbeddedCPAAuthPinsProcessKeyAndCredential(t *testing.T) {
-	header := http.Header{
-		"Authorization": {"Bearer tenant-key"},
-		"X-API-Key":     {"public-key"},
-	}
-	applyEmbeddedCPAAuth(header, "process-key", "cred-9")
-	if header.Get("Authorization") != "Bearer process-key" {
-		t.Fatalf("authorization = %q", header.Get("Authorization"))
-	}
-	if header.Get("X-Relay-CPA-Auth-ID") != "cred-9" {
-		t.Fatalf("cpa auth = %q", header.Get("X-Relay-CPA-Auth-ID"))
-	}
-	if header.Get("X-API-Key") != "" {
-		t.Fatal("public API key must not reach CPA")
-	}
-}
-
-func TestNativeRuntimeWebSocketHeadersKeepProcessAuth(t *testing.T) {
-	header := nativeRuntimeWebSocketHeaders(http.Header{
-		"Authorization": {"Bearer tenant-key"},
-		"Connection":    {"Upgrade"},
-		"Upgrade":       {"websocket"},
-	}, "req-1", "cred-9")
-	applyEmbeddedCPAAuth(header, "process-key", "cred-9")
-	if header.Get("Authorization") != "Bearer process-key" {
-		t.Fatalf("authorization = %q", header.Get("Authorization"))
-	}
-	if header.Get("X-Relay-CPA-Auth-ID") != "cred-9" || header.Get("X-Relay-Request-ID") != "req-1" {
-		t.Fatalf("headers = %#v", header)
-	}
-	if header.Get("Connection") != "" || header.Get("Upgrade") != "" {
-		t.Fatalf("handshake headers leaked: %#v", header)
 	}
 }
 
