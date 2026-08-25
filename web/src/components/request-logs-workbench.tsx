@@ -88,8 +88,6 @@ import { cn } from "@/lib/utils"
 import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
 import { CacheHitRateBadge } from "@/components/token-cache-rate"
 
-const logSecondaryColumnClass = "hidden @min-[64rem]:table-cell"
-
 const emptyPage: RequestLogPage = {
   items: [],
   page: 1,
@@ -276,7 +274,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   if (detailLoading && logIdFromHash()) {
     return (
-      <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex w-full min-w-0 flex-col gap-4">
         <Skeleton className="h-9 w-28" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-72 w-full" />
@@ -285,9 +283,9 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   }
 
   return (
-    <div className="@container flex w-full min-w-0 flex-col gap-4">
+    <div className="flex w-full min-w-0 flex-col gap-4">
       <StatStrip
-        className="@min-[28rem]:grid-cols-3 @min-[80rem]:grid-cols-6"
+        className="sm:grid-cols-3 xl:grid-cols-6"
         items={[
           {
             label: "请求",
@@ -333,7 +331,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
             一条日志是一次对 Relay 的调用。SSE 仍是一条 HTTP 请求；WebSocket
             按会话一行，轮次在详情里。
           </CardDescription>
-          <FieldGroup className="grid grid-cols-1 gap-2 pt-2 @min-[36rem]:grid-cols-[minmax(0,1fr)_8rem_auto_auto]">
+          <FieldGroup className="grid min-w-0 gap-2 pt-2 md:grid-cols-[minmax(0,1fr)_9rem_auto_auto]">
             <Field className="min-w-0">
               <FieldLabel htmlFor="log-search" className="sr-only">
                 搜索日志
@@ -410,7 +408,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                 刷新
               </Button>
               <CollapsibleContent className="col-span-full pt-2">
-                <FieldGroup className="grid grid-cols-1 gap-3 @min-[28rem]:grid-cols-2 @min-[48rem]:grid-cols-3">
+                <FieldGroup className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-5">
                   <Field>
                     <FieldLabel>方法</FieldLabel>
                     <Select
@@ -516,28 +514,18 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
         <CardContent className="px-0">
           {data.items.length ? (
-            <Table className={cn("table-fixed", loading && "opacity-60")}>
+            <Table className={cn(loading && "opacity-60")}>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[7.5rem] pl-4">时间</TableHead>
-                  <TableHead className="w-20">状态</TableHead>
+                  <TableHead className="pl-4">时间</TableHead>
+                  <TableHead>状态</TableHead>
                   <TableHead>请求</TableHead>
-                  <TableHead className={logSecondaryColumnClass}>
-                    客户端
-                  </TableHead>
-                  {admin ? (
-                    <TableHead className={logSecondaryColumnClass}>
-                      用户
-                    </TableHead>
-                  ) : null}
-                  <TableHead className="w-24 text-right">Token</TableHead>
-                  <TableHead
-                    className={cn(logSecondaryColumnClass, "text-right")}
-                  >
-                    负载
-                  </TableHead>
-                  <TableHead className="w-20 text-right">耗时</TableHead>
-                  <TableHead className="w-16 pr-4 text-right">费用</TableHead>
+                  <TableHead>客户端</TableHead>
+                  {admin ? <TableHead>用户</TableHead> : null}
+                  <TableHead className="text-right">Token</TableHead>
+                  <TableHead className="text-right">负载</TableHead>
+                  <TableHead className="text-right">耗时</TableHead>
+                  <TableHead className="pr-4 text-right">费用</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -555,11 +543,11 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                       }
                     }}
                   >
-                    <TableCell className="pl-4 text-muted-foreground">
+                    <TableCell className="pl-4 whitespace-nowrap text-muted-foreground">
                       {dateTime(log.started_at)}
                     </TableCell>
                     <TableCell>
-                      <div className="flex min-w-0 items-center gap-1.5">
+                      <div className="flex items-center gap-1.5">
                         <Badge
                           variant={
                             requestLogSucceeded(log.status_code, log.error_code)
@@ -571,20 +559,20 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                         </Badge>
                         {requestLogTransport(log.request_type, log.stream) !==
                         "HTTP" ? (
-                          <span className="truncate text-xs text-muted-foreground">
+                          <span className="text-xs text-muted-foreground">
                             {requestLogTransport(log.request_type, log.stream)}
                           </span>
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell className="max-w-0 min-w-0 whitespace-normal">
-                      <p className="truncate font-mono text-xs">
+                    <TableCell>
+                      <p className="max-w-72 truncate font-mono text-xs">
                         {log.actual_model ||
                           log.requested_model ||
                           log.model ||
                           log.path}
                       </p>
-                      <p className="truncate text-xs text-muted-foreground">
+                      <p className="max-w-72 truncate text-xs text-muted-foreground">
                         {requestLogTransport(log.request_type, log.stream)}
                         {log.request_type
                           ? ` · ${log.request_type}`
@@ -594,23 +582,20 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                           : ""}
                       </p>
                     </TableCell>
-                    <TableCell
-                      className={logSecondaryColumnClass}
-                      title={log.user_agent || undefined}
-                    >
-                      <p className="truncate text-sm">
+                    <TableCell title={log.user_agent || undefined}>
+                      <p className="max-w-44 truncate text-sm">
                         {log.client_name || "未知客户端"}
                       </p>
-                      <p className="truncate font-mono text-xs text-muted-foreground">
+                      <p className="max-w-44 truncate font-mono text-xs text-muted-foreground">
                         {log.client_version || "—"}
                       </p>
                     </TableCell>
                     {admin ? (
-                      <TableCell className={logSecondaryColumnClass}>
-                        <p className="truncate text-sm">
+                      <TableCell>
+                        <p className="max-w-40 truncate text-sm">
                           {log.tenant_name || log.tenant_id}
                         </p>
-                        <p className="truncate text-xs text-muted-foreground">
+                        <p className="max-w-40 truncate text-xs text-muted-foreground">
                           {log.api_key_name || log.api_key_prefix || "—"}
                         </p>
                       </TableCell>
@@ -624,17 +609,12 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                         />
                       </span>
                     </TableCell>
-                    <TableCell
-                      className={cn(
-                        logSecondaryColumnClass,
-                        "text-right text-xs tabular-nums"
-                      )}
-                    >
+                    <TableCell className="text-right text-xs whitespace-nowrap tabular-nums">
                       <span>{bytes(log.request_body_bytes)}</span>
                       <ArrowRightIcon className="mx-1 inline size-3 text-muted-foreground" />
                       <span>{bytes(log.response_body_bytes)}</span>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right whitespace-nowrap tabular-nums">
                       <p>{log.latency_ms} ms</p>
                       {log.ttft_ms != null ? (
                         <p className="text-xs text-muted-foreground">
@@ -766,7 +746,7 @@ function LogDetailPage({
     Number(requestVisible) + Number(forwardedVisible) + Number(responseVisible)
 
   return (
-    <div className="@container flex w-full min-w-0 flex-col gap-4">
+    <div className="flex w-full min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-start gap-3">
         <Button variant="outline" onClick={onBack}>
           <ChevronLeftIcon data-icon="inline-start" />
@@ -1233,7 +1213,7 @@ function DetailGroup({
 function Facts({ items }: { items: Array<[string, string | undefined]> }) {
   const visible = items.filter(([, value]) => Boolean(value))
   return (
-    <dl className="grid gap-x-5 gap-y-3 @min-[28rem]:grid-cols-2 @min-[48rem]:grid-cols-3">
+    <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
       {visible.map(([label, value]) => (
         <Detail key={label} label={label} value={value ?? ""} />
       ))}
