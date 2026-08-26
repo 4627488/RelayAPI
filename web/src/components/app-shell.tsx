@@ -313,12 +313,14 @@ export function AppShell({
                   <ChevronsUpDownIcon />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="end" className="w-56">
-                  <DropdownMenuLabel>{name}</DropdownMenuLabel>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{name}</DropdownMenuLabel>
+                  </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   {session.is_admin ? (
                     <>
-                      <DropdownMenuLabel>工作区</DropdownMenuLabel>
                       <DropdownMenuGroup>
+                        <DropdownMenuLabel>工作区</DropdownMenuLabel>
                         <DropdownMenuItem
                           onClick={() =>
                             onWorkspaceChange(admin ? "user" : "admin")
@@ -331,8 +333,10 @@ export function AppShell({
                       <DropdownMenuSeparator />
                     </>
                   ) : null}
-                  <DropdownMenuLabel>外观</DropdownMenuLabel>
-                  <ThemeChoices value={theme} onValueChange={setTheme} />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>外观</DropdownMenuLabel>
+                    <ThemeChoices value={theme} onValueChange={setTheme} />
+                  </DropdownMenuGroup>
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuItem variant="destructive" onClick={onLogout}>
@@ -341,15 +345,17 @@ export function AppShell({
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel
-                    className="flex items-center justify-between gap-4"
-                    title={buildCommit}
-                  >
-                    <span>版本</span>
-                    <code className="font-mono font-normal text-muted-foreground">
-                      {buildVersion}
-                    </code>
-                  </DropdownMenuLabel>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel
+                      className="flex items-center justify-between gap-4"
+                      title={buildCommit}
+                    >
+                      <span>版本</span>
+                      <code className="font-mono font-normal text-muted-foreground">
+                        {buildVersion}
+                      </code>
+                    </DropdownMenuLabel>
+                  </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
             </SidebarMenuItem>
