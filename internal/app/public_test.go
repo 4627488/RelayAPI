@@ -32,6 +32,8 @@ func TestRoutesCoverSupportedClientProtocols(t *testing.T) {
 		{name: "rai authorizations", method: http.MethodPost, path: "/api/rai/authorizations"},
 		{name: "rai token", method: http.MethodPost, path: "/api/rai/token"},
 		{name: "rai authorize", method: http.MethodGet, path: "/rai/authorize/example"},
+		{name: "rai install", method: http.MethodGet, path: "/rai/install.sh"},
+		{name: "rai install ps1", method: http.MethodGet, path: "/rai/install.ps1"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path, nil)

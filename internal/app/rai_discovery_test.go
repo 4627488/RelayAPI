@@ -29,4 +29,7 @@ func TestRAIDiscoveryDocument(t *testing.T) {
 	if document["authorization"] != "/api/rai/authorizations" || document["token"] != "/api/rai/token" {
 		t.Fatalf("auth endpoints = %#v", document)
 	}
+	if document["install"] != "/rai/install.sh" {
+		t.Fatalf("install = %#v", document["install"])
+	}
 }

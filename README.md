@@ -89,23 +89,16 @@ Responses；百炼请求会在 Responses 与 Chat Completions 之间按上游能
 随后恢复成客户端请求的协议。原生运行时通过兼容端点枚举模型；仅支持 DashScope
 专用协议的模型不在该接入范围内。
 
-用户面板的“接入向导”会生成 5 分钟有效的一键 Bash 或 PowerShell 命令，可同时
-配置 Codex 与 OpenCode。脚本先验证 `/v1/models`，可选择安装缺失
-客户端，并以备份、合并、原子替换和失败回滚方式写用户级配置；两个客户端通过
-权限受限的 `~/.config/relayapi/api-key` 共用凭据，不向 shell profile 或 Codex
-`auth.json` 写入明文。OpenCode 配置会包含该 API Key 当前可用的完整模型列表；
-重复执行脚本会替换 RelayAPI 管理的模型集合，避免已撤销模型继续出现在选择器中。
-下面的片段仅作为无法执行脚本时的手动回退。
-
-`rai` 是 RelayAPI 的 Agent 启动器。登录一次后，用原来的客户端命令行启动，并在当次启动注入 Relay 的模型、协议和凭据：
+用户面板的接入指南提供一条本站下发的 `rai` 安装命令。脚本装好启动器后会对当前站点执行 `rai login`，浏览器批准即可；之后用 `rai claude` / `rai codex` / `rai opencode` 启动原来的客户端。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/4627488/RelayAPI/main/scripts/install-rai.sh | bash
-rai login --server http://localhost:8080
-rai models
-rai claude
-rai codex -- --full-auto
-rai opencode
+curl -fsSL 'http://localhost:8080/rai/install.sh' | bash
+```
+
+Windows：
+
+```powershell
+irm 'http://localhost:8080/rai/install.ps1' | iex
 ```
 
 `rai login` 打开浏览器，用 PKCE 设备授权批准后写入系统钥匙串（无钥匙串时回退到 `~/.config/rai/credentials.json`，权限 0600）。无图形界面时加 `--no-browser`，把打印的 URL 贴到浏览器。CI 或已有密钥用 `--api-key-stdin`。`rai credential print` 供 Codex 的 command-based auth 刷新模型目录。`rai update` 检查 GitHub Release 并替换当前二进制。
@@ -215,6 +208,7 @@ Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段�
 - `DELETE /api/keys/{id}`：删除个人 API Key
 - `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
+- `GET /rai/install.sh|install.ps1`：本站下发的 rai 安装脚本，装好后对 PublicURL 执行 `rai login`
 - `POST /api/agent-setup`：创建 5 分钟有效的短随机安装令牌与跨平台一键命令；数据库只保存令牌哈希和加密配置
 - `GET /setup/{token}/install.sh|install.ps1`：读取禁止缓存的短时安装脚本
 

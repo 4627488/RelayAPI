@@ -18,6 +18,7 @@ func (a *App) raiDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"authorization":    "/api/rai/authorizations",
 		"token":            "/api/rai/token",
 		"authorize":        "/rai/authorize",
+		"install":          "/rai/install.sh",
 		"adapters":         raiAdapterNames(),
 		"contract_version": "1",
 		"min_rai_version":  "0.1.0",
