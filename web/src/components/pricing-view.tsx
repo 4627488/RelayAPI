@@ -28,7 +28,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -273,8 +272,7 @@ export function PricingView() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="模型设置"
-        description="维护模型能力、计费覆盖和目录同步策略。"
+        title="目录与计费"
         actions={
           <>
             <Button
@@ -365,22 +363,15 @@ export function PricingView() {
               </EmptyHeader>
             </Empty>
           ) : filteredModels.length ? (
-            <Table>
+            <Table pinEdges>
               <TableHeader>
                 <TableRow>
                   <TableHead>模型</TableHead>
                   <TableHead>能力</TableHead>
                   <TableHead className="text-right">上下文</TableHead>
-                  <TableHead>推理</TableHead>
                   <TableHead>来源</TableHead>
-                  <TableHead className="text-right">文本输入</TableHead>
-                  <TableHead className="text-right">文本缓存</TableHead>
-                  <TableHead className="text-right">缓存写入</TableHead>
-                  <TableHead className="text-right">图片输入</TableHead>
-                  <TableHead className="text-right">图片缓存</TableHead>
-                  <TableHead className="text-right">图片输出</TableHead>
-                  <TableHead className="text-right">文本输出</TableHead>
-                  <TableHead className="text-right">推理</TableHead>
+                  <TableHead className="text-right">输入 / 百万</TableHead>
+                  <TableHead className="text-right">输出 / 百万</TableHead>
                   <TableHead className="text-right">倍率</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -406,11 +397,6 @@ export function PricingView() {
                         ? price.context_window.toLocaleString("en-US")
                         : "—"}
                     </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {price.reasoning_efforts?.length
-                        ? price.reasoning_efforts.join("/")
-                        : "—"}
-                    </TableCell>
                     <TableCell>
                       {price.priced ? (
                         <Badge variant="outline">
@@ -420,23 +406,16 @@ export function PricingView() {
                         <Badge variant="secondary">未定价</Badge>
                       )}
                     </TableCell>
-                    {[
-                      price.input_nano_usd_per_token,
-                      price.cached_input_nano_usd_per_token,
-                      price.cache_write_nano_usd_per_token,
-                      price.image_input_nano_usd_per_token,
-                      price.cached_image_input_nano_usd_per_token,
-                      price.image_output_nano_usd_per_token,
-                      price.output_nano_usd_per_token,
-                      price.reasoning_nano_usd_per_token,
-                    ].map((value, index) => (
-                      <TableCell
-                        key={index}
-                        className="text-right tabular-nums"
-                      >
-                        {price.priced ? pricePerMillion(value) : "—"}
-                      </TableCell>
-                    ))}
+                    <TableCell className="text-right tabular-nums">
+                      {price.priced
+                        ? pricePerMillion(price.input_nano_usd_per_token)
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {price.priced
+                        ? pricePerMillion(price.output_nano_usd_per_token)
+                        : "—"}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {price.priced ? `×${price.price_multiplier}` : "—"}
                     </TableCell>
@@ -531,22 +510,15 @@ export function PricingView() {
       >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>配置模型设置</DialogTitle>
-            <DialogDescription>
-              能力覆盖会写进 Codex 目录，优先于
-              Models.dev。价格覆盖只影响本站计费，单位为 USD / 1M tokens。
-            </DialogDescription>
+            <DialogTitle>{editingPrice?.model ?? "模型设置"}</DialogTitle>
           </DialogHeader>
           <form id="price-form" key={editingPrice?.model} onSubmit={savePrice}>
             <FieldGroup>
-              <Field>
-                <FieldLabel>模型</FieldLabel>
-                <Input
-                  name="model"
-                  value={editingPrice?.model ?? ""}
-                  readOnly
-                />
-              </Field>
+              <input
+                type="hidden"
+                name="model"
+                value={editingPrice?.model ?? ""}
+              />
               <FieldSet>
                 <FieldLegend>能力元数据</FieldLegend>
                 <FieldGroup className="grid gap-3 sm:grid-cols-2">
@@ -697,7 +669,7 @@ export function PricingView() {
                 </FieldSet>
               </FieldSet>
               <FieldSet>
-                <FieldLegend>计价</FieldLegend>
+                <FieldLegend>计价（USD / 百万 Tokens）</FieldLegend>
                 <FieldGroup className="grid gap-3 sm:grid-cols-3">
                   {[
                     [

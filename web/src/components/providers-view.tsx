@@ -13,6 +13,7 @@ import {
   FileJson2Icon,
   KeyRoundIcon,
   Link2Icon,
+  MoreHorizontalIcon,
   NetworkIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -62,6 +63,14 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -80,12 +89,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  InfoBar,
-  PageHeader,
-  SearchField,
-  StatStrip,
-} from "@/components/workspace-ui"
+import { PageHeader, SearchField } from "@/components/workspace-ui"
 import { Textarea } from "@/components/ui/textarea"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
 import {
@@ -283,11 +287,6 @@ export function ProvidersView() {
           ].some((part) => part.toLowerCase().includes(needle)))
     )
   }, [accounts, provider, search])
-  const enabled = accounts.filter(
-    (item) => !item.disabled && !item.unavailable
-  ).length
-  const modelCount = new Set(accounts.flatMap((item) => item.models ?? [])).size
-
   async function toggle(account: ProviderAccount, disabled: boolean) {
     setPending(true)
     try {
@@ -384,10 +383,9 @@ export function ProvidersView() {
     )
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       <PageHeader
         title="模型账户"
-        description="连接上游提供商账户，查看状态、额度和可用模型。"
         actions={
           <>
             <Button
@@ -414,19 +412,6 @@ export function ProvidersView() {
           </>
         }
       />
-
-      <StatStrip
-        className="grid-cols-3"
-        items={[
-          { label: "账户", value: accounts.length },
-          { label: "可用", value: enabled },
-          { label: "公开模型", value: modelCount },
-        ]}
-      />
-
-      <InfoBar icon={ShieldCheckIcon}>
-        一行一个上游账户。发布模型决定对外目录；测试会向该账户发一次最短推理，不走用户计费。
-      </InfoBar>
 
       <div className="flex flex-col gap-3 sm:flex-row">
         <SearchField
@@ -468,7 +453,7 @@ export function ProvidersView() {
       {filtered.length ? (
         <Card>
           <CardContent className="px-0">
-            <Table>
+            <Table pinEdges>
               <TableHeader>
                 <TableRow>
                   <TableHead>账户</TableHead>
@@ -1847,32 +1832,7 @@ function ManageAccountDialog({
               </TabsContent>
             </Tabs>
             <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
-              <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => onDelete(account)}
-                >
-                  <Trash2Icon />
-                  删除
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={pending}
-                  onClick={() => void onToggle(account, !account.disabled)}
-                >
-                  {account.disabled ? "启用" : "停用"}
-                </Button>
-                {isOAuthAccount(account) ? (
-                  <Button
-                    variant="outline"
-                    disabled={pending}
-                    onClick={() => onReauthenticate(account)}
-                  >
-                    <RefreshCwIcon data-icon="inline-start" />
-                    重新认证
-                  </Button>
-                ) : null}
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
                   disabled={
@@ -1885,6 +1845,43 @@ function ManageAccountDialog({
                   <ActivityIcon data-icon="inline-start" />
                   测试
                 </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button variant="outline" />}>
+                    <MoreHorizontalIcon data-icon="inline-start" />
+                    更多
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        disabled={pending}
+                        onClick={() =>
+                          void onToggle(account, !account.disabled)
+                        }
+                      >
+                        {account.disabled ? "启用账户" : "停用账户"}
+                      </DropdownMenuItem>
+                      {isOAuthAccount(account) ? (
+                        <DropdownMenuItem
+                          disabled={pending}
+                          onClick={() => onReauthenticate(account)}
+                        >
+                          <RefreshCwIcon />
+                          重新认证
+                        </DropdownMenuItem>
+                      ) : null}
+                    </DropdownMenuGroup>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => onDelete(account)}
+                      >
+                        <Trash2Icon />
+                        删除账户
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
               <Button
                 disabled={pending || modelLoading || !selectedModels.length}

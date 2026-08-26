@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/card"
 import {
   Empty,
-  EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
@@ -50,11 +49,8 @@ export function TenantSubscriptionsView() {
   })
 
   return (
-    <div className="flex flex-col gap-5">
-      <PageHeader
-        title="我的订阅"
-        description="查看已分配的模型账户、额度窗口和可用模型。"
-      />
+    <div className="flex flex-col gap-4">
+      <PageHeader title="我的订阅" />
       {loading ? (
         <div className="flex justify-center py-12">
           <Spinner />
@@ -74,9 +70,6 @@ export function TenantSubscriptionsView() {
               <PackageOpenIcon />
             </EmptyMedia>
             <EmptyTitle>尚未获得订阅授权</EmptyTitle>
-            <EmptyDescription>
-              管理员分配模型账户后，你可以在这里查看结算方式和可用范围。
-            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       )}
@@ -116,14 +109,9 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
 
       <CardContent className="flex flex-col gap-5 pt-5">
         {entitlementWindows.length ? (
-          <section className="flex flex-col gap-3">
-            <div>
-              <h3 className="text-sm font-medium">共享额度</h3>
-              <p className="text-xs text-muted-foreground">
-                你在每个账户额度窗口中可使用的份额。
-              </p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+          <section className="flex flex-col gap-2">
+            <h3 className="text-sm font-medium">共享额度</h3>
+            <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
               {entitlementWindows.map((window, index) => (
                 <EntitlementWindow
                   key={`${window.kind}:${index}`}
@@ -136,9 +124,6 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
           <Alert>
             <GaugeIcon />
             <AlertTitle>按账户余额结算</AlertTitle>
-            <AlertDescription>
-              请求固定到这个模型账户，每次调用从你的 Relay 余额扣除。
-            </AlertDescription>
           </Alert>
         ) : item.parent_quota_probe_status === "unsupported" ? (
           <Alert variant="destructive">
@@ -153,25 +138,17 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
           <Alert>
             <GaugeIcon />
             <AlertTitle>当前按账户余额结算</AlertTitle>
-            <AlertDescription>
-              这条授权没有独立额度窗口，请求费用从你的 Relay 余额扣除。
-            </AlertDescription>
           </Alert>
         )}
 
         <Separator />
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-medium">可用模型</h3>
-              <p className="text-xs text-muted-foreground">
-                此授权当前允许访问的模型。
-              </p>
-            </div>
+            <h3 className="text-sm font-medium">可用模型</h3>
             <Badge variant="secondary">{models.length} 个</Badge>
           </div>
           {models.length ? (
-            <div className="flex flex-wrap gap-2 rounded-lg border bg-muted/10 p-3">
+            <div className="flex flex-wrap gap-1.5">
               {models.map((model) => (
                 <Badge
                   key={model}
@@ -210,7 +187,7 @@ function EntitlementWindow({
   return (
     <Progress
       value={remaining}
-      className="gap-2.5 rounded-lg border bg-muted/10 p-4 [&_[data-slot=progress-track]]:h-2"
+      className="gap-2 border-t pt-3 first:border-t-0 [&_[data-slot=progress-track]]:h-2"
     >
       <ProgressLabel className="text-base">
         {quotaWindowLabel(window.kind)}

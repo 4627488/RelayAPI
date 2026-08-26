@@ -15,7 +15,7 @@ describe("workspace UI contract", () => {
     const onClear = vi.fn()
     const screen = await render(
       <main>
-        <PageHeader title="请求日志" description="查看请求状态与费用。" />
+        <PageHeader title="请求日志" />
         <SearchField
           value="gpt"
           onChange={() => undefined}

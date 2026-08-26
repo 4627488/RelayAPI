@@ -6,6 +6,7 @@ import {
   CircleDollarSignIcon,
   CopyIcon,
   KeyRoundIcon,
+  MoreHorizontalIcon,
   PlusIcon,
   SendIcon,
   Trash2Icon,
@@ -63,6 +64,14 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   InputGroup,
   InputGroupAddon,
@@ -228,12 +237,7 @@ function UsersHub({
 
   return (
     <div className="flex flex-col gap-4">
-      {tab === "accounts" ? (
-        <PageHeader
-          title="用户"
-          description="管理租户账户、访问状态和模型权限。"
-        />
-      ) : null}
+      {tab === "accounts" ? <PageHeader title="用户" /> : null}
       <Tabs
         value={tab}
         onValueChange={(value) => {
@@ -272,12 +276,7 @@ function SettingsHub({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      {tab === "runtime" ? (
-        <PageHeader
-          title="系统设置"
-          description="配置网关运行策略、限额刷新和上游行为。"
-        />
-      ) : null}
+      {tab === "runtime" ? <PageHeader title="系统设置" /> : null}
       <Tabs
         value={tab}
         onValueChange={(value) => {
@@ -334,10 +333,7 @@ function AdminOverviewPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader
-        title="管理总览"
-        description="查看租户、调用、费用和异常请求的整体状态。"
-      />
+      <PageHeader title="管理总览" />
       <MetricGrid
         items={[
           {
@@ -540,7 +536,7 @@ function UsersView({
         </CardHeader>
         <CardContent>
           {users.length ? (
-            <Table>
+            <Table pinEdges>
               <TableHeader>
                 <TableRow>
                   <TableHead>用户</TableHead>
@@ -579,18 +575,7 @@ function UsersView({
                       {dateTime(user.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <span className="inline-flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setResetUser(user)
-                            setTemporaryPassword("")
-                          }}
-                        >
-                          <KeyRoundIcon data-icon="inline-start" />
-                          重置密码
-                        </Button>
+                      <span className="inline-flex items-center gap-1">
                         <Button
                           size="sm"
                           variant="outline"
@@ -599,28 +584,54 @@ function UsersView({
                           <CircleDollarSignIcon data-icon="inline-start" />
                           充值
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={pending || user.id === currentUserId}
-                          onClick={() => void toggleUser(user)}
-                        >
-                          {user.enabled ? (
-                            <BanIcon data-icon="inline-start" />
-                          ) : (
-                            <CircleCheckIcon data-icon="inline-start" />
-                          )}
-                          {user.enabled ? "停用" : "启用"}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          disabled={pending || user.id === currentUserId}
-                          onClick={() => setDeleteUser(user)}
-                        >
-                          <Trash2Icon data-icon="inline-start" />
-                          删除
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                aria-label={`管理 ${user.name}`}
+                              />
+                            }
+                          >
+                            <MoreHorizontalIcon />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setResetUser(user)
+                                  setTemporaryPassword("")
+                                }}
+                              >
+                                <KeyRoundIcon />
+                                重置密码
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={pending || user.id === currentUserId}
+                                onClick={() => void toggleUser(user)}
+                              >
+                                {user.enabled ? (
+                                  <BanIcon />
+                                ) : (
+                                  <CircleCheckIcon />
+                                )}
+                                {user.enabled ? "停用" : "启用"}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                disabled={pending || user.id === currentUserId}
+                                onClick={() => setDeleteUser(user)}
+                              >
+                                <Trash2Icon />
+                                删除
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </span>
                     </TableCell>
                   </TableRow>
@@ -912,7 +923,6 @@ function InvitationsView({
     <div className="flex flex-col gap-4">
       <PageHeader
         title="邀请"
-        description="生成、查看和撤销租户注册邀请。"
         actions={
           <Button
             onClick={() => {
@@ -953,7 +963,7 @@ function InvitationsView({
         </CardHeader>
         <CardContent>
           {items.length ? (
-            <Table>
+            <Table pinEdges>
               <TableHeader>
                 <TableRow>
                   <TableHead>目标邮箱</TableHead>

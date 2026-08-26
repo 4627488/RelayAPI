@@ -26,7 +26,6 @@ import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -297,29 +296,16 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   }
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-5">
-      <PageHeader
-        title="请求日志"
-        description={
-          admin
-            ? "审查所有租户的请求、路由、延迟和计费详情。"
-            : "查看你的请求状态、Token、延迟和费用明细。"
-        }
-      />
+    <div className="flex w-full min-w-0 flex-col gap-4">
+      <PageHeader title="请求日志" />
       <StatStrip
-        className="sm:grid-cols-3 xl:grid-cols-6"
         items={[
           {
             label: "请求",
             value: compact(data.summary.requests),
-            detail: `${data.summary.errors} 个错误`,
-          },
-          {
-            label: "错误率",
-            value: data.summary.requests
-              ? `${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%`
-              : "0%",
-            detail: "HTTP 错误或中断",
+            detail: data.summary.requests
+              ? `${data.summary.errors} 错误 · ${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%`
+              : "0 错误",
           },
           {
             label: "Tokens",
@@ -327,14 +313,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
             detail: `缓存命中 ${cacheRate}`,
           },
           {
-            label: "负载",
-            value: bytes(
-              data.summary.request_bytes + data.summary.response_bytes
-            ),
-            detail: `${bytes(data.summary.request_bytes)} ↑ · ${bytes(data.summary.response_bytes)} ↓`,
-          },
-          {
-            label: "总耗时",
+            label: "耗时",
             value: data.summary.requests
               ? `P50 ${formatMS(data.summary.latency_p50_ms)}`
               : "无数据",
@@ -349,11 +328,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       <Card>
         <CardHeader className="border-b">
           <CardTitle>请求明细</CardTitle>
-          <CardDescription>
-            一条日志是一次对 Relay 的调用。SSE 仍是一条 HTTP 请求；WebSocket
-            按会话一行，轮次在详情里。
-          </CardDescription>
-          <FieldGroup className="grid min-w-0 gap-2 pt-2 md:grid-cols-[minmax(0,1fr)_9rem_auto_auto]">
+          <FieldGroup className="grid min-w-0 gap-2 pt-1 md:grid-cols-[minmax(0,1fr)_9rem_auto_auto]">
             <Field className="min-w-0">
               <FieldLabel htmlFor="log-search" className="sr-only">
                 搜索日志

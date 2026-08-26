@@ -54,7 +54,6 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { Separator } from "@/components/ui/separator"
 import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
 import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
@@ -77,35 +76,30 @@ const userItems: NavigationItem[] = [
 ]
 
 const adminItems: NavigationItem[] = [
-  { id: "overview", label: "管理总览", icon: GaugeIcon, section: "运营" },
-  { id: "users", label: "用户", icon: UsersIcon, section: "运营" },
+  { id: "overview", label: "管理总览", icon: GaugeIcon, section: "管理" },
+  { id: "users", label: "用户", icon: UsersIcon, section: "管理" },
+  { id: "providers", label: "模型账户", icon: PlugIcon, section: "模型" },
   {
     id: "subscriptions",
     label: "订阅分配",
     icon: PackageOpenIcon,
-    section: "运营",
+    section: "模型",
   },
-  { id: "usage", label: "全局用量", icon: BarChart3Icon, section: "运营" },
-  { id: "logs", label: "请求日志", icon: ListIcon, section: "运营" },
-  { id: "providers", label: "模型管理", icon: PlugIcon, section: "上游" },
-  { id: "pricing", label: "模型设置", icon: Settings2Icon, section: "上游" },
+  { id: "pricing", label: "目录与计费", icon: Settings2Icon, section: "模型" },
   {
     id: "settings",
     label: "系统设置",
     icon: SlidersHorizontalIcon,
-    section: "上游",
+    section: "模型",
   },
+  { id: "usage", label: "全局用量", icon: BarChart3Icon, section: "观测" },
+  { id: "logs", label: "请求日志", icon: ListIcon, section: "观测" },
 ]
 
 function navPage(page: Page): Page {
   if (page === "invitations") return "users"
   if (page === "proxies") return "settings"
   return page
-}
-
-function navLabel(items: NavigationItem[], page: Page) {
-  const id = navPage(page)
-  return items.find((item) => item.id === id)?.label
 }
 
 function shouldHandleClientNavigation(event: MouseEvent<HTMLElement>) {
@@ -376,14 +370,10 @@ export function AppShell({
         <SidebarRail />
       </Sidebar>
       <SidebarInset className="min-w-0">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4 sm:px-6">
+        <header className="sticky top-0 z-10 flex h-12 shrink-0 items-center border-b bg-background px-3 md:hidden">
           <SidebarTrigger />
-          <Separator orientation="vertical" className="h-4" />
-          <nav aria-label="当前位置" className="text-sm font-medium">
-            {navLabel(items, page)}
-          </nav>
         </header>
-        <main className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-1 flex-col p-4 sm:p-6">
+        <main className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-1 flex-col p-3 sm:p-5">
           {children}
         </main>
       </SidebarInset>

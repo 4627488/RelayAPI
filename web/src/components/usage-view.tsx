@@ -54,7 +54,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { PageHeader } from "@/components/workspace-ui"
+import { PageHeader, StatStrip } from "@/components/workspace-ui"
 import { api, type UsageReport, type User } from "@/lib/api"
 import { cacheHitRateLabel, compact, compactTokens, money } from "@/lib/format"
 
@@ -89,35 +89,6 @@ function successRate(errors: number, requests: number) {
 
 function averageCost(cost: number, requests: number) {
   return requests > 0 ? money(cost / requests) : "—"
-}
-
-function SummaryCard({
-  label,
-  value,
-  hint,
-  icon: Icon,
-}: {
-  label: string
-  value: string
-  hint: string
-  icon: typeof ActivityIcon
-}) {
-  return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between gap-4">
-        <div className="min-w-0">
-          <CardDescription>{label}</CardDescription>
-          <CardTitle className="mt-1 text-2xl tabular-nums">{value}</CardTitle>
-        </div>
-        <Icon className="size-5 shrink-0 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        <p className="truncate text-xs text-muted-foreground" title={hint}>
-          {hint}
-        </p>
-      </CardContent>
-    </Card>
-  )
 }
 
 function BreakdownRow({
@@ -646,10 +617,9 @@ export function UsageView({
         : report.api_keys.length > 0
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       <PageHeader
         title={admin ? "全局用量" : "用量"}
-        description="查看请求、Token、缓存命中和成本的变化与归因。"
         actions={
           <>
             {admin ? (
@@ -705,35 +675,37 @@ export function UsageView({
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard
-          label="请求"
-          value={compact(report.summary.requests)}
-          hint={`${successRate(report.summary.errors, report.summary.requests)} 成功 · ${compact(report.summary.errors)} 个错误`}
-          icon={ActivityIcon}
-        />
-        <SummaryCard
-          label="Tokens"
-          value={compactTokens(report.summary.tokens)}
-          hint={`${compactTokens(report.summary.prompt_tokens)} 输入 · ${compactTokens(report.summary.completion_tokens)} 输出`}
-          icon={CoinsIcon}
-        />
-        <SummaryCard
-          label="缓存命中"
-          value={cacheHitRateLabel(
-            report.summary.cached_tokens,
-            report.summary.prompt_tokens
-          )}
-          hint={`${compactTokens(report.summary.cached_tokens)} 个缓存读取 Token`}
-          icon={DatabaseIcon}
-        />
-        <SummaryCard
-          label="模型成本"
-          value={money(report.summary.cost_nano_usd)}
-          hint={`平均 ${averageCost(report.summary.cost_nano_usd, report.summary.requests)} / 请求`}
-          icon={CircleDollarSignIcon}
-        />
-      </div>
+      <StatStrip
+        items={[
+          {
+            label: "请求",
+            value: compact(report.summary.requests),
+            detail: `${successRate(report.summary.errors, report.summary.requests)} 成功 · ${compact(report.summary.errors)} 错误`,
+            icon: ActivityIcon,
+          },
+          {
+            label: "Tokens",
+            value: compactTokens(report.summary.tokens),
+            detail: `${compactTokens(report.summary.prompt_tokens)} 输入 · ${compactTokens(report.summary.completion_tokens)} 输出`,
+            icon: CoinsIcon,
+          },
+          {
+            label: "缓存命中",
+            value: cacheHitRateLabel(
+              report.summary.cached_tokens,
+              report.summary.prompt_tokens
+            ),
+            detail: compactTokens(report.summary.cached_tokens),
+            icon: DatabaseIcon,
+          },
+          {
+            label: "成本",
+            value: money(report.summary.cost_nano_usd),
+            detail: `${averageCost(report.summary.cost_nano_usd, report.summary.requests)} / 请求`,
+            icon: CircleDollarSignIcon,
+          },
+        ]}
+      />
 
       <UsageTrend report={report} />
 
@@ -744,10 +716,7 @@ export function UsageView({
 
       <Card>
         <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>用量归因</CardTitle>
-            <CardDescription>定位主要消耗与异常来源。</CardDescription>
-          </div>
+          <CardTitle>用量归因</CardTitle>
           <Tabs
             value={dimension}
             onValueChange={(value) => setDimension(value as Dimension)}

@@ -8,7 +8,6 @@ import {
   type FormEvent,
 } from "react"
 import {
-  CheckIcon,
   CopyIcon,
   EyeIcon,
   EyeOffIcon,
@@ -22,17 +21,10 @@ import { toast } from "sonner"
 import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -180,10 +172,7 @@ function KeysPage({ tenantModels }: { tenantModels: string[] }) {
 function GuidePage() {
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader
-        title="接入指南"
-        description="安装 RAI 启动器，通过浏览器登录后连接常用 AI 客户端。"
-      />
+      <PageHeader title="接入指南" />
       <ConnectionGuide />
     </div>
   )
@@ -237,45 +226,25 @@ function UserOverview({
     <div className="flex flex-col gap-4">
       <PageHeader
         title="总览"
-        description={`${session.tenant?.name ?? "当前账户"} 的调用、费用与账户状态。`}
+        actions={
+          <dl className="flex items-baseline gap-5 text-sm">
+            <div>
+              <dt className="inline text-muted-foreground">余额 </dt>
+              <dd className="inline font-medium tabular-nums">
+                {money(session.tenant?.balance_nano_usd)}
+              </dd>
+            </div>
+            <div>
+              <dt className="inline text-muted-foreground">Keys </dt>
+              <dd className="inline font-medium tabular-nums">
+                {keys.filter((key) => key.enabled).length}
+              </dd>
+            </div>
+          </dl>
+        }
       />
       <UsageMetrics report={usage} />
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-        <UsageChart report={usage} />
-        <Card>
-          <CardHeader>
-            <CardTitle>账户状态</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-5">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">状态</span>
-              <Badge variant="secondary">
-                <CheckIcon /> 正常
-              </Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">余额</span>
-              <span className="font-medium tabular-nums">
-                {money(session.tenant?.balance_nano_usd)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">有效 Keys</span>
-              <span className="font-medium tabular-nums">
-                {keys.filter((key) => key.enabled).length}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">模型范围</span>
-              <span className="font-medium">
-                {session.tenant?.model_allowlist?.length
-                  ? `${session.tenant.model_allowlist.length} 个`
-                  : "全部模型"}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <UsageChart report={usage} />
       <LogsTable
         logs={logs}
         action={
@@ -503,7 +472,6 @@ function KeysView({
     <div className="flex flex-col gap-4">
       <PageHeader
         title="API Keys"
-        description="创建密钥并限制每个密钥可访问的模型。"
         actions={
           <Button onClick={openCreateDialog}>
             <PlusIcon data-icon="inline-start" />
@@ -513,15 +481,9 @@ function KeysView({
       />
 
       <Card>
-        <CardHeader>
-          <CardTitle>你的密钥</CardTitle>
-          <CardDescription>
-            完整密钥加密保存；点击眼睛可按需查看或复制。
-          </CardDescription>
-        </CardHeader>
         <CardContent>
           {keys.length ? (
-            <Table>
+            <Table pinEdges>
               <TableHeader>
                 <TableRow>
                   <TableHead>名称</TableHead>
@@ -651,11 +613,6 @@ function KeysView({
             <DialogTitle>
               {editingKey ? "编辑 API Key" : "创建 API Key"}
             </DialogTitle>
-            <DialogDescription>
-              {editingKey
-                ? "修改模型范围和客户端可用的模型别名。"
-                : "限制留空表示继承账户策略。创建后可随时查看完整密钥。"}
-            </DialogDescription>
           </DialogHeader>
           <form
             id="key-form"
@@ -706,10 +663,7 @@ function KeysView({
                   onChange={changeSelectedModels}
                   allLabel="全部可用模型"
                 />
-                <FieldDescription>
-                  新建 Key
-                  默认全选当前全部可用模型；可按需取消，不选择表示允许全部可用模型。
-                </FieldDescription>
+                <FieldDescription>不选择模型表示不限制。</FieldDescription>
               </Field>
               <ApiKeyModelAliasEditor
                 aliases={modelAliases}

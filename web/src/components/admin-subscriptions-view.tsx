@@ -4,12 +4,10 @@ import {
   useMemo,
   useState,
   type FormEvent,
-  type ReactNode,
 } from "react"
 import {
   AlertTriangleIcon,
   EllipsisIcon,
-  GaugeIcon,
   PackageOpenIcon,
   PlusIcon,
   SearchIcon,
@@ -17,13 +15,12 @@ import {
   Trash2Icon,
   UserPlusIcon,
   UsersIcon,
-  WalletCardsIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { ModelSelector } from "@/components/model-selector"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
-import { PageHeader } from "@/components/workspace-ui"
+import { PageHeader, StatStrip } from "@/components/workspace-ui"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -396,26 +393,8 @@ export function AdminSubscriptionsView() {
   )
 
   return (
-    <div className="flex flex-col gap-5">
-      <PageHeader
-        title="订阅分配"
-        description="将上游账户额度分配给租户，并控制子订阅配额。"
-        actions={
-          <Button
-            disabled={
-              !selected ||
-              !isAllocatable(selected) ||
-              !tenants.some((tenant) => tenant.enabled)
-            }
-            onClick={() => selected && openAssignment(selected)}
-          >
-            <UserPlusIcon data-icon="inline-start" />
-            {selected?.item.capacity_mode === "unmetered"
-              ? "添加用户"
-              : "分配给租户"}
-          </Button>
-        }
-      />
+    <div className="flex flex-col gap-4">
+      <PageHeader title="订阅分配" />
 
       {loading ? (
         <AllocationSkeleton />
@@ -869,31 +848,22 @@ function AccountAllocationPanel({
       </div>
 
       <div className="flex flex-col gap-6 px-4 py-5 sm:px-6">
-        <div className="grid grid-cols-3 overflow-hidden rounded-lg border bg-muted/20">
-          <AccountFact
-            icon={<UsersIcon />}
-            label={
-              view.item.capacity_mode === "unmetered" ? "授权用户" : "租户授权"
-            }
-            value={`${children.length} ${view.item.capacity_mode === "unmetered" ? "人" : "条"}`}
-          />
-          <AccountFact
-            icon={<PackageOpenIcon />}
-            label="可用模型"
-            value={`${parentModelOptions(view).length} 个`}
-          />
-          <AccountFact
-            icon={
-              view.item.capacity_mode === "unmetered" ? (
-                <WalletCardsIcon />
-              ) : (
-                <GaugeIcon />
-              )
-            }
-            label="结算方式"
-            value={billingLabel(view)}
-          />
-        </div>
+        <StatStrip
+          items={[
+            {
+              label:
+                view.item.capacity_mode === "unmetered"
+                  ? "授权用户"
+                  : "租户授权",
+              value: `${children.length} ${view.item.capacity_mode === "unmetered" ? "人" : "条"}`,
+            },
+            {
+              label: "可用模型",
+              value: `${parentModelOptions(view).length} 个`,
+            },
+            { label: "结算方式", value: billingLabel(view) },
+          ]}
+        />
 
         {view.item.capacity_mode === "observed" ? (
           <section className="flex flex-col gap-3">
@@ -1295,28 +1265,6 @@ function ChildQuotaWindowProgress({
         {Math.round(remainingPercent)}%
       </span>
     </Progress>
-  )
-}
-
-function AccountFact({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode
-  label: string
-  value: string
-}) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1 border-r px-3 py-3 last:border-r-0 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-4">
-      <div className="hidden shrink-0 text-muted-foreground sm:block [&_svg]:size-5">
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <p className="truncate text-xs text-muted-foreground">{label}</p>
-        <p className="truncate text-sm font-medium sm:text-base">{value}</p>
-      </div>
-    </div>
   )
 }
 

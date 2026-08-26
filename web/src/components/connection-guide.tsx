@@ -7,22 +7,10 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
+import { Card, CardContent, CardFooter } from "@/components/ui/card"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import {
   InputGroup,
   InputGroupAddon,
@@ -50,24 +38,14 @@ export function ConnectionGuide() {
     platform === "powershell" ? "%LOCALAPPDATA%\\rai" : "~/.local/bin"
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-3">
       <Alert>
         <TriangleAlertIcon />
-        <AlertTitle>安装前确认运行环境</AlertTitle>
         <AlertDescription>
-          安装器会优先下载匹配的 RAI
-          发布包；如果当前版本尚未提供发布包，需要本机已安装
-          Go。两者都不可用时安装会停止。
+          本站没有对应平台的发布包时，安装器会改用本机 Go。
         </AlertDescription>
       </Alert>
       <Card>
-        <CardHeader>
-          <CardTitle>安装 rai</CardTitle>
-          <CardDescription>
-            安装启动器并打开浏览器登录。之后可用 rai claude、rai codex 或 rai
-            opencode 启动原来的客户端。
-          </CardDescription>
-        </CardHeader>
         <CardContent>
           <FieldGroup>
             <Field>
@@ -95,16 +73,12 @@ export function ConnectionGuide() {
             </Field>
             <Field>
               <FieldLabel htmlFor="rai-install-command">安装命令</FieldLabel>
-              <FieldDescription id="rai-install-description">
-                脚本从本站下发，实际登录地址由服务端 PublicURL 配置。
-              </FieldDescription>
               <InputGroup>
                 <InputGroupAddon>
                   <TerminalIcon />
                 </InputGroupAddon>
                 <InputGroupInput
                   id="rai-install-command"
-                  aria-describedby="rai-install-description"
                   readOnly
                   value={command}
                   className="font-mono text-xs"

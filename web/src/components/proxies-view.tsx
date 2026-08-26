@@ -1,6 +1,5 @@
-import { useCallback, useMemo, useState, type FormEvent } from "react"
+import { useCallback, useState, type FormEvent } from "react"
 import {
-  ActivityIcon,
   CableIcon,
   CircleCheckIcon,
   Clock3Icon,
@@ -10,7 +9,6 @@ import {
   PencilIcon,
   PlusIcon,
   ServerIcon,
-  ShieldCheckIcon,
   Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react"
@@ -65,7 +63,7 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
-import { InfoBar, PageHeader, StatStrip } from "@/components/workspace-ui"
+import { PageHeader } from "@/components/workspace-ui"
 import { LoadErrorView } from "@/components/load-error-view"
 import { useAsyncResource } from "@/hooks/use-async-resource"
 import {
@@ -105,12 +103,6 @@ export function ProxiesView() {
     errorMessage: "无法读取代理列表",
     onBackgroundError: (message) => toast.error(message),
   })
-
-  const accountUses = useMemo(
-    () => items.reduce((sum, item) => sum + item.account_use, 0),
-    [items]
-  )
-  const tested = Object.values(results).filter((result) => result.ok).length
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -198,10 +190,9 @@ export function ProxiesView() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       <PageHeader
         title="出站代理"
-        description="配置上游请求使用的网络出口并检查连通性。"
         actions={
           <Button onClick={() => setEditor({ item: null, open: true })}>
             <PlusIcon data-icon="inline-start" />
@@ -209,19 +200,6 @@ export function ProxiesView() {
           </Button>
         }
       />
-
-      <StatStrip
-        className="grid-cols-3"
-        items={[
-          { label: "代理条目", value: items.length },
-          { label: "账户绑定", value: accountUses },
-          { label: "本次已测", value: tested },
-        ]}
-      />
-
-      <InfoBar icon={ShieldCheckIcon}>
-        地址与认证信息加密保存且不回显；连通性测试固定访问出口信息服务。
-      </InfoBar>
 
       {items.length ? (
         <div className="grid items-stretch gap-3 lg:grid-cols-2">
@@ -255,18 +233,24 @@ export function ProxiesView() {
                   </Badge>
                 </CardHeader>
                 <CardContent className="flex flex-1 flex-col gap-4">
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="rounded-md bg-muted px-3 py-2">
-                      <p className="text-xs text-muted-foreground">系统请求</p>
-                      <p className="mt-1 font-medium">
+                  <dl className="grid grid-cols-2 border-y py-2 text-sm">
+                    <div className="border-r pr-3">
+                      <dt className="text-xs text-muted-foreground">
+                        系统请求
+                      </dt>
+                      <dd className="mt-0.5 font-medium">
                         {item.system_use ? "已选择" : "未使用"}
-                      </p>
+                      </dd>
                     </div>
-                    <div className="rounded-md bg-muted px-3 py-2">
-                      <p className="text-xs text-muted-foreground">模型账户</p>
-                      <p className="mt-1 font-medium">{item.account_use} 个</p>
+                    <div className="pl-3">
+                      <dt className="text-xs text-muted-foreground">
+                        模型账户
+                      </dt>
+                      <dd className="mt-0.5 font-medium">
+                        {item.account_use} 个
+                      </dd>
                     </div>
-                  </div>
+                  </dl>
                   {result ? (
                     result.ok ? (
                       <Alert>
@@ -319,11 +303,7 @@ export function ProxiesView() {
                         </AlertDescription>
                       </Alert>
                     )
-                  ) : (
-                    <InfoBar icon={ActivityIcon}>
-                      测试后在这里显示落地 IP、归属与延迟
-                    </InfoBar>
-                  )}
+                  ) : null}
                 </CardContent>
                 <CardFooter className="mt-auto flex flex-wrap gap-2 border-t bg-muted/20 pt-4">
                   <Button
