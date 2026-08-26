@@ -1,43 +1,19 @@
 import type { ReactNode } from "react"
-import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
-import {
-  ActivityIcon,
-  CircleDollarSignIcon,
-  Clock3Icon,
-  CoinsIcon,
-  TriangleAlertIcon,
-} from "lucide-react"
+import { Area, AreaChart, CartesianGrid, Tooltip, XAxis } from "recharts"
+import { Button } from "@astryxdesign/core/Button"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { VStack } from "@astryxdesign/core/Layout"
+import { Table, pixel, proportional } from "@astryxdesign/core/Table"
+import { Text } from "@astryxdesign/core/Text"
 
-import { Badge } from "@/components/ui/badge"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { StatStrip } from "@/components/workspace-ui"
+  ChartFrame,
+  MetricStrip,
+  PageSection,
+  StatusLabel,
+  useChartColors,
+} from "@/components/page-kit"
+import { CacheHitRateBadge } from "@/components/token-cache-rate"
 import type { RequestLog, UsageReport } from "@/lib/api"
 import {
   compact,
@@ -47,228 +23,105 @@ import {
   requestLogStatus,
   requestLogSucceeded,
 } from "@/lib/format"
-import { CacheHitRateBadge } from "@/components/token-cache-rate"
 
-interface Metric {
-  label: string
-  value: string
-  hint: string
-  icon: typeof ActivityIcon
-}
-
-export function MetricGrid({ items }: { items: Metric[] }) {
+export function UsageMetrics({ report }: { report: UsageReport }) {
+  const summary = report.summary
   return (
-    <StatStrip
-      className="sm:grid-cols-2 xl:grid-cols-4"
-      items={items.map((item) => ({
-        label: item.label,
-        value: item.value,
-        detail: item.hint,
-        icon: item.icon,
-      }))}
+    <MetricStrip
+      items={[
+        {
+          label: "请求",
+          value: compact(summary.requests),
+          hint: `${summary.errors} 个错误`,
+        },
+        {
+          label: "Tokens",
+          value: compactTokens(summary.tokens),
+          hint: `${compactTokens(summary.cached_tokens)} 缓存命中`,
+        },
+        {
+          label: "错误",
+          value: compact(summary.errors),
+          hint: summary.requests
+            ? `${((summary.errors / summary.requests) * 100).toFixed(1)}%`
+            : "—",
+        },
+        {
+          label: "模型成本",
+          value: money(summary.cost_nano_usd),
+          hint: `订阅 ${money(summary.subscription_covered_nano_usd)} · 余额 ${money(summary.balance_charged_nano_usd)}`,
+        },
+      ]}
     />
   )
 }
 
-const chartConfig = {
-  requests: { label: "请求", color: "var(--chart-2)" },
-  tokens: { label: "Tokens", color: "var(--chart-4)" },
-} satisfies ChartConfig
+export function MetricGrid({
+  items,
+}: {
+  items: Array<{ label: string; value: ReactNode; hint?: ReactNode }>
+}) {
+  return <MetricStrip items={items} />
+}
 
 export function UsageChart({ report }: { report: UsageReport }) {
+  const colors = useChartColors()
   const daily = report.daily ?? []
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>用量趋势</CardTitle>
-        <CardDescription>
-          最近 {report.days} 天的请求与 Token 消耗。
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {daily.length ? (
-          <ChartContainer config={chartConfig} className="h-72 w-full">
-            <AreaChart data={daily} accessibilityLayer>
-              <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="date"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={10}
-                tickFormatter={(value: string) => value.slice(5)}
-              />
-              <ChartTooltip
-                content={<ChartTooltipContent indicator="line" />}
-              />
-              <Area
-                dataKey="tokens"
-                type="monotone"
-                fill="var(--color-tokens)"
-                fillOpacity={0.12}
-                stroke="var(--color-tokens)"
-                strokeWidth={2}
-              />
-              <Area
-                dataKey="requests"
-                type="monotone"
-                fill="var(--color-requests)"
-                fillOpacity={0.12}
-                stroke="var(--color-requests)"
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </ChartContainer>
-        ) : (
-          <Empty>
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <ActivityIcon />
-              </EmptyMedia>
-              <EmptyTitle>暂无用量</EmptyTitle>
-              <EmptyDescription>
-                发起第一次模型请求后，趋势会显示在这里。
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
-      </CardContent>
-    </Card>
+    <PageSection title="用量趋势" dividers={["bottom"]}>
+      {daily.length ? (
+        <ChartFrame>
+          <AreaChart data={daily}>
+            <CartesianGrid vertical={false} stroke={colors.border} />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={10}
+              tick={{ fill: colors.text }}
+              tickFormatter={(value: string) => value.slice(5)}
+            />
+            <Tooltip
+              contentStyle={{
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
+              }}
+            />
+            <Area
+              type="monotone"
+              dataKey="requests"
+              name="请求"
+              stroke={colors.accent}
+              fill={colors.accent}
+              fillOpacity={0.12}
+            />
+            <Area
+              type="monotone"
+              dataKey="tokens"
+              name="Tokens"
+              stroke={colors.muted}
+              fill={colors.muted}
+              fillOpacity={0.08}
+            />
+          </AreaChart>
+        </ChartFrame>
+      ) : (
+        <EmptyState isCompact title="暂无用量" />
+      )}
+    </PageSection>
   )
 }
 
-export function ModelTable({ report }: { report: UsageReport }) {
-  const models = report.models ?? []
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>模型分布</CardTitle>
-        <CardDescription>按 Token 消耗排序。</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {models.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>模型</TableHead>
-                <TableHead className="text-right">请求</TableHead>
-                <TableHead className="text-right">Tokens</TableHead>
-                <TableHead className="text-right">费用</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {models.map((model) => (
-                <TableRow key={model.model}>
-                  <TableCell className="font-mono text-xs">
-                    {model.model || "未识别"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {compact(model.requests)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {compactTokens(model.tokens)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {money(model.cost_nano_usd)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <Empty>
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <CoinsIcon />
-              </EmptyMedia>
-              <EmptyTitle>没有模型数据</EmptyTitle>
-              <EmptyDescription>当前时间范围内没有请求。</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
-export function ApiKeyUsageTable({
-  report,
-  showTenant = false,
-}: {
-  report: UsageReport
-  showTenant?: boolean
-}) {
-  const apiKeys = report.api_keys ?? []
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Key 用量</CardTitle>
-        <CardDescription>
-          按 Token 消耗排序，统计最近 {report.days} 天仍在请求日志中的数据。
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {apiKeys.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {showTenant ? <TableHead>用户</TableHead> : null}
-                <TableHead>Key</TableHead>
-                <TableHead className="text-right">请求</TableHead>
-                <TableHead className="text-right">错误</TableHead>
-                <TableHead className="text-right">Tokens</TableHead>
-                <TableHead className="text-right">费用</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {apiKeys.map((apiKey) => (
-                <TableRow
-                  key={`${apiKey.api_key_id}-${apiKey.api_key_name}-${apiKey.api_key_prefix}`}
-                >
-                  {showTenant ? (
-                    <TableCell>{apiKey.tenant_name || "未知用户"}</TableCell>
-                  ) : null}
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <span className="font-medium">
-                        {apiKey.api_key_name || "已删除的 Key"}
-                      </span>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {apiKey.api_key_prefix || "未知前缀"}…
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {compact(apiKey.requests)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {compact(apiKey.errors)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {compactTokens(apiKey.tokens)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {money(apiKey.cost_nano_usd)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <Empty>
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <CoinsIcon />
-              </EmptyMedia>
-              <EmptyTitle>没有 Key 用量</EmptyTitle>
-              <EmptyDescription>
-                当前时间范围内没有 API Key 请求。
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
-      </CardContent>
-    </Card>
-  )
+interface LogRow extends Record<string, unknown> {
+  id: string
+  started_at: string
+  status: string
+  ok: boolean
+  model: string
+  client: string
+  tokens: number
+  latency: number
+  cost: number | null
 }
 
 export function LogsTable({
@@ -278,121 +131,87 @@ export function LogsTable({
   logs: RequestLog[]
   action?: ReactNode
 }) {
+  const rows: LogRow[] = logs.map((log) => ({
+    id: log.id,
+    started_at: log.started_at,
+    status: requestLogStatus(log.status_code),
+    ok: requestLogSucceeded(log.status_code, log.error_code),
+    model: log.actual_model || log.model,
+    client: log.client_name || "未知客户端",
+    tokens: log.total_tokens,
+    latency: log.latency_ms,
+    cost: log.cost_nano_usd,
+  }))
+
   return (
-    <Card>
-      <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <CardTitle>最近请求</CardTitle>
-          <CardDescription>状态、模型、Token 和响应耗时。</CardDescription>
-        </div>
-        {action}
-      </CardHeader>
-      <CardContent>
-        {logs.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>时间</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>模型</TableHead>
-                <TableHead>客户端</TableHead>
-                <TableHead className="text-right">Tokens</TableHead>
-                <TableHead className="text-right">耗时</TableHead>
-                <TableHead className="text-right">费用</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {logs.map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell className="text-muted-foreground">
-                    {dateTime(log.started_at)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        requestLogSucceeded(log.status_code, log.error_code)
-                          ? "secondary"
-                          : "destructive"
-                      }
-                    >
-                      {requestLogStatus(log.status_code)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="max-w-52 truncate font-mono text-xs">
-                    {log.model || log.path}
-                  </TableCell>
-                  <TableCell
-                    className="max-w-44 truncate text-xs"
-                    title={log.user_agent || undefined}
-                  >
-                    {[log.client_name, log.client_version]
-                      .filter(Boolean)
-                      .join(" ") || "未知客户端"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
-                      <span>{compactTokens(log.total_tokens)}</span>
-                      <CacheHitRateBadge
-                        cachedTokens={log.cached_tokens}
-                        promptTokens={log.prompt_tokens}
-                      />
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {log.latency_ms} ms
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {money(log.cost_nano_usd)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        ) : (
-          <Empty>
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <Clock3Icon />
-              </EmptyMedia>
-              <EmptyTitle>暂无请求记录</EmptyTitle>
-              <EmptyDescription>API 调用记录会显示在这里。</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
-      </CardContent>
-    </Card>
+    <VStack gap={0}>
+      <PageSection
+        title="最近请求"
+        actions={action}
+        padding={5}
+        dividers={["bottom"]}
+      />
+      {rows.length ? (
+        <Table
+          data={rows}
+          idKey="id"
+          density="compact"
+          hasHover
+          textOverflow="truncate"
+          columns={[
+            {
+              key: "started_at",
+              header: "时间",
+              width: pixel(140),
+              renderCell: (row) => (
+                <Text type="supporting">{dateTime(row.started_at)}</Text>
+              ),
+            },
+            {
+              key: "status",
+              header: "状态",
+              width: pixel(100),
+              renderCell: (row) => (
+                <StatusLabel
+                  tone={row.ok ? "success" : "error"}
+                  label={row.status}
+                />
+              ),
+            },
+            { key: "model", header: "模型", width: proportional(1) },
+            { key: "client", header: "客户端", width: proportional(1) },
+            {
+              key: "tokens",
+              header: "Tokens",
+              width: pixel(100),
+              align: "end",
+              renderCell: (row) => <Text>{compactTokens(row.tokens)}</Text>,
+            },
+            {
+              key: "latency",
+              header: "耗时",
+              width: pixel(90),
+              align: "end",
+              renderCell: (row) => <Text>{row.latency} ms</Text>,
+            },
+            {
+              key: "cost",
+              header: "费用",
+              width: pixel(100),
+              align: "end",
+              renderCell: (row) => <Text>{money(row.cost)}</Text>,
+            },
+          ]}
+        />
+      ) : (
+        <EmptyState isCompact title="暂无请求记录" />
+      )}
+    </VStack>
   )
 }
 
-export function UsageMetrics({ report }: { report: UsageReport }) {
-  return (
-    <MetricGrid
-      items={[
-        {
-          label: "请求",
-          value: compact(report.summary.requests),
-          hint: `最近 ${report.days} 天`,
-          icon: ActivityIcon,
-        },
-        {
-          label: "Tokens",
-          value: compactTokens(report.summary.tokens),
-          hint: "输入与输出合计",
-          icon: CoinsIcon,
-        },
-        {
-          label: "错误",
-          value: compact(report.summary.errors),
-          hint: "HTTP 错误或中断",
-          icon: TriangleAlertIcon,
-        },
-        {
-          label: "模型成本",
-          value: money(report.summary.cost_nano_usd),
-          hint: `订阅承担 ${money(report.summary.subscription_covered_nano_usd)} · 余额支付 ${money(report.summary.balance_charged_nano_usd)}`,
-          icon: CircleDollarSignIcon,
-        },
-      ]}
-    />
-  )
+export function LogsTableAction({ onOpen }: { onOpen: () => void }) {
+  return <Button label="全部日志" variant="ghost" size="sm" onClick={onOpen} />
 }
+
+export { CacheHitRateBadge }

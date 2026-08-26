@@ -1,57 +1,27 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react"
+import { AppShell as AstryxAppShell } from "@astryxdesign/core/AppShell"
+import { Avatar } from "@astryxdesign/core/Avatar"
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
+import { Icon } from "@astryxdesign/core/Icon"
 import {
-  BarChart3Icon,
-  BookOpenIcon,
-  ChevronsUpDownIcon,
-  GaugeIcon,
-  KeyRoundIcon,
-  ListIcon,
+  SideNav,
+  SideNavHeading,
+  SideNavItem,
+  SideNavSection,
+} from "@astryxdesign/core/SideNav"
+import { Text } from "@astryxdesign/core/Text"
+import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
-  PackageOpenIcon,
-  Settings2Icon,
-  PlugIcon,
   SendIcon,
   ShieldCheckIcon,
-  SlidersHorizontalIcon,
   SunIcon,
   UserRoundIcon,
-  UsersIcon,
 } from "lucide-react"
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarRail,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
-import { Separator } from "@/components/ui/separator"
-import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
+import { useColorMode, type ColorMode } from "@/components/app-providers"
 import type { Session } from "@/lib/api"
-import { initials } from "@/lib/format"
 
 export type Page =
   | "overview"
@@ -71,49 +41,31 @@ export type Workspace = "user" | "admin"
 interface NavigationItem {
   id: Page
   label: string
-  icon: ComponentType
-  section?: string
 }
 
 const userItems: NavigationItem[] = [
-  { id: "overview", label: "总览", icon: GaugeIcon },
-  { id: "usage", label: "用量", icon: BarChart3Icon },
-  { id: "keys", label: "API Keys", icon: KeyRoundIcon },
-  { id: "guide", label: "接入指南", icon: BookOpenIcon },
-  { id: "subscriptions", label: "我的订阅", icon: PackageOpenIcon },
-  { id: "logs", label: "请求日志", icon: ListIcon },
+  { id: "overview", label: "工作台" },
+  { id: "keys", label: "密钥" },
+  { id: "usage", label: "用量" },
+  { id: "logs", label: "日志" },
 ]
 
-const adminItems: NavigationItem[] = [
-  { id: "overview", label: "管理总览", icon: GaugeIcon, section: "运营" },
-  { id: "users", label: "用户", icon: UsersIcon, section: "运营" },
-  {
-    id: "subscriptions",
-    label: "订阅分配",
-    icon: PackageOpenIcon,
-    section: "运营",
-  },
-  { id: "usage", label: "全局用量", icon: BarChart3Icon, section: "运营" },
-  { id: "logs", label: "请求日志", icon: ListIcon, section: "运营" },
-  { id: "providers", label: "模型管理", icon: PlugIcon, section: "上游" },
-  { id: "pricing", label: "模型设置", icon: Settings2Icon, section: "上游" },
-  {
-    id: "settings",
-    label: "系统设置",
-    icon: SlidersHorizontalIcon,
-    section: "上游",
-  },
+const adminItems: Array<NavigationItem & { section: string }> = [
+  { id: "overview", label: "工作台", section: "运营" },
+  { id: "users", label: "用户", section: "运营" },
+  { id: "usage", label: "用量", section: "运营" },
+  { id: "logs", label: "日志", section: "运营" },
+  { id: "providers", label: "模型", section: "上游" },
+  { id: "pricing", label: "定价", section: "上游" },
+  { id: "subscriptions", label: "订阅", section: "上游" },
+  { id: "settings", label: "设置", section: "上游" },
 ]
 
 function navPage(page: Page): Page {
   if (page === "invitations") return "users"
   if (page === "proxies") return "settings"
+  if (page === "guide") return "keys"
   return page
-}
-
-function navLabel(items: NavigationItem[], page: Page) {
-  const id = navPage(page)
-  return items.find((item) => item.id === id)?.label
 }
 
 function EmailAvatar({ email, name }: { email: string; name: string }) {
@@ -124,7 +76,6 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
     const normalized = email.trim().toLowerCase()
     setSource("")
     if (!normalized || !globalThis.crypto?.subtle) {
-      setSource("")
       return () => {
         active = false
       }
@@ -146,21 +97,14 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
     }
   }, [email])
 
-  return (
-    <Avatar className="size-8 rounded-lg">
-      {source ? (
-        <AvatarImage
-          src={source}
-          alt={`${name} 的头像`}
-          className="rounded-lg"
-        />
-      ) : null}
-      <AvatarFallback className="rounded-lg">{initials(name)}</AvatarFallback>
-    </Avatar>
-  )
+  return <Avatar src={source || undefined} name={name} size="sm" />
 }
 
-const themes: Array<{ value: Theme; label: string; icon: ComponentType }> = [
+const themeItems: Array<{
+  value: ColorMode
+  label: string
+  icon: ComponentType
+}> = [
   { value: "light", label: "浅色", icon: SunIcon },
   { value: "dark", label: "深色", icon: MoonIcon },
   { value: "system", label: "跟随系统", icon: MonitorIcon },
@@ -169,79 +113,6 @@ const themes: Array<{ value: Theme; label: string; icon: ComponentType }> = [
 const buildCommit = (import.meta.env.VITE_GIT_COMMIT || "dev").trim()
 const buildVersion =
   buildCommit === "dev" ? buildCommit : buildCommit.slice(0, 7)
-
-function ThemeChoices({
-  value,
-  onValueChange,
-}: {
-  value: Theme
-  onValueChange: (theme: Theme) => void
-}) {
-  return (
-    <DropdownMenuRadioGroup
-      value={value}
-      onValueChange={(nextValue) => {
-        if (isTheme(nextValue)) {
-          onValueChange(nextValue)
-        }
-      }}
-    >
-      {themes.map((item) => (
-        <DropdownMenuRadioItem key={item.value} value={item.value}>
-          <item.icon />
-          {item.label}
-        </DropdownMenuRadioItem>
-      ))}
-    </DropdownMenuRadioGroup>
-  )
-}
-
-function SidebarNav({
-  items,
-  page,
-  fallbackLabel,
-  onPageChange,
-}: {
-  items: NavigationItem[]
-  page: Page
-  fallbackLabel: string
-  onPageChange: (page: Page) => void
-}) {
-  const groups: { title: string; items: NavigationItem[] }[] = []
-  for (const item of items) {
-    const title = item.section || fallbackLabel
-    const last = groups.at(-1)
-    if (last && last.title === title) last.items.push(item)
-    else groups.push({ title, items: [item] })
-  }
-  const active = navPage(page)
-
-  return (
-    <>
-      {groups.map((group) => (
-        <SidebarGroup key={group.title}>
-          <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {group.items.map((item) => (
-                <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton
-                    isActive={active === item.id}
-                    tooltip={item.label}
-                    onClick={() => onPageChange(item.id)}
-                  >
-                    <item.icon />
-                    <span>{item.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ))}
-    </>
-  )
-}
 
 interface AppShellProps {
   session: Session
@@ -262,112 +133,134 @@ export function AppShell({
   onLogout,
   children,
 }: AppShellProps) {
-  const { theme, setTheme } = useTheme()
+  const { mode, setMode } = useColorMode()
   const admin = workspace === "admin" && session.is_admin
   const name = session.tenant.name || "用户"
   const subtitle = session.tenant.owner_email || ""
-  const items = admin ? adminItems : userItems
+  const active = navPage(page)
 
   return (
-    <SidebarProvider>
-      <Sidebar variant="inset" collapsible="icon">
-        <SidebarHeader>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="lg"
-                onClick={() => onPageChange("overview")}
-              >
-                <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <SendIcon />
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">RelayAPI</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    模型网关
-                  </span>
-                </div>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarNav
-            items={items}
-            page={page}
-            fallbackLabel="工作区"
-            onPageChange={onPageChange}
-          />
-        </SidebarContent>
-        <SidebarFooter>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <DropdownMenu>
-                <DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
-                  <EmailAvatar email={subtitle} name={name} />
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">{name}</span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {subtitle}
-                    </span>
-                  </div>
-                  <ChevronsUpDownIcon />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="top" align="end" className="w-56">
-                  <DropdownMenuLabel>{name}</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {session.is_admin ? (
-                    <>
-                      <DropdownMenuLabel>工作区</DropdownMenuLabel>
-                      <DropdownMenuGroup>
-                        <DropdownMenuItem
-                          onClick={() =>
-                            onWorkspaceChange(admin ? "user" : "admin")
-                          }
-                        >
-                          {admin ? <UserRoundIcon /> : <ShieldCheckIcon />}
-                          {admin ? "返回个人面板" : "进入管理员面板"}
-                        </DropdownMenuItem>
-                      </DropdownMenuGroup>
-                      <DropdownMenuSeparator />
-                    </>
-                  ) : null}
-                  <DropdownMenuLabel>外观</DropdownMenuLabel>
-                  <ThemeChoices value={theme} onValueChange={setTheme} />
-                  <DropdownMenuSeparator />
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem variant="destructive" onClick={onLogout}>
-                      <LogOutIcon />
-                      退出登录
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel
-                    className="flex items-center justify-between gap-4"
-                    title={buildCommit}
-                  >
-                    <span>版本</span>
-                    <code className="font-mono font-normal text-muted-foreground">
-                      {buildVersion}
-                    </code>
-                  </DropdownMenuLabel>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarFooter>
-        <SidebarRail />
-      </Sidebar>
-      <SidebarInset className="min-w-0">
-        <header className="flex h-14 shrink-0 items-center gap-3 px-4 sm:px-6">
-          <SidebarTrigger />
-          <Separator orientation="vertical" className="h-4" />
-          <p className="text-sm font-medium">{navLabel(items, page)}</p>
-        </header>
-        <main className="flex min-w-0 flex-1 flex-col p-4 pt-0 sm:p-6 sm:pt-0">
-          {children}
-        </main>
-      </SidebarInset>
-    </SidebarProvider>
+    <AstryxAppShell
+      height="fill"
+      variant="section"
+      contentPadding={0}
+      sideNav={
+        <SideNav
+          collapsible
+          resizable={{
+            defaultWidth: 240,
+            minWidth: 200,
+            maxWidth: 300,
+            autoSaveId: "relayapi.sidenav",
+          }}
+          header={
+            <SideNavHeading
+              heading="RelayAPI"
+              subheading="模型网关"
+              icon={<Icon icon={SendIcon} />}
+            />
+          }
+          footer={
+            <DropdownMenu
+              placement="above"
+              alignment="start"
+              hasChevron
+              menuWidth={240}
+              button={{
+                label: name,
+                variant: "ghost",
+                width: "100%",
+                icon: <EmailAvatar email={subtitle} name={name} />,
+              }}
+              items={[
+                { type: "section", title: name, items: [] },
+                ...(session.is_admin
+                  ? [
+                      {
+                        label: admin ? "返回个人面板" : "进入管理员面板",
+                        icon: admin ? (
+                          <UserRoundIcon />
+                        ) : (
+                          <ShieldCheckIcon />
+                        ),
+                        onClick: () =>
+                          onWorkspaceChange(admin ? "user" : "admin"),
+                      },
+                      { type: "divider" as const },
+                    ]
+                  : []),
+                {
+                  type: "section",
+                  title: "外观",
+                  items: themeItems.map((item) => ({
+                    label: item.label,
+                    icon: <item.icon />,
+                    onClick: () => setMode(item.value),
+                    endContent:
+                      mode === item.value ? (
+                        <Text type="supporting">当前</Text>
+                      ) : undefined,
+                  })),
+                },
+                { type: "divider" },
+                {
+                  label: "退出登录",
+                  icon: <LogOutIcon />,
+                  variant: "destructive" as const,
+                  onClick: onLogout,
+                },
+                { type: "divider" },
+                {
+                  label: `版本 ${buildVersion}`,
+                  isDisabled: true,
+                },
+              ]}
+            />
+          }
+        >
+          {admin ? (
+            <>
+              <SideNavSection title="运营">
+                {adminItems
+                  .filter((item) => item.section === "运营")
+                  .map((item) => (
+                    <SideNavItem
+                      key={item.id}
+                      label={item.label}
+                      isSelected={active === item.id}
+                      onClick={() => onPageChange(item.id)}
+                    />
+                  ))}
+              </SideNavSection>
+              <SideNavSection title="上游">
+                {adminItems
+                  .filter((item) => item.section === "上游")
+                  .map((item) => (
+                    <SideNavItem
+                      key={item.id}
+                      label={item.label}
+                      isSelected={active === item.id}
+                      onClick={() => onPageChange(item.id)}
+                    />
+                  ))}
+              </SideNavSection>
+            </>
+          ) : (
+            <SideNavSection title="工作区">
+              {userItems.map((item) => (
+                <SideNavItem
+                  key={item.id}
+                  label={item.label}
+                  isSelected={active === item.id}
+                  onClick={() => onPageChange(item.id)}
+                />
+              ))}
+            </SideNavSection>
+          )}
+        </SideNav>
+      }
+    >
+      {children}
+    </AstryxAppShell>
   )
 }

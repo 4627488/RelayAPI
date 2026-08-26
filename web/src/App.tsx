@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react"
-import { toast } from "sonner"
+import { useToast } from "@astryxdesign/core/Toast"
 
 import { AppShell, type Page, type Workspace } from "@/components/app-shell"
 import { AuthPage } from "@/components/auth-page"
@@ -19,6 +19,7 @@ const UserWorkspace = lazy(() =>
 )
 
 export function App() {
+  const toast = useToast()
   const [session, setSession] = useState<Session | null>(null)
   const [checking, setChecking] = useState(true)
   const [page, setPage] = useState<Page>("overview")
@@ -50,18 +51,17 @@ export function App() {
       setSession(null)
       setPage("overview")
       setWorkspace("user")
-      toast.success("已退出登录")
+      toast({ body: "已退出登录" })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "退出失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "退出失败",
+      })
     }
   }
 
   if (checking) {
-    return (
-      <main className="p-6">
-        <LoadingView />
-      </main>
-    )
+    return <LoadingView />
   }
 
   if (!session) {

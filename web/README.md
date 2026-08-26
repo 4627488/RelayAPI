@@ -1,21 +1,16 @@
-# React + TypeScript + Vite + shadcn/ui
+# RelayAPI Console
 
-This is a template for a new Vite project with React, TypeScript, and shadcn/ui.
-
-## Adding components
-
-To add components to your app, run the following command:
+Vite + React 19 console for RelayAPI, built with Astryx (`@astryxdesign/core`) and StyleX.
 
 ```bash
-npx shadcn@latest add button
+pnpm install
+pnpm dev
 ```
 
-This will place the ui components in the `src/components` directory.
+The dev server proxies `/api`, `/v1`, and `/healthz` to `http://localhost:3000`.
 
-## Using components
-
-To use the components in your app, import them as follows:
-
-```tsx
-import { Button } from "@/components/ui/button"
+```bash
+pnpm typecheck
+pnpm build
+pnpm exec astryx --help
 ```

@@ -8,25 +8,26 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit",
-    "preview": "vite preview"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "preview": "vite preview",
+    "astryx": "node node_modules/@astryxdesign/cli/clients/cli/bin/astryx.mjs"
   },
   "dependencies": {
-    "@base-ui/react": "^1.6.0",
-    "@fontsource-variable/geist": "^5.3.0",
-    "@fontsource-variable/geist-mono": "^5.3.0",
-    "@tailwindcss/vite": "^4",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
+    "@astryxdesign/cli": "^0.5.0",
+    "@astryxdesign/core": "^0.5.0",
+    "@astryxdesign/theme-neutral": "^0.5.0",
+    "@stylexjs/stylex": "^0.19.0",
     "lucide-react": "^1.26.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "recharts": "3.8.0",
-    "shadcn": "^4.14.0",
-    "sonner": "^2.0.7",
-    "tailwind-merge": "^3.6.0",
-    "tailwindcss": "^4",
-    "tw-animate-css": "^1.4.0"
+    "recharts": "3.8.0"
+  },
+  "packageManager": "pnpm@10.34.5",
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@astryxdesign/cli",
+      "@astryxdesign/core"
+    ]
   },
   "devDependencies": {
     "@eslint/js": "^10",
@@ -39,7 +40,6 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17",
     "prettier": "^3.8.3",
-    "prettier-plugin-tailwindcss": "^0.8.0",
     "typescript": "~6",
     "typescript-eslint": "^8",
     "vite": "^8"

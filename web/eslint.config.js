@@ -19,15 +19,14 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
-      // Data-loading effects and the registry's responsive hook intentionally
-      // synchronize state from external browser/network systems.
+      // Data-loading effects synchronize state from external browser/network systems.
       'react-hooks/set-state-in-effect': 'off',
     },
   },
   {
-    files: ['src/components/ui/**/*.{ts,tsx}'],
+    files: ['src/components/app-providers.tsx', 'src/components/page-kit.tsx'],
     rules: {
-      // shadcn registry files intentionally export component variants/hooks.
+      // These modules export a provider/kit plus the hook that reads its context.
       'react-refresh/only-export-components': 'off',
     },
   },

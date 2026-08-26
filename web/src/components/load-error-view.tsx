@@ -1,24 +1,35 @@
+import { Button } from "@astryxdesign/core/Button"
+import { Center } from "@astryxdesign/core/Center"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { Layout, LayoutContent } from "@astryxdesign/core/Layout"
 import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-
-export function LoadErrorView({ message, onRetry }: { message: string; onRetry: () => void }) {
+export function LoadErrorView({
+  message,
+  onRetry,
+}: {
+  message: string
+  onRetry: () => void
+}) {
   return (
-    <Card className="mx-auto w-full max-w-xl">
-      <CardHeader>
-        <div className="flex size-10 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
-          <TriangleAlertIcon className="size-5" />
-        </div>
-        <CardTitle>页面数据加载失败</CardTitle>
-        <CardDescription>{message}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Button onClick={onRetry}>
-          <RefreshCwIcon data-icon="inline-start" />
-          重试
-        </Button>
-      </CardContent>
-    </Card>
+    <Layout height="fill">
+      <LayoutContent padding={6}>
+        <Center minHeight="100%">
+          <EmptyState
+            title="无法读取这一页"
+            description={message}
+            icon={<TriangleAlertIcon />}
+            actions={
+              <Button
+                label="重试"
+                variant="primary"
+                icon={<RefreshCwIcon />}
+                onClick={onRetry}
+              />
+            }
+          />
+        </Center>
+      </LayoutContent>
+    </Layout>
   )
 }

@@ -1,31 +1,12 @@
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from "recharts"
+import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts"
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { Table, pixel, proportional } from "@astryxdesign/core/Table"
+import { Text } from "@astryxdesign/core/Text"
+import { VStack } from "@astryxdesign/core/Layout"
+
+import { ChartFrame, MetricStrip, PageSection, useChartColors } from "@/components/page-kit"
 import { bytes } from "@/lib/format"
-import { StatStrip } from "@/components/workspace-ui"
 
 type LatencyBucket = "user" | "relay" | "upstream" | "mixed" | "context"
 
@@ -54,14 +35,6 @@ type LatencySegment = {
   start_ms: number
   duration_ms: number
   description?: string
-  attempt?: number
-  status?: string
-  provider?: string
-  model?: string
-  credential?: string
-  error?: string
-  reused?: boolean
-  remote_addr?: string
 }
 
 type LatencyMark = {
@@ -77,10 +50,6 @@ type LatencyTransfer = {
   bytes_written: number
   read_count: number
   write_count: number
-  first_read_ms?: number
-  last_read_ms?: number
-  first_write_ms?: number
-  last_write_ms?: number
   wall_ms?: number
   local_copy_ms?: number
 }
@@ -105,15 +74,6 @@ type LatencyTrace = {
   marks?: LatencyMark[]
 }
 
-const chartConfig = {
-  user: { label: "用户网络", color: "var(--chart-2)" },
-  relay: { label: "中转", color: "var(--chart-3)" },
-  upstream: { label: "上游", color: "var(--chart-4)" },
-  mixed: { label: "未拆分", color: "var(--muted-foreground)" },
-  wall: { label: "墙钟", color: "var(--foreground)" },
-  duration: { label: "耗时", color: "var(--chart-3)" },
-} satisfies ChartConfig
-
 const bucketLabel: Record<LatencyBucket, string> = {
   user: "用户网络",
   relay: "中转",
@@ -122,32 +82,44 @@ const bucketLabel: Record<LatencyBucket, string> = {
   context: "参考",
 }
 
+interface TransferRow extends Record<string, unknown> {
+  id: string
+  label: string
+  value: string
+}
+
+interface SegmentRow extends Record<string, unknown> {
+  id: string
+  bucket: string
+  label: string
+  description?: string
+  start: string
+  duration: string
+  share: string
+}
+
 export function RequestLatencyTimeline({
   value,
   totalMS,
   ttftMS,
-  stream,
 }: {
   value?: string
   totalMS: number
   ttftMS?: number
   stream: boolean
 }) {
+  const colors = useChartColors()
   const trace = parseTrace(value)
   if (!trace) return null
 
   const total = Math.max(trace.total_ms, totalMS, 0.001)
   const attribution = trace.attribution
-  const attempts = trace.segments.filter(
-    (segment) => segment.track === "attempt" && !segment.id.includes("_retry_wait_")
-  ).length
   const comparison = [
     {
       name: "观测累计",
       user: attribution.user_network_ms,
       relay: attribution.relay_ms,
       upstream: attribution.upstream_ms,
-      mixed: 0,
       wall: 0,
     },
     {
@@ -155,7 +127,6 @@ export function RequestLatencyTimeline({
       user: 0,
       relay: 0,
       upstream: 0,
-      mixed: 0,
       wall: total,
     },
   ]
@@ -166,51 +137,80 @@ export function RequestLatencyTimeline({
       name: segment.label,
       offset: segment.start_ms,
       duration: segment.duration_ms,
-      bucket: segment.bucket,
-      fill: `var(--color-${segment.bucket})`,
+      fill: bucketColor(segment.bucket, colors),
     }))
   const transfer = attribution.transfer
+  const transferRows: TransferRow[] = transfer
+    ? [
+        {
+          id: "wall",
+          label: "墙钟",
+          value: transfer.wall_ms != null ? formatMS(transfer.wall_ms) : "—",
+        },
+        {
+          id: "read",
+          label: "Read() 阻塞",
+          value: `${formatMS(transfer.upstream_read_wait_ms)} · ${transfer.read_count} 次 · ${bytes(transfer.bytes_read)}`,
+        },
+        {
+          id: "write",
+          label: "Write() 阻塞",
+          value: `${formatMS(transfer.client_write_wait_ms)} · ${transfer.write_count} 次 · ${bytes(transfer.bytes_written)}`,
+        },
+        ...(transfer.local_copy_ms && transfer.local_copy_ms > 0
+          ? [
+              {
+                id: "local",
+                label: "读/写之外的本地处理",
+                value: formatMS(transfer.local_copy_ms),
+              },
+            ]
+          : []),
+      ]
+    : []
+  const segmentRows: SegmentRow[] = [...trace.segments]
+    .sort((a, b) => a.start_ms - b.start_ms)
+    .map((segment) => ({
+      id: segment.id,
+      bucket: bucketLabel[segment.bucket],
+      label: segment.label,
+      description: segment.description,
+      start: `+${formatMS(segment.start_ms)}`,
+      duration: formatMS(segment.duration_ms),
+      share: formatPercent(segment.duration_ms / total),
+    }))
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>耗时测量</CardTitle>
-        <CardDescription>
-          {stream ? "流式" : "非流式"}
-          {attempts > 1 ? ` · ${attempts} 次上游尝试` : ""}
-          {` · 墙钟 ${formatMS(total)}`}
-          {` · 首字节 ${ttftMS != null ? formatMS(ttftMS) : "—"}`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-6">
-        <StatStrip
-          className="sm:grid-cols-3"
+    <PageSection title="耗时">
+      <VStack gap={4}>
+        <MetricStrip
           items={[
             {
               label: "用户网络",
               value: formatMS(attribution.user_network_ms),
-              detail: formatPercent(attribution.user_network_ms / total),
+              hint: formatPercent(attribution.user_network_ms / total),
             },
             {
               label: "中转",
               value: formatMS(attribution.relay_ms),
-              detail: formatPercent(attribution.relay_ms / total),
+              hint: formatPercent(attribution.relay_ms / total),
             },
             {
               label: "上游",
               value: formatMS(attribution.upstream_ms),
-              detail: formatPercent(attribution.upstream_ms / total),
+              hint: formatPercent(attribution.upstream_ms / total),
             },
           ]}
         />
 
-        <ChartContainer config={chartConfig} className="aspect-auto h-44 w-full">
-          <BarChart data={comparison} layout="vertical" accessibilityLayer>
-            <CartesianGrid horizontal={false} />
+        <ChartFrame>
+          <BarChart data={comparison} layout="vertical">
+            <CartesianGrid horizontal={false} stroke={colors.border} />
             <XAxis
               type="number"
               tickLine={false}
               axisLine={false}
+              tick={{ fill: colors.text }}
               tickFormatter={formatMS}
             />
             <YAxis
@@ -219,90 +219,52 @@ export function RequestLatencyTimeline({
               tickLine={false}
               axisLine={false}
               width={64}
+              tick={{ fill: colors.text }}
             />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value) => formatMS(Number(value))}
-                />
-              }
+            <Tooltip
+              contentStyle={{
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
+              }}
+              formatter={(value) => formatMS(Number(value))}
             />
-            <ChartLegend content={<ChartLegendContent />} />
-            <Bar dataKey="user" stackId="compare" fill="var(--color-user)" />
-            <Bar dataKey="relay" stackId="compare" fill="var(--color-relay)" />
-            <Bar
-              dataKey="upstream"
-              stackId="compare"
-              fill="var(--color-upstream)"
-            />
-            <Bar dataKey="wall" stackId="compare" fill="var(--color-wall)" />
+            <Bar dataKey="user" name="用户网络" stackId="compare" fill={colors.blue} />
+            <Bar dataKey="relay" name="中转" stackId="compare" fill={colors.accent} />
+            <Bar dataKey="upstream" name="上游" stackId="compare" fill={colors.success} />
+            <Bar dataKey="wall" name="墙钟" stackId="compare" fill={colors.muted} />
           </BarChart>
-        </ChartContainer>
+        </ChartFrame>
 
-        <p className="text-xs text-muted-foreground tabular-nums">
+        <Text color="secondary" type="supporting">
           三桶合计 {formatPercent(attribution.observed_sum_ms / total)} 墙钟
-          {attribution.overlap_ms > 0
-            ? ` · 重叠 ${formatMS(attribution.overlap_ms)}`
-            : ""}
+          {attribution.overlap_ms > 0 ? ` · 重叠 ${formatMS(attribution.overlap_ms)}` : ""}
           {attribution.unattributed_ms > 0
             ? ` · 未覆盖 ${formatMS(attribution.unattributed_ms)}`
             : ""}
-        </p>
+        </Text>
 
-        {transfer ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>首字节后</TableHead>
-                <TableHead className="text-right">测量</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow>
-                <TableCell>墙钟</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {transfer.wall_ms != null ? formatMS(transfer.wall_ms) : "—"}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Read() 阻塞</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatMS(transfer.upstream_read_wait_ms)} · {transfer.read_count}{" "}
-                  次 · {bytes(transfer.bytes_read)}
-                </TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell>Write() 阻塞</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatMS(transfer.client_write_wait_ms)} · {transfer.write_count}{" "}
-                  次 · {bytes(transfer.bytes_written)}
-                </TableCell>
-              </TableRow>
-              {transfer.local_copy_ms && transfer.local_copy_ms > 0 ? (
-                <TableRow>
-                  <TableCell>读/写之外的本地处理</TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMS(transfer.local_copy_ms)}
-                  </TableCell>
-                </TableRow>
-              ) : null}
-            </TableBody>
-          </Table>
+        {transferRows.length ? (
+          <Table
+            data={transferRows}
+            idKey="id"
+            density="compact"
+            columns={[
+              { key: "label", header: "首字节后", width: proportional(1) },
+              { key: "value", header: "测量", width: proportional(1), align: "end" },
+            ]}
+          />
         ) : null}
 
         {gantt.length ? (
-          <ChartContainer
-            config={chartConfig}
-            className="aspect-auto w-full"
-            style={{ height: Math.max(220, gantt.length * 36) }}
-          >
-            <BarChart data={gantt} layout="vertical" accessibilityLayer>
-              <CartesianGrid horizontal={false} />
+          <ChartFrame>
+            <BarChart data={gantt} layout="vertical">
+              <CartesianGrid horizontal={false} stroke={colors.border} />
               <XAxis
                 type="number"
                 domain={[0, total]}
                 tickLine={false}
                 axisLine={false}
+                tick={{ fill: colors.text }}
                 tickFormatter={formatMS}
               />
               <YAxis
@@ -311,18 +273,19 @@ export function RequestLatencyTimeline({
                 tickLine={false}
                 axisLine={false}
                 width={112}
+                tick={{ fill: colors.text }}
               />
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent
-                    formatter={(value, name) =>
-                      name === "offset" ? null : formatMS(Number(value))
-                    }
-                  />
+              <Tooltip
+                contentStyle={{
+                  background: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                formatter={(value, name) =>
+                  name === "offset" ? "" : formatMS(Number(value))
                 }
               />
               <Bar dataKey="offset" stackId="gantt" fill="transparent" />
-              <Bar dataKey="duration" stackId="gantt">
+              <Bar dataKey="duration" name="耗时" stackId="gantt">
                 {gantt.map((row) => (
                   <Cell key={row.name} fill={row.fill} />
                 ))}
@@ -330,63 +293,61 @@ export function RequestLatencyTimeline({
               {ttftMS != null && ttftMS >= 0 && ttftMS <= total ? (
                 <ReferenceLine
                   x={ttftMS}
-                  stroke="var(--foreground)"
+                  stroke={colors.text}
                   strokeDasharray="3 3"
                 />
               ) : null}
             </BarChart>
-          </ChartContainer>
-        ) : null}
+          </ChartFrame>
+        ) : (
+          <EmptyState isCompact title="没有可展示的阶段" />
+        )}
 
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>轨道</TableHead>
-              <TableHead>阶段</TableHead>
-              <TableHead className="text-right">开始</TableHead>
-              <TableHead className="text-right">耗时</TableHead>
-              <TableHead className="text-right">占墙钟</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {[...trace.segments]
-              .sort((a, b) => a.start_ms - b.start_ms)
-              .map((segment) => (
-                <TableRow key={segment.id}>
-                  <TableCell className="text-muted-foreground">
-                    {bucketLabel[segment.bucket]}
-                  </TableCell>
-                  <TableCell>
-                    <div>{segment.label}</div>
-                    {segment.description ? (
-                      <div className="mt-0.5 max-w-[36rem] text-xs text-muted-foreground">
-                        {segment.description}
-                      </div>
-                    ) : null}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    +{formatMS(segment.start_ms)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatMS(segment.duration_ms)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatPercent(segment.duration_ms / total)}
-                  </TableCell>
-                </TableRow>
-              ))}
-          </TableBody>
-        </Table>
-      </CardContent>
-      {trace.boundary ? (
-        <CardFooter>
-          <p className="text-xs leading-5 text-muted-foreground">
+        <Table
+          data={segmentRows}
+          idKey="id"
+          density="compact"
+          columns={[
+            { key: "bucket", header: "轨道", width: pixel(90) },
+            {
+              key: "label",
+              header: "阶段",
+              width: proportional(1),
+              renderCell: (row) => (
+                <VStack gap={0}>
+                  <Text>{row.label}</Text>
+                  {row.description ? (
+                    <Text color="secondary" type="supporting">
+                      {row.description}
+                    </Text>
+                  ) : null}
+                </VStack>
+              ),
+            },
+            { key: "start", header: "开始", width: pixel(90), align: "end" },
+            { key: "duration", header: "耗时", width: pixel(90), align: "end" },
+            { key: "share", header: "占墙钟", width: pixel(90), align: "end" },
+          ]}
+        />
+
+        {trace.boundary ? (
+          <Text color="secondary" type="supporting">
             {trace.boundary}
-          </p>
-        </CardFooter>
-      ) : null}
-    </Card>
+          </Text>
+        ) : null}
+      </VStack>
+    </PageSection>
   )
+}
+
+function bucketColor(
+  bucket: LatencyBucket,
+  colors: ReturnType<typeof useChartColors>
+) {
+  if (bucket === "user") return colors.blue
+  if (bucket === "relay") return colors.accent
+  if (bucket === "upstream") return colors.success
+  return colors.muted
 }
 
 function parseTrace(value?: string): LatencyTrace | null {

@@ -1,71 +1,39 @@
+import { useCallback, useEffect, useState, type ReactNode } from "react"
+import { AlertDialog } from "@astryxdesign/core/AlertDialog"
+import { Banner } from "@astryxdesign/core/Banner"
+import { Button } from "@astryxdesign/core/Button"
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { FormLayout } from "@astryxdesign/core/FormLayout"
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-} from "react"
+  HStack,
+  Layout,
+  LayoutContent,
+  LayoutFooter,
+  VStack,
+} from "@astryxdesign/core/Layout"
+import { Table, pixel, proportional } from "@astryxdesign/core/Table"
+import { Text } from "@astryxdesign/core/Text"
+import { TextInput } from "@astryxdesign/core/TextInput"
+import { Token } from "@astryxdesign/core/Token"
+import { useToast } from "@astryxdesign/core/Toast"
 import {
-  ActivityIcon,
   CableIcon,
-  CircleCheckIcon,
-  Clock3Icon,
-  Globe2Icon,
-  MapPinIcon,
+  MoreHorizontalIcon,
   NetworkIcon,
   PencilIcon,
   PlusIcon,
-  ServerIcon,
-  ShieldCheckIcon,
   Trash2Icon,
-  TriangleAlertIcon,
 } from "lucide-react"
-import { toast } from "sonner"
 
+import { LoadErrorView } from "@/components/load-error-view"
+import { LoadingView } from "@/components/loading-view"
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
-import { Input } from "@/components/ui/input"
-import { Spinner } from "@/components/ui/spinner"
-import { InfoBar, PageHeader, StatStrip } from "@/components/workspace-ui"
+  PageFrame,
+  PageSection,
+  StatusLabel,
+} from "@/components/page-kit"
 import {
   api,
   deleteRequest,
@@ -75,6 +43,16 @@ import {
 
 type ProxyEditor = { item: OutboundProxy | null; open: boolean }
 
+interface ProxyRow extends Record<string, unknown> {
+  id: string
+  name: string
+  endpoint: string
+  scheme: string
+  usage: string
+  inUse: boolean
+  item: OutboundProxy
+}
+
 function proxyLocation(result: ProxyTestResult) {
   return (
     [result.city, result.region, result.country].filter(Boolean).join(" · ") ||
@@ -82,44 +60,76 @@ function proxyLocation(result: ProxyTestResult) {
   )
 }
 
-export function ProxiesView() {
+function usageLabel(item: OutboundProxy) {
+  if (item.system_use && item.account_use > 0) {
+    return `系统 · ${item.account_use} 个账户`
+  }
+  if (item.system_use) return "系统请求"
+  if (item.account_use > 0) return `${item.account_use} 个账户`
+  return "未绑定"
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <HStack hAlign="between" gap={3} vAlign="center">
+      <Text color="secondary">{label}</Text>
+      <Text>{value}</Text>
+    </HStack>
+  )
+}
+
+export function ProxiesView({ accessory }: { accessory?: ReactNode }) {
+  const toast = useToast()
   const [items, setItems] = useState<OutboundProxy[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState("")
   const [editor, setEditor] = useState<ProxyEditor>({ item: null, open: false })
+  const [name, setName] = useState("")
+  const [url, setUrl] = useState("")
   const [deleting, setDeleting] = useState<OutboundProxy | null>(null)
   const [pending, setPending] = useState(false)
   const [testingID, setTestingID] = useState("")
   const [results, setResults] = useState<Record<string, ProxyTestResult>>({})
+  const [lastTestedID, setLastTestedID] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError("")
     try {
       const result = await api<{ items: OutboundProxy[] }>("/api/admin/proxies")
       setItems(result.items ?? [])
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取代理列表")
+      const message =
+        cause instanceof Error ? cause.message : "无法读取代理列表"
+      setLoadError(message)
+      toast({ type: "error", body: message })
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [toast])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  const accountUses = useMemo(
-    () => items.reduce((sum, item) => sum + item.account_use, 0),
-    [items]
-  )
-  const tested = Object.values(results).filter((result) => result.ok).length
+  const lastTested = items.find((item) => item.id === lastTestedID)
+  const lastResult = lastTested ? results[lastTested.id] : undefined
 
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    const name = String(form.get("name") ?? "").trim()
-    const url = String(form.get("url") ?? "").trim()
-    if (!name || (!editor.item && !url)) {
-      toast.error("请填写代理名称和地址")
+  function openCreate() {
+    setName("")
+    setUrl("")
+    setEditor({ item: null, open: true })
+  }
+
+  function openEdit(item: OutboundProxy) {
+    setName(item.name)
+    setUrl("")
+    setEditor({ item, open: true })
+  }
+
+  async function save() {
+    if (!name.trim() || (!editor.item && !url.trim())) {
+      toast({ type: "error", body: "请填写代理名称和地址" })
       return
     }
     setPending(true)
@@ -129,13 +139,19 @@ export function ProxiesView() {
         : "/api/admin/proxies"
       await api(path, {
         method: editor.item ? "PATCH" : "POST",
-        body: JSON.stringify({ name, ...(url ? { url } : {}) }),
+        body: JSON.stringify({
+          name: name.trim(),
+          ...(url.trim() ? { url: url.trim() } : {}),
+        }),
       })
-      toast.success(editor.item ? "代理已更新" : "代理已添加")
+      toast({ body: editor.item ? "代理已更新" : "代理已添加" })
       setEditor({ item: null, open: false })
       await load()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存代理失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "保存代理失败",
+      })
     } finally {
       setPending(false)
     }
@@ -143,6 +159,7 @@ export function ProxiesView() {
 
   async function test(item: OutboundProxy) {
     setTestingID(item.id)
+    setLastTestedID(item.id)
     try {
       const result = await api<ProxyTestResult>(
         `/api/admin/proxies/${encodeURIComponent(item.id)}/test`,
@@ -150,11 +167,11 @@ export function ProxiesView() {
       )
       setResults((current) => ({ ...current, [item.id]: result }))
       if (result.ok) {
-        toast.success(
-          `代理可用，落地 ${result.ip ?? "IP 未知"}，${result.latency_ms} ms`
-        )
+        toast({
+          body: `代理可用，落地 ${result.ip ?? "IP 未知"}，${result.latency_ms} ms`,
+        })
       } else {
-        toast.error(result.error || "代理测试失败")
+        toast({ type: "error", body: result.error || "代理测试失败" })
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "代理测试失败"
@@ -162,7 +179,7 @@ export function ProxiesView() {
         ...current,
         [item.id]: { ok: false, latency_ms: 0, error: message },
       }))
-      toast.error(message)
+      toast({ type: "error", body: message })
     } finally {
       setTestingID("")
     }
@@ -175,291 +192,256 @@ export function ProxiesView() {
       await deleteRequest(
         `/api/admin/proxies/${encodeURIComponent(deleting.id)}`
       )
-      toast.success("代理已删除")
+      toast({ body: "代理已删除" })
       setDeleting(null)
       await load()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "删除代理失败")
+      toast({
+        type: "error",
+        body: cause instanceof Error ? cause.message : "删除代理失败",
+      })
     } finally {
       setPending(false)
     }
   }
 
-  if (loading)
-    return (
-      <div className="flex min-h-56 items-center justify-center">
-        <Spinner />
-      </div>
-    )
+  if (loading) return <LoadingView />
+  if (loadError && items.length === 0) {
+    return <LoadErrorView message={loadError} onRetry={() => void load()} />
+  }
+
+  const rows: ProxyRow[] = items.map((item) => ({
+    id: item.id,
+    name: item.name,
+    endpoint: item.endpoint,
+    scheme: item.scheme,
+    usage: usageLabel(item),
+    inUse: item.system_use || item.account_use > 0,
+    item,
+  }))
 
   return (
-    <div className="flex flex-col gap-5">
-      <PageHeader
-        actions={
-          <Button onClick={() => setEditor({ item: null, open: true })}>
-            <PlusIcon data-icon="inline-start" />
-            添加代理
-          </Button>
-        }
-      />
+    <>
+    <PageFrame
+      title="设置"
+      accessory={accessory}
+      actions={
+        <Button
+          label="添加代理"
+          variant="primary"
+          icon={<PlusIcon />}
+          onClick={openCreate}
+        />
+      }
+    >
+      <VStack gap={0}>
+        {rows.length ? (
+          <Table
+            data={rows}
+            idKey="id"
+            density="compact"
+            hasHover
+            columns={[
+              {
+                key: "name",
+                header: "名称",
+                width: proportional(1),
+                renderCell: (row) => (
+                  <HStack gap={2} vAlign="center" wrap="wrap">
+                    <Text weight="semibold">{row.name}</Text>
+                    <Token label={row.scheme.toUpperCase()} color="gray" />
+                  </HStack>
+                ),
+              },
+              {
+                key: "endpoint",
+                header: "端点",
+                width: proportional(2),
+                renderCell: (row) => <Text type="code">{row.endpoint}</Text>,
+              },
+              {
+                key: "usage",
+                header: "用途",
+                width: proportional(1),
+                renderCell: (row) => (
+                  <HStack gap={2} vAlign="center" wrap="wrap">
+                    <StatusLabel
+                      tone={row.inUse ? "success" : "neutral"}
+                      label={row.inUse ? "使用中" : "未绑定"}
+                    />
+                    <Text color="secondary" type="supporting">
+                      {row.usage}
+                    </Text>
+                  </HStack>
+                ),
+              },
+              {
+                key: "actions",
+                header: "操作",
+                width: pixel(72),
+                align: "end",
+                renderCell: (row) => (
+                  <DropdownMenu
+                    hasChevron={false}
+                    button={{
+                      label: `操作 ${row.name}`,
+                      variant: "ghost",
+                      isIconOnly: true,
+                      icon: <MoreHorizontalIcon />,
+                    }}
+                    items={[
+                      {
+                        label: testingID === row.id ? "测试中…" : "测试",
+                        icon: <CableIcon />,
+                        isDisabled: Boolean(testingID),
+                        onClick: () => void test(row.item),
+                      },
+                      {
+                        label: "编辑",
+                        icon: <PencilIcon />,
+                        onClick: () => openEdit(row.item),
+                      },
+                      { type: "divider" },
+                      {
+                        label: "删除",
+                        icon: <Trash2Icon />,
+                        variant: "destructive",
+                        isDisabled: row.inUse,
+                        onClick: () => setDeleting(row.item),
+                      },
+                    ]}
+                  />
+                ),
+              },
+            ]}
+          />
+        ) : (
+          <EmptyState
+            title="还没有代理"
+            icon={<NetworkIcon />}
+            actions={
+              <Button
+                label="添加"
+                variant="primary"
+                icon={<PlusIcon />}
+                onClick={openCreate}
+              />
+            }
+          />
+        )}
 
-      <StatStrip
-        className="grid-cols-3"
-        items={[
-          { label: "代理条目", value: items.length },
-          { label: "账户绑定", value: accountUses },
-          { label: "本次已测", value: tested },
-        ]}
-      />
-
-      <InfoBar icon={ShieldCheckIcon}>
-        地址与认证信息加密保存且不回显；连通性测试固定访问出口信息服务。
-      </InfoBar>
-
-      {items.length ? (
-        <div className="grid items-stretch gap-3 lg:grid-cols-2">
-          {items.map((item) => {
-            const result = results[item.id]
-            const inUse = item.system_use || item.account_use > 0
-            return (
-              <Card
-                key={item.id}
-                className="flex h-full flex-col overflow-hidden"
-              >
-                <CardHeader>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <CardTitle className="truncate text-base">
-                        {item.name}
-                      </CardTitle>
-                      <Badge variant="outline" className="uppercase">
-                        {item.scheme}
-                      </Badge>
-                    </div>
-                    <CardDescription
-                      className="mt-1 truncate font-mono"
-                      title={item.endpoint}
-                    >
-                      {item.endpoint}
-                    </CardDescription>
-                  </div>
-                  <Badge variant={inUse ? "default" : "secondary"}>
-                    {inUse ? "使用中" : "未绑定"}
-                  </Badge>
-                </CardHeader>
-                <CardContent className="flex flex-1 flex-col gap-4">
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="rounded-md bg-muted px-3 py-2">
-                      <p className="text-xs text-muted-foreground">系统请求</p>
-                      <p className="mt-1 font-medium">
-                        {item.system_use ? "已选择" : "未使用"}
-                      </p>
-                    </div>
-                    <div className="rounded-md bg-muted px-3 py-2">
-                      <p className="text-xs text-muted-foreground">模型账户</p>
-                      <p className="mt-1 font-medium">{item.account_use} 个</p>
-                    </div>
-                  </div>
-                  {result ? (
-                    result.ok ? (
-                      <div className="space-y-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                            <CircleCheckIcon className="size-4" />
-                            代理可用
-                          </span>
-                          <Badge variant="outline">
-                            <Clock3Icon />
-                            {result.latency_ms} ms
-                          </Badge>
-                        </div>
-                        <div className="grid gap-2 text-sm sm:grid-cols-2">
-                          <p className="flex min-w-0 items-center gap-2">
-                            <Globe2Icon className="size-4 shrink-0 text-muted-foreground" />
-                            <span
-                              className="truncate font-mono"
-                              title={result.ip}
-                            >
-                              {result.ip}
-                            </span>
-                          </p>
-                          <p className="flex min-w-0 items-center gap-2">
-                            <MapPinIcon className="size-4 shrink-0 text-muted-foreground" />
-                            <span className="truncate">
-                              {result.flag} {proxyLocation(result)}
-                            </span>
-                          </p>
-                          <p className="flex min-w-0 items-center gap-2 sm:col-span-2">
-                            <ServerIcon className="size-4 shrink-0 text-muted-foreground" />
-                            <span
-                              className="truncate"
-                              title={result.organization}
-                            >
-                              {result.organization ||
-                                result.isp ||
-                                "网络归属未知"}
-                              {result.asn ? ` · AS${result.asn}` : ""}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive">
-                        <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
-                        <span>{result.error || "代理测试失败"}</span>
-                      </div>
-                    )
-                  ) : (
-                    <div className="flex flex-1 items-center gap-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-                      <ActivityIcon className="size-4" />
-                      测试后在这里显示落地 IP、归属与延迟
-                    </div>
-                  )}
-                </CardContent>
-                <CardFooter className="mt-auto flex flex-wrap gap-2 border-t bg-muted/20 pt-4">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={Boolean(testingID)}
-                    onClick={() => void test(item)}
-                  >
-                    {testingID === item.id ? <Spinner /> : <CableIcon />}
-                    测试代理
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setEditor({ item, open: true })}
-                  >
-                    <PencilIcon />
-                    编辑
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="ml-auto text-destructive hover:text-destructive"
-                    disabled={inUse}
-                    title={inUse ? "请先取消系统或账户绑定" : undefined}
-                    onClick={() => setDeleting(item)}
-                  >
-                    <Trash2Icon />
-                    删除
-                  </Button>
-                </CardFooter>
-              </Card>
-            )
-          })}
-        </div>
-      ) : (
-        <Card>
-          <CardContent className="py-12">
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <NetworkIcon />
-                </EmptyMedia>
-                <EmptyTitle>还没有代理</EmptyTitle>
-                <EmptyDescription>
-                  添加后可在系统设置或模型账户中选择使用。
-                </EmptyDescription>
-              </EmptyHeader>
-              <Button onClick={() => setEditor({ item: null, open: true })}>
-                <PlusIcon />
-                添加第一个代理
-              </Button>
-            </Empty>
-          </CardContent>
-        </Card>
-      )}
+      {lastTested && lastResult ? (
+        lastResult.ok ? (
+          <PageSection title={lastTested.name}>
+            <VStack gap={3}>
+              <HStack hAlign="between" gap={3} vAlign="center">
+                <Text color="secondary">状态</Text>
+                <StatusLabel tone="success" label="代理可用" />
+              </HStack>
+              <Fact label="延迟" value={`${lastResult.latency_ms} ms`} />
+              <Fact label="落地 IP" value={lastResult.ip || "IP 未知"} />
+              <Fact
+                label="归属地"
+                value={`${lastResult.flag ? `${lastResult.flag} ` : ""}${proxyLocation(lastResult)}`}
+              />
+              <Fact
+                label="网络"
+                value={`${lastResult.organization || lastResult.isp || "网络归属未知"}${
+                  lastResult.asn ? ` · AS${lastResult.asn}` : ""
+                }`}
+              />
+            </VStack>
+          </PageSection>
+        ) : (
+          <Banner
+            status="error"
+            title={lastResult.error || "测试失败"}
+            collapsible={false}
+          />
+        )
+      ) : null}
+      </VStack>
+    </PageFrame>
 
       <Dialog
-        open={editor.open}
+        isOpen={editor.open}
         onOpenChange={(open) => setEditor((current) => ({ ...current, open }))}
+        width={520}
+        purpose="form"
       >
-        <DialogContent className="sm:max-w-lg">
-          <form onSubmit={save} className="contents">
-            <DialogHeader>
-              <DialogTitle>{editor.item ? "编辑代理" : "添加代理"}</DialogTitle>
-              <DialogDescription>
-                {editor.item
+        <Layout
+          height="auto"
+          header={
+            <DialogHeader
+              title={editor.item ? "编辑代理" : "添加代理"}
+              subtitle={
+                editor.item
                   ? "地址留空会保留现有密文；填写新地址才会替换。"
-                  : "支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。"}
-              </DialogDescription>
-            </DialogHeader>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="proxy-name">名称</FieldLabel>
-                <Input
-                  id="proxy-name"
-                  name="name"
-                  required
-                  defaultValue={editor.item?.name ?? ""}
+                  : "支持 HTTP、HTTPS、SOCKS5 和 SOCKS5H。"
+              }
+              onOpenChange={(open) =>
+                setEditor((current) => ({ ...current, open }))
+              }
+            />
+          }
+          content={
+            <LayoutContent>
+              <FormLayout>
+                <TextInput
+                  label="名称"
+                  value={name}
+                  onChange={setName}
+                  isRequired
                   placeholder="例如 东京出口"
                 />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="proxy-url">
-                  代理地址{editor.item ? "（可选）" : ""}
-                </FieldLabel>
-                <Input
-                  id="proxy-url"
-                  name="url"
-                  required={!editor.item}
+                <TextInput
+                  label={editor.item ? "代理地址（可选）" : "代理地址"}
+                  value={url}
+                  onChange={setUrl}
                   type="password"
-                  autoComplete="new-password"
-                  className="font-mono"
+                  isRequired={!editor.item}
+                  isOptional={Boolean(editor.item)}
                   placeholder={
                     editor.item
                       ? "留空保持当前地址"
                       : "socks5h://user:password@proxy.example:1080"
                   }
+                  description="认证信息不会返回浏览器；保存后列表只显示脱敏端点。"
                 />
-                <FieldDescription>
-                  认证信息不会返回浏览器；保存后列表只显示脱敏端点。
-                </FieldDescription>
-              </Field>
-            </FieldGroup>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setEditor({ item: null, open: false })}
-              >
-                取消
-              </Button>
-              <Button type="submit" disabled={pending}>
-                {pending ? <Spinner /> : null}保存
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
+              </FormLayout>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack hAlign="end" gap={2}>
+                <Button
+                  label="取消"
+                  onClick={() => setEditor({ item: null, open: false })}
+                />
+                <Button
+                  label="保存"
+                  variant="primary"
+                  isLoading={pending}
+                  onClick={() => void save()}
+                />
+              </HStack>
+            </LayoutFooter>
+          }
+        />
       </Dialog>
 
       <AlertDialog
-        open={Boolean(deleting)}
+        isOpen={Boolean(deleting)}
         onOpenChange={(open) => {
           if (!open) setDeleting(null)
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>删除“{deleting?.name}”？</AlertDialogTitle>
-            <AlertDialogDescription>
-              删除后无法恢复。正在被系统或模型账户使用的代理不能删除。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={pending}
-              onClick={() => void remove()}
-            >
-              删除代理
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+        title={`删除“${deleting?.name ?? ""}”？`}
+        description="删除后无法恢复。正在被系统或模型账户使用的代理不能删除。"
+        actionLabel="删除代理"
+        cancelLabel="取消"
+        isActionLoading={pending}
+        onAction={() => void remove()}
+      />
+    </>
   )
 }
