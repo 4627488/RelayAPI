@@ -31,7 +31,7 @@ export function PageHeader({
       {title || accessory ? (
         <div className="flex min-w-0 flex-wrap items-center gap-2.5">
           {title ? (
-            <h1 className="font-heading text-2xl font-semibold tracking-tight">
+            <h1 className="font-heading text-xl font-semibold">
               {title}
             </h1>
           ) : null}
@@ -57,8 +57,8 @@ export interface StatItem {
 
 const statTones = {
   default: "text-foreground",
-  positive: "text-emerald-600 dark:text-emerald-400",
-  warning: "text-amber-600 dark:text-amber-400",
+  positive: "text-positive",
+  warning: "text-warning",
   negative: "text-destructive",
 }
 
@@ -72,7 +72,7 @@ export function StatStrip({
   return (
     <dl
       className={cn(
-        "grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border/70 ring-1 ring-foreground/10",
+        "grid grid-cols-2 gap-px overflow-hidden rounded-lg bg-border",
         className
       )}
     >
@@ -157,7 +157,7 @@ export function InfoBar({
   return (
     <div
       className={cn(
-        "flex gap-3 rounded-xl bg-muted/35 px-4 py-3 text-sm leading-relaxed text-muted-foreground ring-1 ring-foreground/10",
+        "flex gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm leading-relaxed text-muted-foreground",
         className
       )}
     >

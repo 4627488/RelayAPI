@@ -22,8 +22,9 @@ Compose 中单个 RelayAPI 镜像同时提供前端与统一 API 入口，默认
 
 ## 前端
 
-`web/` 是基于 Vite、React 19、Tailwind CSS v4 和 shadcn/ui Nova（Base UI）
-构建的独立源码应用。生产镜像会把其构建产物打包进 Go 服务，因此部署时不再需要
+`web/` 是基于 Vite、React 19、Tailwind CSS v4 和 shadcn/ui（Base UI）
+构建的独立源码应用。视觉规范是仓库根目录的 [DESIGN.md](DESIGN.md)
+（Relay Desk）。生产镜像会把其构建产物打包进 Go 服务，因此部署时不再需要
 单独的 Web/Nginx 容器。
 
 ```bash

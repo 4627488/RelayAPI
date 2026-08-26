@@ -247,7 +247,6 @@ function UserOverview({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title={`你好，${session.tenant?.name ?? ""}`} />
       <UsageMetrics report={usage} />
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <UsageChart report={usage} />

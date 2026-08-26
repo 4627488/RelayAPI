@@ -262,9 +262,9 @@ export function ProxiesView() {
                   </div>
                   {result ? (
                     result.ok ? (
-                      <div className="space-y-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3">
+                      <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3">
                         <div className="flex items-center justify-between gap-3">
-                          <span className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                          <span className="flex items-center gap-2 text-sm font-medium text-positive">
                             <CircleCheckIcon className="size-4" />
                             代理可用
                           </span>

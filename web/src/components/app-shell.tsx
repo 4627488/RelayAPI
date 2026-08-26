@@ -12,7 +12,6 @@ import {
   PackageOpenIcon,
   Settings2Icon,
   PlugIcon,
-  SendIcon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
   SunIcon,
@@ -278,8 +277,8 @@ export function AppShell({
                 size="lg"
                 onClick={() => onPageChange("overview")}
               >
-                <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <SendIcon />
+                <div className="flex size-8 items-center justify-center rounded-md bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
+                  R
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">RelayAPI</span>
