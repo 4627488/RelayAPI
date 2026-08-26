@@ -19,15 +19,12 @@ import { toast } from "sonner"
 import type { Page } from "@/components/app-shell"
 import { LogsTable, MetricGrid, UsageChart } from "@/components/data-views"
 import { UsageView } from "@/components/usage-view"
-import { LoadingView } from "@/components/loading-view"
-import { LoadErrorView } from "@/components/load-error-view"
 import { ProvidersView } from "@/components/providers-view"
 import { PricingView } from "@/components/pricing-view"
 import { ProxiesView } from "@/components/proxies-view"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { RuntimeSettingsView } from "@/components/runtime-settings-view"
 import { AdminSubscriptionsView } from "@/components/admin-subscriptions-view"
-import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -59,6 +56,7 @@ import {
 } from "@/components/ui/dialog"
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -169,9 +167,30 @@ function UsersHub({
     void load(true)
   }, [load])
 
-  if (loading) return <LoadingView />
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    )
+  }
   if (loadError && users.length === 0 && invitations.length === 0) {
-    return <LoadErrorView message={loadError} onRetry={() => void load(true)} />
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <TriangleAlertIcon />
+          </EmptyMedia>
+          <EmptyTitle>加载失败</EmptyTitle>
+          <EmptyDescription>{loadError}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" onClick={() => void load(true)}>
+            重试
+          </Button>
+        </EmptyContent>
+      </Empty>
+    )
   }
 
   const pendingInvites = invitations.filter((item) => {
@@ -267,13 +286,29 @@ function AdminOverviewPage({
     void load(true)
   }, [load])
 
-  if (loading) return <LoadingView />
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    )
+  }
   if (!overview || !usage) {
     return (
-      <LoadErrorView
-        message={loadError || "管理数据不完整"}
-        onRetry={() => void load(true)}
-      />
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <TriangleAlertIcon />
+          </EmptyMedia>
+          <EmptyTitle>加载失败</EmptyTitle>
+          <EmptyDescription>{loadError || "管理数据不完整"}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" onClick={() => void load(true)}>
+            重试
+          </Button>
+        </EmptyContent>
+      </Empty>
     )
   }
 
@@ -849,19 +884,17 @@ function InvitationsView({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader
-        actions={
-          <Button
-            onClick={() => {
-              setShowResult(false)
-              setOpen(true)
-            }}
-          >
-            <PlusIcon data-icon="inline-start" />
-            生成邀请
-          </Button>
-        }
-      />
+      <div className="flex justify-end">
+        <Button
+          onClick={() => {
+            setShowResult(false)
+            setOpen(true)
+          }}
+        >
+          <PlusIcon data-icon="inline-start" />
+          生成邀请
+        </Button>
+      </div>
       {result ? (
         <Card>
           <CardHeader className="flex-row items-start justify-between gap-4">

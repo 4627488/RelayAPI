@@ -64,8 +64,14 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
-import { InfoBar, PageHeader, StatStrip } from "@/components/workspace-ui"
 import {
   api,
   deleteRequest,
@@ -194,27 +200,40 @@ export function ProxiesView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader
-        actions={
-          <Button onClick={() => setEditor({ item: null, open: true })}>
-            <PlusIcon data-icon="inline-start" />
-            添加代理
-          </Button>
-        }
-      />
+      <div className="flex justify-end">
+        <Button onClick={() => setEditor({ item: null, open: true })}>
+          <PlusIcon data-icon="inline-start" />
+          添加代理
+        </Button>
+      </div>
 
-      <StatStrip
-        className="grid-cols-3"
-        items={[
-          { label: "代理条目", value: items.length },
-          { label: "账户绑定", value: accountUses },
-          { label: "本次已测", value: tested },
-        ]}
-      />
+      <div className="grid grid-cols-3 gap-2">
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>代理条目</ItemDescription>
+            <ItemTitle className="tabular-nums">{items.length}</ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>账户绑定</ItemDescription>
+            <ItemTitle className="tabular-nums">{accountUses}</ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>本次已测</ItemDescription>
+            <ItemTitle className="tabular-nums">{tested}</ItemTitle>
+          </ItemContent>
+        </Item>
+      </div>
 
-      <InfoBar icon={ShieldCheckIcon}>
-        地址与认证信息加密保存且不回显；连通性测试固定访问出口信息服务。
-      </InfoBar>
+      <Alert>
+        <ShieldCheckIcon />
+        <AlertDescription>
+          地址与认证信息加密保存且不回显；连通性测试固定访问出口信息服务。
+        </AlertDescription>
+      </Alert>
 
       {items.length ? (
         <div className="grid items-stretch gap-3 lg:grid-cols-2">
@@ -262,9 +281,9 @@ export function ProxiesView() {
                   </div>
                   {result ? (
                     result.ok ? (
-                      <div className="space-y-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3">
+                      <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3">
                         <div className="flex items-center justify-between gap-3">
-                          <span className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                          <span className="flex items-center gap-2 text-sm font-medium">
                             <CircleCheckIcon className="size-4" />
                             代理可用
                           </span>

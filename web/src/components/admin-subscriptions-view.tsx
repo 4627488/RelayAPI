@@ -23,7 +23,6 @@ import { toast } from "sonner"
 
 import { ModelSelector } from "@/components/model-selector"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
-import { PageHeader } from "@/components/workspace-ui"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -397,23 +396,21 @@ export function AdminSubscriptionsView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader
-        actions={
-          <Button
-            disabled={
-              !selected ||
-              !isAllocatable(selected) ||
-              !tenants.some((tenant) => tenant.enabled)
-            }
-            onClick={() => selected && openAssignment(selected)}
-          >
-            <UserPlusIcon data-icon="inline-start" />
-            {selected?.item.capacity_mode === "unmetered"
-              ? "添加用户"
-              : "分配给租户"}
-          </Button>
-        }
-      />
+      <div className="flex justify-end">
+        <Button
+          disabled={
+            !selected ||
+            !isAllocatable(selected) ||
+            !tenants.some((tenant) => tenant.enabled)
+          }
+          onClick={() => selected && openAssignment(selected)}
+        >
+          <UserPlusIcon data-icon="inline-start" />
+          {selected?.item.capacity_mode === "unmetered"
+            ? "添加用户"
+            : "分配给租户"}
+        </Button>
+      </div>
 
       {loading ? (
         <AllocationSkeleton />

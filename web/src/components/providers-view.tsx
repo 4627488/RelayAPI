@@ -16,9 +16,11 @@ import {
   NetworkIcon,
   PlusIcon,
   RefreshCwIcon,
+  SearchIcon,
   ShieldCheckIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -62,6 +64,17 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item"
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -80,12 +93,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  InfoBar,
-  PageHeader,
-  SearchField,
-  StatStrip,
-} from "@/components/workspace-ui"
 import { Textarea } from "@/components/ui/textarea"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
 import {
@@ -385,55 +392,82 @@ export function ProvidersView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader
-        actions={
-          <>
-            <Button
-              variant="outline"
-              disabled={syncingQuota}
-              onClick={() => void syncQuota()}
-            >
-              {syncingQuota ? (
-                <Spinner />
-              ) : (
-                <RefreshCwIcon data-icon="inline-start" />
-              )}
-              刷新额度
-            </Button>
-            <Button
-              onClick={() => {
-                setReauthenticating(null)
-                setConnectOpen(true)
-              }}
-            >
-              <PlusIcon data-icon="inline-start" />
-              连接账户
-            </Button>
-          </>
-        }
-      />
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          variant="outline"
+          disabled={syncingQuota}
+          onClick={() => void syncQuota()}
+        >
+          {syncingQuota ? (
+            <Spinner />
+          ) : (
+            <RefreshCwIcon data-icon="inline-start" />
+          )}
+          刷新额度
+        </Button>
+        <Button
+          onClick={() => {
+            setReauthenticating(null)
+            setConnectOpen(true)
+          }}
+        >
+          <PlusIcon data-icon="inline-start" />
+          连接账户
+        </Button>
+      </div>
 
-      <StatStrip
-        className="grid-cols-3"
-        items={[
-          { label: "账户", value: accounts.length },
-          { label: "可用", value: enabled },
-          { label: "公开模型", value: modelCount },
-        ]}
-      />
+      <div className="grid grid-cols-3 gap-2">
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>账户</ItemDescription>
+            <ItemTitle className="tabular-nums">{accounts.length}</ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>可用</ItemDescription>
+            <ItemTitle className="tabular-nums">{enabled}</ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>公开模型</ItemDescription>
+            <ItemTitle className="tabular-nums">{modelCount}</ItemTitle>
+          </ItemContent>
+        </Item>
+      </div>
 
-      <InfoBar icon={ShieldCheckIcon}>
-        一行一个上游账户。发布模型决定对外目录；测试会向该账户发一次最短推理，不走用户计费。
-      </InfoBar>
+      <Alert>
+        <ShieldCheckIcon />
+        <AlertDescription>
+          一行一个上游账户。发布模型决定对外目录；测试会向该账户发一次最短推理，不走用户计费。
+        </AlertDescription>
+      </Alert>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <SearchField
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          onClear={() => setSearch("")}
-          placeholder="搜索账户或模型"
-          className="flex-1"
-        />
+        <InputGroup className="flex-1">
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="搜索账户或模型"
+          />
+          {search ? (
+            <InputGroupAddon align="inline-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => setSearch("")}
+                aria-label="清除搜索"
+              >
+                <XIcon />
+              </Button>
+            </InputGroupAddon>
+          ) : null}
+        </InputGroup>
         <Select
           items={[
             { value: "all", label: "全部提供商" },

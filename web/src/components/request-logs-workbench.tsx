@@ -46,6 +46,17 @@ import {
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item"
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -65,7 +76,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { SearchField, StatStrip } from "@/components/workspace-ui"
 import {
   api,
   type RequestLog,
@@ -284,45 +294,72 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
-      <StatStrip
-        className="sm:grid-cols-3 xl:grid-cols-6"
-        items={[
-          {
-            label: "请求",
-            value: compact(data.summary.requests),
-            detail: `${data.summary.errors} 个错误`,
-          },
-          {
-            label: "错误率",
-            value: data.summary.requests
-              ? `${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%`
-              : "0%",
-            detail: "HTTP 错误或中断",
-          },
-          {
-            label: "Tokens",
-            value: compactTokens(data.summary.tokens),
-            detail: `缓存命中 ${cacheRate}`,
-          },
-          {
-            label: "负载",
-            value: bytes(
-              data.summary.request_bytes + data.summary.response_bytes
-            ),
-            detail: `${bytes(data.summary.request_bytes)} ↑ · ${bytes(data.summary.response_bytes)} ↓`,
-          },
-          {
-            label: "总耗时",
-            value: data.summary.requests
-              ? `P50 ${formatMS(data.summary.latency_p50_ms)}`
-              : "无数据",
-            detail: data.summary.requests
-              ? `P95 ${formatMS(data.summary.latency_p95_ms)}`
-              : "当前筛选范围",
-          },
-          { label: "费用", value: money(data.summary.cost_nano_usd) },
-        ]}
-      />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>请求</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {compact(data.summary.requests)}
+            </ItemTitle>
+            <ItemDescription>{data.summary.errors} 个错误</ItemDescription>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>错误率</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {data.summary.requests
+                ? `${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%`
+                : "0%"}
+            </ItemTitle>
+            <ItemDescription>HTTP 错误或中断</ItemDescription>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>Tokens</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {compactTokens(data.summary.tokens)}
+            </ItemTitle>
+            <ItemDescription>缓存命中 {cacheRate}</ItemDescription>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>负载</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {bytes(data.summary.request_bytes + data.summary.response_bytes)}
+            </ItemTitle>
+            <ItemDescription>
+              {bytes(data.summary.request_bytes)} ↑ ·{" "}
+              {bytes(data.summary.response_bytes)} ↓
+            </ItemDescription>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>总耗时</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {data.summary.requests
+                ? `P50 ${formatMS(data.summary.latency_p50_ms)}`
+                : "无数据"}
+            </ItemTitle>
+            <ItemDescription>
+              {data.summary.requests
+                ? `P95 ${formatMS(data.summary.latency_p95_ms)}`
+                : "当前筛选范围"}
+            </ItemDescription>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>费用</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {money(data.summary.cost_nano_usd)}
+            </ItemTitle>
+          </ItemContent>
+        </Item>
+      </div>
 
       <Card>
         <CardHeader className="border-b">
@@ -336,16 +373,33 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               <FieldLabel htmlFor="log-search" className="sr-only">
                 搜索日志
               </FieldLabel>
-              <SearchField
-                id="log-search"
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value)
-                  setPage(1)
-                }}
-                onClear={() => setQuery("")}
-                placeholder="搜索模型、路径、用户、Key、Trace ID 或错误"
-              />
+              <InputGroup>
+                <InputGroupAddon>
+                  <SearchIcon />
+                </InputGroupAddon>
+                <InputGroupInput
+                  id="log-search"
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.target.value)
+                    setPage(1)
+                  }}
+                  placeholder="搜索模型、路径、用户、Key、Trace ID 或错误"
+                />
+                {query ? (
+                  <InputGroupAddon align="inline-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => setQuery("")}
+                      aria-label="清除搜索"
+                    >
+                      <XIcon />
+                    </Button>
+                  </InputGroupAddon>
+                ) : null}
+              </InputGroup>
             </Field>
             <Field>
               <FieldLabel className="sr-only">状态</FieldLabel>

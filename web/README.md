@@ -1,6 +1,6 @@
-# React + TypeScript + Vite + shadcn/ui
+# RelayAPI console
 
-This is a template for a new Vite project with React, TypeScript, and shadcn/ui.
+Vite + React + TypeScript + official shadcn/ui **Mira** preset (Base UI, neutral, Inter, Hugeicons). Visual contract: [`../DESIGN.md`](../DESIGN.md). Agent rules: [`../AGENTS.md`](../AGENTS.md).
 
 ## Adding components
 

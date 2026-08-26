@@ -1,4 +1,4 @@
-import { PlusIcon, Trash2Icon, WandSparklesIcon } from "lucide-react"
+import { ListPlusIcon, PlusIcon, Trash2Icon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -97,7 +97,7 @@ export function ApiKeyModelAliasEditor({
                 })
               }
             >
-              <WandSparklesIcon data-icon="inline-start" />
+              <ListPlusIcon data-icon="inline-start" />
               <span className="flex flex-col gap-1">
                 <span>{preset.label}</span>
                 <span className="text-xs font-normal text-muted-foreground">

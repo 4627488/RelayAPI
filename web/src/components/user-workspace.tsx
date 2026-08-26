@@ -15,10 +15,10 @@ import {
   PencilIcon,
   PlusIcon,
   Trash2Icon,
+  TriangleAlertIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -67,8 +67,6 @@ import {
 } from "@/components/ui/table"
 import { LogsTable, UsageChart, UsageMetrics } from "@/components/data-views"
 import { UsageView } from "@/components/usage-view"
-import { LoadingView } from "@/components/loading-view"
-import { LoadErrorView } from "@/components/load-error-view"
 import { ModelSelector } from "@/components/model-selector"
 import {
   ApiKeyModelAliasEditor,
@@ -136,9 +134,30 @@ function KeysPage({ tenantModels }: { tenantModels: string[] }) {
     void load(true)
   }, [load])
 
-  if (loading) return <LoadingView />
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    )
+  }
   if (loadError && keys.length === 0) {
-    return <LoadErrorView message={loadError} onRetry={() => void load(true)} />
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <TriangleAlertIcon />
+          </EmptyMedia>
+          <EmptyTitle>加载失败</EmptyTitle>
+          <EmptyDescription>{loadError}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" onClick={() => void load(true)}>
+            重试
+          </Button>
+        </EmptyContent>
+      </Empty>
+    )
   }
 
   return (
@@ -173,24 +192,43 @@ function GuidePage({ tenantModels }: { tenantModels: string[] }) {
     }
   }, [])
 
-  if (loading) return <LoadingView />
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    )
+  }
   if (loadError && keys.length === 0) {
     return (
-      <LoadErrorView
-        message={loadError}
-        onRetry={() => {
-          setLoading(true)
-          setLoadError("")
-          void api<{ items: ApiKey[] }>("/api/keys")
-            .then((value) => setKeys(value.items ?? []))
-            .catch((cause) =>
-              setLoadError(
-                cause instanceof Error ? cause.message : "无法读取密钥"
-              )
-            )
-            .finally(() => setLoading(false))
-        }}
-      />
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <TriangleAlertIcon />
+          </EmptyMedia>
+          <EmptyTitle>加载失败</EmptyTitle>
+          <EmptyDescription>{loadError}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setLoading(true)
+              setLoadError("")
+              void api<{ items: ApiKey[] }>("/api/keys")
+                .then((value) => setKeys(value.items ?? []))
+                .catch((cause) =>
+                  setLoadError(
+                    cause instanceof Error ? cause.message : "无法读取密钥"
+                  )
+                )
+                .finally(() => setLoading(false))
+            }}
+          >
+            重试
+          </Button>
+        </EmptyContent>
+      </Empty>
     )
   }
 
@@ -235,19 +273,34 @@ function UserOverview({
     void load(true)
   }, [load])
 
-  if (loading) return <LoadingView />
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner />
+      </div>
+    )
+  }
   if (!usage) {
     return (
-      <LoadErrorView
-        message={loadError || "账户数据不完整"}
-        onRetry={() => void load(true)}
-      />
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <TriangleAlertIcon />
+          </EmptyMedia>
+          <EmptyTitle>加载失败</EmptyTitle>
+          <EmptyDescription>{loadError || "账户数据不完整"}</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" onClick={() => void load(true)}>
+            重试
+          </Button>
+        </EmptyContent>
+      </Empty>
     )
   }
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title={`你好，${session.tenant?.name ?? ""}`} />
       <UsageMetrics report={usage} />
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <UsageChart report={usage} />
@@ -510,14 +563,12 @@ function KeysView({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader
-        actions={
-          <Button onClick={openCreateDialog}>
-            <PlusIcon data-icon="inline-start" />
-            创建 Key
-          </Button>
-        }
-      />
+      <div className="flex justify-end">
+        <Button onClick={openCreateDialog}>
+          <PlusIcon data-icon="inline-start" />
+          创建 Key
+        </Button>
+      </div>
 
       <Card>
         <CardHeader>
