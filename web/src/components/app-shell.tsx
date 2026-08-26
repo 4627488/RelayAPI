@@ -10,25 +10,14 @@ import {
   SideNavSection,
 } from "@astryxdesign/core/SideNav"
 import { Text } from "@astryxdesign/core/Text"
-import { VStack } from "@astryxdesign/core/Layout"
 import {
-  BarChart3Icon,
-  BookOpenIcon,
-  GaugeIcon,
-  KeyRoundIcon,
-  ListIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
-  PackageOpenIcon,
-  PlugIcon,
   SendIcon,
-  Settings2Icon,
   ShieldCheckIcon,
-  SlidersHorizontalIcon,
   SunIcon,
   UserRoundIcon,
-  UsersIcon,
 } from "lucide-react"
 
 import { useColorMode, type ColorMode } from "@/components/app-providers"
@@ -52,43 +41,30 @@ export type Workspace = "user" | "admin"
 interface NavigationItem {
   id: Page
   label: string
-  icon: ComponentType
-  section?: string
 }
 
 const userItems: NavigationItem[] = [
-  { id: "overview", label: "总览", icon: GaugeIcon },
-  { id: "usage", label: "用量", icon: BarChart3Icon },
-  { id: "keys", label: "API Keys", icon: KeyRoundIcon },
-  { id: "guide", label: "接入指南", icon: BookOpenIcon },
-  { id: "subscriptions", label: "我的订阅", icon: PackageOpenIcon },
-  { id: "logs", label: "请求日志", icon: ListIcon },
+  { id: "overview", label: "工作台" },
+  { id: "keys", label: "密钥" },
+  { id: "usage", label: "用量" },
+  { id: "logs", label: "日志" },
 ]
 
-const adminItems: NavigationItem[] = [
-  { id: "overview", label: "管理总览", icon: GaugeIcon, section: "运营" },
-  { id: "users", label: "用户", icon: UsersIcon, section: "运营" },
-  {
-    id: "subscriptions",
-    label: "订阅分配",
-    icon: PackageOpenIcon,
-    section: "运营",
-  },
-  { id: "usage", label: "全局用量", icon: BarChart3Icon, section: "运营" },
-  { id: "logs", label: "请求日志", icon: ListIcon, section: "运营" },
-  { id: "providers", label: "模型管理", icon: PlugIcon, section: "上游" },
-  { id: "pricing", label: "模型设置", icon: Settings2Icon, section: "上游" },
-  {
-    id: "settings",
-    label: "系统设置",
-    icon: SlidersHorizontalIcon,
-    section: "上游",
-  },
+const adminItems: Array<NavigationItem & { section: string }> = [
+  { id: "overview", label: "工作台", section: "运营" },
+  { id: "users", label: "用户", section: "运营" },
+  { id: "usage", label: "用量", section: "运营" },
+  { id: "logs", label: "日志", section: "运营" },
+  { id: "providers", label: "模型", section: "上游" },
+  { id: "pricing", label: "定价", section: "上游" },
+  { id: "subscriptions", label: "订阅", section: "上游" },
+  { id: "settings", label: "设置", section: "上游" },
 ]
 
 function navPage(page: Page): Page {
   if (page === "invitations") return "users"
   if (page === "proxies") return "settings"
+  if (page === "guide") return "keys"
   return page
 }
 
@@ -121,9 +97,7 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
     }
   }, [email])
 
-  return (
-    <Avatar src={source || undefined} name={name} size="sm" />
-  )
+  return <Avatar src={source || undefined} name={name} size="sm" />
 }
 
 const themeItems: Array<{
@@ -163,26 +137,22 @@ export function AppShell({
   const admin = workspace === "admin" && session.is_admin
   const name = session.tenant.name || "用户"
   const subtitle = session.tenant.owner_email || ""
-  const items = admin ? adminItems : userItems
   const active = navPage(page)
-
-  const groups: { title: string; items: NavigationItem[] }[] = []
-  for (const item of items) {
-    const title = item.section || "工作区"
-    const last = groups.at(-1)
-    if (last && last.title === title) last.items.push(item)
-    else groups.push({ title, items: [item] })
-  }
 
   return (
     <AstryxAppShell
       height="fill"
-      variant="elevated"
-      contentPadding={4}
+      variant="section"
+      contentPadding={0}
       sideNav={
         <SideNav
           collapsible
-          resizable={{ defaultWidth: 260, minWidth: 220, maxWidth: 320 }}
+          resizable={{
+            defaultWidth: 240,
+            minWidth: 200,
+            maxWidth: 300,
+            autoSaveId: "relayapi.sidenav",
+          }}
           header={
             <SideNavHeading
               heading="RelayAPI"
@@ -227,7 +197,9 @@ export function AppShell({
                     icon: <item.icon />,
                     onClick: () => setMode(item.value),
                     endContent:
-                      mode === item.value ? <Text type="supporting">当前</Text> : undefined,
+                      mode === item.value ? (
+                        <Text type="supporting">当前</Text>
+                      ) : undefined,
                   })),
                 },
                 { type: "divider" },
@@ -246,23 +218,49 @@ export function AppShell({
             />
           }
         >
-          {groups.map((group) => (
-            <SideNavSection key={group.title} title={group.title}>
-              {group.items.map((item) => (
+          {admin ? (
+            <>
+              <SideNavSection title="运营">
+                {adminItems
+                  .filter((item) => item.section === "运营")
+                  .map((item) => (
+                    <SideNavItem
+                      key={item.id}
+                      label={item.label}
+                      isSelected={active === item.id}
+                      onClick={() => onPageChange(item.id)}
+                    />
+                  ))}
+              </SideNavSection>
+              <SideNavSection title="上游">
+                {adminItems
+                  .filter((item) => item.section === "上游")
+                  .map((item) => (
+                    <SideNavItem
+                      key={item.id}
+                      label={item.label}
+                      isSelected={active === item.id}
+                      onClick={() => onPageChange(item.id)}
+                    />
+                  ))}
+              </SideNavSection>
+            </>
+          ) : (
+            <SideNavSection title="工作区">
+              {userItems.map((item) => (
                 <SideNavItem
                   key={item.id}
                   label={item.label}
-                  icon={item.icon}
                   isSelected={active === item.id}
                   onClick={() => onPageChange(item.id)}
                 />
               ))}
             </SideNavSection>
-          ))}
+          )}
         </SideNav>
       }
     >
-      <VStack gap={4}>{children}</VStack>
+      {children}
     </AstryxAppShell>
   )
 }

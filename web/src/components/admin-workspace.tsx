@@ -6,7 +6,6 @@ import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
 import { EmptyState } from "@astryxdesign/core/EmptyState"
 import { FormLayout } from "@astryxdesign/core/FormLayout"
-import { Icon } from "@astryxdesign/core/Icon"
 import {
   HStack,
   Layout,
@@ -23,7 +22,6 @@ import { Text } from "@astryxdesign/core/Text"
 import { TextInput } from "@astryxdesign/core/TextInput"
 import { useToast } from "@astryxdesign/core/Toast"
 import {
-  ActivityIcon,
   BanIcon,
   CircleCheckIcon,
   CircleDollarSignIcon,
@@ -32,8 +30,6 @@ import {
   PlusIcon,
   SendIcon,
   Trash2Icon,
-  TriangleAlertIcon,
-  UserCheckIcon,
   UsersIcon,
   XIcon,
 } from "lucide-react"
@@ -57,8 +53,7 @@ import { AdminSubscriptionsView } from "@/components/admin-subscriptions-view"
 import {
   CopyField,
   CountBadge,
-  PageHeader,
-  SectionCard,
+  PageFrame,
   StatusLabel,
 } from "@/components/page-kit"
 import {
@@ -159,51 +154,60 @@ function UsersHub({
     return !item.used_at && !item.revoked_at && !expired
   }).length
 
+  const tabs = (
+    <TabList
+      value={tab}
+      onChange={(value) => {
+        if (value === "accounts" || value === "invites") setTab(value)
+      }}
+    >
+      <Tab value="accounts" label="账号" />
+      <Tab
+        value="invites"
+        label="邀请"
+        endContent={
+          pendingInvites > 0 ? <CountBadge value={pendingInvites} /> : undefined
+        }
+      />
+    </TabList>
+  )
+
+  if (tab === "accounts") {
+    return (
+      <UsersView
+        users={users}
+        currentUserId={currentUserId}
+        accessory={tabs}
+        onChanged={() => load()}
+      />
+    )
+  }
   return (
-    <VStack gap={4}>
-      <TabList
-        value={tab}
-        onChange={(value) => {
-          if (value === "accounts" || value === "invites") setTab(value)
-        }}
-      >
-        <Tab value="accounts" label="账号" />
-        <Tab
-          value="invites"
-          label="邀请"
-          endContent={
-            pendingInvites > 0 ? <CountBadge value={pendingInvites} /> : undefined
-          }
-        />
-      </TabList>
-      {tab === "accounts" ? (
-        <UsersView
-          users={users}
-          currentUserId={currentUserId}
-          onChanged={() => load()}
-        />
-      ) : (
-        <InvitationsView items={invitations} onChanged={() => load()} />
-      )}
-    </VStack>
+    <InvitationsView
+      items={invitations}
+      accessory={tabs}
+      onChanged={() => load()}
+    />
   )
 }
 
 function SettingsHub({ initialTab }: { initialTab: "runtime" | "proxies" }) {
   const [tab, setTab] = useState(initialTab)
-  return (
-    <VStack gap={4}>
-      <TabList
-        value={tab}
-        onChange={(value) => {
-          if (value === "runtime" || value === "proxies") setTab(value)
-        }}
-      >
-        <Tab value="runtime" label="运行策略" />
-        <Tab value="proxies" label="出站代理" />
-      </TabList>
-      {tab === "runtime" ? <RuntimeSettingsView /> : <ProxiesView />}
-    </VStack>
+  const tabs = (
+    <TabList
+      value={tab}
+      onChange={(value) => {
+        if (value === "runtime" || value === "proxies") setTab(value)
+      }}
+    >
+      <Tab value="runtime" label="运行策略" />
+      <Tab value="proxies" label="出站代理" />
+    </TabList>
+  )
+  return tab === "runtime" ? (
+    <RuntimeSettingsView accessory={tabs} />
+  ) : (
+    <ProxiesView accessory={tabs} />
   )
 }
 
@@ -259,83 +263,62 @@ function AdminOverviewPage({
   }
 
   return (
-    <VStack gap={4}>
-      <MetricGrid
-        items={[
-          {
-            label: "用户",
-            value: compact(overview.users),
-            hint: `${overview.enabled_users} 个账户正常`,
-            icon: UsersIcon,
-          },
-          {
-            label: "有效 Keys",
-            value: compact(overview.active_api_keys),
-            hint: "用户创建的访问凭据",
-            icon: KeyRoundIcon,
-          },
-          {
-            label: "今日请求",
-            value: compact(overview.today.requests),
-            hint: `${compactTokens(overview.today.tokens)} tokens`,
-            icon: ActivityIcon,
-          },
-          {
-            label: "今日错误",
-            value: compact(overview.today.errors),
-            hint: `费用 ${money(overview.today.cost_nano_usd)}`,
-            icon: TriangleAlertIcon,
-          },
-        ]}
-      />
-      <HStack gap={4} wrap="wrap" vAlign="stretch">
-        <StackFill>
-          <UsageChart report={usage} />
-        </StackFill>
-        <SectionCard title="需要关注">
-          <List>
-            <ListItem
-              label="待使用邀请"
-              description="仍在有效期内"
-              startContent={<Icon icon={SendIcon} color="secondary" size="sm" />}
-              endContent={<CountBadge value={overview.pending_invitations} />}
-              onClick={() => onPageChange("invitations")}
-            />
-            <ListItem
-              label="正常用户"
-              description="可登录并调用 API"
-              startContent={
-                <Icon icon={UserCheckIcon} color="secondary" size="sm" />
-              }
-              endContent={<CountBadge value={overview.enabled_users} />}
-              onClick={() => onPageChange("users")}
-            />
-          </List>
-        </SectionCard>
-      </HStack>
-      <LogsTable
-        logs={logs}
-        action={<LogsTableAction onOpen={() => onPageChange("logs")} />}
-      />
-    </VStack>
-  )
-}
-
-function StackFill({ children }: { children: ReactNode }) {
-  return (
-    <VStack gap={0} width="100%">
-      {children}
-    </VStack>
+    <PageFrame title="工作台">
+      <VStack gap={0}>
+        <MetricGrid
+          items={[
+            {
+              label: "用户",
+              value: compact(overview.users),
+              hint: `${overview.enabled_users} 正常`,
+            },
+            {
+              label: "Keys",
+              value: compact(overview.active_api_keys),
+            },
+            {
+              label: "今日请求",
+              value: compact(overview.today.requests),
+              hint: compactTokens(overview.today.tokens),
+            },
+            {
+              label: "今日错误",
+              value: compact(overview.today.errors),
+              hint: money(overview.today.cost_nano_usd),
+            },
+          ]}
+        />
+        <UsageChart report={usage} />
+        <List density="compact" hasDividers>
+          <ListItem
+            label="待使用邀请"
+            endContent={<CountBadge value={overview.pending_invitations} />}
+            onClick={() => onPageChange("invitations")}
+          />
+          <ListItem
+            label="正常用户"
+            endContent={<CountBadge value={overview.enabled_users} />}
+            onClick={() => onPageChange("users")}
+          />
+        </List>
+        <LogsTable
+          logs={logs}
+          action={<LogsTableAction onOpen={() => onPageChange("logs")} />}
+        />
+      </VStack>
+    </PageFrame>
   )
 }
 
 function UsersView({
   users,
   currentUserId,
+  accessory,
   onChanged,
 }: {
   users: User[]
   currentUserId: string
+  accessory?: ReactNode
   onChanged: () => Promise<void>
 }) {
   const toast = useToast()
@@ -487,14 +470,15 @@ function UsersView({
   }))
 
   return (
-    <VStack gap={4}>
-      <SectionCard title="全部用户" description={`${users.length} 个账户`}>
+    <>
+    <PageFrame title="用户" accessory={accessory}>
         {rows.length ? (
           <Table
             data={rows}
             idKey="id"
             density="compact"
             hasHover
+            textOverflow="truncate"
             columns={[
               {
                 key: "name",
@@ -593,11 +577,10 @@ function UsersView({
         ) : (
           <EmptyState
             title="还没有用户"
-            description="生成邀请链接来添加第一个用户。"
             icon={<UsersIcon />}
           />
         )}
-      </SectionCard>
+    </PageFrame>
 
       <Dialog
         isOpen={Boolean(creditUser)}
@@ -728,7 +711,7 @@ function UsersView({
           }
         />
       </Dialog>
-    </VStack>
+    </>
   )
 }
 
@@ -760,9 +743,11 @@ function invitationStatus(item: Invitation, now: number) {
 
 function InvitationsView({
   items,
+  accessory,
   onChanged,
 }: {
   items: Invitation[]
+  accessory?: ReactNode
   onChanged: () => Promise<void>
 }) {
   const toast = useToast()
@@ -882,45 +867,46 @@ function InvitationsView({
   })
 
   return (
-    <VStack gap={4}>
-      <PageHeader
-        actions={
-          <Button
-            label="生成邀请"
-            variant="primary"
-            icon={<PlusIcon />}
-            onClick={openCreate}
-          />
-        }
-      />
+    <>
+    <PageFrame
+      title="用户"
+      accessory={accessory}
+      actions={
+        <Button
+          label="生成邀请"
+          variant="primary"
+          icon={<PlusIcon />}
+          onClick={openCreate}
+        />
+      }
+    >
+      <VStack gap={0}>
       {result ? (
-        <SectionCard
-          title="最近生成的邀请链接"
-          description="关闭标签页后无法再次查看。"
-          actions={
+        <VStack gap={3} padding={4}>
+          <HStack hAlign="between" vAlign="center">
+            <Text weight="semibold">邀请链接</Text>
             <Button
-              label="清除邀请链接"
+              label="清除"
               variant="ghost"
-              isIconOnly
+              size="sm"
               icon={<XIcon />}
               onClick={() => setResult(null)}
             />
-          }
-        >
+          </HStack>
           <InviteLinkField
             id="latest-invite-url"
             value={result.invite_url}
             onCopy={copyInviteUrl}
           />
-        </SectionCard>
+        </VStack>
       ) : null}
-      <SectionCard title="邀请记录" description="Token 明文不会在列表中保存。">
         {rows.length ? (
           <Table
             data={rows}
             idKey="id"
             density="compact"
             hasHover
+            textOverflow="truncate"
             columns={[
               { key: "email", header: "目标邮箱", width: proportional(1) },
               {
@@ -967,11 +953,11 @@ function InvitationsView({
         ) : (
           <EmptyState
             title="还没有邀请"
-            description="生成链接，让用户自行完成注册。"
             icon={<SendIcon />}
           />
         )}
-      </SectionCard>
+      </VStack>
+    </PageFrame>
 
       <Dialog
         isOpen={open}
@@ -1060,7 +1046,7 @@ function InvitationsView({
         isActionLoading={pending}
         onAction={() => void revoke()}
       />
-    </VStack>
+    </>
   )
 }
 

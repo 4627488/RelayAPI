@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Banner } from "@astryxdesign/core/Banner"
 import { Button } from "@astryxdesign/core/Button"
-import { Code } from "@astryxdesign/core/Code"
 import { CodeBlock } from "@astryxdesign/core/CodeBlock"
 import { Collapsible } from "@astryxdesign/core/Collapsible"
 import { FormLayout } from "@astryxdesign/core/FormLayout"
-import { HStack, VStack } from "@astryxdesign/core/Layout"
+import { VStack } from "@astryxdesign/core/Layout"
 import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl"
 import { Selector } from "@astryxdesign/core/Selector"
 import { Switch } from "@astryxdesign/core/Switch"
@@ -13,7 +12,7 @@ import { Text } from "@astryxdesign/core/Text"
 import { useToast } from "@astryxdesign/core/Toast"
 import { KeyRoundIcon, TerminalIcon } from "lucide-react"
 
-import { CopyField, PageHeader, SectionCard } from "@/components/page-kit"
+import { CopyField, PageFrame, PageSection } from "@/components/page-kit"
 import { api, postJSON, type ApiKey, type ChildSubscription } from "@/lib/api"
 
 type Platform = "bash" | "powershell"
@@ -30,9 +29,11 @@ interface SetupResponse {
 export function ConnectionGuide({
   keys,
   tenantModels,
+  accessory,
 }: {
   keys: ApiKey[]
   tenantModels: string[]
+  accessory?: ReactNode
 }) {
   const toast = useToast()
   const usableKeys = useMemo(
@@ -161,32 +162,32 @@ export function ConnectionGuide({
   const includesOpenCode = client === "all" || client === "opencode"
 
   return (
-    <VStack gap={4}>
-      <PageHeader title="接入指南" />
+    <PageFrame
+      title="接入"
+      accessory={accessory}
+      actions={
+        <Button
+          label="生成命令"
+          variant="primary"
+          icon={<TerminalIcon />}
+          isLoading={pending}
+          isDisabled={!usableKeys.length || !model}
+          onClick={() => void generateSetup()}
+        />
+      }
+      contentPadding={6}
+      contentWidth={640}
+    >
+      <VStack gap={6}>
       {!usableKeys.length ? (
         <Banner
           status="warning"
-          title="需要一个可恢复的 API Key"
-          description="请先在 API Keys 页面创建新密钥。旧密钥只有哈希，无法生成安装脚本。"
+          title="需要可恢复的 API Key"
           icon={<KeyRoundIcon />}
         />
       ) : null}
 
-      <SectionCard
-        title="配置客户端"
-        description="已有配置会先备份；脚本失败时自动恢复。"
-        actions={
-          <Button
-            label="生成接入命令"
-            variant="primary"
-            icon={<TerminalIcon />}
-            isLoading={pending}
-            isDisabled={!usableKeys.length || !model}
-            onClick={() => void generateSetup()}
-          />
-        }
-      >
-        <FormLayout>
+      <FormLayout>
           <FormLayout direction="horizontal">
             <Selector
               label="API Key"
@@ -217,9 +218,6 @@ export function ConnectionGuide({
             <SegmentedControlItem value="codex" label="Codex" />
             <SegmentedControlItem value="opencode" label="OpenCode" />
           </SegmentedControl>
-          <Text color="secondary" type="supporting">
-            “全部”会同时配置 Codex 和 OpenCode。
-          </Text>
           <SegmentedControl
             label="运行环境"
             value={platform}
@@ -244,39 +242,28 @@ export function ConnectionGuide({
                 </SegmentedControl>
               ) : null}
               {includesOpenCode ? (
-                <VStack gap={2}>
-                  <SegmentedControl
-                    label="OpenCode 协议"
-                    value={openCodeProtocol}
-                    onChange={setOpenCodeProtocol}
-                  >
-                    <SegmentedControlItem value="responses" label="Responses" />
-                    <SegmentedControlItem value="chat" label="Chat Completions" />
-                  </SegmentedControl>
-                  <Text color="secondary" type="supporting">
-                    Responses 适合 Codex/OAI；Chat 兼容传统 OpenAI 接口。
-                  </Text>
-                </VStack>
+                <SegmentedControl
+                  label="OpenCode 协议"
+                  value={openCodeProtocol}
+                  onChange={setOpenCodeProtocol}
+                >
+                  <SegmentedControlItem value="responses" label="Responses" />
+                  <SegmentedControlItem value="chat" label="Chat Completions" />
+                </SegmentedControl>
               ) : null}
               <Switch
                 label="安装缺失的客户端"
-                description="只在命令不存在时调用官方安装器。"
                 value={installMissing}
                 onChange={setInstallMissing}
               />
               <Switch
                 label="验证连接"
-                description="写入前后检查网关、密钥和模型。"
                 value={verifyConnection}
                 onChange={setVerifyConnection}
               />
             </FormLayout>
           </Collapsible>
-          <Text color="secondary" type="supporting">
-            {clientLabel(client)} · {platform === "bash" ? "Bash" : "PowerShell"}
-          </Text>
-        </FormLayout>
-      </SectionCard>
+      </FormLayout>
 
       {usableKeys.length && model ? (
         <ManualConfigCard
@@ -293,9 +280,8 @@ export function ConnectionGuide({
       ) : null}
 
       {setup ? (
-        <SectionCard
+        <PageSection
           title="运行命令"
-          description="先预检；确认无误后再执行安装。"
           actions={
             <Text color="secondary" type="supporting">
               {new Date(setup.expires_at).toLocaleTimeString()} 前有效
@@ -304,43 +290,24 @@ export function ConnectionGuide({
         >
           <VStack gap={4}>
             <CodeBlock
-              title="只读预检"
+              title="预检"
               language="bash"
               code={checkCommand}
               width="100%"
               hasLanguageLabel={false}
             />
             <CodeBlock
-              title="安装并配置"
+              title="安装"
               language="bash"
               code={installCommand}
               width="100%"
               hasLanguageLabel={false}
             />
-            <Collapsible trigger="查看脚本写入内容" defaultIsOpen={false}>
-              <VStack gap={2}>
-                {includesCodex ? (
-                  <WriteTarget title="Codex" path="~/.codex/config.toml" />
-                ) : null}
-                {includesOpenCode ? (
-                  <WriteTarget
-                    title="OpenCode"
-                    path="~/.config/opencode/opencode.json"
-                  />
-                ) : null}
-                <WriteTarget
-                  title="共享凭据"
-                  path="~/.config/relayapi/api-key"
-                />
-              </VStack>
-            </Collapsible>
-            <Text color="secondary" type="supporting">
-              链接使用短时随机令牌，不包含 API Key；过期后需重新生成。
-            </Text>
           </VStack>
-        </SectionCard>
+        </PageSection>
       ) : null}
-    </VStack>
+      </VStack>
+    </PageFrame>
   )
 }
 
@@ -424,10 +391,7 @@ ${codexAuth}`
   )
 
   return (
-    <SectionCard
-      title="手动配置"
-      description="把 API Key 写入密钥文件，再把对应配置合并进客户端。"
-    >
+    <PageSection title="手动配置">
       <VStack gap={4}>
         <CopyField id="guide-endpoint" label="接口地址" value={endpoint} />
         <CopyField id="guide-key-path" label="密钥文件" value={keyPath} />
@@ -448,21 +412,8 @@ ${codexAuth}`
           />
         ) : null}
       </VStack>
-    </SectionCard>
+    </PageSection>
   )
 }
 
-function WriteTarget({ title, path }: { title: string; path: string }) {
-  return (
-    <HStack hAlign="between" gap={3} vAlign="center">
-      <Text>{title}</Text>
-      <Code>{path}</Code>
-    </HStack>
-  )
-}
 
-function clientLabel(client: ClientChoice) {
-  if (client === "all") return "两个客户端"
-  if (client === "opencode") return "OpenCode"
-  return "Codex"
-}

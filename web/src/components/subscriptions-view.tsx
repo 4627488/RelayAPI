@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { Banner } from "@astryxdesign/core/Banner"
 import { EmptyState } from "@astryxdesign/core/EmptyState"
-import { Grid } from "@astryxdesign/core/Grid"
 import { HStack, VStack } from "@astryxdesign/core/Layout"
 import { List, ListItem } from "@astryxdesign/core/List"
 import { ProgressBar } from "@astryxdesign/core/ProgressBar"
@@ -10,7 +9,7 @@ import { Token } from "@astryxdesign/core/Token"
 import { useToast } from "@astryxdesign/core/Toast"
 import { PackageOpenIcon } from "lucide-react"
 
-import { CountBadge, PageHeader, SectionCard, StatusLabel } from "@/components/page-kit"
+import { PageFrame, PageSection, StatusLabel } from "@/components/page-kit"
 import { LoadingView } from "@/components/loading-view"
 import {
   api,
@@ -19,14 +18,23 @@ import {
 } from "@/lib/api"
 import { dateTime, money } from "@/lib/format"
 
-export function TenantSubscriptionsView() {
+export function TenantSubscriptionsView({
+  accessory,
+}: {
+  accessory?: ReactNode
+}) {
   const toast = useToast()
   const [items, setItems] = useState<ChildSubscription[]>([])
+  const [selectedID, setSelectedID] = useState("")
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     api<{ items: ChildSubscription[] }>("/api/subscriptions")
-      .then((value) => setItems(value.items ?? []))
+      .then((value) => {
+        const next = value.items ?? []
+        setItems(next)
+        setSelectedID((current) => current || next[0]?.id || "")
+      })
       .catch((cause) =>
         toast({
           type: "error",
@@ -38,118 +46,78 @@ export function TenantSubscriptionsView() {
 
   if (loading) return <LoadingView />
 
+  const selected = items.find((item) => item.id === selectedID)
+
   return (
-    <VStack gap={4}>
-      <PageHeader title="我的订阅" />
+    <PageFrame title="订阅" accessory={accessory}>
       {items.length ? (
-        <VStack gap={4}>
-          {items.map((item) => (
-            <TenantSubscriptionCard key={item.id} item={item} />
-          ))}
+        <VStack gap={0}>
+          <List density="compact" hasDividers>
+            {items.map((item) => (
+              <ListItem
+                key={item.id}
+                label={item.name}
+                description={item.parent_name || undefined}
+                isSelected={item.id === selectedID}
+                onClick={() => setSelectedID(item.id)}
+                endContent={
+                  <StatusLabel
+                    tone={(item.available ?? item.enabled) ? "success" : "error"}
+                    label={(item.available ?? item.enabled) ? "可用" : "不可用"}
+                  />
+                }
+              />
+            ))}
+          </List>
+          {selected ? <SubscriptionDetail item={selected} /> : null}
         </VStack>
       ) : (
-        <EmptyState
-          title="尚未获得订阅授权"
-          description="管理员分配模型账户后，你可以在这里查看结算方式和可用范围。"
-          icon={<PackageOpenIcon />}
-        />
+        <EmptyState title="没有订阅" icon={<PackageOpenIcon />} />
       )}
-    </VStack>
+    </PageFrame>
   )
 }
 
-function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
+function SubscriptionDetail({ item }: { item: ChildSubscription }) {
   const models = item.effective_model_allowlist ?? item.model_allowlist ?? []
   const entitlementWindows = item.entitlement_windows ?? []
-  const available = item.available ?? item.enabled
 
   return (
-    <SectionCard
-      title={item.name}
-      description={[
-        item.parent_name || "模型账户",
-        item.parent_plan_type && item.parent_plan_type !== "native"
-          ? item.parent_plan_type
-          : null,
-        item.expires_at ? `有效期至 ${dateTime(item.expires_at)}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
-      actions={
-        <StatusLabel
-          tone={available ? "success" : "error"}
-          label={available ? "可用" : "不可用"}
-        />
-      }
-    >
+    <PageSection title={item.name} dividers={["top"]}>
       <VStack gap={4}>
         {entitlementWindows.length ? (
           <VStack gap={3}>
-            <VStack gap={1}>
-              <Text weight="semibold">共享额度</Text>
-              <Text color="secondary" type="supporting">
-                你在每个账户额度窗口中可使用的份额。
-              </Text>
-            </VStack>
-            <Grid columns={{ minWidth: 240, max: 2 }} gap={3}>
-              {entitlementWindows.map((window, index) => (
-                <EntitlementWindow
-                  key={`${window.kind}:${index}`}
-                  window={window}
-                />
-              ))}
-            </Grid>
+            {entitlementWindows.map((window, index) => (
+              <EntitlementWindow
+                key={`${window.kind}:${index}`}
+                window={window}
+              />
+            ))}
           </VStack>
-        ) : item.capacity_mode === "unmetered" ? (
+        ) : (
           <Banner
-            status="info"
-            title="按账户余额结算"
-            description="请求固定到这个模型账户，每次调用从你的 Relay 余额扣除。"
-            collapsible={false}
-          />
-        ) : item.parent_quota_probe_status === "unsupported" ? (
-          <Banner
-            status="error"
-            title="额度不可用"
-            description={
-              item.availability_message ||
-              "这个模型账户没有可分配的额度窗口，请联系管理员调整结算方式。"
+            status={
+              item.parent_quota_probe_status === "unsupported" ? "error" : "info"
+            }
+            title={
+              item.parent_quota_probe_status === "unsupported"
+                ? item.availability_message || "额度不可用"
+                : "余额结算"
             }
             collapsible={false}
           />
-        ) : (
-          <Banner
-            status="info"
-            title="当前按账户余额结算"
-            description="这条授权没有独立额度窗口，请求费用从你的 Relay 余额扣除。"
-            collapsible={false}
-          />
         )}
-
-        <VStack gap={3}>
-          <HStack hAlign="between" vAlign="center" gap={3}>
-            <VStack gap={1}>
-              <Text weight="semibold">可用模型</Text>
-              <Text color="secondary" type="supporting">
-                此授权当前允许访问的模型。
-              </Text>
-            </VStack>
-            <CountBadge value={models.length} />
-          </HStack>
-          {models.length ? (
-            <List density="compact" hasDividers>
-              {models.map((model) => (
-                <ListItem key={model} label={model} />
-              ))}
-            </List>
-          ) : (
-            <Text color="secondary">
-              此授权继承账户全部可用模型，或账户尚未提供可枚举的模型清单。
-            </Text>
-          )}
-        </VStack>
+        {models.length ? (
+          <List density="compact" hasDividers>
+            {models.map((model) => (
+              <ListItem key={model} label={model} />
+            ))}
+          </List>
+        ) : (
+          <Text color="secondary">全部模型</Text>
+        )}
       </VStack>
-    </SectionCard>
+    </PageSection>
   )
 }
 
@@ -178,9 +146,7 @@ function EntitlementWindow({
       <HStack hAlign="between" vAlign="center" gap={3}>
         <Text weight="semibold">{quotaWindowLabel(window.kind)}</Text>
         <Token
-          label={
-            roundedRemaining === 0 ? "已用完" : `剩余 ${roundedRemaining}%`
-          }
+          label={roundedRemaining === 0 ? "已用完" : `${roundedRemaining}%`}
           color={
             roundedRemaining <= 10
               ? "red"
@@ -191,7 +157,8 @@ function EntitlementWindow({
         />
       </HStack>
       <ProgressBar
-        label={`${quotaWindowLabel(window.kind)}剩余额度`}
+        label={quotaWindowLabel(window.kind)}
+        isLabelHidden
         value={remaining}
         variant={variant}
         hasValueLabel
@@ -218,11 +185,10 @@ function quotaWindowLabel(kind: string) {
 function resetDescription(value: string) {
   const target = new Date(value).getTime()
   const remaining = target - Date.now()
-  if (!Number.isFinite(target) || remaining <= 0)
-    return `${dateTime(value)} 重置`
+  if (!Number.isFinite(target) || remaining <= 0) return dateTime(value)
   const minutes = Math.ceil(remaining / 60_000)
-  if (minutes < 60) return `${minutes} 分钟后重置`
+  if (minutes < 60) return `${minutes} 分钟`
   const hours = Math.ceil(minutes / 60)
-  if (hours < 48) return `${hours} 小时后重置`
-  return `${Math.ceil(hours / 24)} 天后重置`
+  if (hours < 48) return `${hours} 小时`
+  return `${Math.ceil(hours / 24)} 天`
 }

@@ -48,7 +48,6 @@ import { LoadingView } from "@/components/loading-view"
 import { ModelSelector } from "@/components/model-selector"
 import {
   CountBadge,
-  PageHeader,
   SearchField,
   StatusLabel,
 } from "@/components/page-kit"
@@ -426,15 +425,15 @@ export function AdminSubscriptionsView() {
       header={
         <LayoutHeader>
           <VStack gap={3}>
-            <PageHeader
-              title="订阅分配"
-              accessory={<CountBadge value={visibleParents.length} />}
-              actions={
+            <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap">
+              <Heading level={1}>订阅</Heading>
+              <HStack gap={2} vAlign="center">
+                <CountBadge value={visibleParents.length} />
                 <Button
                   label={
                     selected?.item.capacity_mode === "unmetered"
                       ? "添加用户"
-                      : "分配给租户"
+                      : "分配"
                   }
                   variant="primary"
                   icon={<UserPlusIcon />}
@@ -445,8 +444,8 @@ export function AdminSubscriptionsView() {
                   }
                   onClick={() => selected && openAssignment(selected)}
                 />
-              }
-            />
+              </HStack>
+            </HStack>
             <SearchField
               label="搜索模型账户"
               value={query}

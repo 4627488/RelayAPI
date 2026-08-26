@@ -43,10 +43,8 @@ import { LoadingView } from "@/components/loading-view"
 import {
   CopyField,
   CountBadge,
-  MetricGrid,
-  PageHeader,
+  PageFrame,
   SearchField,
-  SectionCard,
   StatusLabel,
 } from "@/components/page-kit"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
@@ -281,10 +279,6 @@ export function ProvidersView() {
           ].some((part) => part.toLowerCase().includes(needle)))
     )
   }, [accounts, provider, search])
-  const enabled = accounts.filter(
-    (item) => !item.disabled && !item.unavailable
-  ).length
-  const modelCount = new Set(accounts.flatMap((item) => item.models ?? [])).size
   const rows: AccountRow[] = filtered.map((account) => {
     const models = modelSummary(account)
     return {
@@ -416,76 +410,63 @@ export function ProvidersView() {
   }
 
   return (
-    <VStack gap={4}>
-      <PageHeader
-        title="模型账户"
-        actions={
-          <>
-            <Button
-              label="刷新额度"
-              icon={<RefreshCwIcon />}
-              isLoading={syncingQuota}
-              onClick={() => void syncQuota()}
-            />
-            <Button
-              label="连接账户"
-              variant="primary"
-              icon={<PlusIcon />}
-              onClick={openConnect}
-            />
-          </>
-        }
-      />
-
-      <MetricGrid
-        items={[
-          { label: "账户", value: accounts.length },
-          { label: "可用", value: enabled },
-          { label: "公开模型", value: modelCount },
-        ]}
-      />
-
+    <>
+    <PageFrame
+      title="模型"
+      accessory={
+        <HStack gap={2} wrap="wrap" vAlign="center">
+          <SearchField
+            value={search}
+            onChange={setSearch}
+            placeholder="搜索"
+          />
+          <Selector
+            label="提供商"
+            isLabelHidden
+            value={provider}
+            onChange={setProvider}
+            options={[
+              { value: "all", label: "全部提供商" },
+              ...providerOptions.map((item) => ({
+                value: item,
+                label: providerLabel(item),
+              })),
+            ]}
+          />
+        </HStack>
+      }
+      actions={
+        <HStack gap={2}>
+          <Button
+            label="刷新额度"
+            icon={<RefreshCwIcon />}
+            isLoading={syncingQuota}
+            onClick={() => void syncQuota()}
+          />
+          <Button
+            label="连接"
+            variant="primary"
+            icon={<PlusIcon />}
+            onClick={openConnect}
+          />
+        </HStack>
+      }
+    >
+      <VStack gap={0}>
       {loadError ? (
         <Banner
           status="error"
-          title="账户列表可能已过期"
-          description={loadError}
+          title={loadError}
           collapsible={false}
         />
       ) : null}
-
-      <SectionCard
-        title="上游账户"
-        description="一行一个上游账户。发布模型决定对外目录；测试会向该账户发一次最短推理，不走用户计费。"
-        actions={
-          <HStack gap={3} wrap="wrap" vAlign="end">
-            <SearchField
-              value={search}
-              onChange={setSearch}
-              placeholder="搜索账户或模型"
-            />
-            <Selector
-              label="提供商"
-              isLabelHidden
-              value={provider}
-              onChange={setProvider}
-              options={[
-                { value: "all", label: "全部提供商" },
-                ...providerOptions.map((item) => ({
-                  value: item,
-                  label: providerLabel(item),
-                })),
-              ]}
-            />
-          </HStack>
-        }
-      >
         {rows.length ? (
           <Table
             data={rows}
             idKey="id"
             density="compact"
             hasHover
+            textOverflow="truncate"
             verticalAlign="top"
             columns={[
               {
@@ -645,7 +626,7 @@ export function ProvidersView() {
             actions={
               accounts.length ? undefined : (
                 <Button
-                  label="连接账户"
+                  label="连接"
                   variant="primary"
                   icon={<PlusIcon />}
                   onClick={openConnect}
@@ -654,7 +635,8 @@ export function ProvidersView() {
             }
           />
         )}
-      </SectionCard>
+      </VStack>
+    </PageFrame>
 
       <ConnectAccountDialog
         open={connectOpen || Boolean(reauthenticating)}
@@ -714,7 +696,7 @@ export function ProvidersView() {
         isActionLoading={pending}
         onAction={() => void remove()}
       />
-    </VStack>
+    </>
   )
 }
 

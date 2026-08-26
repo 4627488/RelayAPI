@@ -37,10 +37,9 @@ import {
 
 import { LoadingView } from "@/components/loading-view"
 import {
-  MetricGrid,
-  PageHeader,
+  PageFrame,
+  PageSection,
   SearchField,
-  SectionCard,
   StatusLabel,
 } from "@/components/page-kit"
 import {
@@ -149,7 +148,7 @@ export function PricingView() {
   const [prices, setPrices] = useState<PricesResponse>({ available_models: [] })
   const [aliases, setAliases] = useState<ModelAlias[]>([])
   const [rules, setRules] = useState<ModelPriceRule[]>([])
-  const [fields, setFields] = useState<string[]>([])
+  const [, setFields] = useState<string[]>([])
   const [editingPrice, setEditingPrice] = useState<AvailableModelPrice | null>(
     null
   )
@@ -378,79 +377,55 @@ export function PricingView() {
   }))
 
   return (
-    <VStack gap={4}>
-      <PageHeader
-        actions={
-          <HStack gap={2} wrap="wrap" vAlign="center">
-            <Button
-              label="预览同步"
-              icon={<CloudDownloadIcon />}
-              isDisabled={pending}
-              onClick={() => void syncCatalog(false)}
-            />
-            <Button
-              label="应用 Models.dev"
-              icon={<CloudDownloadIcon />}
-              isDisabled={pending}
-              onClick={() => void syncCatalog(true)}
-            />
-          </HStack>
-        }
-      />
-      <MetricGrid
-        items={[
-          { label: "已接入模型", value: prices.available_models.length },
-          {
-            label: "已定价",
-            value: prices.available_models.filter((item) => item.priced).length,
-          },
-          {
-            label: "未定价",
-            value: prices.available_models.filter((item) => !item.priced)
-              .length,
-          },
-          {
-            label: "管理员覆盖",
-            value: prices.available_models.filter(
-              (item) => item.source === "admin"
-            ).length,
-          },
-        ]}
-      />
+    <>
+    <PageFrame
+      title="定价"
+      accessory={
+        <SearchField
+          value={catalogQuery}
+          onChange={setCatalogQuery}
+          placeholder="搜索"
+        />
+      }
+      actions={
+        <HStack gap={2} wrap="wrap" vAlign="center">
+          <Button
+            label="预览同步"
+            icon={<CloudDownloadIcon />}
+            isDisabled={pending}
+            onClick={() => void syncCatalog(false)}
+          />
+          <Button
+            label="应用 Models.dev"
+            icon={<CloudDownloadIcon />}
+            isDisabled={pending}
+            onClick={() => void syncCatalog(true)}
+          />
+        </HStack>
+      }
+    >
+      <VStack gap={0}>
       {loadError ? (
         <Banner
           status="error"
-          title="定价数据加载失败"
-          description={loadError}
+          title={loadError}
           collapsible={false}
         />
       ) : null}
       {prices.catalog_sync_error ? (
         <Banner
           status="warning"
-          title="Models.dev 暂时不可用，当前使用内置目录"
-          description={prices.catalog_sync_error}
+          title={prices.catalog_sync_error}
           collapsible={false}
         />
       ) : null}
       {prices.available_models_error ? (
         <Banner
           status="error"
-          title="无法读取本站模型"
-          description={prices.available_models_error}
+          title={prices.available_models_error}
           collapsible={false}
         />
       ) : null}
-      <SectionCard
-        title="已接入模型"
-        description="计价仍按 USD / 1M tokens。能力元数据优先用本页覆盖，其次 Models.dev，最后才是 Codex 模板。用来补 models.dev 没有或不对的条目，例如 Kimi Coding Plan 的 kimi-k3-256k。"
-      >
-        <VStack gap={3}>
-          <SearchField
-            value={catalogQuery}
-            onChange={setCatalogQuery}
-            placeholder="搜索模型"
-          />
           {rows.length ? (
             <Table
               data={rows}
@@ -695,25 +670,17 @@ export function PricingView() {
               title={
                 prices.available_models.length
                   ? "没有匹配的模型"
-                  : "本站尚未接入模型"
-              }
-              description={
-                prices.available_models.length
-                  ? "换一个模型名称。"
-                  : "在提供商页面接入账户后，模型会自动出现在这里。"
+                  : "尚未接入模型"
               }
               icon={<SearchIcon />}
             />
           )}
-        </VStack>
-      </SectionCard>
-      <Grid columns={{ minWidth: 320, max: 2 }} gap={4}>
-        <SectionCard
-          title="模型别名"
-          description="请求模型先解析别名，再按来源优先级查价。"
+      <Grid columns={{ minWidth: 320, max: 2 }} gap={0}>
+        <PageSection
+          title="别名"
           actions={
             <Button
-              label={`保存 ${aliases.length} 条别名`}
+              label={`保存 ${aliases.length} 条`}
               onClick={() => void saveJSON("aliases")}
             />
           }
@@ -723,13 +690,12 @@ export function PricingView() {
             value={aliasText}
             onChange={setAliasText}
           />
-        </SectionCard>
-        <SectionCard
-          title="多维倍率规则"
-          description={`可用字段：${fields.join("、")}`}
+        </PageSection>
+        <PageSection
+          title="倍率规则"
           actions={
             <Button
-              label={`保存 ${rules.length} 条规则`}
+              label={`保存 ${rules.length} 条`}
               onClick={() => void saveJSON("rules")}
             />
           }
@@ -739,8 +705,10 @@ export function PricingView() {
             value={ruleText}
             onChange={setRuleText}
           />
-        </SectionCard>
+        </PageSection>
       </Grid>
+      </VStack>
+    </PageFrame>
       <Dialog
         isOpen={Boolean(editingPrice)}
         onOpenChange={(open) => {
@@ -967,7 +935,7 @@ export function PricingView() {
           }
         />
       </Dialog>
-    </VStack>
+    </>
   )
 }
 

@@ -1,6 +1,7 @@
 import { Button } from "@astryxdesign/core/Button"
-import { EmptyState } from "@astryxdesign/core/EmptyState"
 import { Center } from "@astryxdesign/core/Center"
+import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { Layout, LayoutContent } from "@astryxdesign/core/Layout"
 import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 
 export function LoadErrorView({
@@ -11,20 +12,24 @@ export function LoadErrorView({
   onRetry: () => void
 }) {
   return (
-    <Center minHeight={320}>
-      <EmptyState
-        title="页面数据加载失败"
-        description={message}
-        icon={<TriangleAlertIcon />}
-        actions={
-          <Button
-            label="重试"
-            variant="primary"
-            icon={<RefreshCwIcon />}
-            onClick={onRetry}
+    <Layout height="fill">
+      <LayoutContent padding={6}>
+        <Center minHeight="100%">
+          <EmptyState
+            title="无法读取这一页"
+            description={message}
+            icon={<TriangleAlertIcon />}
+            actions={
+              <Button
+                label="重试"
+                variant="primary"
+                icon={<RefreshCwIcon />}
+                onClick={onRetry}
+              />
+            }
           />
-        }
-      />
-    </Center>
+        </Center>
+      </LayoutContent>
+    </Layout>
   )
 }

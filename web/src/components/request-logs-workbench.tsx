@@ -38,14 +38,8 @@ import { TextInput } from "@astryxdesign/core/TextInput"
 import { useToast } from "@astryxdesign/core/Toast"
 import { Token } from "@astryxdesign/core/Token"
 import {
-  ActivityIcon,
-  CircleDollarSignIcon,
-  Clock3Icon,
-  CoinsIcon,
-  DatabaseIcon,
   RefreshCwIcon,
   SearchIcon,
-  TriangleAlertIcon,
   XIcon,
 } from "lucide-react"
 
@@ -53,8 +47,7 @@ import { LoadingView } from "@/components/loading-view"
 import {
   CopyField,
   CountBadge,
-  MetricGrid,
-  PageHeader,
+  MetricStrip,
   SearchField,
   StatusLabel,
 } from "@/components/page-kit"
@@ -402,71 +395,53 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       }
       header={
         <LayoutHeader>
-          <VStack gap={4}>
-            <MetricGrid
+          <VStack gap={3}>
+            <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap">
+              <Heading level={1}>日志</Heading>
+              <Button
+                label="刷新"
+                variant="secondary"
+                size="sm"
+                icon={<RefreshCwIcon />}
+                isLoading={loading}
+                onClick={() => void load()}
+              />
+            </HStack>
+            <MetricStrip
               items={[
                 {
                   label: "请求",
                   value: compact(data.summary.requests),
-                  hint: `${data.summary.errors} 个错误`,
-                  icon: ActivityIcon,
                 },
                 {
                   label: "错误率",
                   value: data.summary.requests
                     ? `${((data.summary.errors / data.summary.requests) * 100).toFixed(1)}%`
                     : "0%",
-                  hint: "HTTP 错误或中断",
-                  icon: TriangleAlertIcon,
                 },
                 {
                   label: "Tokens",
                   value: compactTokens(data.summary.tokens),
-                  hint: `缓存命中 ${cacheRate}`,
-                  icon: CoinsIcon,
+                  hint: cacheRate,
                 },
                 {
                   label: "负载",
                   value: bytes(
                     data.summary.request_bytes + data.summary.response_bytes
                   ),
-                  hint: `${bytes(data.summary.request_bytes)} ↑ · ${bytes(data.summary.response_bytes)} ↓`,
-                  icon: DatabaseIcon,
                 },
                 {
-                  label: "总耗时",
+                  label: "P50",
                   value: data.summary.requests
-                    ? `P50 ${formatMS(data.summary.latency_p50_ms)}`
-                    : "无数据",
-                  hint: data.summary.requests
-                    ? `P95 ${formatMS(data.summary.latency_p95_ms)}`
-                    : "当前筛选范围",
-                  icon: Clock3Icon,
+                    ? formatMS(data.summary.latency_p50_ms)
+                    : "—",
                 },
                 {
                   label: "费用",
                   value: money(data.summary.cost_nano_usd),
-                  icon: CircleDollarSignIcon,
                 },
               ]}
             />
-            <PageHeader
-              title="请求明细"
-              actions={
-                <Button
-                  label="刷新"
-                  variant="secondary"
-                  size="sm"
-                  icon={<RefreshCwIcon />}
-                  isLoading={loading}
-                  onClick={() => void load()}
-                />
-              }
-            />
-            <Text color="secondary">
-              一条日志是一次对 Relay 的调用。SSE 仍是一条 HTTP 请求；WebSocket
-              按会话一行，轮次在详情里。
-            </Text>
             <HStack gap={3} wrap="wrap" vAlign="end">
               <StackItem size="fill">
                 <SearchField

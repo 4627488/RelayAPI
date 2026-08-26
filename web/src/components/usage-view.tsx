@@ -1,11 +1,5 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Area, AreaChart, CartesianGrid, Tooltip, XAxis } from "recharts"
-import {
-  ActivityIcon,
-  CircleDollarSignIcon,
-  CoinsIcon,
-  DatabaseIcon,
-} from "lucide-react"
 import { EmptyState } from "@astryxdesign/core/EmptyState"
 import { Grid } from "@astryxdesign/core/Grid"
 import { HStack, VStack } from "@astryxdesign/core/Layout"
@@ -20,9 +14,9 @@ import { LoadErrorView } from "@/components/load-error-view"
 import { LoadingView } from "@/components/loading-view"
 import {
   ChartFrame,
-  MetricGrid,
-  PageHeader,
-  SectionCard,
+  MetricStrip,
+  PageFrame,
+  PageSection,
   useChartColors,
 } from "@/components/page-kit"
 import { CacheHitRateBadge } from "@/components/token-cache-rate"
@@ -65,10 +59,7 @@ function TokenBreakdown({ report }: { report: UsageReport }) {
   ] as const
   const imageTokens = summary.image_input_tokens + summary.image_output_tokens
   return (
-    <SectionCard
-      title="Token 结构"
-      description="输入输出为主维度，缓存与推理为其中的细分计数。"
-    >
+    <PageSection title="Token 结构" dividers={["bottom"]}>
       <VStack gap={3}>
         {items.map(([label, value]) => (
           <ProgressBar
@@ -92,7 +83,7 @@ function TokenBreakdown({ report }: { report: UsageReport }) {
           />
         ) : null}
       </VStack>
-    </SectionCard>
+    </PageSection>
   )
 }
 
@@ -102,7 +93,7 @@ function CostBreakdown({ report }: { report: UsageReport }) {
   const covered = summary.subscription_covered_nano_usd
   const charged = summary.balance_charged_nano_usd
   return (
-    <SectionCard title="费用来源" description="区分订阅容量承担与账户余额实际扣费。">
+    <PageSection title="费用来源" dividers={["bottom"]}>
       <VStack gap={4}>
         <ProgressBar
           label="订阅承担"
@@ -122,7 +113,7 @@ function CostBreakdown({ report }: { report: UsageReport }) {
           <Text weight="semibold">{averageCost(total, summary.requests)}</Text>
         </HStack>
       </VStack>
-    </SectionCard>
+    </PageSection>
   )
 }
 
@@ -134,9 +125,9 @@ function UsageTrend({ report }: { report: UsageReport }) {
     cost_usd: item.cost_nano_usd / 1_000_000_000,
   }))
   return (
-    <SectionCard
+    <PageSection
       title="趋势"
-      description="按天查看请求质量、Token 与费用变化。"
+      dividers={["bottom"]}
       actions={
         <SegmentedControl
           label="趋势指标"
@@ -222,7 +213,7 @@ function UsageTrend({ report }: { report: UsageReport }) {
       ) : (
         <EmptyState isCompact title="当前范围内没有用量" />
       )}
-    </SectionCard>
+    </PageSection>
   )
 }
 
@@ -385,10 +376,12 @@ export function UsageView({
   initialReport,
   admin = false,
   users: initialUsers = [],
+  accessory,
 }: {
   initialReport?: UsageReport
   admin?: boolean
   users?: User[]
+  accessory?: ReactNode
 }) {
   const toast = useToast()
   const [report, setReport] = useState<UsageReport | null>(initialReport ?? null)
@@ -475,113 +468,100 @@ export function UsageView({
         : report.api_keys.length > 0
 
   return (
-    <VStack gap={4}>
-      <PageHeader
-        title={admin ? "全局用量" : "用量"}
-        actions={
-          <HStack gap={2} wrap="wrap" vAlign="center">
-            {admin ? (
-              <Selector
-                label="用户"
-                isLabelHidden
-                variant="ghost"
-                value={userID}
-                onChange={(value) => void load(days, value)}
-                options={[
-                  { value: "all", label: "全部用户" },
-                  ...users.map((user) => ({
-                    value: user.id,
-                    label: user.name,
-                  })),
-                ]}
-              />
-            ) : null}
-            <SegmentedControl
-              label="统计周期"
-              size="sm"
-              value={String(days)}
-              onChange={(value) => void load(Number(value) as Period)}
-            >
-              {periods.map((period) => (
-                <SegmentedControlItem
-                  key={period.value}
-                  value={String(period.value)}
-                  label={period.label}
-                />
-              ))}
-            </SegmentedControl>
-          </HStack>
-        }
-      />
-
-      <MetricGrid
-        items={[
-          {
-            label: "请求",
-            value: compact(report.summary.requests),
-            hint: `${successRate(report.summary.errors, report.summary.requests)} 成功 · ${compact(report.summary.errors)} 个错误`,
-            icon: ActivityIcon,
-          },
-          {
-            label: "Tokens",
-            value: compactTokens(report.summary.tokens),
-            hint: `${compactTokens(report.summary.prompt_tokens)} 输入 · ${compactTokens(report.summary.completion_tokens)} 输出`,
-            icon: CoinsIcon,
-          },
-          {
-            label: "缓存命中",
-            value: cacheHitRateLabel(
-              report.summary.cached_tokens,
-              report.summary.prompt_tokens
-            ),
-            hint: `${compactTokens(report.summary.cached_tokens)} 个缓存读取 Token`,
-            icon: DatabaseIcon,
-          },
-          {
-            label: "模型成本",
-            value: money(report.summary.cost_nano_usd),
-            hint: `平均 ${averageCost(report.summary.cost_nano_usd, report.summary.requests)} / 请求`,
-            icon: CircleDollarSignIcon,
-          },
-        ]}
-      />
-
-      <UsageTrend report={report} />
-
-      <Grid columns={{ minWidth: 280, max: 2 }} gap={4}>
-        <TokenBreakdown report={report} />
-        <CostBreakdown report={report} />
-      </Grid>
-
-      <SectionCard
-        title="用量归因"
-        description="定位主要消耗与异常来源。"
-        actions={
+    <PageFrame
+      title={admin ? "用量" : "用量"}
+      accessory={accessory}
+      actions={
+        <HStack gap={2} wrap="wrap" vAlign="center">
+          {admin ? (
+            <Selector
+              label="用户"
+              isLabelHidden
+              variant="ghost"
+              value={userID}
+              onChange={(value) => void load(days, value)}
+              options={[
+                { value: "all", label: "全部用户" },
+                ...users.map((user) => ({
+                  value: user.id,
+                  label: user.name,
+                })),
+              ]}
+            />
+          ) : null}
           <SegmentedControl
-            label="归因维度"
+            label="统计周期"
             size="sm"
-            value={dimension}
-            onChange={(value) => setDimension(value as Dimension)}
+            value={String(days)}
+            onChange={(value) => void load(Number(value) as Period)}
           >
-            {admin && userID === "all" ? (
-              <SegmentedControlItem value="users" label="用户" />
-            ) : null}
-            <SegmentedControlItem value="models" label="模型" />
-            <SegmentedControlItem value="keys" label="Keys" />
+            {periods.map((period) => (
+              <SegmentedControlItem
+                key={period.value}
+                value={String(period.value)}
+                label={period.label}
+              />
+            ))}
           </SegmentedControl>
-        }
-      >
-        {hasRows ? (
-          <DimensionTable report={report} dimension={dimension} />
-        ) : (
-          <EmptyState isCompact title="当前范围内没有可归因的用量" />
-        )}
-      </SectionCard>
-      {loading ? (
-        <Text color="secondary" type="supporting">
-          正在更新…
-        </Text>
-      ) : null}
-    </VStack>
+        </HStack>
+      }
+    >
+      <VStack gap={0}>
+        <MetricStrip
+          items={[
+            {
+              label: "请求",
+              value: compact(report.summary.requests),
+              hint: `${successRate(report.summary.errors, report.summary.requests)} · ${compact(report.summary.errors)} 错误`,
+            },
+            {
+              label: "Tokens",
+              value: compactTokens(report.summary.tokens),
+              hint: `${compactTokens(report.summary.prompt_tokens)} / ${compactTokens(report.summary.completion_tokens)}`,
+            },
+            {
+              label: "缓存",
+              value: cacheHitRateLabel(
+                report.summary.cached_tokens,
+                report.summary.prompt_tokens
+              ),
+            },
+            {
+              label: "成本",
+              value: money(report.summary.cost_nano_usd),
+              hint: averageCost(report.summary.cost_nano_usd, report.summary.requests),
+            },
+          ]}
+        />
+        <UsageTrend report={report} />
+        <Grid columns={{ minWidth: 280, max: 2 }} gap={0}>
+          <TokenBreakdown report={report} />
+          <CostBreakdown report={report} />
+        </Grid>
+        <PageSection
+          title="归因"
+          actions={
+            <SegmentedControl
+              label="归因维度"
+              size="sm"
+              value={dimension}
+              onChange={(value) => setDimension(value as Dimension)}
+            >
+              {admin && userID === "all" ? (
+                <SegmentedControlItem value="users" label="用户" />
+              ) : null}
+              <SegmentedControlItem value="models" label="模型" />
+              <SegmentedControlItem value="keys" label="Keys" />
+            </SegmentedControl>
+          }
+        >
+          {hasRows ? (
+            <DimensionTable report={report} dimension={dimension} />
+          ) : (
+            <EmptyState isCompact title="没有可归因用量" />
+          )}
+        </PageSection>
+      </VStack>
+    </PageFrame>
   )
 }

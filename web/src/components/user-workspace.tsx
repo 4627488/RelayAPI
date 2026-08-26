@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Button } from "@astryxdesign/core/Button"
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
@@ -11,7 +11,9 @@ import {
   LayoutFooter,
   VStack,
 } from "@astryxdesign/core/Layout"
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList"
 import { NumberInput } from "@astryxdesign/core/NumberInput"
+import { Tab, TabList } from "@astryxdesign/core/TabList"
 import { Table, pixel, proportional } from "@astryxdesign/core/Table"
 import { Text } from "@astryxdesign/core/Text"
 import { TextInput } from "@astryxdesign/core/TextInput"
@@ -34,7 +36,7 @@ import { LogsTable, LogsTableAction, UsageChart, UsageMetrics } from "@/componen
 import { LoadErrorView } from "@/components/load-error-view"
 import { LoadingView } from "@/components/loading-view"
 import { ModelSelector } from "@/components/model-selector"
-import { CopyField, PageHeader, SectionCard, StatusLabel } from "@/components/page-kit"
+import { CopyField, PageFrame, StatusLabel } from "@/components/page-kit"
 import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
 import { TenantSubscriptionsView } from "@/components/subscriptions-view"
 import { UsageView } from "@/components/usage-view"
@@ -63,15 +65,50 @@ export function UserWorkspace({
   onPageChange,
 }: UserWorkspaceProps) {
   const tenantModels = session.tenant?.model_allowlist ?? []
-  if (page === "keys") return <KeysPage tenantModels={tenantModels} />
+  if (page === "keys" || page === "guide") {
+    return (
+      <KeysPage
+        tenantModels={tenantModels}
+        initialTab={page === "guide" ? "guide" : "keys"}
+      />
+    )
+  }
   if (page === "logs") return <RequestLogsWorkbench />
-  if (page === "guide") return <GuidePage tenantModels={tenantModels} />
-  if (page === "subscriptions") return <TenantSubscriptionsView />
-  if (page === "usage") return <UsageView />
+  if (page === "usage" || page === "subscriptions") {
+    return (
+      <UsageHub initialTab={page === "subscriptions" ? "subscriptions" : "usage"} />
+    )
+  }
   return <UserOverview session={session} onPageChange={onPageChange} />
 }
 
-function KeysPage({ tenantModels }: { tenantModels: string[] }) {
+function UsageHub({ initialTab }: { initialTab: "usage" | "subscriptions" }) {
+  const [tab, setTab] = useState(initialTab)
+  const tabs = (
+    <TabList
+      value={tab}
+      onChange={(value) => {
+        if (value === "usage" || value === "subscriptions") setTab(value)
+      }}
+    >
+      <Tab value="usage" label="用量" />
+      <Tab value="subscriptions" label="订阅" />
+    </TabList>
+  )
+  if (tab === "subscriptions") {
+    return <TenantSubscriptionsView accessory={tabs} />
+  }
+  return <UsageView accessory={tabs} />
+}
+
+function KeysPage({
+  tenantModels,
+  initialTab,
+}: {
+  tenantModels: string[]
+  initialTab: "keys" | "guide"
+}) {
+  const [tab, setTab] = useState(initialTab)
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState("")
@@ -94,55 +131,33 @@ function KeysPage({ tenantModels }: { tenantModels: string[] }) {
     void load(true)
   }, [load])
 
+  const tabs = (
+    <TabList
+      value={tab}
+      onChange={(value) => {
+        if (value === "keys" || value === "guide") setTab(value)
+      }}
+    >
+      <Tab value="keys" label="密钥" />
+      <Tab value="guide" label="接入" />
+    </TabList>
+  )
+
   if (loading) return <LoadingView />
   if (loadError && keys.length === 0) {
     return <LoadErrorView message={loadError} onRetry={() => void load(true)} />
   }
-  return <KeysView keys={keys} tenantModels={tenantModels} onChanged={() => load()} />
-}
-
-function GuidePage({ tenantModels }: { tenantModels: string[] }) {
-  const [keys, setKeys] = useState<ApiKey[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
-
-  useEffect(() => {
-    let active = true
-    api<{ items: ApiKey[] }>("/api/keys")
-      .then((value) => {
-        if (active) setKeys(value.items ?? [])
-      })
-      .catch((cause) => {
-        if (active)
-          setLoadError(cause instanceof Error ? cause.message : "无法读取密钥")
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [])
-
-  if (loading) return <LoadingView />
-  if (loadError && keys.length === 0) {
-    return (
-      <LoadErrorView
-        message={loadError}
-        onRetry={() => {
-          setLoading(true)
-          setLoadError("")
-          void api<{ items: ApiKey[] }>("/api/keys")
-            .then((value) => setKeys(value.items ?? []))
-            .catch((cause) =>
-              setLoadError(cause instanceof Error ? cause.message : "无法读取密钥")
-            )
-            .finally(() => setLoading(false))
-        }}
-      />
-    )
+  if (tab === "guide") {
+    return <ConnectionGuide keys={keys} tenantModels={tenantModels} accessory={tabs} />
   }
-  return <ConnectionGuide keys={keys} tenantModels={tenantModels} />
+  return (
+    <KeysView
+      keys={keys}
+      tenantModels={tenantModels}
+      accessory={tabs}
+      onChanged={() => load()}
+    />
+  )
 }
 
 function UserOverview({
@@ -195,50 +210,46 @@ function UserOverview({
   }
 
   return (
-    <VStack gap={4}>
-      <PageHeader title={`你好，${session.tenant?.name ?? ""}`} />
-      <UsageMetrics report={usage} />
-      <HStack gap={4} wrap="wrap" vAlign="stretch">
-        <StackFill>
-          <UsageChart report={usage} />
-        </StackFill>
-        <SectionCard title="账户状态">
-          <VStack gap={4} padding={4}>
-            <Fact label="状态" value={<StatusLabel tone="success" label="正常" />} />
-            <Fact label="余额" value={moneySafe(session.tenant?.balance_nano_usd)} />
-            <Fact
-              label="有效 Keys"
-              value={String(keys.filter((key) => key.enabled).length)}
-            />
-            <Fact
-              label="模型范围"
-              value={
-                session.tenant?.model_allowlist?.length
-                  ? `${session.tenant.model_allowlist.length} 个`
-                  : "全部模型"
-              }
-            />
-          </VStack>
-        </SectionCard>
-      </HStack>
-      <LogsTable
-        logs={logs}
-        action={<LogsTableAction onOpen={() => onPageChange("logs")} />}
-      />
-    </VStack>
+    <PageFrame title={session.tenant?.name || "工作台"}>
+      <VStack gap={0}>
+        <UsageMetrics report={usage} />
+        <UsageChart report={usage} />
+        <PageSectionAccount session={session} keys={keys} />
+        <LogsTable
+          logs={logs}
+          action={<LogsTableAction onOpen={() => onPageChange("logs")} />}
+        />
+      </VStack>
+    </PageFrame>
   )
 }
 
-function StackFill({ children }: { children: React.ReactNode }) {
-  return <VStack gap={0} width="100%">{children}</VStack>
-}
-
-function Fact({ label, value }: { label: string; value: React.ReactNode }) {
+function PageSectionAccount({
+  session,
+  keys,
+}: {
+  session: Session
+  keys: ApiKey[]
+}) {
   return (
-    <HStack hAlign="between" gap={3}>
-      <Text color="secondary">{label}</Text>
-      {typeof value === "string" ? <Text weight="semibold">{value}</Text> : value}
-    </HStack>
+    <VStack gap={0} padding={5}>
+      <MetadataList title="账户" columns="multi">
+        <MetadataListItem label="状态">
+          <StatusLabel tone="success" label="正常" />
+        </MetadataListItem>
+        <MetadataListItem label="余额">
+          {moneySafe(session.tenant?.balance_nano_usd)}
+        </MetadataListItem>
+        <MetadataListItem label="有效 Keys">
+          {String(keys.filter((key) => key.enabled).length)}
+        </MetadataListItem>
+        <MetadataListItem label="模型范围">
+          {session.tenant?.model_allowlist?.length
+            ? `${session.tenant.model_allowlist.length} 个`
+            : "全部模型"}
+        </MetadataListItem>
+      </MetadataList>
+    </VStack>
   )
 }
 
@@ -253,10 +264,12 @@ function moneySafe(value: number | undefined) {
 function KeysView({
   keys,
   tenantModels,
+  accessory,
   onChanged,
 }: {
   keys: ApiKey[]
   tenantModels: string[]
+  accessory?: ReactNode
   onChanged: () => Promise<void>
 }) {
   const toast = useToast()
@@ -394,27 +407,26 @@ function KeysView({
   }))
 
   return (
-    <VStack gap={4}>
-      <PageHeader
-        actions={
-          <Button
-            label="创建 Key"
-            variant="primary"
-            icon={<PlusIcon />}
-            onClick={openCreate}
-          />
-        }
-      />
-      <SectionCard
-        title="你的密钥"
-        description="完整密钥加密保存；需要时再查看或复制。"
-      >
+    <>
+    <PageFrame
+      title="密钥"
+      accessory={accessory}
+      actions={
+        <Button
+          label="创建 Key"
+          variant="primary"
+          icon={<PlusIcon />}
+          onClick={openCreate}
+        />
+      }
+    >
         {rows.length ? (
           <Table
             data={rows}
             idKey="id"
             density="compact"
             hasHover
+            textOverflow="truncate"
             columns={[
               { key: "name", header: "名称", width: proportional(1) },
               {
@@ -525,7 +537,7 @@ function KeysView({
             }
           />
         )}
-      </SectionCard>
+    </PageFrame>
 
       <Dialog
         isOpen={editorOpen}
@@ -653,6 +665,6 @@ function KeysView({
           }
         />
       </Dialog>
-    </VStack>
+    </>
   )
 }

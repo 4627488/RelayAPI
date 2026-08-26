@@ -1,21 +1,15 @@
 import type { ReactNode } from "react"
 import { Area, AreaChart, CartesianGrid, Tooltip, XAxis } from "recharts"
-import {
-  ActivityIcon,
-  CircleDollarSignIcon,
-  Clock3Icon,
-  CoinsIcon,
-  TriangleAlertIcon,
-} from "lucide-react"
 import { Button } from "@astryxdesign/core/Button"
 import { EmptyState } from "@astryxdesign/core/EmptyState"
+import { VStack } from "@astryxdesign/core/Layout"
 import { Table, pixel, proportional } from "@astryxdesign/core/Table"
 import { Text } from "@astryxdesign/core/Text"
 
 import {
   ChartFrame,
-  MetricGrid as MetricTiles,
-  SectionCard,
+  MetricStrip,
+  PageSection,
   StatusLabel,
   useChartColors,
 } from "@/components/page-kit"
@@ -30,29 +24,20 @@ import {
   requestLogSucceeded,
 } from "@/lib/format"
 
-interface Metric {
-  label: string
-  value: string
-  hint: string
-  icon: typeof ActivityIcon
-}
-
 export function UsageMetrics({ report }: { report: UsageReport }) {
   const summary = report.summary
   return (
-    <MetricTiles
+    <MetricStrip
       items={[
         {
           label: "请求",
           value: compact(summary.requests),
           hint: `${summary.errors} 个错误`,
-          icon: ActivityIcon,
         },
         {
           label: "Tokens",
           value: compactTokens(summary.tokens),
           hint: `${compactTokens(summary.cached_tokens)} 缓存命中`,
-          icon: CoinsIcon,
         },
         {
           label: "错误",
@@ -60,40 +45,30 @@ export function UsageMetrics({ report }: { report: UsageReport }) {
           hint: summary.requests
             ? `${((summary.errors / summary.requests) * 100).toFixed(1)}%`
             : "—",
-          icon: TriangleAlertIcon,
         },
         {
           label: "模型成本",
           value: money(summary.cost_nano_usd),
           hint: `订阅 ${money(summary.subscription_covered_nano_usd)} · 余额 ${money(summary.balance_charged_nano_usd)}`,
-          icon: CircleDollarSignIcon,
         },
       ]}
     />
   )
 }
 
-export function MetricGrid({ items }: { items: Metric[] }) {
-  return (
-    <MetricTiles
-      items={items.map((item) => ({
-        label: item.label,
-        value: item.value,
-        hint: item.hint,
-        icon: item.icon,
-      }))}
-    />
-  )
+export function MetricGrid({
+  items,
+}: {
+  items: Array<{ label: string; value: ReactNode; hint?: ReactNode }>
+}) {
+  return <MetricStrip items={items} />
 }
 
 export function UsageChart({ report }: { report: UsageReport }) {
   const colors = useChartColors()
   const daily = report.daily ?? []
   return (
-    <SectionCard
-      title="用量趋势"
-      description={`最近 ${report.days} 天的请求与 Token 消耗。`}
-    >
+    <PageSection title="用量趋势" dividers={["bottom"]}>
       {daily.length ? (
         <ChartFrame>
           <AreaChart data={daily}>
@@ -131,14 +106,9 @@ export function UsageChart({ report }: { report: UsageReport }) {
           </AreaChart>
         </ChartFrame>
       ) : (
-        <EmptyState
-          isCompact
-          title="暂无用量"
-          description="发起第一次模型请求后，这里会显示趋势。"
-          icon={<Clock3Icon />}
-        />
+        <EmptyState isCompact title="暂无用量" />
       )}
-    </SectionCard>
+    </PageSection>
   )
 }
 
@@ -174,13 +144,20 @@ export function LogsTable({
   }))
 
   return (
-    <SectionCard title="最近请求" actions={action}>
+    <VStack gap={0}>
+      <PageSection
+        title="最近请求"
+        actions={action}
+        padding={5}
+        dividers={["bottom"]}
+      />
       {rows.length ? (
         <Table
           data={rows}
           idKey="id"
           density="compact"
           hasHover
+          textOverflow="truncate"
           columns={[
             {
               key: "started_at",
@@ -208,9 +185,7 @@ export function LogsTable({
               header: "Tokens",
               width: pixel(100),
               align: "end",
-              renderCell: (row) => (
-                <Text>{compactTokens(row.tokens)}</Text>
-              ),
+              renderCell: (row) => <Text>{compactTokens(row.tokens)}</Text>,
             },
             {
               key: "latency",
@@ -231,15 +206,11 @@ export function LogsTable({
       ) : (
         <EmptyState isCompact title="暂无请求记录" />
       )}
-    </SectionCard>
+    </VStack>
   )
 }
 
-export function LogsTableAction({
-  onOpen,
-}: {
-  onOpen: () => void
-}) {
+export function LogsTableAction({ onOpen }: { onOpen: () => void }) {
   return <Button label="全部日志" variant="ghost" size="sm" onClick={onOpen} />
 }
 

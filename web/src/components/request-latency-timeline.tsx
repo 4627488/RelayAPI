@@ -5,7 +5,7 @@ import { Table, pixel, proportional } from "@astryxdesign/core/Table"
 import { Text } from "@astryxdesign/core/Text"
 import { VStack } from "@astryxdesign/core/Layout"
 
-import { ChartFrame, MetricGrid, SectionCard, useChartColors } from "@/components/page-kit"
+import { ChartFrame, MetricStrip, PageSection, useChartColors } from "@/components/page-kit"
 import { bytes } from "@/lib/format"
 
 type LatencyBucket = "user" | "relay" | "upstream" | "mixed" | "context"
@@ -102,7 +102,6 @@ export function RequestLatencyTimeline({
   value,
   totalMS,
   ttftMS,
-  stream,
 }: {
   value?: string
   totalMS: number
@@ -115,9 +114,6 @@ export function RequestLatencyTimeline({
 
   const total = Math.max(trace.total_ms, totalMS, 0.001)
   const attribution = trace.attribution
-  const attempts = trace.segments.filter(
-    (segment) => segment.track === "attempt" && !segment.id.includes("_retry_wait_")
-  ).length
   const comparison = [
     {
       name: "观测累计",
@@ -185,19 +181,9 @@ export function RequestLatencyTimeline({
     }))
 
   return (
-    <SectionCard
-      title="耗时测量"
-      description={[
-        stream ? "流式" : "非流式",
-        attempts > 1 ? `${attempts} 次上游尝试` : null,
-        `墙钟 ${formatMS(total)}`,
-        `首字节 ${ttftMS != null ? formatMS(ttftMS) : "—"}`,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
-    >
+    <PageSection title="耗时">
       <VStack gap={4}>
-        <MetricGrid
+        <MetricStrip
           items={[
             {
               label: "用户网络",
@@ -350,7 +336,7 @@ export function RequestLatencyTimeline({
           </Text>
         ) : null}
       </VStack>
-    </SectionCard>
+    </PageSection>
   )
 }
 

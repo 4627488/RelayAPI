@@ -1,11 +1,9 @@
-import type { ComponentType, ReactNode } from "react"
+import type { ReactNode } from "react"
 import { ResponsiveContainer } from "recharts"
 import { useTheme } from "@astryxdesign/core/theme"
 import { Badge } from "@astryxdesign/core/Badge"
 import { Button } from "@astryxdesign/core/Button"
-import { Card } from "@astryxdesign/core/Card"
-import { Grid } from "@astryxdesign/core/Grid"
-import { Icon } from "@astryxdesign/core/Icon"
+import { Divider } from "@astryxdesign/core/Divider"
 import {
   HStack,
   Layout,
@@ -14,6 +12,7 @@ import {
   StackItem,
   VStack,
 } from "@astryxdesign/core/Layout"
+import { Section } from "@astryxdesign/core/Section"
 import { StatusDot } from "@astryxdesign/core/StatusDot"
 import { Heading, Text } from "@astryxdesign/core/Text"
 import { TextInput } from "@astryxdesign/core/TextInput"
@@ -22,36 +21,92 @@ import { CopyIcon } from "lucide-react"
 
 import { copyText } from "@/lib/clipboard"
 
-export function PageHeader({
+type Spacing = 0 | 4 | 5 | 6 | 8
+
+export function PageFrame({
   title,
   accessory,
   actions,
+  children,
+  contentWidth,
+  contentPadding = 0,
+  footer,
+  end,
+  start,
 }: {
   title?: ReactNode
   accessory?: ReactNode
   actions?: ReactNode
+  children: ReactNode
+  contentWidth?: number
+  contentPadding?: Spacing
+  footer?: ReactNode
+  end?: ReactNode
+  start?: ReactNode
 }) {
-  if (!title && !accessory && !actions) return null
+  const hasHeader = Boolean(title || accessory || actions)
   return (
-    <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap">
-      {title || accessory ? (
-        <HStack gap={2} vAlign="center" wrap="wrap">
-          {title ? (
-            typeof title === "string" ? (
-              <Heading level={1}>{title}</Heading>
-            ) : (
-              title
-            )
-          ) : null}
-          {accessory}
-        </HStack>
-      ) : null}
-      {actions ? (
-        <HStack gap={2} vAlign="center" wrap="wrap">
-          {actions}
-        </HStack>
-      ) : null}
-    </HStack>
+    <Layout
+      height="fill"
+      defaultHasDividers
+      contentWidth={contentWidth}
+      start={start}
+      end={end}
+      footer={footer}
+      header={
+        hasHeader ? (
+          <LayoutHeader>
+            <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap">
+              {typeof title === "string" ? (
+                <Heading level={1}>{title}</Heading>
+              ) : (
+                title
+              )}
+              {accessory}
+              {actions}
+            </HStack>
+          </LayoutHeader>
+        ) : undefined
+      }
+    >
+      <LayoutContent padding={contentPadding}>{children}</LayoutContent>
+    </Layout>
+  )
+}
+
+export function PageSection({
+  title,
+  actions,
+  children,
+  padding = 5,
+  variant = "section",
+  dividers,
+}: {
+  title?: ReactNode
+  actions?: ReactNode
+  children?: ReactNode
+  padding?: Spacing
+  variant?: "section" | "transparent" | "muted"
+  dividers?: Array<"top" | "bottom" | "start" | "end">
+}) {
+  return (
+    <Section variant={variant} padding={padding} dividers={dividers}>
+      <VStack gap={4}>
+        {title || actions ? (
+          <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap">
+            {title ? (
+              typeof title === "string" ? (
+                <Heading level={3}>{title}</Heading>
+              ) : (
+                title
+              )
+            ) : null}
+            {actions}
+          </HStack>
+        ) : null}
+        {children ?? null}
+      </VStack>
+    </Section>
   )
 }
 
@@ -59,46 +114,48 @@ export interface MetricItem {
   label: string
   value: ReactNode
   hint?: ReactNode
-  icon?: ComponentType<{ className?: string }>
 }
 
-export function MetricGrid({ items }: { items: MetricItem[] }) {
+export function MetricStrip({ items }: { items: MetricItem[] }) {
   return (
-    <Grid columns={{ minWidth: 180, max: 4 }} gap={3}>
-      {items.map((item) => {
-        const IconComponent = item.icon
-        return (
-          <Card key={item.label} padding={4} elevation="low">
-            <VStack gap={1}>
-              <HStack hAlign="between" vAlign="start" gap={2}>
-                <Text color="secondary" type="supporting">
-                  {item.label}
-                </Text>
-                {IconComponent ? (
-                  <Icon icon={IconComponent} color="secondary" size="sm" />
-                ) : null}
-              </HStack>
-              <Heading level={3}>{item.value}</Heading>
+    <Section variant="muted" padding={4}>
+      <HStack gap={0} wrap="wrap" vAlign="stretch">
+        {items.map((item, index) => (
+          <HStack key={item.label} gap={0} vAlign="stretch">
+            {index > 0 ? <Divider orientation="vertical" /> : null}
+            <VStack gap={0} padding={3}>
+              <Text color="secondary" type="supporting">
+                {item.label}
+              </Text>
+              {typeof item.value === "string" || typeof item.value === "number" ? (
+                <Heading level={2}>{item.value}</Heading>
+              ) : (
+                item.value
+              )}
               {item.hint ? (
-                <Text color="secondary" type="supporting">
-                  {item.hint}
-                </Text>
+                typeof item.hint === "string" ? (
+                  <Text color="secondary" type="supporting">
+                    {item.hint}
+                  </Text>
+                ) : (
+                  item.hint
+                )
               ) : null}
             </VStack>
-          </Card>
-        )
-      })}
-    </Grid>
+          </HStack>
+        ))}
+      </HStack>
+    </Section>
   )
 }
 
 export function ChartFrame({ children }: { children: ReactNode }) {
   return (
-    <Card height={288} padding={0} elevation="none">
+    <Section height={288} padding={0} variant="transparent">
       <ResponsiveContainer width="100%" height="100%">
         {children}
       </ResponsiveContainer>
-    </Card>
+    </Section>
   )
 }
 
@@ -197,37 +254,55 @@ export function CountBadge({ value }: { value: number | string }) {
   return <Badge label={String(value)} />
 }
 
+/** @deprecated Use PageFrame. Kept for call sites mid-migration. */
+export function PageHeader({
+  title,
+  accessory,
+  actions,
+}: {
+  title?: ReactNode
+  accessory?: ReactNode
+  actions?: ReactNode
+}) {
+  if (!title && !accessory && !actions) return null
+  return (
+    <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap">
+      {title || accessory ? (
+        <HStack gap={2} vAlign="center" wrap="wrap">
+          {title ? (
+            typeof title === "string" ? (
+              <Heading level={1}>{title}</Heading>
+            ) : (
+              title
+            )
+          ) : null}
+          {accessory}
+        </HStack>
+      ) : null}
+      {actions}
+    </HStack>
+  )
+}
+
+/** @deprecated Use MetricStrip. */
+export function MetricGrid({ items }: { items: MetricItem[] }) {
+  return <MetricStrip items={items} />
+}
+
+/** @deprecated Use PageSection. */
 export function SectionCard({
   title,
-  description,
   actions,
   children,
 }: {
-  title: string
-  description?: string
+  title?: ReactNode
+  description?: ReactNode
   actions?: ReactNode
   children: ReactNode
 }) {
   return (
-    <Card padding={0} elevation="low">
-      <Layout
-        height="auto"
-        defaultHasDividers
-        header={
-          <LayoutHeader>
-            <HStack hAlign="between" vAlign="start" gap={3} wrap="wrap">
-              <VStack gap={1}>
-                <Heading level={3}>{title}</Heading>
-                {description ? (
-                  <Text color="secondary">{description}</Text>
-                ) : null}
-              </VStack>
-              {actions}
-            </HStack>
-          </LayoutHeader>
-        }
-        content={<LayoutContent>{children}</LayoutContent>}
-      />
-    </Card>
+    <PageSection title={title} actions={actions}>
+      {children}
+    </PageSection>
   )
 }

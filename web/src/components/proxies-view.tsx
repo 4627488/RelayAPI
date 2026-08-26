@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState, type ReactNode } from "react"
 import { AlertDialog } from "@astryxdesign/core/AlertDialog"
 import { Banner } from "@astryxdesign/core/Banner"
 import { Button } from "@astryxdesign/core/Button"
@@ -24,16 +24,14 @@ import {
   NetworkIcon,
   PencilIcon,
   PlusIcon,
-  ShieldCheckIcon,
   Trash2Icon,
 } from "lucide-react"
 
 import { LoadErrorView } from "@/components/load-error-view"
 import { LoadingView } from "@/components/loading-view"
 import {
-  MetricGrid,
-  PageHeader,
-  SectionCard,
+  PageFrame,
+  PageSection,
   StatusLabel,
 } from "@/components/page-kit"
 import {
@@ -80,7 +78,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   )
 }
 
-export function ProxiesView() {
+export function ProxiesView({ accessory }: { accessory?: ReactNode }) {
   const toast = useToast()
   const [items, setItems] = useState<OutboundProxy[]>([])
   const [loading, setLoading] = useState(true)
@@ -114,11 +112,6 @@ export function ProxiesView() {
     void load()
   }, [load])
 
-  const accountUses = useMemo(
-    () => items.reduce((sum, item) => sum + item.account_use, 0),
-    [items]
-  )
-  const tested = Object.values(results).filter((result) => result.ok).length
   const lastTested = items.find((item) => item.id === lastTestedID)
   const lastResult = lastTested ? results[lastTested.id] : undefined
 
@@ -228,35 +221,20 @@ export function ProxiesView() {
   }))
 
   return (
-    <VStack gap={4}>
-      <PageHeader
-        actions={
-          <Button
-            label="添加代理"
-            variant="primary"
-            icon={<PlusIcon />}
-            onClick={openCreate}
-          />
-        }
-      />
-
-      <MetricGrid
-        items={[
-          { label: "代理条目", value: items.length },
-          { label: "账户绑定", value: accountUses },
-          { label: "本次已测", value: tested },
-        ]}
-      />
-
-      <Banner
-        status="info"
-        title="地址与认证信息加密保存且不回显"
-        description="连通性测试固定访问出口信息服务。"
-        icon={<ShieldCheckIcon />}
-        collapsible={false}
-      />
-
-      <SectionCard title="出站代理" description="在系统设置或模型账户中选择使用。">
+    <>
+    <PageFrame
+      title="设置"
+      accessory={accessory}
+      actions={
+        <Button
+          label="添加代理"
+          variant="primary"
+          icon={<PlusIcon />}
+          onClick={openCreate}
+        />
+      }
+    >
+      <VStack gap={0}>
         {rows.length ? (
           <Table
             data={rows}
@@ -340,11 +318,10 @@ export function ProxiesView() {
         ) : (
           <EmptyState
             title="还没有代理"
-            description="添加后可在系统设置或模型账户中选择使用。"
             icon={<NetworkIcon />}
             actions={
               <Button
-                label="添加第一个代理"
+                label="添加"
                 variant="primary"
                 icon={<PlusIcon />}
                 onClick={openCreate}
@@ -352,11 +329,10 @@ export function ProxiesView() {
             }
           />
         )}
-      </SectionCard>
 
       {lastTested && lastResult ? (
         lastResult.ok ? (
-          <SectionCard title={`测试结果 · ${lastTested.name}`}>
+          <PageSection title={lastTested.name}>
             <VStack gap={3}>
               <HStack hAlign="between" gap={3} vAlign="center">
                 <Text color="secondary">状态</Text>
@@ -375,16 +351,17 @@ export function ProxiesView() {
                 }`}
               />
             </VStack>
-          </SectionCard>
+          </PageSection>
         ) : (
           <Banner
             status="error"
-            title={`${lastTested.name} 测试失败`}
-            description={lastResult.error || "代理测试失败"}
+            title={lastResult.error || "测试失败"}
             collapsible={false}
           />
         )
       ) : null}
+      </VStack>
+    </PageFrame>
 
       <Dialog
         isOpen={editor.open}
@@ -465,6 +442,6 @@ export function ProxiesView() {
         isActionLoading={pending}
         onAction={() => void remove()}
       />
-    </VStack>
+    </>
   )
 }

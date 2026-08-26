@@ -5,7 +5,6 @@ import { FormLayout } from "@astryxdesign/core/FormLayout"
 import { Grid } from "@astryxdesign/core/Grid"
 import {
   HStack,
-  Layout,
   LayoutFooter,
   VStack,
 } from "@astryxdesign/core/Layout"
@@ -21,7 +20,7 @@ import { RotateCcwIcon, SaveIcon } from "lucide-react"
 
 import { LoadErrorView } from "@/components/load-error-view"
 import { LoadingView } from "@/components/loading-view"
-import { MetricGrid, SectionCard, StatusLabel } from "@/components/page-kit"
+import { MetricStrip, PageFrame, PageSection, StatusLabel } from "@/components/page-kit"
 import { api, type OutboundProxy } from "@/lib/api"
 
 type RoutingStrategy = "round-robin" | "fill-first"
@@ -215,13 +214,12 @@ function nextInFlight(requestMiB: number, currentInFlight: number) {
 
 function ChoiceField<T extends string | number>({
   label,
-  description,
   value,
   options,
   onChange,
 }: {
   label: string
-  description: string
+  description?: string
   value: T
   options: Choice<T>[]
   onChange: (value: T) => void
@@ -242,7 +240,6 @@ function ChoiceField<T extends string | number>({
     return (
       <Field
         label={label}
-        description={description}
         inputID={inputID}
         isGroupLabel
       >
@@ -267,7 +264,6 @@ function ChoiceField<T extends string | number>({
   return (
     <Selector
       label={label}
-      description={description}
       value={selected}
       options={selectorOptions}
       onChange={handleChange}
@@ -275,7 +271,11 @@ function ChoiceField<T extends string | number>({
   )
 }
 
-export function RuntimeSettingsView() {
+export function RuntimeSettingsView({
+  accessory,
+}: {
+  accessory?: import("react").ReactNode
+}) {
   const toast = useToast()
   const [value, setValue] = useState<RuntimeSettings | null>(null)
   const [saved, setSaved] = useState<RuntimeSettings | null>(null)
@@ -383,11 +383,38 @@ export function RuntimeSettingsView() {
     imageModeHelp[value.image_generation_mode] ?? "当前值不在预设选项中。"
 
   return (
-    <Layout
-      height="auto"
-      content={
-        <VStack gap={4}>
-          <MetricGrid
+    <PageFrame
+      title="设置"
+      accessory={accessory}
+      contentWidth={640}
+      contentPadding={6}
+      footer={
+        dirty ? (
+          <LayoutFooter>
+            <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap">
+              <Text>有未保存的更改</Text>
+              <HStack gap={2} vAlign="center" wrap="wrap">
+                <Button
+                  label="重置"
+                  icon={<RotateCcwIcon />}
+                  isDisabled={saving}
+                  onClick={() => saved && setValue(saved)}
+                />
+                <Button
+                  label="保存"
+                  variant="primary"
+                  icon={<SaveIcon />}
+                  isLoading={saving}
+                  onClick={() => void save()}
+                />
+              </HStack>
+            </HStack>
+          </LayoutFooter>
+        ) : undefined
+      }
+    >
+        <VStack gap={6}>
+          <MetricStrip
             items={[
               {
                 label: "运行状态",
@@ -403,16 +430,12 @@ export function RuntimeSettingsView() {
               {
                 label: "并发 / 排队",
                 value: `${runtime.max_in_flight} / ${runtime.max_queue}`,
-                hint: "启动配置，修改后需重启",
               },
             ]}
           />
 
           <Grid columns={{ minWidth: 360, max: 2 }} gap={4}>
-            <SectionCard
-              title="凭据调度"
-              description="同一模型有多个账户时的分流方式。"
-            >
+            <PageSection title="凭据调度">
               <FormLayout direction="horizontal-labels">
                 <ChoiceField
                   label="调度方式"
@@ -434,12 +457,9 @@ export function RuntimeSettingsView() {
                   }
                 />
               </FormLayout>
-            </SectionCard>
+            </PageSection>
 
-            <SectionCard
-              title="失败重试"
-              description="仅在上游内部更换账户重试，不会重复提交同一请求。"
-            >
+            <PageSection title="失败重试">
               <FormLayout direction="horizontal-labels">
                 <ChoiceField
                   label="请求重试"
@@ -486,12 +506,9 @@ export function RuntimeSettingsView() {
                   onChange={(next) => patch("stream_bootstrap_retries", next)}
                 />
               </FormLayout>
-            </SectionCard>
+            </PageSection>
 
-            <SectionCard
-              title="长连接"
-              description="已建立的 SSE 或 WebSocket 保活策略，不会中断正在输出的内容。"
-            >
+            <PageSection title="长连接">
               <FormLayout direction="horizontal-labels">
                 <ChoiceField
                   label="流式保活"
@@ -524,12 +541,9 @@ export function RuntimeSettingsView() {
                   onChange={(checked) => patch("upstream_websockets", checked)}
                 />
               </FormLayout>
-            </SectionCard>
+            </PageSection>
 
-            <SectionCard
-              title="图像与视频"
-              description="出图工具与视频结果绑定。"
-            >
+            <PageSection title="图像与视频">
               <FormLayout direction="horizontal-labels">
                 <ChoiceField
                   label="图像生成"
@@ -561,12 +575,9 @@ export function RuntimeSettingsView() {
                   }
                 />
               </FormLayout>
-            </SectionCard>
+            </PageSection>
 
-            <SectionCard
-              title="系统网络"
-              description="用于 OAuth 与价格目录等系统请求。推理流量在模型账户上单独选择代理。"
-            >
+            <PageSection title="系统网络">
               <FormLayout direction="horizontal-labels">
                 <Selector
                   label="系统代理"
@@ -593,12 +604,9 @@ export function RuntimeSettingsView() {
                   onChange={(checked) => patch("force_model_prefix", checked)}
                 />
               </FormLayout>
-            </SectionCard>
+            </PageSection>
 
-            <SectionCard
-              title="进程边界"
-              description="保存后立即生效。并发路数仍由启动配置决定。"
-            >
+            <PageSection title="进程边界">
               <FormLayout direction="horizontal-labels">
                 <ChoiceField
                   label="响应头超时"
@@ -678,34 +686,9 @@ export function RuntimeSettingsView() {
                   onChange={(next) => patch("unpriced_model_policy", next)}
                 />
               </FormLayout>
-            </SectionCard>
+            </PageSection>
           </Grid>
         </VStack>
-      }
-      footer={
-        dirty ? (
-          <LayoutFooter>
-            <HStack hAlign="between" vAlign="center" gap={3} wrap="wrap">
-              <Text>有未保存的更改</Text>
-              <HStack gap={2} vAlign="center" wrap="wrap">
-                <Button
-                  label="重置"
-                  icon={<RotateCcwIcon />}
-                  isDisabled={saving}
-                  onClick={() => saved && setValue(saved)}
-                />
-                <Button
-                  label="保存"
-                  variant="primary"
-                  icon={<SaveIcon />}
-                  isLoading={saving}
-                  onClick={() => void save()}
-                />
-              </HStack>
-            </HStack>
-          </LayoutFooter>
-        ) : undefined
-      }
-    />
+    </PageFrame>
   )
 }
