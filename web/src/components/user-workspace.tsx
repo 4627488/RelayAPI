@@ -1,5 +1,6 @@
 import {
   Fragment,
+  lazy,
   useCallback,
   useEffect,
   useRef,
@@ -65,8 +66,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { LogsTable, UsageChart, UsageMetrics } from "@/components/data-views"
-import { UsageView } from "@/components/usage-view"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { ModelSelector } from "@/components/model-selector"
@@ -75,10 +74,7 @@ import {
   type ModelAliasPreset,
   type ModelAliasDraft,
 } from "@/components/api-key-model-alias-editor"
-import { TenantSubscriptionsView } from "@/components/subscriptions-view"
-import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
-import { ConnectionGuide } from "@/components/connection-guide"
-import type { Page } from "@/components/app-shell"
+import type { Page } from "@/lib/routes"
 import {
   api,
   deleteRequest,
@@ -91,6 +87,43 @@ import {
 } from "@/lib/api"
 import { dateTime, money } from "@/lib/format"
 import { copyText } from "@/lib/clipboard"
+import { useAsyncResource } from "@/hooks/use-async-resource"
+
+const LogsTable = lazy(() =>
+  import("@/components/data-views").then((module) => ({
+    default: module.LogsTable,
+  }))
+)
+const UsageChart = lazy(() =>
+  import("@/components/data-views").then((module) => ({
+    default: module.UsageChart,
+  }))
+)
+const UsageMetrics = lazy(() =>
+  import("@/components/data-views").then((module) => ({
+    default: module.UsageMetrics,
+  }))
+)
+const UsageView = lazy(() =>
+  import("@/components/usage-view").then((module) => ({
+    default: module.UsageView,
+  }))
+)
+const TenantSubscriptionsView = lazy(() =>
+  import("@/components/subscriptions-view").then((module) => ({
+    default: module.TenantSubscriptionsView,
+  }))
+)
+const RequestLogsWorkbench = lazy(() =>
+  import("@/components/request-logs-workbench").then((module) => ({
+    default: module.RequestLogsWorkbench,
+  }))
+)
+const ConnectionGuide = lazy(() =>
+  import("@/components/connection-guide").then((module) => ({
+    default: module.ConnectionGuide,
+  }))
+)
 
 interface UserWorkspaceProps {
   page: Page
@@ -106,47 +139,53 @@ export function UserWorkspace({
   const tenantModels = session.tenant?.model_allowlist ?? []
   if (page === "keys") return <KeysPage tenantModels={tenantModels} />
   if (page === "logs") return <RequestLogsWorkbench />
-  if (page === "guide") return <ConnectionGuide />
+  if (page === "guide") return <GuidePage />
   if (page === "subscriptions") return <TenantSubscriptionsView />
   if (page === "usage") return <UsageView />
   return <UserOverview session={session} onPageChange={onPageChange} />
 }
 
 function KeysPage({ tenantModels }: { tenantModels: string[] }) {
-  const [keys, setKeys] = useState<ApiKey[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
-
-  const load = useCallback(async (showLoading = false) => {
-    if (showLoading) setLoading(true)
-    setLoadError("")
-    try {
-      const keysValue = await api<{ items: ApiKey[] }>("/api/keys")
-      setKeys(keysValue.items ?? [])
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "无法读取密钥"
-      setLoadError(message)
-      if (!showLoading) toast.error(message)
-    } finally {
-      if (showLoading) setLoading(false)
-    }
+  const loadKeys = useCallback(async () => {
+    const value = await api<{ items: ApiKey[] }>("/api/keys")
+    return value.items ?? []
   }, [])
-
-  useEffect(() => {
-    void load(true)
-  }, [load])
+  const {
+    data: keys,
+    loading,
+    error: loadError,
+    reload,
+  } = useAsyncResource(loadKeys, {
+    initialData: [],
+    errorMessage: "无法读取密钥",
+    onBackgroundError: (message) => toast.error(message),
+  })
 
   if (loading) return <LoadingView />
   if (loadError && keys.length === 0) {
-    return <LoadErrorView message={loadError} onRetry={() => void load(true)} />
+    return (
+      <LoadErrorView message={loadError} onRetry={() => void reload(true)} />
+    )
   }
 
   return (
     <KeysView
       keys={keys}
       tenantModels={tenantModels}
-      onChanged={() => load()}
+      onChanged={() => reload()}
     />
+  )
+}
+
+function GuidePage() {
+  return (
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="接入指南"
+        description="安装 RAI 启动器，通过浏览器登录后连接常用 AI 客户端。"
+      />
+      <ConnectionGuide />
+    </div>
   )
 }
 
@@ -157,50 +196,49 @@ function UserOverview({
   session: Session
   onPageChange: (page: Page) => void
 }) {
-  const [usage, setUsage] = useState<UsageReport | null>(null)
-  const [logs, setLogs] = useState<RequestLog[]>([])
-  const [keys, setKeys] = useState<ApiKey[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
-
-  const load = useCallback(async (showLoading = false) => {
-    if (showLoading) setLoading(true)
-    setLoadError("")
-    try {
-      const [usageValue, logsValue, keysValue] = await Promise.all([
-        api<UsageReport>("/api/usage?days=30"),
-        api<{ items: RequestLog[] }>("/api/logs?limit=8"),
-        api<{ items: ApiKey[] }>("/api/keys"),
-      ])
-      setUsage(usageValue)
-      setLogs(logsValue.items ?? [])
-      setKeys(keysValue.items ?? [])
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "无法读取数据"
-      setLoadError(message)
-      if (!showLoading) toast.error(message)
-    } finally {
-      if (showLoading) setLoading(false)
+  const loadOverview = useCallback(async () => {
+    const [usage, logs, keys] = await Promise.all([
+      api<UsageReport>("/api/usage?days=30"),
+      api<{ items: RequestLog[] }>("/api/logs?limit=8"),
+      api<{ items: ApiKey[] }>("/api/keys"),
+    ])
+    return {
+      usage,
+      logs: logs.items ?? [],
+      keys: keys.items ?? [],
     }
   }, [])
-
-  useEffect(() => {
-    void load(true)
-  }, [load])
+  const {
+    data: { usage, logs, keys },
+    loading,
+    error: loadError,
+    reload,
+  } = useAsyncResource(loadOverview, {
+    initialData: {
+      usage: null as UsageReport | null,
+      logs: [] as RequestLog[],
+      keys: [] as ApiKey[],
+    },
+    errorMessage: "无法读取数据",
+    onBackgroundError: (message) => toast.error(message),
+  })
 
   if (loading) return <LoadingView />
   if (!usage) {
     return (
       <LoadErrorView
         message={loadError || "账户数据不完整"}
-        onRetry={() => void load(true)}
+        onRetry={() => void reload(true)}
       />
     )
   }
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title={`你好，${session.tenant?.name ?? ""}`} />
+      <PageHeader
+        title="总览"
+        description={`${session.tenant?.name ?? "当前账户"} 的调用、费用与账户状态。`}
+      />
       <UsageMetrics report={usage} />
       <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
         <UsageChart report={usage} />
@@ -464,6 +502,8 @@ function KeysView({
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
+        title="API Keys"
+        description="创建密钥并限制每个密钥可访问的模型。"
         actions={
           <Button onClick={openCreateDialog}>
             <PlusIcon data-icon="inline-start" />

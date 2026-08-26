@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-} from "react"
+import { useCallback, useMemo, useState, type FormEvent } from "react"
 import {
   ActivityIcon,
   CableIcon,
@@ -33,6 +27,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -66,6 +66,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { InfoBar, PageHeader, StatStrip } from "@/components/workspace-ui"
+import { LoadErrorView } from "@/components/load-error-view"
+import { useAsyncResource } from "@/hooks/use-async-resource"
 import {
   api,
   deleteRequest,
@@ -83,29 +85,26 @@ function proxyLocation(result: ProxyTestResult) {
 }
 
 export function ProxiesView() {
-  const [items, setItems] = useState<OutboundProxy[]>([])
-  const [loading, setLoading] = useState(true)
   const [editor, setEditor] = useState<ProxyEditor>({ item: null, open: false })
   const [deleting, setDeleting] = useState<OutboundProxy | null>(null)
   const [pending, setPending] = useState(false)
   const [testingID, setTestingID] = useState("")
   const [results, setResults] = useState<Record<string, ProxyTestResult>>({})
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const result = await api<{ items: OutboundProxy[] }>("/api/admin/proxies")
-      setItems(result.items ?? [])
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取代理列表")
-    } finally {
-      setLoading(false)
-    }
+  const loadProxies = useCallback(async () => {
+    const result = await api<{ items: OutboundProxy[] }>("/api/admin/proxies")
+    return result.items ?? []
   }, [])
-
-  useEffect(() => {
-    void load()
-  }, [load])
+  const {
+    data: items,
+    loading,
+    error: loadError,
+    reload,
+  } = useAsyncResource(loadProxies, {
+    initialData: [],
+    errorMessage: "无法读取代理列表",
+    onBackgroundError: (message) => toast.error(message),
+  })
 
   const accountUses = useMemo(
     () => items.reduce((sum, item) => sum + item.account_use, 0),
@@ -133,7 +132,7 @@ export function ProxiesView() {
       })
       toast.success(editor.item ? "代理已更新" : "代理已添加")
       setEditor({ item: null, open: false })
-      await load()
+      await reload()
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "保存代理失败")
     } finally {
@@ -177,7 +176,7 @@ export function ProxiesView() {
       )
       toast.success("代理已删除")
       setDeleting(null)
-      await load()
+      await reload()
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "删除代理失败")
     } finally {
@@ -192,9 +191,17 @@ export function ProxiesView() {
       </div>
     )
 
+  if (loadError && items.length === 0) {
+    return (
+      <LoadErrorView message={loadError} onRetry={() => void reload(true)} />
+    )
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
+        title="出站代理"
+        description="配置上游请求使用的网络出口并检查连通性。"
         actions={
           <Button onClick={() => setEditor({ item: null, open: true })}>
             <PlusIcon data-icon="inline-start" />
@@ -262,58 +269,60 @@ export function ProxiesView() {
                   </div>
                   {result ? (
                     result.ok ? (
-                      <div className="space-y-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                            <CircleCheckIcon className="size-4" />
-                            代理可用
-                          </span>
+                      <Alert>
+                        <CircleCheckIcon className="text-positive" />
+                        <AlertTitle>代理可用</AlertTitle>
+                        <AlertAction>
                           <Badge variant="outline">
                             <Clock3Icon />
                             {result.latency_ms} ms
                           </Badge>
-                        </div>
-                        <div className="grid gap-2 text-sm sm:grid-cols-2">
-                          <p className="flex min-w-0 items-center gap-2">
-                            <Globe2Icon className="size-4 shrink-0 text-muted-foreground" />
-                            <span
-                              className="truncate font-mono"
-                              title={result.ip}
-                            >
-                              {result.ip}
-                            </span>
-                          </p>
-                          <p className="flex min-w-0 items-center gap-2">
-                            <MapPinIcon className="size-4 shrink-0 text-muted-foreground" />
-                            <span className="truncate">
-                              {result.flag} {proxyLocation(result)}
-                            </span>
-                          </p>
-                          <p className="flex min-w-0 items-center gap-2 sm:col-span-2">
-                            <ServerIcon className="size-4 shrink-0 text-muted-foreground" />
-                            <span
-                              className="truncate"
-                              title={result.organization}
-                            >
-                              {result.organization ||
-                                result.isp ||
-                                "网络归属未知"}
-                              {result.asn ? ` · AS${result.asn}` : ""}
-                            </span>
-                          </p>
-                        </div>
-                      </div>
+                        </AlertAction>
+                        <AlertDescription>
+                          <div className="mt-2 grid gap-2 text-sm text-foreground sm:grid-cols-2">
+                            <p className="flex min-w-0 items-center gap-2">
+                              <Globe2Icon className="size-4 shrink-0 text-muted-foreground" />
+                              <span
+                                className="truncate font-mono"
+                                title={result.ip}
+                              >
+                                {result.ip}
+                              </span>
+                            </p>
+                            <p className="flex min-w-0 items-center gap-2">
+                              <MapPinIcon className="size-4 shrink-0 text-muted-foreground" />
+                              <span className="truncate">
+                                {result.flag} {proxyLocation(result)}
+                              </span>
+                            </p>
+                            <p className="flex min-w-0 items-center gap-2 sm:col-span-2">
+                              <ServerIcon className="size-4 shrink-0 text-muted-foreground" />
+                              <span
+                                className="truncate"
+                                title={result.organization}
+                              >
+                                {result.organization ||
+                                  result.isp ||
+                                  "网络归属未知"}
+                                {result.asn ? ` · AS${result.asn}` : ""}
+                              </span>
+                            </p>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
                     ) : (
-                      <div className="flex gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive">
-                        <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
-                        <span>{result.error || "代理测试失败"}</span>
-                      </div>
+                      <Alert variant="destructive">
+                        <TriangleAlertIcon />
+                        <AlertTitle>代理测试失败</AlertTitle>
+                        <AlertDescription>
+                          {result.error || "未能通过该代理访问测试地址。"}
+                        </AlertDescription>
+                      </Alert>
                     )
                   ) : (
-                    <div className="flex flex-1 items-center gap-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-                      <ActivityIcon className="size-4" />
+                    <InfoBar icon={ActivityIcon}>
                       测试后在这里显示落地 IP、归属与延迟
-                    </div>
+                    </InfoBar>
                   )}
                 </CardContent>
                 <CardFooter className="mt-auto flex flex-wrap gap-2 border-t bg-muted/20 pt-4">

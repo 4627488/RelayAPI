@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback } from "react"
 import { AlertTriangleIcon, GaugeIcon, PackageOpenIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -20,6 +20,10 @@ import {
 } from "@/components/ui/empty"
 import { Progress, ProgressLabel } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
+import { Separator } from "@/components/ui/separator"
+import { PageHeader } from "@/components/workspace-ui"
+import { LoadErrorView } from "@/components/load-error-view"
+import { useAsyncResource } from "@/hooks/use-async-resource"
 import {
   api,
   type ChildSubscription,
@@ -28,24 +32,35 @@ import {
 import { dateTime, money } from "@/lib/format"
 
 export function TenantSubscriptionsView() {
-  const [items, setItems] = useState<ChildSubscription[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    api<{ items: ChildSubscription[] }>("/api/subscriptions")
-      .then((value) => setItems(value.items ?? []))
-      .catch((cause) =>
-        toast.error(cause instanceof Error ? cause.message : "无法读取订阅")
-      )
-      .finally(() => setLoading(false))
+  const loadSubscriptions = useCallback(async () => {
+    const value = await api<{ items: ChildSubscription[] }>(
+      "/api/subscriptions"
+    )
+    return value.items ?? []
   }, [])
+  const {
+    data: items,
+    loading,
+    error,
+    reload,
+  } = useAsyncResource(loadSubscriptions, {
+    initialData: [],
+    errorMessage: "无法读取订阅",
+    onBackgroundError: (message) => toast.error(message),
+  })
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title="我的订阅"
+        description="查看已分配的模型账户、额度窗口和可用模型。"
+      />
       {loading ? (
         <div className="flex justify-center py-12">
           <Spinner />
         </div>
+      ) : error && items.length === 0 ? (
+        <LoadErrorView message={error} onRetry={() => void reload(true)} />
       ) : items.length ? (
         <div className="grid gap-4 xl:grid-cols-2">
           {items.map((item) => (
@@ -75,7 +90,7 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
   const available = item.available ?? item.enabled
 
   return (
-    <Card className="overflow-hidden">
+    <Card>
       <CardHeader className="border-b bg-muted/15">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -144,7 +159,8 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
           </Alert>
         )}
 
-        <section className="flex flex-col gap-3 border-t pt-4">
+        <Separator />
+        <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-medium">可用模型</h3>

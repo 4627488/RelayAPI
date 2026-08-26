@@ -3,13 +3,31 @@ import { KeyRoundIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { postJSON } from "@/lib/api"
 
-export function ForcePasswordChange({ onChanged, onLogout }: { onChanged: () => Promise<void>; onLogout: () => void }) {
+export function ForcePasswordChange({
+  onChanged,
+  onLogout,
+}: {
+  onChanged: () => Promise<void>
+  onLogout: () => void
+}) {
   const [pending, setPending] = useState(false)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -44,25 +62,44 @@ export function ForcePasswordChange({ onChanged, onLogout }: { onChanged: () => 
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>设置新密码</CardTitle>
-          <CardDescription>当前密码由管理员临时生成。设置新密码后才能继续使用账户。</CardDescription>
+          <CardDescription>
+            当前密码由管理员临时生成。设置新密码后才能继续使用账户。
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form id="force-password-change" onSubmit={submit}>
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="new-password">新密码</FieldLabel>
-                <Input id="new-password" name="password" type="password" minLength={12} autoComplete="new-password" autoFocus required />
+                <Input
+                  id="new-password"
+                  name="password"
+                  type="password"
+                  minLength={12}
+                  autoComplete="new-password"
+                  autoFocus
+                  required
+                />
                 <FieldDescription>至少 12 位。</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="confirm-password">确认新密码</FieldLabel>
-                <Input id="confirm-password" name="confirmation" type="password" minLength={12} autoComplete="new-password" required />
+                <Input
+                  id="confirm-password"
+                  name="confirmation"
+                  type="password"
+                  minLength={12}
+                  autoComplete="new-password"
+                  required
+                />
               </Field>
             </FieldGroup>
           </form>
         </CardContent>
         <CardFooter className="flex justify-between gap-2">
-          <Button variant="outline" onClick={onLogout} disabled={pending}>退出登录</Button>
+          <Button variant="outline" onClick={onLogout} disabled={pending}>
+            退出登录
+          </Button>
           <Button type="submit" form="force-password-change" disabled={pending}>
             {pending ? <Spinner /> : <KeyRoundIcon data-icon="inline-start" />}
             保存新密码

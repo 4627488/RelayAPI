@@ -744,7 +744,7 @@ export function RuntimeSettingsView() {
       </div>
 
       {dirty ? (
-        <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-background px-4 py-3">
+        <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background px-4 py-3">
           <p className="text-sm">有未保存的更改</p>
           <div className="flex flex-wrap items-center gap-2">
             <Button

@@ -51,6 +51,14 @@ import {
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
   Table,
   TableBody,
   TableCell,
@@ -265,6 +273,8 @@ export function PricingView() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
+        title="模型设置"
+        description="维护模型能力、计费覆盖和目录同步策略。"
         actions={
           <>
             <Button
@@ -272,7 +282,7 @@ export function PricingView() {
               disabled={pending}
               onClick={() => void syncCatalog(false)}
             >
-              <CloudDownloadIcon />
+              <CloudDownloadIcon data-icon="inline-start" />
               预览同步
             </Button>
             <Button
@@ -280,7 +290,7 @@ export function PricingView() {
               disabled={pending}
               onClick={() => void syncCatalog(true)}
             >
-              <CloudDownloadIcon />
+              <CloudDownloadIcon data-icon="inline-start" />
               应用 Models.dev
             </Button>
           </>
@@ -577,9 +587,9 @@ export function PricingView() {
                     />
                   </Field>
                 </FieldGroup>
-                <Field>
-                  <FieldLabel>推理档位</FieldLabel>
-                  <div className="flex flex-wrap gap-3">
+                <FieldSet>
+                  <FieldLegend variant="label">推理档位</FieldLegend>
+                  <FieldGroup className="flex flex-row flex-wrap gap-3">
                     {reasoningEffortOptions.map((effort) => (
                       <Field
                         key={effort}
@@ -587,55 +597,81 @@ export function PricingView() {
                         className="w-auto items-center"
                       >
                         <Checkbox
+                          id={`reasoning-effort-${effort}`}
                           name="reasoning_effort"
                           value={effort}
                           defaultChecked={editingPrice?.reasoning_efforts?.includes(
                             effort
                           )}
                         />
-                        <FieldLabel>{effort}</FieldLabel>
+                        <FieldLabel htmlFor={`reasoning-effort-${effort}`}>
+                          {effort}
+                        </FieldLabel>
                       </Field>
                     ))}
-                  </div>
-                </Field>
+                  </FieldGroup>
+                </FieldSet>
                 <FieldGroup className="grid gap-3 sm:grid-cols-2">
                   <Field>
                     <FieldLabel>默认推理</FieldLabel>
-                    <select
+                    <Select
+                      items={defaultReasoningItems}
                       name="default_reasoning_level"
-                      defaultValue={editingPrice?.default_reasoning_level ?? ""}
-                      className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                      defaultValue={
+                        editingPrice?.default_reasoning_level ?? null
+                      }
                     >
-                      <option value="">自动</option>
-                      {reasoningEffortOptions.map((effort) => (
-                        <option key={effort} value={effort}>
-                          {effort}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {defaultReasoningItems.map((item) => (
+                            <SelectItem
+                              key={item.value ?? "automatic"}
+                              value={item.value}
+                            >
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
                   </Field>
                   <Field>
                     <FieldLabel>WebSocket</FieldLabel>
-                    <select
+                    <Select
+                      items={websocketItems}
                       name="prefer_websockets"
                       defaultValue={
                         editingPrice?.prefer_websockets === true
                           ? "true"
                           : editingPrice?.prefer_websockets === false
                             ? "false"
-                            : ""
+                            : null
                       }
-                      className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
                     >
-                      <option value="">跟随提供商</option>
-                      <option value="false">关闭</option>
-                      <option value="true">开启</option>
-                    </select>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {websocketItems.map((item) => (
+                            <SelectItem
+                              key={item.value ?? "provider"}
+                              value={item.value}
+                            >
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
                   </Field>
                 </FieldGroup>
-                <Field>
-                  <FieldLabel>输入模态</FieldLabel>
-                  <div className="flex flex-wrap gap-3">
+                <FieldSet>
+                  <FieldLegend variant="label">输入模态</FieldLegend>
+                  <FieldGroup className="flex flex-row flex-wrap gap-3">
                     {["text", "image"].map((modality) => (
                       <Field
                         key={modality}
@@ -643,6 +679,7 @@ export function PricingView() {
                         className="w-auto items-center"
                       >
                         <Checkbox
+                          id={`input-modality-${modality}`}
                           name="input_modality"
                           value={modality}
                           defaultChecked={
@@ -651,11 +688,13 @@ export function PricingView() {
                             ) ?? modality === "text"
                           }
                         />
-                        <FieldLabel>{modality}</FieldLabel>
+                        <FieldLabel htmlFor={`input-modality-${modality}`}>
+                          {modality}
+                        </FieldLabel>
                       </Field>
                     ))}
-                  </div>
-                </Field>
+                  </FieldGroup>
+                </FieldSet>
               </FieldSet>
               <FieldSet>
                 <FieldLegend>计价</FieldLegend>
@@ -768,6 +807,17 @@ function capabilitySourceLabel(source?: string) {
 }
 
 const reasoningEffortOptions = ["none", "low", "medium", "high", "xhigh", "max"]
+
+const defaultReasoningItems = [
+  { value: null, label: "自动" },
+  ...reasoningEffortOptions.map((value) => ({ value, label: value })),
+]
+
+const websocketItems = [
+  { value: null, label: "跟随提供商" },
+  { value: "false", label: "关闭" },
+  { value: "true", label: "开启" },
+]
 
 function inferredProvider(model?: string) {
   const value = model?.toLowerCase() ?? ""

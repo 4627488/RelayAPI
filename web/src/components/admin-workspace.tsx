@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { lazy, useCallback, useEffect, useState, type FormEvent } from "react"
 import {
   ActivityIcon,
   BanIcon,
@@ -16,17 +16,9 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import type { Page } from "@/components/app-shell"
-import { LogsTable, MetricGrid, UsageChart } from "@/components/data-views"
-import { UsageView } from "@/components/usage-view"
+import type { Page } from "@/lib/routes"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
-import { ProvidersView } from "@/components/providers-view"
-import { PricingView } from "@/components/pricing-view"
-import { ProxiesView } from "@/components/proxies-view"
-import { RequestLogsWorkbench } from "@/components/request-logs-workbench"
-import { RuntimeSettingsView } from "@/components/runtime-settings-view"
-import { AdminSubscriptionsView } from "@/components/admin-subscriptions-view"
 import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -98,6 +90,58 @@ import {
 import { compact, compactTokens, dateTime, money } from "@/lib/format"
 import { copyText } from "@/lib/clipboard"
 import { useSessionStorage } from "@/hooks/use-session-storage"
+import { useAsyncResource } from "@/hooks/use-async-resource"
+
+const LogsTable = lazy(() =>
+  import("@/components/data-views").then((module) => ({
+    default: module.LogsTable,
+  }))
+)
+const MetricGrid = lazy(() =>
+  import("@/components/data-views").then((module) => ({
+    default: module.MetricGrid,
+  }))
+)
+const UsageChart = lazy(() =>
+  import("@/components/data-views").then((module) => ({
+    default: module.UsageChart,
+  }))
+)
+const UsageView = lazy(() =>
+  import("@/components/usage-view").then((module) => ({
+    default: module.UsageView,
+  }))
+)
+const ProvidersView = lazy(() =>
+  import("@/components/providers-view").then((module) => ({
+    default: module.ProvidersView,
+  }))
+)
+const PricingView = lazy(() =>
+  import("@/components/pricing-view").then((module) => ({
+    default: module.PricingView,
+  }))
+)
+const ProxiesView = lazy(() =>
+  import("@/components/proxies-view").then((module) => ({
+    default: module.ProxiesView,
+  }))
+)
+const RequestLogsWorkbench = lazy(() =>
+  import("@/components/request-logs-workbench").then((module) => ({
+    default: module.RequestLogsWorkbench,
+  }))
+)
+const RuntimeSettingsView = lazy(() =>
+  import("@/components/runtime-settings-view").then((module) => ({
+    default: module.RuntimeSettingsView,
+  }))
+)
+const AdminSubscriptionsView = lazy(() =>
+  import("@/components/admin-subscriptions-view").then((module) => ({
+    default: module.AdminSubscriptionsView,
+  }))
+)
 
 interface AdminWorkspaceProps {
   page: Page
@@ -114,14 +158,22 @@ export function AdminWorkspace({
     return (
       <UsersHub
         currentUserId={currentUserId}
-        initialTab={page === "invitations" ? "invites" : "accounts"}
+        tab={page === "invitations" ? "invites" : "accounts"}
+        onTabChange={(value) =>
+          onPageChange(value === "invites" ? "invitations" : "users")
+        }
       />
     )
   }
   if (page === "providers") return <ProvidersView />
   if (page === "settings" || page === "proxies") {
     return (
-      <SettingsHub initialTab={page === "proxies" ? "proxies" : "runtime"} />
+      <SettingsHub
+        tab={page === "proxies" ? "proxies" : "runtime"}
+        onTabChange={(value) =>
+          onPageChange(value === "proxies" ? "proxies" : "settings")
+        }
+      />
     )
   }
   if (page === "subscriptions") return <AdminSubscriptionsView />
@@ -133,45 +185,40 @@ export function AdminWorkspace({
 
 function UsersHub({
   currentUserId,
-  initialTab,
+  tab,
+  onTabChange,
 }: {
   currentUserId: string
-  initialTab: "accounts" | "invites"
+  tab: "accounts" | "invites"
+  onTabChange: (tab: "accounts" | "invites") => void
 }) {
-  const [tab, setTab] = useState(initialTab)
-  const [users, setUsers] = useState<User[]>([])
-  const [invitations, setInvitations] = useState<Invitation[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
   const [now] = useState(() => Date.now())
-
-  const load = useCallback(async (showLoading = false) => {
-    if (showLoading) setLoading(true)
-    setLoadError("")
-    try {
-      const [usersValue, invitationsValue] = await Promise.all([
-        api<{ items: User[] }>("/api/admin/tenants"),
-        api<{ items: Invitation[] }>("/api/admin/invitations"),
-      ])
-      setUsers(usersValue.items ?? [])
-      setInvitations(invitationsValue.items ?? [])
-    } catch (cause) {
-      const message =
-        cause instanceof Error ? cause.message : "无法读取用户数据"
-      setLoadError(message)
-      if (!showLoading) toast.error(message)
-    } finally {
-      if (showLoading) setLoading(false)
+  const loadUsers = useCallback(async () => {
+    const [users, invitations] = await Promise.all([
+      api<{ items: User[] }>("/api/admin/tenants"),
+      api<{ items: Invitation[] }>("/api/admin/invitations"),
+    ])
+    return {
+      users: users.items ?? [],
+      invitations: invitations.items ?? [],
     }
   }, [])
-
-  useEffect(() => {
-    void load(true)
-  }, [load])
+  const {
+    data: { users, invitations },
+    loading,
+    error: loadError,
+    reload,
+  } = useAsyncResource(loadUsers, {
+    initialData: { users: [] as User[], invitations: [] as Invitation[] },
+    errorMessage: "无法读取用户数据",
+    onBackgroundError: (message) => toast.error(message),
+  })
 
   if (loading) return <LoadingView />
   if (loadError && users.length === 0 && invitations.length === 0) {
-    return <LoadErrorView message={loadError} onRetry={() => void load(true)} />
+    return (
+      <LoadErrorView message={loadError} onRetry={() => void reload(true)} />
+    )
   }
 
   const pendingInvites = invitations.filter((item) => {
@@ -181,10 +228,16 @@ function UsersHub({
 
   return (
     <div className="flex flex-col gap-4">
+      {tab === "accounts" ? (
+        <PageHeader
+          title="用户"
+          description="管理租户账户、访问状态和模型权限。"
+        />
+      ) : null}
       <Tabs
         value={tab}
         onValueChange={(value) => {
-          if (value === "accounts" || value === "invites") setTab(value)
+          if (value === "accounts" || value === "invites") onTabChange(value)
         }}
       >
         <TabsList>
@@ -201,23 +254,34 @@ function UsersHub({
         <UsersView
           users={users}
           currentUserId={currentUserId}
-          onChanged={() => load()}
+          onChanged={() => reload()}
         />
       ) : (
-        <InvitationsView items={invitations} onChanged={() => load()} />
+        <InvitationsView items={invitations} onChanged={() => reload()} />
       )}
     </div>
   )
 }
 
-function SettingsHub({ initialTab }: { initialTab: "runtime" | "proxies" }) {
-  const [tab, setTab] = useState(initialTab)
+function SettingsHub({
+  tab,
+  onTabChange,
+}: {
+  tab: "runtime" | "proxies"
+  onTabChange: (tab: "runtime" | "proxies") => void
+}) {
   return (
     <div className="flex flex-col gap-4">
+      {tab === "runtime" ? (
+        <PageHeader
+          title="系统设置"
+          description="配置网关运行策略、限额刷新和上游行为。"
+        />
+      ) : null}
       <Tabs
         value={tab}
         onValueChange={(value) => {
-          if (value === "runtime" || value === "proxies") setTab(value)
+          if (value === "runtime" || value === "proxies") onTabChange(value)
         }}
       >
         <TabsList>
@@ -235,50 +299,45 @@ function AdminOverviewPage({
 }: {
   onPageChange: (page: Page) => void
 }) {
-  const [overview, setOverview] = useState<AdminOverview | null>(null)
-  const [usage, setUsage] = useState<UsageReport | null>(null)
-  const [logs, setLogs] = useState<RequestLog[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
-
-  const load = useCallback(async (showLoading = false) => {
-    if (showLoading) setLoading(true)
-    setLoadError("")
-    try {
-      const [overviewValue, usageValue, logsValue] = await Promise.all([
-        api<AdminOverview>("/api/admin/overview"),
-        api<UsageReport>("/api/admin/usage?days=30"),
-        api<{ items: RequestLog[] }>("/api/admin/logs?limit=8"),
-      ])
-      setOverview(overviewValue)
-      setUsage(usageValue)
-      setLogs(logsValue.items ?? [])
-    } catch (cause) {
-      const message =
-        cause instanceof Error ? cause.message : "无法读取管理数据"
-      setLoadError(message)
-      if (!showLoading) toast.error(message)
-    } finally {
-      if (showLoading) setLoading(false)
-    }
+  const loadOverview = useCallback(async () => {
+    const [overview, usage, logs] = await Promise.all([
+      api<AdminOverview>("/api/admin/overview"),
+      api<UsageReport>("/api/admin/usage?days=30"),
+      api<{ items: RequestLog[] }>("/api/admin/logs?limit=8"),
+    ])
+    return { overview, usage, logs: logs.items ?? [] }
   }, [])
-
-  useEffect(() => {
-    void load(true)
-  }, [load])
+  const {
+    data: { overview, usage, logs },
+    loading,
+    error: loadError,
+    reload,
+  } = useAsyncResource(loadOverview, {
+    initialData: {
+      overview: null as AdminOverview | null,
+      usage: null as UsageReport | null,
+      logs: [] as RequestLog[],
+    },
+    errorMessage: "无法读取管理数据",
+    onBackgroundError: (message) => toast.error(message),
+  })
 
   if (loading) return <LoadingView />
   if (!overview || !usage) {
     return (
       <LoadErrorView
         message={loadError || "管理数据不完整"}
-        onRetry={() => void load(true)}
+        onRetry={() => void reload(true)}
       />
     )
   }
 
   return (
     <div className="flex flex-col gap-4">
+      <PageHeader
+        title="管理总览"
+        description="查看租户、调用、费用和异常请求的整体状态。"
+      />
       <MetricGrid
         items={[
           {
@@ -314,27 +373,29 @@ function AdminOverviewPage({
             <CardTitle>需要关注</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <button
+            <Button
               type="button"
-              className="flex w-full items-center justify-between rounded-lg bg-muted p-3 text-left"
+              variant="ghost"
+              className="h-auto w-full justify-between p-3 text-left"
               onClick={() => onPageChange("invitations")}
             >
               <div className="flex items-center gap-3">
-                <SendIcon className="size-4 text-muted-foreground" />
+                <SendIcon className="text-muted-foreground" />
                 <div>
                   <p className="text-sm font-medium">待使用邀请</p>
                   <p className="text-xs text-muted-foreground">仍在有效期内</p>
                 </div>
               </div>
               <Badge variant="secondary">{overview.pending_invitations}</Badge>
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="flex w-full items-center justify-between rounded-lg bg-muted p-3 text-left"
+              variant="ghost"
+              className="h-auto w-full justify-between p-3 text-left"
               onClick={() => onPageChange("users")}
             >
               <div className="flex items-center gap-3">
-                <UserCheckIcon className="size-4 text-muted-foreground" />
+                <UserCheckIcon className="text-muted-foreground" />
                 <div>
                   <p className="text-sm font-medium">正常用户</p>
                   <p className="text-xs text-muted-foreground">
@@ -343,7 +404,7 @@ function AdminOverviewPage({
                 </div>
               </div>
               <Badge variant="secondary">{overview.enabled_users}</Badge>
-            </button>
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -850,6 +911,8 @@ function InvitationsView({
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
+        title="邀请"
+        description="生成、查看和撤销租户注册邀请。"
         actions={
           <Button
             onClick={() => {

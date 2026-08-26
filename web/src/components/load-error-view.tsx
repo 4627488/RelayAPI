@@ -1,9 +1,21 @@
 import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 
-export function LoadErrorView({ message, onRetry }: { message: string; onRetry: () => void }) {
+export function LoadErrorView({
+  message,
+  onRetry,
+}: {
+  message: string
+  onRetry: () => void
+}) {
   return (
     <Card className="mx-auto w-full max-w-xl">
       <CardHeader>

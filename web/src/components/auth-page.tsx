@@ -1,5 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { ArrowRightIcon, KeyRoundIcon, ShieldCheckIcon, SparklesIcon } from "lucide-react"
+import {
+  ArrowRightIcon,
+  KeyRoundIcon,
+  ShieldCheckIcon,
+  SparklesIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -11,7 +16,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { api, postJSON, type AuthStatus, type Session } from "@/lib/api"
@@ -30,13 +40,14 @@ function BrandPanel() {
         <span className="text-lg font-semibold tracking-tight">RelayAPI</span>
       </div>
       <div className="flex max-w-lg flex-col gap-6">
-        <p className="text-4xl font-medium leading-tight tracking-tight">
+        <p className="text-4xl leading-tight font-medium tracking-tight">
           一个入口，
           <br />
           连接所有模型。
         </p>
         <p className="max-w-md text-primary-foreground/70">
-          安全地管理 API Key、额度和用量。模型路由与协议兼容由 Relay 原生运行时提供。
+          安全地管理 API Key、额度和用量。模型路由与协议兼容由 Relay
+          原生运行时提供。
         </p>
         <div className="flex gap-6 text-sm text-primary-foreground/70">
           <span className="flex items-center gap-2">
@@ -49,7 +60,9 @@ function BrandPanel() {
           </span>
         </div>
       </div>
-      <p className="text-xs text-primary-foreground/50">Powered by RelayAPI Native Runtime</p>
+      <p className="text-xs text-primary-foreground/50">
+        Powered by RelayAPI Native Runtime
+      </p>
     </section>
   )
 }
@@ -112,7 +125,11 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
           <div className="flex flex-col gap-2">
             <p className="text-sm text-muted-foreground">账户中心</p>
             <h1 className="text-3xl font-semibold tracking-tight">
-              {mode === "register" ? (setupRequired ? "初始化 RelayAPI" : "接受邀请") : "登录 RelayAPI"}
+              {mode === "register"
+                ? setupRequired
+                  ? "初始化 RelayAPI"
+                  : "接受邀请"
+                : "登录 RelayAPI"}
             </h1>
             <p className="text-sm text-muted-foreground">
               {mode === "register"
@@ -135,7 +152,9 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
               <CardHeader>
                 <CardTitle>创建账户</CardTitle>
                 <CardDescription>
-                  {setupRequired ? "管理员是该普通用户的附加身份，提交后默认进入个人面板。" : "邀请为单次使用，提交后会自动登录。"}
+                  {setupRequired
+                    ? "管理员是该普通用户的附加身份，提交后默认进入个人面板。"
+                    : "邀请为单次使用，提交后会自动登录。"}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -144,16 +163,32 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
                     {!setupRequired ? (
                       <Field>
                         <FieldLabel htmlFor="token">邀请 Token</FieldLabel>
-                        <Input id="token" name="token" defaultValue={token ?? ""} required />
+                        <Input
+                          id="token"
+                          name="token"
+                          defaultValue={token ?? ""}
+                          required
+                        />
                       </Field>
                     ) : null}
                     <Field>
                       <FieldLabel htmlFor="name">显示名称</FieldLabel>
-                      <Input id="name" name="name" autoComplete="name" required />
+                      <Input
+                        id="name"
+                        name="name"
+                        autoComplete="name"
+                        required
+                      />
                     </Field>
                     <Field>
                       <FieldLabel htmlFor="register-email">邮箱</FieldLabel>
-                      <Input id="register-email" name="email" type="email" autoComplete="email" required />
+                      <Input
+                        id="register-email"
+                        name="email"
+                        type="email"
+                        autoComplete="email"
+                        required
+                      />
                     </Field>
                     <Field>
                       <FieldLabel htmlFor="register-password">密码</FieldLabel>
@@ -170,7 +205,9 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
                     <Button type="submit" disabled={pending}>
                       {pending ? <Spinner data-icon="inline-start" /> : null}
                       创建账户
-                      {!pending ? <ArrowRightIcon data-icon="inline-end" /> : null}
+                      {!pending ? (
+                        <ArrowRightIcon data-icon="inline-end" />
+                      ) : null}
                     </Button>
                   </FieldGroup>
                 </form>
@@ -180,18 +217,32 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
             <Card>
               <CardHeader>
                 <CardTitle>账户登录</CardTitle>
-                <CardDescription>管理员也使用自己的普通用户邮箱和密码登录。</CardDescription>
+                <CardDescription>
+                  管理员也使用自己的普通用户邮箱和密码登录。
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={login}>
                   <FieldGroup>
                     <Field>
                       <FieldLabel htmlFor="email">邮箱</FieldLabel>
-                      <Input id="email" name="email" type="email" autoComplete="username" required />
+                      <Input
+                        id="email"
+                        name="email"
+                        type="email"
+                        autoComplete="username"
+                        required
+                      />
                     </Field>
                     <Field>
                       <FieldLabel htmlFor="password">密码</FieldLabel>
-                      <Input id="password" name="password" type="password" autoComplete="current-password" required />
+                      <Input
+                        id="password"
+                        name="password"
+                        type="password"
+                        autoComplete="current-password"
+                        required
+                      />
                     </Field>
                     <Button type="submit" disabled={pending}>
                       {pending ? <Spinner data-icon="inline-start" /> : null}
@@ -203,10 +254,15 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
             </Card>
           )}
 
-          <Button variant="ghost" onClick={() => setMode(mode === "register" ? "login" : "register")}>
+          <Button
+            variant="ghost"
+            onClick={() => setMode(mode === "register" ? "login" : "register")}
+          >
             {mode === "register"
               ? "已有账户？返回登录"
-              : setupRequired ? "首次使用？创建首个用户" : "已有邀请？创建账户"}
+              : setupRequired
+                ? "首次使用？创建首个用户"
+                : "已有邀请？创建账户"}
           </Button>
         </div>
       </section>

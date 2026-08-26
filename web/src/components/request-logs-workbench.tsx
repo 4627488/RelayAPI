@@ -65,7 +65,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { SearchField, StatStrip } from "@/components/workspace-ui"
+import { PageHeader, SearchField, StatStrip } from "@/components/workspace-ui"
 import {
   api,
   type RequestLog,
@@ -85,6 +85,7 @@ import {
   requestLogTransport,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { navigateTo, routeHref, useAppRoute } from "@/lib/routes"
 import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
 import { CacheHitRateBadge } from "@/components/token-cache-rate"
 
@@ -118,6 +119,7 @@ type SelectedLog = {
 }
 
 export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
+  const route = useAppRoute()
   const [data, setData] = useState<RequestLogPage>(emptyPage)
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("all")
@@ -188,16 +190,28 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
         if (detailRequest.current !== token) return
         setSelected(null)
         toast.error(cause instanceof Error ? cause.message : "读取日志详情失败")
-        if (logIdFromHash() === id) writeLogHash(null, "replace")
+        if (route.logId === id) {
+          navigateTo(
+            { workspace: admin ? "admin" : "user", page: "logs" },
+            { replace: true }
+          )
+        }
       } finally {
         if (detailRequest.current === token) setDetailLoading(false)
       }
     },
-    [admin]
+    [admin, route.logId]
   )
 
   function openDetail(log: RequestLog) {
-    writeLogHash(log.id, "push")
+    navigateTo(
+      {
+        workspace: admin ? "admin" : "user",
+        page: "logs",
+        logId: log.id,
+      },
+      { state: { relayFromLogs: true } }
+    )
     void fetchDetail(log.id, log)
   }
 
@@ -205,26 +219,26 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     detailRequest.current += 1
     setSelected(null)
     setDetailLoading(false)
-    writeLogHash(null, "push")
-  }, [])
+    const state = window.history.state as { relayFromLogs?: boolean } | null
+    if (state?.relayFromLogs) {
+      window.history.back()
+      return
+    }
+    navigateTo(
+      { workspace: admin ? "admin" : "user", page: "logs" },
+      { replace: true }
+    )
+  }, [admin])
 
   useEffect(() => {
-    function syncFromLocation() {
-      const id = logIdFromHash()
-      if (!id) {
-        detailRequest.current += 1
-        setSelected(null)
-        setDetailLoading(false)
-        return
-      }
-      void fetchDetail(id)
+    if (!route.logId) {
+      detailRequest.current += 1
+      setSelected(null)
+      setDetailLoading(false)
+      return
     }
-    window.addEventListener("hashchange", syncFromLocation)
-    if (logIdFromHash()) void fetchDetail(logIdFromHash())
-    return () => {
-      window.removeEventListener("hashchange", syncFromLocation)
-    }
-  }, [fetchDetail])
+    if (selected?.log.id !== route.logId) void fetchDetail(route.logId)
+  }, [fetchDetail, route.logId, selected?.log.id])
 
   useEffect(() => {
     if (!selected) return
@@ -272,7 +286,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     )
   }
 
-  if (detailLoading && logIdFromHash()) {
+  if (detailLoading && route.logId) {
     return (
       <div className="flex w-full min-w-0 flex-col gap-4">
         <Skeleton className="h-9 w-28" />
@@ -283,7 +297,15 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   }
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-4">
+    <div className="flex w-full min-w-0 flex-col gap-5">
+      <PageHeader
+        title="请求日志"
+        description={
+          admin
+            ? "审查所有租户的请求、路由、延迟和计费详情。"
+            : "查看你的请求状态、Token、延迟和费用明细。"
+        }
+      />
       <StatStrip
         className="sm:grid-cols-3 xl:grid-cols-6"
         items={[
@@ -532,19 +554,51 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                 {data.items.map((log) => (
                   <TableRow
                     key={log.id}
-                    role="button"
-                    tabIndex={0}
-                    className="cursor-pointer focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
-                    onClick={() => void openDetail(log)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault()
-                        void openDetail(log)
+                    className="cursor-pointer"
+                    onClick={(event) => {
+                      if (
+                        event.target instanceof HTMLElement &&
+                        event.target.closest(
+                          "a, button, input, select, textarea, [role='button']"
+                        )
+                      ) {
+                        return
                       }
+                      void openDetail(log)
                     }}
                   >
-                    <TableCell className="pl-4 whitespace-nowrap text-muted-foreground">
-                      {dateTime(log.started_at)}
+                    <TableCell className="pl-4 whitespace-nowrap">
+                      <Button
+                        render={
+                          <a
+                            href={routeHref({
+                              workspace: admin ? "admin" : "user",
+                              page: "logs",
+                              logId: log.id,
+                            })}
+                          />
+                        }
+                        variant="link"
+                        size="sm"
+                        nativeButton={false}
+                        className="h-auto p-0 font-normal"
+                        aria-label={`查看 ${dateTime(log.started_at)} 的请求日志`}
+                        onClick={(event) => {
+                          if (
+                            event.button !== 0 ||
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey ||
+                            event.altKey
+                          ) {
+                            return
+                          }
+                          event.preventDefault()
+                          void openDetail(log)
+                        }}
+                      >
+                        {dateTime(log.started_at)}
+                      </Button>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5">
@@ -763,7 +817,7 @@ function LogDetailPage({
             >
               {requestLogStatus(log.status_code)}
             </Badge>
-            <h1 className="text-lg font-medium">
+            <h1 className="font-heading text-3xl font-semibold tracking-tight">
               {modelRoute(log) || "请求详情"}
             </h1>
           </div>
@@ -1344,27 +1398,6 @@ function modelRoute(log: RequestLog) {
   if (requested && actual && requested !== actual)
     return `${requested} → ${actual}`
   return actual || requested
-}
-
-const logHashPrefix = "#log="
-
-function logIdFromHash(hash = window.location.hash) {
-  if (!hash.startsWith(logHashPrefix)) return ""
-  try {
-    return decodeURIComponent(hash.slice(logHashPrefix.length)).trim()
-  } catch {
-    return ""
-  }
-}
-
-function writeLogHash(id: string | null, mode: "push" | "replace") {
-  const url = new URL(window.location.href)
-  url.hash = id ? `log=${encodeURIComponent(id)}` : ""
-  const next = `${url.pathname}${url.search}${url.hash}`
-  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
-  if (next === current) return
-  if (mode === "replace") window.history.replaceState(null, "", next)
-  else window.history.pushState(null, "", next)
 }
 
 function timingLabel(value: string) {

@@ -2,7 +2,7 @@ import { useCallback, useState } from "react"
 
 export function useSessionStorage<T>(
   key: string,
-  validate: (value: unknown) => value is T,
+  validate: (value: unknown) => value is T
 ) {
   const [value, setValueState] = useState<T | null>(() => {
     try {
@@ -20,18 +20,21 @@ export function useSessionStorage<T>(
     return null
   })
 
-  const setValue = useCallback((nextValue: T | null) => {
-    setValueState(nextValue)
-    try {
-      if (nextValue === null) {
-        window.sessionStorage.removeItem(key)
-      } else {
-        window.sessionStorage.setItem(key, JSON.stringify(nextValue))
+  const setValue = useCallback(
+    (nextValue: T | null) => {
+      setValueState(nextValue)
+      try {
+        if (nextValue === null) {
+          window.sessionStorage.removeItem(key)
+        } else {
+          window.sessionStorage.setItem(key, JSON.stringify(nextValue))
+        }
+      } catch {
+        // Keep the in-memory value even when storage is unavailable.
       }
-    } catch {
-      // Keep the in-memory value even when storage is unavailable.
-    }
-  }, [key])
+    },
+    [key]
+  )
 
   return [value, setValue] as const
 }

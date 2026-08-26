@@ -398,6 +398,8 @@ export function AdminSubscriptionsView() {
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
+        title="订阅分配"
+        description="将上游账户额度分配给租户，并控制子订阅配额。"
         actions={
           <Button
             disabled={

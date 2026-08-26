@@ -1,4 +1,12 @@
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from "recharts"
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ReferenceLine,
+  XAxis,
+  YAxis,
+} from "recharts"
 
 import {
   Card,
@@ -30,20 +38,10 @@ import { StatStrip } from "@/components/workspace-ui"
 type LatencyBucket = "user" | "relay" | "upstream" | "mixed" | "context"
 
 type LatencyOwner =
-  | "relay"
-  | "queue"
-  | "runtime"
-  | "upstream"
-  | "downstream"
-  | "billing"
+  "relay" | "queue" | "runtime" | "upstream" | "downstream" | "billing"
 
 type LatencyTrack =
-  | "critical"
-  | "runtime"
-  | "attempt"
-  | "network"
-  | "user"
-  | "upstream"
+  "critical" | "runtime" | "attempt" | "network" | "user" | "upstream"
 
 type LatencySegment = {
   id: string
@@ -139,7 +137,8 @@ export function RequestLatencyTimeline({
   const total = Math.max(trace.total_ms, totalMS, 0.001)
   const attribution = trace.attribution
   const attempts = trace.segments.filter(
-    (segment) => segment.track === "attempt" && !segment.id.includes("_retry_wait_")
+    (segment) =>
+      segment.track === "attempt" && !segment.id.includes("_retry_wait_")
   ).length
   const comparison = [
     {
@@ -204,7 +203,10 @@ export function RequestLatencyTimeline({
           ]}
         />
 
-        <ChartContainer config={chartConfig} className="aspect-auto h-44 w-full">
+        <ChartContainer
+          config={chartConfig}
+          className="aspect-auto h-44 w-full"
+        >
           <BarChart data={comparison} layout="vertical" accessibilityLayer>
             <CartesianGrid horizontal={false} />
             <XAxis
@@ -267,15 +269,15 @@ export function RequestLatencyTimeline({
               <TableRow>
                 <TableCell>Read() 阻塞</TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatMS(transfer.upstream_read_wait_ms)} · {transfer.read_count}{" "}
-                  次 · {bytes(transfer.bytes_read)}
+                  {formatMS(transfer.upstream_read_wait_ms)} ·{" "}
+                  {transfer.read_count} 次 · {bytes(transfer.bytes_read)}
                 </TableCell>
               </TableRow>
               <TableRow>
                 <TableCell>Write() 阻塞</TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatMS(transfer.client_write_wait_ms)} · {transfer.write_count}{" "}
-                  次 · {bytes(transfer.bytes_written)}
+                  {formatMS(transfer.client_write_wait_ms)} ·{" "}
+                  {transfer.write_count} 次 · {bytes(transfer.bytes_written)}
                 </TableCell>
               </TableRow>
               {transfer.local_copy_ms && transfer.local_copy_ms > 0 ? (

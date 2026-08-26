@@ -27,7 +27,10 @@ export function cacheHitRateLabel(cachedTokens: number, promptTokens: number) {
 export function bytes(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value) || value <= 0) return "0 B"
   const units = ["B", "KB", "MB", "GB"]
-  const exponent = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
+  const exponent = Math.min(
+    Math.floor(Math.log(value) / Math.log(1024)),
+    units.length - 1
+  )
   const amount = value / 1024 ** exponent
   return `${new Intl.NumberFormat("zh-CN", {
     maximumFractionDigits: amount >= 10 || exponent === 0 ? 0 : 1,
@@ -58,7 +61,10 @@ export function initials(name?: string) {
 }
 
 export function requestLogSucceeded(statusCode: number, errorCode?: string) {
-  return !errorCode && (statusCode === 101 || (statusCode >= 200 && statusCode < 400))
+  return (
+    !errorCode &&
+    (statusCode === 101 || (statusCode >= 200 && statusCode < 400))
+  )
 }
 
 export function requestLogStatus(statusCode: number) {

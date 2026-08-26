@@ -386,6 +386,8 @@ export function ProvidersView() {
   return (
     <div className="flex flex-col gap-5">
       <PageHeader
+        title="模型账户"
+        description="连接上游提供商账户，查看状态、额度和可用模型。"
         actions={
           <>
             <Button

@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import { AppShell, type Page, type Workspace } from "@/components/app-shell"
+import { AppShell } from "@/components/app-shell"
 import { AuthPage } from "@/components/auth-page"
 import { ForcePasswordChange } from "@/components/force-password-change"
 import { LoadingView } from "@/components/loading-view"
 import { api, type Session } from "@/lib/api"
+import { navigateTo, useAppRoute } from "@/lib/routes"
 
 const AdminWorkspace = lazy(() =>
   import("@/components/admin-workspace").then((module) => ({
@@ -21,8 +22,7 @@ const UserWorkspace = lazy(() =>
 export function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [checking, setChecking] = useState(true)
-  const [page, setPage] = useState<Page>("overview")
-  const [workspace, setWorkspace] = useState<Workspace>("user")
+  const route = useAppRoute()
 
   useEffect(() => {
     api<Session>("/api/me")
@@ -30,6 +30,22 @@ export function App() {
       .catch(() => setSession(null))
       .finally(() => setChecking(false))
   }, [])
+
+  useEffect(() => {
+    if (checking || !session) return
+    if (!route.valid || (route.workspace === "admin" && !session.is_admin)) {
+      navigateTo(
+        route.workspace === "admin" && session.is_admin
+          ? {
+              workspace: "admin",
+              page: route.page,
+              logId: route.logId,
+            }
+          : { workspace: "user", page: "overview" },
+        { replace: true }
+      )
+    }
+  }, [checking, route, session])
 
   async function logout() {
     try {
@@ -48,8 +64,7 @@ export function App() {
         // Session storage may be disabled; logout must still succeed.
       }
       setSession(null)
-      setPage("overview")
-      setWorkspace("user")
+      navigateTo({ workspace: "user", page: "overview" }, { replace: true })
       toast.success("已退出登录")
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "退出失败")
@@ -69,8 +84,7 @@ export function App() {
       <AuthPage
         onAuthenticated={(value) => {
           setSession(value)
-          setPage("overview")
-          setWorkspace("user")
+          navigateTo({ workspace: "user", page: "overview" }, { replace: true })
         }}
       />
     )
@@ -88,24 +102,27 @@ export function App() {
   return (
     <AppShell
       session={session}
-      workspace={workspace}
-      page={page}
-      onPageChange={setPage}
+      workspace={route.workspace}
+      page={route.page}
+      onPageChange={(page) => navigateTo({ workspace: route.workspace, page })}
       onWorkspaceChange={(value) => {
-        setWorkspace(value)
-        setPage("overview")
+        navigateTo({ workspace: value, page: "overview" })
       }}
       onLogout={() => void logout()}
     >
       <Suspense fallback={<LoadingView />}>
-        {workspace === "admin" && session.is_admin ? (
+        {route.workspace === "admin" && session.is_admin ? (
           <AdminWorkspace
-            page={page}
+            page={route.page}
             currentUserId={session.tenant.id}
-            onPageChange={setPage}
+            onPageChange={(page) => navigateTo({ workspace: "admin", page })}
           />
         ) : (
-          <UserWorkspace page={page} session={session} onPageChange={setPage} />
+          <UserWorkspace
+            page={route.page}
+            session={session}
+            onPageChange={(page) => navigateTo({ workspace: "user", page })}
+          />
         )}
       </Suspense>
     </AppShell>

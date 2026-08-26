@@ -1,4 +1,10 @@
-import { useEffect, useState, type ComponentType, type ReactNode } from "react"
+import {
+  useEffect,
+  useState,
+  type ComponentType,
+  type MouseEvent,
+  type ReactNode,
+} from "react"
 import {
   BarChart3Icon,
   BookOpenIcon,
@@ -52,21 +58,7 @@ import { Separator } from "@/components/ui/separator"
 import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
 import type { Session } from "@/lib/api"
 import { initials } from "@/lib/format"
-
-export type Page =
-  | "overview"
-  | "usage"
-  | "keys"
-  | "logs"
-  | "guide"
-  | "users"
-  | "invitations"
-  | "providers"
-  | "proxies"
-  | "settings"
-  | "subscriptions"
-  | "pricing"
-export type Workspace = "user" | "admin"
+import { routeHref, type Page, type Workspace } from "@/lib/routes"
 
 interface NavigationItem {
   id: Page
@@ -114,6 +106,16 @@ function navPage(page: Page): Page {
 function navLabel(items: NavigationItem[], page: Page) {
   const id = navPage(page)
   return items.find((item) => item.id === id)?.label
+}
+
+function shouldHandleClientNavigation(event: MouseEvent<HTMLElement>) {
+  return (
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey
+  )
 }
 
 function EmailAvatar({ email, name }: { email: string; name: string }) {
@@ -198,11 +200,13 @@ function ThemeChoices({
 
 function SidebarNav({
   items,
+  workspace,
   page,
   fallbackLabel,
   onPageChange,
 }: {
   items: NavigationItem[]
+  workspace: Workspace
   page: Page
   fallbackLabel: string
   onPageChange: (page: Page) => void
@@ -226,9 +230,16 @@ function SidebarNav({
               {group.items.map((item) => (
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
+                    render={
+                      <a href={routeHref({ workspace, page: item.id })} />
+                    }
                     isActive={active === item.id}
                     tooltip={item.label}
-                    onClick={() => onPageChange(item.id)}
+                    onClick={(event) => {
+                      if (!shouldHandleClientNavigation(event)) return
+                      event.preventDefault()
+                      onPageChange(item.id)
+                    }}
                   >
                     <item.icon />
                     <span>{item.label}</span>
@@ -275,8 +286,13 @@ export function AppShell({
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
+                render={<a href={routeHref({ workspace, page: "overview" })} />}
                 size="lg"
-                onClick={() => onPageChange("overview")}
+                onClick={(event) => {
+                  if (!shouldHandleClientNavigation(event)) return
+                  event.preventDefault()
+                  onPageChange("overview")
+                }}
               >
                 <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                   <SendIcon />
@@ -294,6 +310,7 @@ export function AppShell({
         <SidebarContent>
           <SidebarNav
             items={items}
+            workspace={workspace}
             page={page}
             fallbackLabel="工作区"
             onPageChange={onPageChange}
@@ -359,12 +376,14 @@ export function AppShell({
         <SidebarRail />
       </Sidebar>
       <SidebarInset className="min-w-0">
-        <header className="flex h-14 shrink-0 items-center gap-3 px-4 sm:px-6">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4 sm:px-6">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-4" />
-          <p className="text-sm font-medium">{navLabel(items, page)}</p>
+          <nav aria-label="当前位置" className="text-sm font-medium">
+            {navLabel(items, page)}
+          </nav>
         </header>
-        <main className="flex min-w-0 flex-1 flex-col p-4 pt-0 sm:p-6 sm:pt-0">
+        <main className="mx-auto flex w-full max-w-[1600px] min-w-0 flex-1 flex-col p-4 sm:p-6">
           {children}
         </main>
       </SidebarInset>

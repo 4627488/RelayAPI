@@ -103,11 +103,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
 
+      - name: Install browser
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Check formatting
+        run: pnpm format:check
+
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Lint
         run: pnpm lint
+
+      - name: Test UI and accessibility
+        run: pnpm test
 
       - name: Build
         run: pnpm build

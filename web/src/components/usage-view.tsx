@@ -7,7 +7,6 @@ import {
   CoinsIcon,
   DatabaseIcon,
   KeyRoundIcon,
-  LoaderCircleIcon,
   ShieldCheckIcon,
   UsersIcon,
   WalletCardsIcon,
@@ -47,6 +46,15 @@ import {
 } from "@/components/ui/table"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Progress } from "@/components/ui/progress"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import { PageHeader } from "@/components/workspace-ui"
 import { api, type UsageReport, type User } from "@/lib/api"
 import { cacheHitRateLabel, compact, compactTokens, money } from "@/lib/format"
 
@@ -101,9 +109,7 @@ function SummaryCard({
           <CardDescription>{label}</CardDescription>
           <CardTitle className="mt-1 text-2xl tabular-nums">{value}</CardTitle>
         </div>
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Icon className="size-4" />
-        </div>
+        <Icon className="size-5 shrink-0 text-muted-foreground" />
       </CardHeader>
       <CardContent>
         <p className="truncate text-xs text-muted-foreground" title={hint}>
@@ -126,17 +132,12 @@ function BreakdownRow({
   const width =
     total > 0 ? Math.min(100, (Math.max(0, value) / total) * 100) : 0
   return (
-    <div className="space-y-1.5">
+    <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-4 text-xs">
         <span className="text-muted-foreground">{label}</span>
         <span className="tabular-nums">{compactTokens(value)}</span>
       </div>
-      <div className="h-1 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-foreground/70"
-          style={{ width: `${width}%` }}
-        />
-      </div>
+      <Progress value={width} aria-label={`${label}占比`} />
     </div>
   )
 }
@@ -159,7 +160,7 @@ function TokenBreakdown({ report }: { report: UsageReport }) {
           输入输出为主维度，缓存与推理为其中的细分计数。
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="flex flex-col gap-4">
         {items.map(([label, value]) => (
           <BreakdownRow
             key={label}
@@ -191,7 +192,7 @@ function CostBreakdown({ report }: { report: UsageReport }) {
         <CardTitle>费用来源</CardTitle>
         <CardDescription>区分订阅容量承担与账户余额实际扣费。</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent className="flex flex-col gap-5">
         <div className="flex h-2 overflow-hidden rounded-full bg-muted">
           <div
             className="bg-foreground"
@@ -265,29 +266,36 @@ function UsageTrend({ report }: { report: UsageReport }) {
             按天查看请求质量、Token 与费用变化。
           </CardDescription>
         </div>
-        <div className="flex rounded-lg bg-muted p-1">
+        <ToggleGroup
+          value={[metric]}
+          onValueChange={(value) => {
+            const next = value[0] as TrendMetric | undefined
+            if (next) setMetric(next)
+          }}
+          variant="outline"
+          size="sm"
+          spacing={0}
+          aria-label="趋势指标"
+        >
           {(["requests", "tokens", "cost"] as TrendMetric[]).map((item) => (
-            <Button
-              key={item}
-              size="sm"
-              variant={metric === item ? "secondary" : "ghost"}
-              className="h-6 px-2"
-              onClick={() => setMetric(item)}
-            >
+            <ToggleGroupItem key={item} value={item}>
               {item === "requests"
                 ? "请求"
                 : item === "tokens"
                   ? "Token"
                   : "费用"}
-            </Button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       </CardHeader>
       <CardContent>
         {empty ? (
-          <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
-            当前范围内没有用量
-          </div>
+          <Empty className="h-72 border-0 p-0">
+            <EmptyHeader>
+              <EmptyTitle>暂无用量</EmptyTitle>
+              <EmptyDescription>当前时间范围内没有请求记录。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
           <ChartContainer config={trendConfig} className="h-72 w-full">
             <AreaChart
@@ -390,7 +398,7 @@ function UsageTrend({ report }: { report: UsageReport }) {
 function ShareCell({ value, total }: { value: number; total: number }) {
   const share = total > 0 ? Math.min(100, (value / total) * 100) : 0
   return (
-    <div className="ml-auto w-28 space-y-1">
+    <div className="ml-auto flex w-28 flex-col gap-1">
       <div className="flex justify-between gap-2 text-xs tabular-nums">
         <span>{compactTokens(value)}</span>
         <span className="text-muted-foreground">{percent(value, total)}</span>
@@ -638,49 +646,64 @@ export function UsageView({
         : report.api_keys.length > 0
 
   return (
-    <div className="relative flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {admin ? (
-          <Select
-            items={[
-              { value: "all", label: "全部用户" },
-              ...users.map((user) => ({
-                value: user.id,
-                label: user.name,
-              })),
-            ]}
-            value={userID}
-            onValueChange={(value) => void load(days, value ?? "all")}
-          >
-            <SelectTrigger className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end">
-              <SelectGroup>
-                <SelectItem value="all">全部用户</SelectItem>
-                {users.map((user) => (
-                  <SelectItem key={user.id} value={user.id}>
-                    {user.name}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        ) : null}
-        <div className="flex rounded-lg border bg-background p-0.5">
-          {periods.map((period) => (
-            <Button
-              key={period.value}
+    <div className="flex flex-col gap-5">
+      <PageHeader
+        title={admin ? "全局用量" : "用量"}
+        description="查看请求、Token、缓存命中和成本的变化与归因。"
+        actions={
+          <>
+            {admin ? (
+              <Select
+                items={[
+                  { value: "all", label: "全部用户" },
+                  ...users.map((user) => ({
+                    value: user.id,
+                    label: user.name,
+                  })),
+                ]}
+                value={userID}
+                onValueChange={(value) => void load(days, value ?? "all")}
+              >
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="end">
+                  <SelectGroup>
+                    <SelectItem value="all">全部用户</SelectItem>
+                    {users.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        {user.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            ) : null}
+            <ToggleGroup
+              value={[String(days)]}
+              onValueChange={(value) => {
+                const next = Number(value[0]) as Period
+                if (periods.some((period) => period.value === next))
+                  void load(next)
+              }}
+              variant="outline"
               size="sm"
-              variant={days === period.value ? "secondary" : "ghost"}
-              className="h-7 px-2.5"
-              onClick={() => void load(period.value)}
+              spacing={0}
+              aria-label="统计周期"
             >
-              {period.label}
-            </Button>
-          ))}
-        </div>
-      </div>
+              {periods.map((period) => (
+                <ToggleGroupItem
+                  key={period.value}
+                  value={String(period.value)}
+                >
+                  {period.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+            {loading ? <Spinner aria-label="正在更新用量" /> : null}
+          </>
+        }
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
@@ -755,21 +778,17 @@ export function UsageView({
               dimension={dimension}
             />
           ) : (
-            <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
-              当前范围内没有可归因的用量
-            </div>
+            <Empty className="h-32 border-0 p-0">
+              <EmptyHeader>
+                <EmptyTitle>暂无归因数据</EmptyTitle>
+                <EmptyDescription>
+                  当前范围内没有可归因的用量。
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
         </CardContent>
       </Card>
-
-      {loading ? (
-        <div className="absolute inset-0 z-10 flex items-start justify-center rounded-lg bg-background/55 pt-24 backdrop-blur-[1px]">
-          <div className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm shadow-sm">
-            <LoaderCircleIcon className="size-4 animate-spin" />
-            正在更新
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }
