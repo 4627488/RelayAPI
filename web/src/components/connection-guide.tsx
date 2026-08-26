@@ -58,7 +58,7 @@ import { copyText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 type Platform = "bash" | "powershell"
-type ClientChoice = "all" | "codex" | "opencode"
+type ClientChoice = "all" | "rai" | "codex" | "opencode"
 
 interface SetupResponse {
   expires_at: string
@@ -201,7 +201,7 @@ export function ConnectionGuide({
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
-      {!usableKeys.length ? (
+      {!usableKeys.length && client !== "rai" ? (
         <Alert>
           <KeyRoundIcon />
           <AlertTitle>需要一个可恢复的 API Key</AlertTitle>
@@ -215,22 +215,32 @@ export function ConnectionGuide({
         <CardHeader>
           <CardTitle>配置客户端</CardTitle>
           <CardDescription>
-            已有配置会先备份；脚本失败时自动恢复。
+            {client === "rai"
+              ? "浏览器登录一次，之后用原来的客户端命令行启动。"
+              : "已有配置会先备份；脚本失败时自动恢复。"}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <FieldGroup>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <SelectField
-                label="API Key"
-                value={keyID}
-                placeholder="选择 API Key"
-                onChange={setKeyID}
-                options={usableKeys.map((key) => ({
-                  value: key.id,
-                  label: `${key.name} · ${key.prefix}…`,
-                }))}
-              />
+            <div
+              className={
+                client === "rai"
+                  ? "grid gap-4"
+                  : "grid gap-4 sm:grid-cols-2"
+              }
+            >
+              {client === "rai" ? null : (
+                <SelectField
+                  label="API Key"
+                  value={keyID}
+                  placeholder="选择 API Key"
+                  onChange={setKeyID}
+                  options={usableKeys.map((key) => ({
+                    value: key.id,
+                    label: `${key.name} · ${key.prefix}…`,
+                  }))}
+                />
+              )}
               <SelectField
                 label="默认模型"
                 value={model}
@@ -242,11 +252,16 @@ export function ConnectionGuide({
 
             <ChoiceField
               label="客户端"
-              description="“全部”会同时配置 Codex 和 OpenCode。"
+              description={
+                client === "rai"
+                  ? "rai 登录会创建一把专用 API Key；Claude、Codex、OpenCode 等都走同一套凭据。"
+                  : "“全部”会同时配置 Codex 和 OpenCode。"
+              }
               value={client}
               onChange={(value) => setClient(value as ClientChoice)}
               options={[
                 { value: "all", label: "全部" },
+                { value: "rai", label: "rai" },
                 { value: "codex", label: "Codex" },
                 { value: "opencode", label: "OpenCode" },
               ]}
@@ -283,7 +298,7 @@ export function ConnectionGuide({
               </CollapsibleTrigger>
               <CollapsibleContent className="pt-4">
                 <FieldGroup>
-                  {includesCodex ? (
+                  {includesCodex || client === "rai" ? (
                     <ChoiceField
                       label="Codex 推理强度"
                       value={reasoningEffort}
@@ -298,7 +313,7 @@ export function ConnectionGuide({
                     />
                   ) : null}
 
-                  {includesOpenCode ? (
+                  {includesOpenCode || client === "rai" ? (
                     <ChoiceField
                       label="OpenCode 协议"
                       description="Responses 适合 Codex/OAI；Chat 兼容传统 OpenAI 接口。"
@@ -311,6 +326,7 @@ export function ConnectionGuide({
                     />
                   ) : null}
 
+                  {client === "rai" ? null : (
                   <FieldSet>
                     <FieldLegend variant="label">安装行为</FieldLegend>
                     <FieldGroup className="gap-3">
@@ -330,6 +346,7 @@ export function ConnectionGuide({
                       />
                     </FieldGroup>
                   </FieldSet>
+                  )}
                 </FieldGroup>
               </CollapsibleContent>
             </Collapsible>
@@ -340,6 +357,7 @@ export function ConnectionGuide({
             {clientLabel(client)} ·{" "}
             {platform === "bash" ? "Bash" : "PowerShell"}
           </p>
+          {client === "rai" ? null : (
           <Button
             className="w-full sm:w-auto"
             disabled={pending || !usableKeys.length || !model}
@@ -352,35 +370,25 @@ export function ConnectionGuide({
             )}
             生成接入命令
           </Button>
+          )}
         </CardFooter>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>rai 启动器</CardTitle>
-          <CardDescription>
-            浏览器登录一次，之后用原来的客户端命令行启动。批准页会创建一把
-            名为 rai · 设备 的专用 API Key。
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FieldGroup>
-            <CommandField
-              label="安装"
-              description="优先使用 GitHub Release；没有对应资产时走 go install。"
-              command="curl -fsSL https://raw.githubusercontent.com/4627488/RelayAPI/main/scripts/install-rai.sh | bash"
-            />
-            <CommandField
-              label="登录并启动"
-              description="rai login 打开批准页；之后 rai claude / rai codex 即可。"
-              command={`rai login --server ${typeof window === "undefined" ? "http://localhost:3000" : window.location.origin}`}
-              primary
-            />
-          </FieldGroup>
-        </CardContent>
-      </Card>
+      {client === "rai" ? (
+        <RaiCommandsCard
+          origin={
+            typeof window === "undefined"
+              ? "http://localhost:3000"
+              : window.location.origin
+          }
+          model={model}
+          platform={platform}
+          reasoningEffort={reasoningEffort}
+          openCodeProtocol={openCodeProtocol}
+        />
+      ) : null}
 
-      {usableKeys.length && model ? (
+      {usableKeys.length && model && client !== "rai" ? (
         <ManualConfigCard
           endpoint={`${
             typeof window === "undefined" ? "" : window.location.origin
@@ -394,7 +402,7 @@ export function ConnectionGuide({
         />
       ) : null}
 
-      {setup ? (
+      {setup && client !== "rai" ? (
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -795,8 +803,82 @@ function WriteTarget({ title, path }: { title: string; path: string }) {
 
 function clientLabel(client: ClientChoice) {
   if (client === "all") return "两个客户端"
+  if (client === "rai") return "rai"
   if (client === "opencode") return "OpenCode"
   return "Codex"
+}
+
+function shellSingleQuote(value: string) {
+  if (!/[^\w./:@+-]/.test(value)) return value
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function RaiCommandsCard({
+  origin,
+  model,
+  platform,
+  reasoningEffort,
+  openCodeProtocol,
+}: {
+  origin: string
+  model: string
+  platform: Platform
+  reasoningEffort: string
+  openCodeProtocol: string
+}) {
+  const login = [
+    "rai login --server",
+    origin,
+    model ? `--model ${shellSingleQuote(model)}` : "",
+    reasoningEffort !== "high" ? `--reasoning-effort ${reasoningEffort}` : "",
+    openCodeProtocol !== "responses"
+      ? `--opencode-protocol ${openCodeProtocol}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+  const install =
+    platform === "powershell"
+      ? "irm https://raw.githubusercontent.com/4627488/RelayAPI/main/scripts/install-rai.ps1 | iex"
+      : "curl -fsSL https://raw.githubusercontent.com/4627488/RelayAPI/main/scripts/install-rai.sh | bash"
+  const launch = model
+    ? `rai claude --model ${shellSingleQuote(model)}`
+    : "rai claude"
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>运行命令</CardTitle>
+        <CardDescription>
+          安装 rai，浏览器批准后即可启动客户端。
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <FieldGroup>
+          <CommandField
+            label="安装 rai"
+            description="有 Release 资产就下载二进制，否则走 go install。"
+            command={install}
+          />
+          <CommandField
+            label="登录"
+            description="打开批准页，创建一把名为 rai · 设备 的专用 Key。"
+            command={login}
+            primary
+          />
+          <CommandField
+            label="已有 Key"
+            description="把密钥从 stdin 读入，不打开浏览器。"
+            command={`${login} --api-key-stdin`}
+          />
+          <CommandField
+            label="启动"
+            description="同一套凭据也可换成 rai codex / rai opencode。"
+            command={launch}
+          />
+        </FieldGroup>
+      </CardContent>
+    </Card>
+  )
 }
 
 async function copy(value: string, label: string) {
