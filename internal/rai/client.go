@@ -22,6 +22,9 @@ type Discovery struct {
 	Authorization   string   `json:"authorization"`
 	Token           string   `json:"token"`
 	Authorize       string   `json:"authorize"`
+	Install         string   `json:"install"`
+	Download        string   `json:"download"`
+	RAIVersion      string   `json:"rai_version"`
 	Adapters        []string `json:"adapters"`
 	ContractVersion string   `json:"contract_version"`
 	MinRAIVersion   string   `json:"min_rai_version"`
@@ -92,6 +95,8 @@ func (g Gateway) Discover(ctx context.Context, server string) (Discovery, error)
 		Authorization:   "/api/rai/authorizations",
 		Token:           "/api/rai/token",
 		Authorize:       "/rai/authorize",
+		Install:         "/rai/install.sh",
+		Download:        "/rai/download",
 		Adapters:        []string{"claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent"},
 		ContractVersion: contractVersion,
 		MinRAIVersion:   minRAIVersion,
@@ -314,52 +319,6 @@ func (e tokenError) Error() string {
 		return e.Message
 	}
 	return e.Code
-}
-
-func (g Gateway) LatestRelease(ctx context.Context, releasesURL string) (Release, error) {
-	if releasesURL == "" {
-		releasesURL = defaultReleases
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
-	if err != nil {
-		return Release{}, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "rai/"+Version)
-	resp, err := g.HTTP.Do(req)
-	if err != nil {
-		return Release{}, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode != http.StatusOK {
-		return Release{}, fmt.Errorf("releases %s: %s", resp.Status, redact(string(body)))
-	}
-	var document struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.Unmarshal(body, &document); err != nil {
-		return Release{}, fmt.Errorf("parse release: %w", err)
-	}
-	release := Release{Tag: strings.TrimPrefix(document.TagName, "v")}
-	for _, asset := range document.Assets {
-		release.Assets = append(release.Assets, ReleaseAsset{Name: asset.Name, URL: asset.URL})
-	}
-	return release, nil
-}
-
-type Release struct {
-	Tag    string
-	Assets []ReleaseAsset
-}
-
-type ReleaseAsset struct {
-	Name string
-	URL  string
 }
 
 func parseModelIDs(payload []byte) ([]string, error) {

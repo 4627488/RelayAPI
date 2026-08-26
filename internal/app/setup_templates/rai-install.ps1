@@ -1,27 +1,15 @@
-# Install rai and sign in to this RelayAPI deployment.
+# Install rai from this RelayAPI deployment and sign in.
 $ErrorActionPreference = "Stop"
 $Server = '{{.Server}}'
-$Repo = if ($env:RAI_REPO) { $env:RAI_REPO } else { "4627488/RelayAPI" }
 $Prefix = if ($env:RAI_PREFIX) { $env:RAI_PREFIX } else { Join-Path $env:LOCALAPPDATA "rai" }
 New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
 $dest = Join-Path $Prefix "rai.exe"
-$installed = $false
+$arch = "amd64"
+if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { $arch = "arm64" }
 try {
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "rai-installer" }
-    $asset = $release.assets | Where-Object { $_.name -match "rai-windows-amd64" } | Select-Object -First 1
-    if ($asset) {
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dest
-        $installed = $true
-    }
+    Invoke-WebRequest -Uri "$Server/rai/download/windows-$arch" -Headers @{ "User-Agent" = "rai-installer" } -OutFile $dest
 } catch {
-    $installed = $false
-}
-if (-not $installed) {
-    if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-        Write-Error "No published rai binary, and go is not on PATH. Install Go, then: go install github.com/$Repo/cmd/rai@latest"
-    }
-    $env:GOBIN = $Prefix
-    go install "github.com/$Repo/cmd/rai@latest"
+    throw "This deployment did not serve a rai binary for windows-$arch. The published RelayAPI image ships these binaries at /rai/download."
 }
 Write-Host "installed $dest"
 $env:Path = "$Prefix;$env:Path"

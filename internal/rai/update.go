@@ -2,36 +2,35 @@ package rai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"runtime"
 	"strings"
+	"time"
 )
 
 func (a *App) update(ctx context.Context) error {
-	releasesURL := a.Releases
-	if releasesURL == "" {
-		releasesURL = strings.TrimSpace(os.Getenv(envReleasesURL))
-	}
-	release, err := a.Gateway.LatestRelease(ctx, releasesURL)
+	server, err := a.updateServer()
 	if err != nil {
 		return err
 	}
+	discovery, err := a.Gateway.Discover(ctx, server)
+	if err != nil {
+		return err
+	}
+	latest := strings.TrimSpace(discovery.RAIVersion)
 	fmt.Fprintf(a.Stdout, "installed: %s\n", Version)
-	fmt.Fprintf(a.Stdout, "latest:    %s\n", release.Tag)
-	if release.Tag == "" || release.Tag == Version || release.Tag == "v"+Version {
-		fmt.Fprintln(a.Stdout, "rai is up to date")
-		return nil
+	if latest != "" {
+		fmt.Fprintf(a.Stdout, "site:      %s\n", latest)
+		if latest == Version || latest == "v"+Version {
+			fmt.Fprintln(a.Stdout, "rai matches this site")
+			return nil
+		}
 	}
-	asset, ok := selectReleaseAsset(release.Assets, runtime.GOOS, runtime.GOARCH)
-	if !ok {
-		fmt.Fprintf(a.Stdout, "No published rai binary for %s/%s.\n", runtime.GOOS, runtime.GOARCH)
-		fmt.Fprintln(a.Stdout, "Install from source:")
-		fmt.Fprintln(a.Stdout, "  go install github.com/4627488/RelayAPI/cmd/rai@latest")
-		return nil
-	}
+	rawURL := raiDownloadURL(server, discovery.Download, runtime.GOOS, runtime.GOARCH)
 	target := a.Self
 	if target == "" || target == "rai" {
 		target, err = lookPath("rai")
@@ -39,39 +38,53 @@ func (a *App) update(ctx context.Context) error {
 			return err
 		}
 	}
-	fmt.Fprintf(a.Stdout, "downloading %s\n", asset.Name)
-	if err := replaceExecutable(ctx, a.Gateway.HTTP, asset.URL, target); err != nil {
+	fmt.Fprintf(a.Stdout, "downloading %s\n", rawURL)
+	if err := replaceExecutable(ctx, a.Gateway.HTTP, rawURL, target); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "updated %s to %s\n", target, release.Tag)
+	if latest == "" {
+		latest = "site build"
+	}
+	fmt.Fprintf(a.Stdout, "updated %s to %s\n", target, latest)
 	return nil
 }
 
-func selectReleaseAsset(assets []ReleaseAsset, goos, goarch string) (ReleaseAsset, bool) {
-	needles := []string{
-		"rai-" + goos + "-" + goarch,
-		"rai_" + goos + "_" + goarch,
-		"rai-" + goos + "_" + goarch,
+func (a *App) updateServer() (string, error) {
+	if server := strings.TrimSpace(os.Getenv(envServer)); server != "" {
+		return normalizeServerURL(server)
 	}
-	if goos == "windows" {
-		for i := range needles {
-			needles[i] += ".exe"
-		}
+	store, err := a.store()
+	if err != nil {
+		return "", err
 	}
-	for _, asset := range assets {
-		name := strings.ToLower(asset.Name)
-		for _, needle := range needles {
-			if strings.Contains(name, needle) {
-				return asset, true
-			}
-		}
+	profile, err := store.ResolveProfile("")
+	if err != nil {
+		return "", errors.New("rai update needs a logged-in profile or RAI_SERVER")
 	}
-	return ReleaseAsset{}, false
+	return normalizeServerURL(profile.ServerURL)
+}
+
+func raiDownloadURL(server, download, goos, goarch string) string {
+	download = strings.TrimSpace(download)
+	if download == "" {
+		download = "/rai/download"
+	}
+	target := goos + "-" + goarch
+	if strings.HasPrefix(download, "http://") || strings.HasPrefix(download, "https://") {
+		return strings.TrimRight(download, "/") + "/" + target
+	}
+	return strings.TrimRight(server, "/") + "/" + strings.Trim(download, "/") + "/" + target
 }
 
 func replaceExecutable(ctx context.Context, client *http.Client, rawURL, target string) error {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 2 * time.Minute}
+	} else {
+		clone := *client
+		if clone.Timeout < 2*time.Minute {
+			clone.Timeout = 2 * time.Minute
+		}
+		client = &clone
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {

@@ -15,6 +15,4 @@ const (
 	envHome         = "RAI_HOME"
 	envDisableKey   = "RAI_DISABLE_KEYRING"
 	envServer       = "RAI_SERVER"
-	envReleasesURL  = "RAI_RELEASES_URL"
-	defaultReleases = "https://api.github.com/repos/4627488/RelayAPI/releases/latest"
 )

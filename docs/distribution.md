@@ -1,9 +1,11 @@
 # RelayAPI distribution
 
 The standard deployment contains only RelayAPI and PostgreSQL. The Relay image
-includes the Go API, native provider runtime and built React application; no
+includes the Go API, native provider runtime, built React application, and the
+`rai` launcher binaries for darwin/linux/windows on amd64 and arm64. No
 sidecar proxy, bridge image, C ABI plugin or third-party executor module is
-required.
+required. The site serves those binaries at `/rai/download/{os}-{arch}` so
+each deployment installs a launcher that matches that image.
 
 CI publishes Linux AMD64/ARM64 images. Production should pin a full release or
 immutable `sha-*` tag. The deployment workflow verifies `/healthz` and rolls

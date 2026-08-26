@@ -32,6 +32,7 @@ type Config struct {
 	UpstreamWebSockets             bool
 	UnpricedModelPolicy            string
 	WebDistDir                     string
+	RAIBinDir                      string
 	RequestLogRetentionDays        int
 	RequestDetailRetentionDays     int
 	RequestSuccessDetailDays       int
@@ -71,6 +72,7 @@ func Load() (Config, error) {
 		UpstreamWebSockets:             envBool("RELAY_UPSTREAM_WEBSOCKETS", true),
 		UnpricedModelPolicy:            strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
 		WebDistDir:                     strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
+		RAIBinDir:                      strings.TrimSpace(os.Getenv("RELAY_RAI_BIN_DIR")),
 		RequestLogRetentionDays:        int(envInt64("REQUEST_LOG_RETENTION_DAYS", 30)),
 		RequestDetailRetentionDays:     int(envInt64("REQUEST_LOG_DETAIL_RETENTION_DAYS", 14)),
 		RequestSuccessDetailDays:       int(envInt64("REQUEST_LOG_SUCCESS_DETAIL_DAYS", 1)),
