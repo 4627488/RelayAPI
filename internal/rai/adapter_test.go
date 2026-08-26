@@ -40,6 +40,9 @@ func TestCodexPrepareUsesConfigOverridesAndAuthCommand(t *testing.T) {
 			t.Fatalf("args %q missing %q", joined, want)
 		}
 	}
+	if strings.Contains(joined, "env_key") || strings.Contains(joined, "requires_openai_auth") {
+		t.Fatalf("Codex 0.149 rejects auth combined with env_key or requires_openai_auth: %q", joined)
+	}
 	if !containsEnv(command.Env, envAPIKey+"=relay_secret") {
 		t.Fatalf("env = %v", command.Env)
 	}
