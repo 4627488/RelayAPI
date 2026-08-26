@@ -4,20 +4,22 @@ Status: implemented
 
 ## Problem
 
-The console already used shadcn/ui Nova (Base UI) and a project skill, but it had no agent-facing visual contract. Tokens were the stock neutral/Geist preset. Login used a marketing split, Sparkles, and a slogan. Agents writing UI therefore defaulted to generic dashboard chrome, and the shipped look stayed "default shadcn".
+The console had shadcn/ui and a project skill, but no agent-facing visual contract. Handmade palettes (stock Nova/Geist, then a paper/copper "Relay Desk") drifted with whoever wrote the CSS. Agents kept inventing taste.
 
 ## Decision
 
-`DESIGN.md` at the repo root is the visual contract (Relay Desk: paper, ink, one copper). `AGENTS.md` points UI work at that file and the shadcn skill. `web/src/index.css` maps the tokens (IBM Plex, 6px radius, copper primary, semantic `positive` / `warning`). Login is a single centered form. Status colors use tokens, not raw emerald/amber. Do not apply a shadcn `--preset` that overwrites these values.
+The look is the official shadcn/ui **Sera** preset (`npx shadcn@latest apply sera`): `base-sera`, taupe, Noto Sans, Playfair Display, Lucide. `DESIGN.md` restates that preset so agents do not invent colors. `AGENTS.md` points UI work at those two files. Login stays a single centered form. Status uses Sera semantic tokens only.
+
+Do not hand-tune paper, copper, or a second accent into `web/src/index.css`. To change the look, apply another official named preset.
 
 ## Alternatives considered
 
-**Keep Nova/Geist and only add DESIGN.md.** A contract that describes the current default would not fix the look, and agents would keep reproducing it.
+**Keep Nova/Geist and only add DESIGN.md.** A contract that describes the default still looks like every shadcn dashboard.
 
-**Apply a public shadcn preset.** Presets overwrite fonts, radius, and components. We need a product-specific desk, not another named theme.
+**Handmade Relay Desk (paper / copper / IBM Plex).** Faster to type, but the palette was invented in-repo and read as generic "AI taste".
 
-**Full page rewrite.** The pages already compose shadcn correctly. Token + chrome + contract is enough; the working tables stay.
+**Lyra.** Official and more "console", but it wants Phosphor icons and JetBrains Mono as the UI face, which fights Chinese copy. Sera keeps Lucide and uses Noto Sans.
 
 ## Consequences
 
-Future UI changes start from `DESIGN.md`. Changing the look means updating that file and `web/src/index.css` in the same commit. `npx @google/design.md lint DESIGN.md` checks the contract.
+Future UI changes start from `DESIGN.md`. Changing the look means applying a named preset and updating `DESIGN.md` in the same commit. `npx @google/design.md lint DESIGN.md` checks the contract.

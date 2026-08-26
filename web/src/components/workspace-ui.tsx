@@ -57,8 +57,8 @@ export interface StatItem {
 
 const statTones = {
   default: "text-foreground",
-  positive: "text-positive",
-  warning: "text-warning",
+  positive: "text-foreground",
+  warning: "text-muted-foreground",
   negative: "text-destructive",
 }
 

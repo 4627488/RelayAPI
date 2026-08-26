@@ -1,6 +1,6 @@
 # RelayAPI console
 
-Vite + React + TypeScript + shadcn/ui (Base UI). Visual contract: [`../DESIGN.md`](../DESIGN.md). Agent rules: [`../AGENTS.md`](../AGENTS.md).
+Vite + React + TypeScript + official shadcn/ui **Sera** preset (Base UI, taupe, Noto Sans, Playfair). Visual contract: [`../DESIGN.md`](../DESIGN.md). Agent rules: [`../AGENTS.md`](../AGENTS.md).
 
 ## Adding components
 
