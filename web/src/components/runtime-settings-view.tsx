@@ -28,7 +28,12 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { StatStrip } from "@/components/workspace-ui"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item"
 import { api, type OutboundProxy } from "@/lib/api"
 
 type RoutingStrategy = "round-robin" | "fill-first"
@@ -387,23 +392,39 @@ export function RuntimeSettingsView() {
 
   return (
     <div className="flex flex-col gap-5">
-      <StatStrip
-        className="lg:grid-cols-4"
-        items={[
-          {
-            label: "运行状态",
-            value: runtime.ready ? "正常" : "异常",
-            tone: runtime.ready ? "positive" : "negative",
-          },
-          { label: "有效凭据", value: runtime.credentials },
-          { label: "发布模型", value: runtime.models },
-          {
-            label: "并发 / 排队",
-            value: `${runtime.max_in_flight} / ${runtime.max_queue}`,
-            detail: "启动配置，修改后需重启",
-          },
-        ]}
-      />
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>运行状态</ItemDescription>
+            <ItemTitle
+              className={runtime.ready ? undefined : "text-destructive"}
+            >
+              {runtime.ready ? "正常" : "异常"}
+            </ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>有效凭据</ItemDescription>
+            <ItemTitle className="tabular-nums">{runtime.credentials}</ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>发布模型</ItemDescription>
+            <ItemTitle className="tabular-nums">{runtime.models}</ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>并发 / 排队</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {runtime.max_in_flight} / {runtime.max_queue}
+            </ItemTitle>
+            <ItemDescription>启动配置，修改后需重启</ItemDescription>
+          </ItemContent>
+        </Item>
+      </div>
 
       <div className="grid items-start gap-5 xl:grid-cols-2">
         <Card>

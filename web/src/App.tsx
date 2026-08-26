@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { AppShell, type Page, type Workspace } from "@/components/app-shell"
 import { AuthPage } from "@/components/auth-page"
 import { ForcePasswordChange } from "@/components/force-password-change"
-import { LoadingView } from "@/components/loading-view"
+import { Spinner } from "@/components/ui/spinner"
 import { api, type Session } from "@/lib/api"
 
 const AdminWorkspace = lazy(() =>
@@ -58,8 +58,8 @@ export function App() {
 
   if (checking) {
     return (
-      <main className="p-6">
-        <LoadingView />
+      <main className="flex justify-center p-6 py-16">
+        <Spinner />
       </main>
     )
   }
@@ -97,7 +97,13 @@ export function App() {
       }}
       onLogout={() => void logout()}
     >
-      <Suspense fallback={<LoadingView />}>
+      <Suspense
+        fallback={
+          <div className="flex justify-center py-16">
+            <Spinner />
+          </div>
+        }
+      >
         {workspace === "admin" && session.is_admin ? (
           <AdminWorkspace
             page={page}

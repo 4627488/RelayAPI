@@ -37,7 +37,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { StatStrip } from "@/components/workspace-ui"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item"
 import type { RequestLog, UsageReport } from "@/lib/api"
 import {
   compact,
@@ -58,15 +64,20 @@ interface Metric {
 
 export function MetricGrid({ items }: { items: Metric[] }) {
   return (
-    <StatStrip
-      className="sm:grid-cols-2 xl:grid-cols-4"
-      items={items.map((item) => ({
-        label: item.label,
-        value: item.value,
-        detail: item.hint,
-        icon: item.icon,
-      }))}
-    />
+    <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+      {items.map((item) => (
+        <Item key={item.label} variant="outline">
+          <ItemMedia variant="icon">
+            <item.icon />
+          </ItemMedia>
+          <ItemContent>
+            <ItemDescription>{item.label}</ItemDescription>
+            <ItemTitle className="tabular-nums">{item.value}</ItemTitle>
+            <ItemDescription>{item.hint}</ItemDescription>
+          </ItemContent>
+        </Item>
+      ))}
+    </div>
   )
 }
 

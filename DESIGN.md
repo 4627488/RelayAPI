@@ -1,39 +1,39 @@
 ---
 version: alpha
-name: Sera
-description: Official shadcn/ui Sera preset. Do not invent a palette. Agents must follow this file for all UI work.
+name: Mira
+description: Official shadcn/ui Mira preset. Do not invent a palette. Agents must follow this file for all UI work.
 colors:
   background: oklch(1 0 0)
-  foreground: oklch(0.147 0.004 49.3)
+  foreground: oklch(0.145 0 0)
   card: oklch(1 0 0)
-  primary: oklch(0.214 0.009 43.1)
-  primary-foreground: oklch(0.986 0.002 67.8)
-  secondary: oklch(0.96 0.002 17.2)
-  muted: oklch(0.96 0.002 17.2)
-  muted-foreground: oklch(0.547 0.021 43.1)
-  border: oklch(0.922 0.005 34.3)
+  primary: oklch(0.205 0 0)
+  primary-foreground: oklch(0.985 0 0)
+  secondary: oklch(0.97 0 0)
+  muted: oklch(0.97 0 0)
+  muted-foreground: oklch(0.556 0 0)
+  border: oklch(0.922 0 0)
   destructive: oklch(0.577 0.245 27.325)
-  dark-background: oklch(0.147 0.004 49.3)
-  dark-foreground: oklch(0.986 0.002 67.8)
-  dark-primary: oklch(0.922 0.005 34.3)
+  dark-background: oklch(0.145 0 0)
+  dark-foreground: oklch(0.985 0 0)
+  dark-primary: oklch(0.922 0 0)
 typography:
   display:
-    fontFamily: Playfair Display
-    fontSize: 30px
+    fontFamily: Inter
+    fontSize: 24px
     fontWeight: 600
-    lineHeight: 1.15
+    lineHeight: 1.2
   title:
-    fontFamily: Playfair Display
-    fontSize: 20px
-    fontWeight: 600
+    fontFamily: Inter
+    fontSize: 14px
+    fontWeight: 500
     lineHeight: 1.25
   body:
-    fontFamily: Noto Sans
+    fontFamily: Inter
     fontSize: 14px
     fontWeight: 400
     lineHeight: 1.5
   label:
-    fontFamily: Noto Sans
+    fontFamily: Inter
     fontSize: 12px
     fontWeight: 500
     lineHeight: 1.35
@@ -46,9 +46,9 @@ typography:
     fontFeature: '"zero" 1'
 rounded:
   none: 0px
-  sm: 4px
-  md: 6px
-  lg: 10px
+  sm: 6px
+  md: 10px
+  lg: 12px
 spacing:
   xs: 4px
   sm: 8px
@@ -59,8 +59,8 @@ components:
   button-primary:
     backgroundColor: "{colors.primary}"
     textColor: "{colors.primary-foreground}"
-    rounded: "{rounded.none}"
-    padding: 16px
+    rounded: "{rounded.sm}"
+    padding: 8px
   card:
     backgroundColor: "{colors.card}"
     textColor: "{colors.foreground}"
@@ -70,63 +70,67 @@ components:
     textColor: "{colors.foreground}"
 ---
 
-# Sera
+# Mira
 
 ## Overview
 
-This console uses the official **shadcn/ui Sera** preset (`base-sera`, taupe, Noto Sans, Playfair Display, Lucide). Taste comes from that preset, not from a one-off palette.
+This console uses the official **shadcn/ui Mira** preset (`base-mira`, neutral, Inter, Hugeicons). Taste comes from that preset, not from a one-off palette.
 
-Do not invent colors, fonts, or a "brand accent". If the look must change, apply another official preset with the CLI. Do not hand-tune `--background` / `--primary` into paper, copper, indigo, or anything else.
+Do not invent colors, fonts, or a brand accent. If the look must change, apply another official named preset with the CLI. Do not hand-tune `--background` / `--primary` into paper, copper, taupe, indigo, or anything else.
 
 Chinese is the product language. English is for proper nouns (`RelayAPI`, `API Key`, model IDs) and code.
 
 ## Colors
 
-Tokens live in `web/src/index.css` and are Sera taupe. Use semantic utilities only: `bg-background`, `text-foreground`, `text-muted-foreground`, `bg-primary`, `text-destructive`.
+Tokens live in `web/src/index.css` and are Mira neutral. Use semantic utilities only: `bg-background`, `text-foreground`, `text-muted-foreground`, `bg-primary`, `text-destructive`.
 
 Status uses `text-foreground`, `text-muted-foreground`, or `text-destructive`. Do not add `emerald-*`, `amber-*`, or custom `--positive` / `--warning` colors.
 
-Dark mode is the Sera dark taupe pair in the same file.
+Dark mode is the Mira dark neutral pair in the same file.
 
 ## Typography
 
-- Body: **Noto Sans**. CJK falls back to PingFang SC / Microsoft YaHei.
-- Headings: **Playfair Display** for Latin. Chinese headings use the Noto / system fallback. Do not add a second display face.
+- Body and headings: **Inter**. CJK falls back to PingFang SC / Microsoft YaHei.
 - Keys, hashes, model IDs, versions: **JetBrains Mono**.
-- Sera buttons are small, semibold, uppercase, wide-tracked, square. Do not override that on the `Button` primitive.
+- Mira buttons are compact (`h-7`, `text-xs`). Do not override that on the `Button` primitive.
 
-Do not switch to Geist, Inter, IBM Plex, or a handmade paper/ink stack.
+Do not switch to Geist, Noto Sans, Playfair Display, IBM Plex, or a handmade paper/ink stack.
 
 ## Layout
 
 Operator density. Page padding 24px. Stacks use `flex` + `gap-*`. No `space-y-*`.
 
-Typical page: optional `PageHeader` → facts strip → table or form. Do not nest Card in Card.
+Typical page: page-title from the shell → optional action row (`flex justify-end` + `Button`) → facts (`Item variant="outline"`) → table or form. Do not nest Card in Card.
 
 Login and password-change are a single centered column. No marketing split, no slogan, no Sparkles.
 
 ## Elevation & Depth
 
-Use Sera's surfaces and hairlines. No drop shadows, glow, blur, or glass.
+Use Mira's surfaces and hairlines. No drop shadows, glow, blur, or glass.
 
 ## Shapes
 
-Sera owns radius. Primary buttons are square (`rounded-none`). Cards use the preset `--radius`. Do not invent a second radius scale.
+Mira owns radius (`--radius: 0.625rem`). Do not invent a second radius scale.
 
 ## Components
 
-Use installed shadcn/ui pieces. Compose; do not invent.
+Use installed official shadcn/ui pieces from `web/src/components/ui/`. Compose them in the page. Do not invent wrappers (`PageHeader`, `StatStrip`, `SearchField`, `InfoBar`, `LoadingView`, `LoadErrorView`).
 
 - One `default` button per view. Other actions are `outline` or `ghost`.
 - Forms: `FieldGroup` + `Field` + `FieldLabel`.
-- Facts: `StatStrip` / `MetricGrid`.
-- Empty / Alert / Skeleton: the primitives.
+- Search: `InputGroup` + `InputGroupAddon` + `InputGroupInput`.
+- Facts: official `Item` (`variant="outline"`) with `ItemContent` / `ItemTitle` / `ItemDescription`.
+- Loading: official `Spinner`. Empty / error: official `Empty` + `EmptyHeader` + `EmptyMedia` + `EmptyTitle` + `EmptyDescription` + `EmptyContent`.
+- Callouts: official `Alert`.
+
+Official primitives use Hugeicons. Feature pages may keep Lucide until a page is rewritten. Do not invent a third icon set.
 
 ## Do's and Don'ts
 
 - Do read this file and `.agents/skills/shadcn/SKILL.md` before writing UI.
 - Do keep copy specific: "创建 API Key", not "开启您的 AI 之旅".
-- Don't invent a palette. Don't "improve" Sera with paper, copper, or a second accent.
+- Don't invent a palette. Don't "improve" Mira with paper, copper, taupe, or a second accent.
 - Don't apply a random `--preset` unless a human asked for a named official preset.
 - Don't greet the operator or add dashboard stats the API does not return.
 - Don't use indigo→violet, gradient-clip headlines, glass, glow, or emoji.
+- Don't add homemade design-system wrappers when an official component exists.

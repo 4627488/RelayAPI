@@ -25,7 +25,12 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { bytes } from "@/lib/format"
-import { StatStrip } from "@/components/workspace-ui"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item"
 
 type LatencyBucket = "user" | "relay" | "upstream" | "mixed" | "context"
 
@@ -183,26 +188,41 @@ export function RequestLatencyTimeline({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
-        <StatStrip
-          className="sm:grid-cols-3"
-          items={[
-            {
-              label: "用户网络",
-              value: formatMS(attribution.user_network_ms),
-              detail: formatPercent(attribution.user_network_ms / total),
-            },
-            {
-              label: "中转",
-              value: formatMS(attribution.relay_ms),
-              detail: formatPercent(attribution.relay_ms / total),
-            },
-            {
-              label: "上游",
-              value: formatMS(attribution.upstream_ms),
-              detail: formatPercent(attribution.upstream_ms / total),
-            },
-          ]}
-        />
+        <div className="grid grid-cols-3 gap-2">
+          <Item variant="outline">
+            <ItemContent>
+              <ItemDescription>用户网络</ItemDescription>
+              <ItemTitle className="tabular-nums">
+                {formatMS(attribution.user_network_ms)}
+              </ItemTitle>
+              <ItemDescription>
+                {formatPercent(attribution.user_network_ms / total)}
+              </ItemDescription>
+            </ItemContent>
+          </Item>
+          <Item variant="outline">
+            <ItemContent>
+              <ItemDescription>中转</ItemDescription>
+              <ItemTitle className="tabular-nums">
+                {formatMS(attribution.relay_ms)}
+              </ItemTitle>
+              <ItemDescription>
+                {formatPercent(attribution.relay_ms / total)}
+              </ItemDescription>
+            </ItemContent>
+          </Item>
+          <Item variant="outline">
+            <ItemContent>
+              <ItemDescription>上游</ItemDescription>
+              <ItemTitle className="tabular-nums">
+                {formatMS(attribution.upstream_ms)}
+              </ItemTitle>
+              <ItemDescription>
+                {formatPercent(attribution.upstream_ms / total)}
+              </ItemDescription>
+            </ItemContent>
+          </Item>
+        </div>
 
         <ChartContainer config={chartConfig} className="aspect-auto h-44 w-full">
           <BarChart data={comparison} layout="vertical" accessibilityLayer>

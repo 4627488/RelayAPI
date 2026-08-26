@@ -12,6 +12,7 @@ import {
   PencilIcon,
   SearchIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -49,6 +50,17 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
@@ -59,7 +71,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { PageHeader, SearchField, StatStrip } from "@/components/workspace-ui"
 import {
   api,
   deleteRequest,
@@ -264,49 +275,61 @@ export function PricingView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader
-        actions={
-          <>
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() => void syncCatalog(false)}
-            >
-              <CloudDownloadIcon />
-              预览同步
-            </Button>
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() => void syncCatalog(true)}
-            >
-              <CloudDownloadIcon />
-              应用 Models.dev
-            </Button>
-          </>
-        }
-      />
-      <StatStrip
-        className="sm:grid-cols-4"
-        items={[
-          { label: "已接入模型", value: prices.available_models.length },
-          {
-            label: "已定价",
-            value: prices.available_models.filter((item) => item.priced).length,
-          },
-          {
-            label: "未定价",
-            value: prices.available_models.filter((item) => !item.priced)
-              .length,
-          },
-          {
-            label: "管理员覆盖",
-            value: prices.available_models.filter(
-              (item) => item.source === "admin"
-            ).length,
-          },
-        ]}
-      />
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={() => void syncCatalog(false)}
+        >
+          <CloudDownloadIcon />
+          预览同步
+        </Button>
+        <Button
+          variant="outline"
+          disabled={pending}
+          onClick={() => void syncCatalog(true)}
+        >
+          <CloudDownloadIcon />
+          应用 Models.dev
+        </Button>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>已接入模型</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {prices.available_models.length}
+            </ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>已定价</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {prices.available_models.filter((item) => item.priced).length}
+            </ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>未定价</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {prices.available_models.filter((item) => !item.priced).length}
+            </ItemTitle>
+          </ItemContent>
+        </Item>
+        <Item variant="outline">
+          <ItemContent>
+            <ItemDescription>管理员覆盖</ItemDescription>
+            <ItemTitle className="tabular-nums">
+              {
+                prices.available_models.filter((item) => item.source === "admin")
+                  .length
+              }
+            </ItemTitle>
+          </ItemContent>
+        </Item>
+      </div>
       {loadError ? (
         <Alert variant="destructive">
           <AlertTriangleIcon />
@@ -338,13 +361,29 @@ export function PricingView() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <SearchField
-            value={catalogQuery}
-            onChange={(event) => setCatalogQuery(event.target.value)}
-            onClear={() => setCatalogQuery("")}
-            placeholder="搜索模型"
-            className="max-w-sm"
-          />
+          <InputGroup className="max-w-sm">
+            <InputGroupAddon>
+              <SearchIcon />
+            </InputGroupAddon>
+            <InputGroupInput
+              value={catalogQuery}
+              onChange={(event) => setCatalogQuery(event.target.value)}
+              placeholder="搜索模型"
+            />
+            {catalogQuery ? (
+              <InputGroupAddon align="inline-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => setCatalogQuery("")}
+                  aria-label="清除搜索"
+                >
+                  <XIcon />
+                </Button>
+              </InputGroupAddon>
+            ) : null}
+          </InputGroup>
           {loading ? (
             <Empty>
               <EmptyHeader>
