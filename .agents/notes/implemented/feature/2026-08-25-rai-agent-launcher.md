@@ -14,7 +14,7 @@ Ship `rai` from `cmd/rai` with reusable code in `internal/rai`. The launcher fol
 
 Credentials prefer the OS keyring (`zalando/go-keyring` with a 3s timeout) and write `~/.config/rai/credentials.json` at `0600` when the keyring is unavailable or `RAI_DISABLE_KEYRING=1`. Config writes are atomic in the same directory. Child processes inherit stdio; the parent ignores SIGINT so the terminal delivers it to the shared process group; `rai` returns the child's exit code.
 
-Adapters: Claude Code (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, model-aware `ENABLE_TOOL_SEARCH`), Codex (`-c` overrides plus `rai credential print`), OpenCode (`OPENCODE_CONFIG_CONTENT`), Grok / Hermes / Pi / Prime Agent (OpenAI-compatible env, Grok also sets `XAI_*`). The published image ships `rai` for each client OS/arch; the site install script and `rai update` download from that deployment. `scripts/install-rai.sh` uses `RAI_SERVER` or `go install` for repo-local development.
+Adapters: Claude Code (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, model-aware `ENABLE_TOOL_SEARCH`), Codex (`-c` overrides plus `rai credential print` as the only provider auth — Codex 0.149 rejects combining `auth` with `env_key` or `requires_openai_auth`), OpenCode (`OPENCODE_CONFIG_CONTENT`), Grok / Hermes / Pi / Prime Agent (OpenAI-compatible env, Grok also sets `XAI_*`). The published image ships `rai` for each client OS/arch; the site install script and `rai update` download from that deployment. `scripts/install-rai.sh` uses `RAI_SERVER` or `go install` for repo-local development.
 
 ## Alternatives considered
 

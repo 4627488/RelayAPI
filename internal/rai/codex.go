@@ -29,6 +29,9 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 			return Command{}, err
 		}
 	}
+	// Codex 0.149+ rejects combining [model_providers.*.auth] with env_key or
+	// requires_openai_auth. The site setup script only sets auth.command; keep
+	// that exclusive so `rai credential print` can refresh the catalog.
 	base := strings.TrimRight(ctx.APIBase, "/") + "/v1"
 	rai := ctx.RAI
 	if rai == "" {
@@ -45,10 +48,8 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 		"model_providers." + providerID + ".name=RelayAPI",
 		"model_providers." + providerID + ".base_url=" + quoteTOMLString(base),
 		"model_providers." + providerID + ".wire_api=responses",
-		"model_providers." + providerID + ".requires_openai_auth=false",
 		"model_providers." + providerID + ".supports_websockets=true",
 		"model_providers." + providerID + ".supports_standalone_web_search=true",
-		"model_providers." + providerID + ".env_key=" + envAPIKey,
 		"model_providers." + providerID + ".auth.command=" + quoteTOMLString(rai),
 		"model_providers." + providerID + ".auth.args=" + string(authArgs),
 		"features.apps=true",
