@@ -9,10 +9,12 @@ type OpenCodeAdapter struct{}
 
 func (OpenCodeAdapter) Name() string { return "opencode" }
 
+func (OpenCodeAdapter) Install() string { return "npm install -g opencode-ai" }
+
 func (OpenCodeAdapter) Probe() (string, string, error) {
 	path, err := lookPath("opencode")
 	if err != nil {
-		return "", "", err
+		return "", "", missingBinary("opencode", OpenCodeAdapter{}.Install())
 	}
 	return path, probeVersion(path), nil
 }

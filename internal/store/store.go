@@ -181,6 +181,7 @@ func (s Store) DeleteTenant(ctx context.Context, id string) error {
 			{&db.UsageDailyRollup{}, "tenant_id = ?", id},
 			{&db.RequestLog{}, "tenant_id = ?", id},
 			{&db.AgentSetup{}, "tenant_id = ?", id},
+			{&db.RAIAuthorization{}, "tenant_id = ?", id},
 			{&db.APIKeyModelAlias{}, "api_key_id IN (?)", keyIDs},
 			{&db.APIKey{}, "tenant_id = ?", id},
 		}

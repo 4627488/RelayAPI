@@ -26,4 +26,7 @@ func TestRAIDiscoveryDocument(t *testing.T) {
 	if document["session"] != "/api/rai/session" {
 		t.Fatalf("session = %#v", document["session"])
 	}
+	if document["authorization"] != "/api/rai/authorizations" || document["token"] != "/api/rai/token" {
+		t.Fatalf("auth endpoints = %#v", document)
+	}
 }

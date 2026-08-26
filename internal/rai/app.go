@@ -13,17 +13,20 @@ import (
 )
 
 type App struct {
-	Args    []string
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
-	Environ []string
-	Home    string
-	Gateway Gateway
-	Run     Runner
-	Now     func() time.Time
-	Look    func(string) (string, error)
-	Self    string
+	Args     []string
+	Stdin    io.Reader
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Environ  []string
+	Home     string
+	Gateway  Gateway
+	Run      Runner
+	Now      func() time.Time
+	Look     func(string) (string, error)
+	Self     string
+	OpenURL  func(string) error
+	Sleep    func(context.Context, time.Duration) error
+	Releases string
 }
 
 func Main() int {
@@ -78,7 +81,9 @@ func (a *App) Execute(ctx context.Context) error {
 		return a.credential(profileName, args[1:])
 	case "doctor":
 		return a.doctor(ctx, profileName)
-	case "codex", "opencode":
+	case "update":
+		return a.update(ctx)
+	case "claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent":
 		return a.launch(ctx, profileName, args[0], args[1:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
@@ -113,6 +118,21 @@ func (a *App) defaults() {
 	if a.Self == "" {
 		a.Self = selfExecutable()
 	}
+	if a.OpenURL == nil {
+		a.OpenURL = openBrowser
+	}
+	if a.Sleep == nil {
+		a.Sleep = func(ctx context.Context, d time.Duration) error {
+			timer := time.NewTimer(d)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+				return nil
+			}
+		}
+	}
 }
 
 func (a *App) store() (Store, error) {
@@ -123,15 +143,22 @@ func (a *App) usage() error {
 	fmt.Fprint(a.Stdout, `rai — RelayAPI agent launcher
 
 Usage:
-  rai login --server <url> --api-key-stdin [--profile name] [--model id]
+  rai login --server <url> [--no-browser] [--profile name] [--model id]
+  rai login --server <url> --api-key-stdin
   rai logout [--profile name]
   rai status
   rai models
   rai use <model>
   rai credential print
   rai doctor
+  rai update
+  rai claude [--model id] -- <claude args>
   rai codex [--model id] -- <codex args>
+  rai grok [--model id] -- <grok args>
+  rai hermes [--model id] -- <hermes args>
   rai opencode [--model id] -- <opencode args>
+  rai pi [--model id] -- <pi args>
+  rai prime-agent [--model id] -- <prime-agent args>
 
 Global flags:
   --profile name    Select a named deployment profile
@@ -183,14 +210,72 @@ func (a *App) login(ctx context.Context, profileName string, args []string) erro
 	if err := validateProfileName(profileName); err != nil {
 		return err
 	}
-	server, err := normalizeServerURL(flags.Server)
+	server := flags.Server
+	if server == "" {
+		server = strings.TrimSpace(os.Getenv(envServer))
+	}
+	server, err = normalizeServerURL(server)
 	if err != nil {
 		return err
 	}
-	key, err := a.readAPIKey(flags.APIKeyStdin)
-	if err != nil {
-		return err
+	var key string
+	if flags.APIKeyStdin {
+		key, err = a.readAPIKey(true)
+		if err != nil {
+			return err
+		}
+	} else {
+		key, err = a.loginWithBrowser(ctx, server, flags.NoBrowser)
+		if err != nil {
+			return err
+		}
 	}
+	return a.finishLogin(ctx, profileName, server, key, flags)
+}
+
+func (a *App) loginWithBrowser(ctx context.Context, server string, noBrowser bool) (string, error) {
+	verifier, err := newPKCEVerifier()
+	if err != nil {
+		return "", err
+	}
+	auth, err := a.Gateway.StartAuthorization(ctx, server, deviceName(), pkceChallengeS256(verifier))
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(a.Stdout, "Open this URL to approve rai:\n%s\n", auth.VerificationURI)
+	if !noBrowser {
+		if err := a.OpenURL(auth.VerificationURI); err != nil {
+			fmt.Fprintf(a.Stderr, "browser: %s\n", err.Error())
+		}
+	}
+	deadline := a.Now().Add(time.Duration(auth.ExpiresIn) * time.Second)
+	if auth.ExpiresIn <= 0 {
+		deadline = a.Now().Add(10 * time.Minute)
+	}
+	interval := time.Duration(auth.Interval) * time.Second
+	if interval < time.Second {
+		interval = 3 * time.Second
+	}
+	for {
+		if !a.Now().Before(deadline) {
+			return "", errors.New("authorization expired")
+		}
+		token, err := a.Gateway.ExchangeToken(ctx, server, auth.ID, verifier)
+		if err == nil {
+			return token.APIKey, nil
+		}
+		var tokenErr tokenError
+		if errors.As(err, &tokenErr) && tokenErr.Code == "authorization_pending" {
+			if err := a.Sleep(ctx, interval); err != nil {
+				return "", err
+			}
+			continue
+		}
+		return "", err
+	}
+}
+
+func (a *App) finishLogin(ctx context.Context, profileName, server, key string, flags loginFlags) error {
 	discovery, err := a.Gateway.Discover(ctx, server)
 	if err != nil {
 		return err
@@ -263,6 +348,7 @@ type loginFlags struct {
 	ReasoningEffort  string
 	OpenCodeProtocol string
 	APIKeyStdin      bool
+	NoBrowser        bool
 }
 
 func parseLoginFlags(args []string) (loginFlags, error) {
@@ -313,15 +399,14 @@ func parseLoginFlags(args []string) (loginFlags, error) {
 			}
 		case "--api-key-stdin":
 			flags.APIKeyStdin = true
+		case "--no-browser":
+			flags.NoBrowser = true
 		default:
 			return flags, fmt.Errorf("unknown login flag %q", arg)
 		}
 	}
-	if flags.Server == "" {
-		return flags, errors.New("login requires --server")
-	}
-	if !flags.APIKeyStdin {
-		return flags, errors.New("login requires --api-key-stdin")
+	if flags.Server == "" && strings.TrimSpace(os.Getenv(envServer)) == "" {
+		return flags, errors.New("login requires --server or RAI_SERVER")
 	}
 	return flags, nil
 }
@@ -508,6 +593,18 @@ func (a *App) doctor(ctx context.Context, profileName string) error {
 	return nil
 }
 
+func (a *App) ensureLogin(ctx context.Context, profileName string) error {
+	server := strings.TrimSpace(os.Getenv(envServer))
+	if server == "" {
+		return errors.New("no rai profile is configured; run rai login --server <url>")
+	}
+	args := []string{"--server", server}
+	if profileName != "" {
+		args = append(args, "--profile", profileName)
+	}
+	return a.login(ctx, profileName, args)
+}
+
 func (a *App) launch(ctx context.Context, profileName, agent string, args []string) error {
 	model, passthrough, err := splitLaunchArgs(args)
 	if err != nil {
@@ -519,7 +616,13 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 	}
 	profile, err := store.ResolveProfile(profileName)
 	if err != nil {
-		return err
+		if loginErr := a.ensureLogin(ctx, profileName); loginErr != nil {
+			return err
+		}
+		profile, err = store.ResolveProfile(profileName)
+		if err != nil {
+			return err
+		}
 	}
 	secret, err := store.Credential(profile.Name)
 	if err != nil {

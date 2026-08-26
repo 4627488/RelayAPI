@@ -19,9 +19,30 @@ type Discovery struct {
 	Models          string   `json:"models"`
 	Health          string   `json:"health"`
 	Session         string   `json:"session"`
+	Authorization   string   `json:"authorization"`
+	Token           string   `json:"token"`
+	Authorize       string   `json:"authorize"`
 	Adapters        []string `json:"adapters"`
 	ContractVersion string   `json:"contract_version"`
 	MinRAIVersion   string   `json:"min_rai_version"`
+}
+
+type Authorization struct {
+	ID              string
+	VerificationURI string
+	ExpiresIn       int
+	Interval        int
+}
+
+type TokenResult struct {
+	APIKey  string
+	APIBase string
+	Name    string
+}
+
+type tokenError struct {
+	Code    string
+	Message string
 }
 
 type Session struct {
@@ -68,7 +89,10 @@ func (g Gateway) Discover(ctx context.Context, server string) (Discovery, error)
 		Models:          "/v1/models",
 		Health:          "/healthz",
 		Session:         "/api/rai/session",
-		Adapters:        []string{"codex", "opencode"},
+		Authorization:   "/api/rai/authorizations",
+		Token:           "/api/rai/token",
+		Authorize:       "/rai/authorize",
+		Adapters:        []string{"claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent"},
 		ContractVersion: contractVersion,
 		MinRAIVersion:   minRAIVersion,
 	}, nil
@@ -176,6 +200,166 @@ func (g Gateway) ListModels(ctx context.Context, apiBase, apiKey string) ([]stri
 		return nil, fmt.Errorf("models %s: %s", resp.Status, redact(string(body)))
 	}
 	return parseModelIDs(body)
+}
+
+func (g Gateway) StartAuthorization(ctx context.Context, apiBase, deviceName, challenge string) (Authorization, error) {
+	apiBase, err := normalizeServerURL(apiBase)
+	if err != nil {
+		return Authorization{}, err
+	}
+	payload, err := json.Marshal(map[string]string{
+		"device_name":           deviceName,
+		"code_challenge":        challenge,
+		"code_challenge_method": "S256",
+	})
+	if err != nil {
+		return Authorization{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+"/api/rai/authorizations", strings.NewReader(string(payload)))
+	if err != nil {
+		return Authorization{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "rai/"+Version)
+	resp, err := g.HTTP.Do(req)
+	if err != nil {
+		return Authorization{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return Authorization{}, fmt.Errorf("authorization %s: %s", resp.Status, redact(string(body)))
+	}
+	var document struct {
+		AuthorizationID string `json:"authorization_id"`
+		VerificationURI string `json:"verification_uri"`
+		ExpiresIn       int    `json:"expires_in"`
+		Interval        int    `json:"interval"`
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		return Authorization{}, fmt.Errorf("parse authorization: %w", err)
+	}
+	if document.AuthorizationID == "" || document.VerificationURI == "" {
+		return Authorization{}, fmt.Errorf("authorization response missing verification_uri")
+	}
+	if document.Interval < 1 {
+		document.Interval = 3
+	}
+	return Authorization{
+		ID:              document.AuthorizationID,
+		VerificationURI: document.VerificationURI,
+		ExpiresIn:       document.ExpiresIn,
+		Interval:        document.Interval,
+	}, nil
+}
+
+func (g Gateway) ExchangeToken(ctx context.Context, apiBase, authorizationID, verifier string) (TokenResult, error) {
+	apiBase, err := normalizeServerURL(apiBase)
+	if err != nil {
+		return TokenResult{}, err
+	}
+	payload, err := json.Marshal(map[string]string{
+		"authorization_id": authorizationID,
+		"code_verifier":    verifier,
+	})
+	if err != nil {
+		return TokenResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+"/api/rai/token", strings.NewReader(string(payload)))
+	if err != nil {
+		return TokenResult{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "rai/"+Version)
+	resp, err := g.HTTP.Do(req)
+	if err != nil {
+		return TokenResult{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return TokenResult{}, tokenResponseError(body)
+	}
+	var document struct {
+		APIKey  string `json:"api_key"`
+		APIBase string `json:"api_base"`
+		Name    string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		return TokenResult{}, fmt.Errorf("parse token: %w", err)
+	}
+	if strings.TrimSpace(document.APIKey) == "" {
+		return TokenResult{}, fmt.Errorf("token response missing api_key")
+	}
+	return TokenResult{APIKey: document.APIKey, APIBase: document.APIBase, Name: document.Name}, nil
+}
+
+func tokenResponseError(body []byte) error {
+	var document struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &document) == nil && document.Error.Code != "" {
+		return tokenError{Code: document.Error.Code, Message: document.Error.Message}
+	}
+	return fmt.Errorf("token %s", redact(string(body)))
+}
+
+func (e tokenError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return e.Code
+}
+
+func (g Gateway) LatestRelease(ctx context.Context, releasesURL string) (Release, error) {
+	if releasesURL == "" {
+		releasesURL = defaultReleases
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
+	if err != nil {
+		return Release{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "rai/"+Version)
+	resp, err := g.HTTP.Do(req)
+	if err != nil {
+		return Release{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode != http.StatusOK {
+		return Release{}, fmt.Errorf("releases %s: %s", resp.Status, redact(string(body)))
+	}
+	var document struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		return Release{}, fmt.Errorf("parse release: %w", err)
+	}
+	release := Release{Tag: strings.TrimPrefix(document.TagName, "v")}
+	for _, asset := range document.Assets {
+		release.Assets = append(release.Assets, ReleaseAsset{Name: asset.Name, URL: asset.URL})
+	}
+	return release, nil
+}
+
+type Release struct {
+	Tag    string
+	Assets []ReleaseAsset
+}
+
+type ReleaseAsset struct {
+	Name string
+	URL  string
 }
 
 func parseModelIDs(payload []byte) ([]string, error) {

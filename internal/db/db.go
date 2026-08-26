@@ -44,7 +44,7 @@ func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
 	}
 	if err := database.WithContext(ctx).AutoMigrate(
 		&Tenant{}, &APIKey{}, &APIKeyModelAlias{}, &ModelPrice{}, &ModelCatalogPrice{}, &ModelSetting{}, &ModelAlias{}, &ModelPriceRule{},
-		&BillingLedger{}, &UsageDailyRollup{}, &RequestLog{}, &RequestLogDetail{}, &UpstreamLifecycleEvent{}, &Invitation{}, &AgentSetup{},
+		&BillingLedger{}, &UsageDailyRollup{}, &RequestLog{}, &RequestLogDetail{}, &UpstreamLifecycleEvent{}, &Invitation{}, &AgentSetup{}, &RAIAuthorization{},
 		&ParentSubscription{}, &ParentQuotaWindow{}, &ParentQuotaObservation{},
 		&ChildSubscription{}, &ChildQuotaWindow{}, &RequestReservation{}, &WebSocketTurn{},
 		&OutboundProxy{}, &UpstreamCredential{}, &RuntimeSetting{},

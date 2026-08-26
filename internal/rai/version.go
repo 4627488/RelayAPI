@@ -2,7 +2,7 @@ package rai
 
 // Version is the launcher compatibility version. Release builds override it
 // with -ldflags.
-var Version = "0.1.0"
+var Version = "0.2.0"
 
 const (
 	configKind      = "rai.dev/v1"
@@ -14,4 +14,7 @@ const (
 	envProfile      = "RAI_PROFILE"
 	envHome         = "RAI_HOME"
 	envDisableKey   = "RAI_DISABLE_KEYRING"
+	envServer       = "RAI_SERVER"
+	envReleasesURL  = "RAI_RELEASES_URL"
+	defaultReleases = "https://api.github.com/repos/4627488/RelayAPI/releases/latest"
 )

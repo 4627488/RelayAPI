@@ -80,6 +80,56 @@ func TestOpenCodePrepareUsesRuntimeConfigContent(t *testing.T) {
 	}
 }
 
+func TestClaudePrepareSetsAnthropicGatewayEnv(t *testing.T) {
+	command, err := ClaudeAdapter{}.Prepare(LaunchContext{
+		Profile:    Profile{Name: "work"},
+		APIBase:    "https://relay.example",
+		APIKey:     "relay_secret",
+		Model:      "anthropic/claude-sonnet-4.6",
+		Args:       []string{"-p", "hello"},
+		Environ:    []string{"ANTHROPIC_API_KEY=sk-user"},
+		Executable: "/usr/bin/claude",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(command.Args, " "); got != "--model anthropic/claude-sonnet-4.6 -p hello" {
+		t.Fatalf("args = %q", got)
+	}
+	if envValue(command.Env, "ANTHROPIC_BASE_URL") != "https://relay.example" {
+		t.Fatalf("base = %q", envValue(command.Env, "ANTHROPIC_BASE_URL"))
+	}
+	if envValue(command.Env, "ANTHROPIC_AUTH_TOKEN") != "relay_secret" {
+		t.Fatalf("token = %q", envValue(command.Env, "ANTHROPIC_AUTH_TOKEN"))
+	}
+	if envValue(command.Env, "ANTHROPIC_API_KEY") != "" {
+		t.Fatalf("api key should be cleared, got %q", envValue(command.Env, "ANTHROPIC_API_KEY"))
+	}
+	if envValue(command.Env, "ENABLE_TOOL_SEARCH") != "true" {
+		t.Fatalf("tool search = %q", envValue(command.Env, "ENABLE_TOOL_SEARCH"))
+	}
+}
+
+func TestGrokPrepareUsesOpenAIAndXAIEnv(t *testing.T) {
+	adapter, err := AdapterByName("grok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := adapter.Prepare(LaunchContext{
+		Profile:    Profile{Name: "work"},
+		APIBase:    "https://relay.example",
+		APIKey:     "relay_secret",
+		Model:      "x-ai/grok-4.5",
+		Executable: "/usr/bin/grok",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envValue(command.Env, "OPENAI_BASE_URL") != "https://relay.example/v1" || envValue(command.Env, "XAI_API_KEY") != "relay_secret" {
+		t.Fatalf("env = %v", command.Env)
+	}
+}
+
 func TestResolveLaunchModelValidatesAllowlist(t *testing.T) {
 	got, err := resolveLaunchModel(Profile{DefaultModel: "keep"}, "", []string{"keep", "other"})
 	if err != nil || got != "keep" {

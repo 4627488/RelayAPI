@@ -15,7 +15,10 @@ func (a *App) raiDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"models":           "/v1/models",
 		"health":           "/healthz",
 		"session":          "/api/rai/session",
-		"adapters":         []string{"codex", "opencode"},
+		"authorization":    "/api/rai/authorizations",
+		"token":            "/api/rai/token",
+		"authorize":        "/rai/authorize",
+		"adapters":         raiAdapterNames(),
 		"contract_version": "1",
 		"min_rai_version":  "0.1.0",
 	})
@@ -39,7 +42,7 @@ func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 		"api_base":         a.cfg.PublicURL,
 		"models":           models,
 		"default_model":    defaultModel,
-		"adapters":         []string{"codex", "opencode"},
+		"adapters":         raiAdapterNames(),
 	})
 }
 

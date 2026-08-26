@@ -355,6 +355,31 @@ export function ConnectionGuide({
         </CardFooter>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>rai 启动器</CardTitle>
+          <CardDescription>
+            浏览器登录一次，之后用原来的客户端命令行启动。批准页会创建一把
+            名为 rai · 设备 的专用 API Key。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FieldGroup>
+            <CommandField
+              label="安装"
+              description="优先使用 GitHub Release；没有对应资产时走 go install。"
+              command="curl -fsSL https://raw.githubusercontent.com/4627488/RelayAPI/main/scripts/install-rai.sh | bash"
+            />
+            <CommandField
+              label="登录并启动"
+              description="rai login 打开批准页；之后 rai claude / rai codex 即可。"
+              command={`rai login --server ${typeof window === "undefined" ? "http://localhost:3000" : window.location.origin}`}
+              primary
+            />
+          </FieldGroup>
+        </CardContent>
+      </Card>
+
       {usableKeys.length && model ? (
         <ManualConfigCard
           endpoint={`${

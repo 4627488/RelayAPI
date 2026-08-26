@@ -311,3 +311,20 @@ type AgentSetup struct {
 	ExpiresAt         time.Time `gorm:"not null;index" json:"-"`
 	CreatedAt         time.Time `gorm:"not null" json:"-"`
 }
+
+// RAIAuthorization is a PKCE device grant for the rai launcher.
+// The API key ciphertext is present only between approval and the one-time token exchange.
+type RAIAuthorization struct {
+	ID                  string     `gorm:"type:uuid;primaryKey" json:"id"`
+	TenantID            *string    `gorm:"type:uuid;index" json:"-"`
+	DeviceName          string     `gorm:"not null;default:''" json:"device_name"`
+	CodeChallenge       string     `gorm:"not null" json:"-"`
+	CodeChallengeMethod string     `gorm:"not null;default:'S256'" json:"-"`
+	Status              string     `gorm:"not null;index;default:'pending'" json:"status"`
+	APIKeyID            *string    `gorm:"type:uuid" json:"-"`
+	APIKeyCiphertext    []byte     `gorm:"type:bytea" json:"-"`
+	CreatedAt           time.Time  `gorm:"not null" json:"created_at"`
+	ExpiresAt           time.Time  `gorm:"not null;index" json:"expires_at"`
+	ApprovedAt          *time.Time `json:"approved_at,omitempty"`
+	ConsumedAt          *time.Time `json:"consumed_at,omitempty"`
+}

@@ -29,6 +29,9 @@ func TestRoutesCoverSupportedClientProtocols(t *testing.T) {
 		{name: "Codex WebSocket", method: http.MethodGet, path: "/v1/responses/ws"},
 		{name: "rai discovery", method: http.MethodGet, path: "/.well-known/rai.json"},
 		{name: "rai session", method: http.MethodGet, path: "/api/rai/session"},
+		{name: "rai authorizations", method: http.MethodPost, path: "/api/rai/authorizations"},
+		{name: "rai token", method: http.MethodPost, path: "/api/rai/token"},
+		{name: "rai authorize", method: http.MethodGet, path: "/rai/authorize/example"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path, nil)

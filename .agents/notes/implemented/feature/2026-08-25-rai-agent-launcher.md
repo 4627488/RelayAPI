@@ -8,24 +8,24 @@ RelayAPI already gives Codex and OpenCode a complete gateway contract and a five
 
 ## Decision
 
-Ship `rai` from `cmd/rai` with reusable code in `internal/rai`. Milestone 1 is in this change: `--api-key-stdin` enrollment, profile and credential storage, Codex and OpenCode adapters, `models` / `status` / `doctor` / `credential print`, plus server discovery at `GET /.well-known/rai.json` and authenticated `GET /api/rai/session`.
+Ship `rai` from `cmd/rai` with reusable code in `internal/rai`. The launcher follows the Ori Harness shape: browser PKCE login, per-launch adapters for the real agent CLIs on `PATH`, `--model` passthrough, missing-binary install hints, and `rai update`.
 
-The CLI uses `--profile`, `RAI_PROFILE`, then the active profile. Credentials prefer the OS keyring (`zalando/go-keyring` with a 3s timeout) and write `~/.config/rai/credentials.json` at `0600` when the keyring is unavailable or `RAI_DISABLE_KEYRING=1`. Config writes are atomic in the same directory. Child processes inherit stdio; the parent ignores SIGINT so the terminal delivers it to the shared process group; `rai` returns the child's exit code.
+`rai login --server <url>` starts a PKCE S256 device grant (`POST /api/rai/authorizations`), opens `/rai/authorize/{id}` (or prints it with `--no-browser`), and polls `POST /api/rai/token`. Approval uses the existing tenant session; the page can collect email/password when the browser is not already signed in. A successful approve creates a recoverable API key named `rai · <device>`. `--api-key-stdin` remains for CI and already-issued keys. `RAI_SERVER` supplies the server URL when `--server` is omitted; launching without a profile starts the same login when that variable is set.
 
-The Codex adapter passes `-c` overrides for the Relay provider, Responses wire API, WebSocket and search flags, model, reasoning effort, `RAI_API_KEY`, and `rai --profile <name> credential print` as command-based auth. The OpenCode adapter sets `OPENCODE_CONFIG_CONTENT` with the Relay provider block and `{env:RAI_API_KEY}`.
+Credentials prefer the OS keyring (`zalando/go-keyring` with a 3s timeout) and write `~/.config/rai/credentials.json` at `0600` when the keyring is unavailable or `RAI_DISABLE_KEYRING=1`. Config writes are atomic in the same directory. Child processes inherit stdio; the parent ignores SIGINT so the terminal delivers it to the shared process group; `rai` returns the child's exit code.
 
-Device authorization, browser approval, self-update, installers, and additional adapters remain the next milestones in the original proposal.
+Adapters: Claude Code (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, model-aware `ENABLE_TOOL_SEARCH`), Codex (`-c` overrides plus `rai credential print`), OpenCode (`OPENCODE_CONFIG_CONTENT`), Grok / Hermes / Pi / Prime Agent (OpenAI-compatible env, Grok also sets `XAI_*`). `scripts/install-rai.sh` and `scripts/install-rai.ps1` install from GitHub Releases, then `go install`.
 
 ## Alternatives considered
 
-**Continue growing the generated connection scripts.** The scripts remain for durable Codex and OpenCode configuration. `rai` adds per-launch model choice, client-version-aware settings, and a shared credential workflow.
+**Continue growing the generated connection scripts.** The scripts remain for durable Codex and OpenCode configuration. `rai` adds browser login, per-launch model choice, and more agents.
 
-**Publish `rai` from a dedicated repository.** The RelayAPI repository keeps server discovery, session JSON, adapters, and tests in one change.
+**Publish `rai` from a dedicated repository.** The RelayAPI repository keeps server discovery, the authorize page, adapters, and tests in one change.
 
 **Build the launcher in TypeScript.** Go matches the existing toolchain and produces a single executable.
 
-**Use browser callback authorization for this slice.** Milestone 1 enrolls with `--api-key-stdin` so existing recoverable keys work immediately. PKCE device authorization stays queued for the next slice.
+**Localhost OAuth callback.** Device authorization plus a same-origin approve page matches headless `--no-browser` and the Ori “open this URL” path without binding a loopback port.
 
 ## Consequences
 
-Users can `go build ./cmd/rai`, run `rai login --server <url> --api-key-stdin`, then `rai codex` / `rai opencode` against a live RelayAPI deployment. CI builds both `./cmd/relayapi` and `./cmd/rai`. Follow-on work: PKCE device login and approval UI, release assets and `rai update`, Claude Code and other adapters, server-delivered launch recommendations.
+Users can `rai login --server <url>`, approve in the browser, then `rai claude` / `rai codex` / `rai opencode` (and the other adapters) against a live RelayAPI deployment. CI builds both `./cmd/relayapi` and `./cmd/rai`. Follow-on work: release assets named `rai-<os>-<arch>` so `rai update` and the installers can download binaries, plus server-delivered launch recommendations.

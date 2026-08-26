@@ -206,6 +206,11 @@ func (a *App) maintenance() {
 			} else if count > 0 {
 				slog.Info("deleted expired agent setups", "count", count)
 			}
+			if count, err := a.store.DeleteExpiredRAIAuthorizations(context.Background(), time.Now()); err != nil {
+				slog.Error("delete expired rai authorizations", "error", err)
+			} else if count > 0 {
+				slog.Info("deleted expired rai authorizations", "count", count)
+			}
 			if count, err := a.store.ReclaimExpiredReservations(context.Background(), time.Now()); err != nil {
 				slog.Error("reclaim expired reservations", "error", err)
 			} else if count > 0 {
@@ -325,6 +330,12 @@ func (a *App) routes() {
 	a.mux.HandleFunc("GET /.well-known/rai.json", a.raiDiscovery)
 	a.mux.HandleFunc("HEAD /.well-known/rai.json", a.raiDiscovery)
 	a.mux.HandleFunc("GET /api/rai/session", a.raiSession)
+	a.mux.HandleFunc("POST /api/rai/authorizations", a.createRAIAuthorization)
+	a.mux.HandleFunc("POST /api/rai/token", a.raiToken)
+	a.mux.HandleFunc("GET /rai/authorize/{id}", a.raiAuthorizePage)
+	a.mux.HandleFunc("POST /rai/authorize/{id}/session", a.raiAuthorizeSession)
+	a.mux.HandleFunc("POST /rai/authorize/{id}/approve", a.raiAuthorizeApprove)
+	a.mux.HandleFunc("POST /rai/authorize/{id}/deny", a.raiAuthorizeDeny)
 	a.mux.HandleFunc("GET /setup/{token}/install.sh", a.agentSetupScript)
 	a.mux.HandleFunc("HEAD /setup/{token}/install.sh", a.agentSetupScript)
 	a.mux.HandleFunc("GET /setup/{token}/install.ps1", a.agentSetupScript)

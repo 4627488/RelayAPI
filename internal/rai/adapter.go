@@ -9,6 +9,7 @@ import (
 
 type Adapter interface {
 	Name() string
+	Install() string
 	Probe() (string, string, error)
 	Prepare(ctx LaunchContext) (Command, error)
 }
@@ -26,7 +27,15 @@ type LaunchContext struct {
 }
 
 func Adapters() []Adapter {
-	return []Adapter{CodexAdapter{}, OpenCodeAdapter{}}
+	return []Adapter{
+		ClaudeAdapter{},
+		CodexAdapter{},
+		EnvAdapter{Agent: "grok", BinaryName: "grok", InstallHint: "Install the Grok CLI from xAI and keep grok on PATH", Env: grokEnv, PassModel: true},
+		EnvAdapter{Agent: "hermes", BinaryName: "hermes", InstallHint: "npm install -g @nousresearch/hermes-agent", Env: openAICompatibleEnv, PassModel: true},
+		OpenCodeAdapter{},
+		EnvAdapter{Agent: "pi", BinaryName: "pi", InstallHint: "npm install -g @mariozechner/pi-coding-agent", Env: openAICompatibleEnv, PassModel: true},
+		EnvAdapter{Agent: "prime-agent", BinaryName: "prime-agent", InstallHint: "Install Prime Agent and keep prime-agent on PATH", Env: openAICompatibleEnv, PassModel: true},
+	}
 }
 
 func AdapterByName(name string) (Adapter, error) {

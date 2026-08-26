@@ -10,10 +10,12 @@ type CodexAdapter struct{}
 
 func (CodexAdapter) Name() string { return "codex" }
 
+func (CodexAdapter) Install() string { return "npm install -g @openai/codex" }
+
 func (CodexAdapter) Probe() (string, string, error) {
 	path, err := lookPath("codex")
 	if err != nil {
-		return "", "", err
+		return "", "", missingBinary("codex", CodexAdapter{}.Install())
 	}
 	return path, probeVersion(path), nil
 }
