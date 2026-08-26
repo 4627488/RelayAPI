@@ -106,7 +106,7 @@ export function UserWorkspace({
   const tenantModels = session.tenant?.model_allowlist ?? []
   if (page === "keys") return <KeysPage tenantModels={tenantModels} />
   if (page === "logs") return <RequestLogsWorkbench />
-  if (page === "guide") return <GuidePage tenantModels={tenantModels} />
+  if (page === "guide") return <ConnectionGuide />
   if (page === "subscriptions") return <TenantSubscriptionsView />
   if (page === "usage") return <UsageView />
   return <UserOverview session={session} onPageChange={onPageChange} />
@@ -148,53 +148,6 @@ function KeysPage({ tenantModels }: { tenantModels: string[] }) {
       onChanged={() => load()}
     />
   )
-}
-
-function GuidePage({ tenantModels }: { tenantModels: string[] }) {
-  const [keys, setKeys] = useState<ApiKey[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState("")
-
-  useEffect(() => {
-    let active = true
-    api<{ items: ApiKey[] }>("/api/keys")
-      .then((value) => {
-        if (active) setKeys(value.items ?? [])
-      })
-      .catch((cause) => {
-        if (active)
-          setLoadError(cause instanceof Error ? cause.message : "无法读取密钥")
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [])
-
-  if (loading) return <LoadingView />
-  if (loadError && keys.length === 0) {
-    return (
-      <LoadErrorView
-        message={loadError}
-        onRetry={() => {
-          setLoading(true)
-          setLoadError("")
-          void api<{ items: ApiKey[] }>("/api/keys")
-            .then((value) => setKeys(value.items ?? []))
-            .catch((cause) =>
-              setLoadError(
-                cause instanceof Error ? cause.message : "无法读取密钥"
-              )
-            )
-            .finally(() => setLoading(false))
-        }}
-      />
-    )
-  }
-
-  return <ConnectionGuide keys={keys} tenantModels={tenantModels} />
 }
 
 function UserOverview({

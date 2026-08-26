@@ -73,7 +73,7 @@ jobs:
         run: go test -race -count=1 ./...
 
       - name: Build
-        run: CGO_ENABLED=0 go build -trimpath ./cmd/relayapi
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/relayapi ./cmd/rai
 
   frontend:
     name: Web frontend
