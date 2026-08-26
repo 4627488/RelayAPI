@@ -8,7 +8,7 @@ import (
 )
 
 func (a *App) raiDiscovery(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	document := map[string]any{
 		"name":             "RelayAPI",
 		"kind":             "rai.dev/v1",
 		"api_base":         a.cfg.PublicURL,
@@ -19,10 +19,15 @@ func (a *App) raiDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"token":            "/api/rai/token",
 		"authorize":        "/rai/authorize",
 		"install":          "/rai/install.sh",
+		"download":         "/rai/download",
 		"adapters":         raiAdapterNames(),
 		"contract_version": "1",
 		"min_rai_version":  "0.1.0",
-	})
+	}
+	if version := a.raiBundledVersion(); version != "" {
+		document["rai_version"] = version
+	}
+	writeJSON(w, http.StatusOK, document)
 }
 
 func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {

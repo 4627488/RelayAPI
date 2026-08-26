@@ -13,20 +13,19 @@ import (
 )
 
 type App struct {
-	Args     []string
-	Stdin    io.Reader
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Environ  []string
-	Home     string
-	Gateway  Gateway
-	Run      Runner
-	Now      func() time.Time
-	Look     func(string) (string, error)
-	Self     string
-	OpenURL  func(string) error
-	Sleep    func(context.Context, time.Duration) error
-	Releases string
+	Args    []string
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Stderr  io.Writer
+	Environ []string
+	Home    string
+	Gateway Gateway
+	Run     Runner
+	Now     func() time.Time
+	Look    func(string) (string, error)
+	Self    string
+	OpenURL func(string) error
+	Sleep   func(context.Context, time.Duration) error
 }
 
 func Main() int {

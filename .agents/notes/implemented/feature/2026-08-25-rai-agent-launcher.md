@@ -14,7 +14,7 @@ Ship `rai` from `cmd/rai` with reusable code in `internal/rai`. The launcher fol
 
 Credentials prefer the OS keyring (`zalando/go-keyring` with a 3s timeout) and write `~/.config/rai/credentials.json` at `0600` when the keyring is unavailable or `RAI_DISABLE_KEYRING=1`. Config writes are atomic in the same directory. Child processes inherit stdio; the parent ignores SIGINT so the terminal delivers it to the shared process group; `rai` returns the child's exit code.
 
-Adapters: Claude Code (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, model-aware `ENABLE_TOOL_SEARCH`), Codex (`-c` overrides plus `rai credential print`), OpenCode (`OPENCODE_CONFIG_CONTENT`), Grok / Hermes / Pi / Prime Agent (OpenAI-compatible env, Grok also sets `XAI_*`). `scripts/install-rai.sh` and `scripts/install-rai.ps1` install from GitHub Releases, then `go install`.
+Adapters: Claude Code (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, model-aware `ENABLE_TOOL_SEARCH`), Codex (`-c` overrides plus `rai credential print`), OpenCode (`OPENCODE_CONFIG_CONTENT`), Grok / Hermes / Pi / Prime Agent (OpenAI-compatible env, Grok also sets `XAI_*`). The published image ships `rai` for each client OS/arch; the site install script and `rai update` download from that deployment. `scripts/install-rai.sh` uses `RAI_SERVER` or `go install` for repo-local development.
 
 ## Alternatives considered
 
@@ -28,4 +28,4 @@ Adapters: Claude Code (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, model-awar
 
 ## Consequences
 
-Users can `rai login --server <url>`, approve in the browser, then `rai claude` / `rai codex` / `rai opencode` (and the other adapters) against a live RelayAPI deployment. CI builds both `./cmd/relayapi` and `./cmd/rai`. Follow-on work: release assets named `rai-<os>-<arch>` so `rai update` and the installers can download binaries, plus server-delivered launch recommendations.
+Users can `rai login --server <url>`, approve in the browser, then `rai claude` / `rai codex` / `rai opencode` (and the other adapters) against a live RelayAPI deployment. CI builds both `./cmd/relayapi` and `./cmd/rai`. Follow-on work: server-delivered launch recommendations. Site-served binaries are in [2026-08-26-rai-site-binaries.md](2026-08-26-rai-site-binaries.md).

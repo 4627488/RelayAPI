@@ -336,6 +336,8 @@ func (a *App) routes() {
 	a.mux.HandleFunc("HEAD /rai/install.sh", a.raiInstallScript)
 	a.mux.HandleFunc("GET /rai/install.ps1", a.raiInstallScript)
 	a.mux.HandleFunc("HEAD /rai/install.ps1", a.raiInstallScript)
+	a.mux.HandleFunc("GET /rai/download/{target}", a.raiDownload)
+	a.mux.HandleFunc("HEAD /rai/download/{target}", a.raiDownload)
 	a.mux.HandleFunc("GET /rai/authorize/{id}", a.raiAuthorizePage)
 	a.mux.HandleFunc("POST /rai/authorize/{id}/session", a.raiAuthorizeSession)
 	a.mux.HandleFunc("POST /rai/authorize/{id}/approve", a.raiAuthorizeApprove)

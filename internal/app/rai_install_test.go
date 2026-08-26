@@ -23,6 +23,12 @@ func TestRAIInstallScriptBakesServerAndLogin(t *testing.T) {
 	if !strings.Contains(body, `login --server "$SERVER"`) {
 		t.Fatalf("missing login: %s", body)
 	}
+	if !strings.Contains(body, `"$SERVER/rai/download/${OS}-${ARCH}"`) {
+		t.Fatalf("missing site download: %s", body)
+	}
+	if strings.Contains(body, "api.github.com") {
+		t.Fatal("hosted installer must not use GitHub releases")
+	}
 	if recorder.Header().Get("Content-Type") != "text/x-shellscript; charset=utf-8" {
 		t.Fatalf("content-type = %q", recorder.Header().Get("Content-Type"))
 	}
@@ -41,5 +47,11 @@ func TestRAIInstallPowerShellBakesServer(t *testing.T) {
 	}
 	if !strings.Contains(body, "login --server $Server") {
 		t.Fatalf("missing login: %s", body)
+	}
+	if !strings.Contains(body, "$Server/rai/download/windows-$arch") {
+		t.Fatalf("missing site download: %s", body)
+	}
+	if strings.Contains(body, "api.github.com") {
+		t.Fatal("hosted installer must not use GitHub releases")
 	}
 }

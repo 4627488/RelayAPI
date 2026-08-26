@@ -101,7 +101,7 @@ Windows：
 irm 'http://localhost:8080/rai/install.ps1' | iex
 ```
 
-`rai login` 打开浏览器，用 PKCE 设备授权批准后写入系统钥匙串（无钥匙串时回退到 `~/.config/rai/credentials.json`，权限 0600）。无图形界面时加 `--no-browser`，把打印的 URL 贴到浏览器。CI 或已有密钥用 `--api-key-stdin`。`rai credential print` 供 Codex 的 command-based auth 刷新模型目录。`rai update` 检查 GitHub Release 并替换当前二进制。
+`rai login` 打开浏览器，用 PKCE 设备授权批准后写入系统钥匙串（无钥匙串时回退到 `~/.config/rai/credentials.json`，权限 0600）。无图形界面时加 `--no-browser`，把打印的 URL 贴到浏览器。CI 或已有密钥用 `--api-key-stdin`。`rai credential print` 供 Codex 的 command-based auth 刷新模型目录。发布镜像在构建时交叉编译各平台 `rai`，由本站 `GET /rai/download/{os}-{arch}` 下发；`rai update` 向当前登录站点拉取同一路径。
 
 Codex CLI 的 `~/.codex/config.toml`（`base_url` 必须包含 `/v1`）：
 
@@ -208,7 +208,8 @@ Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段�
 - `DELETE /api/keys/{id}`：删除个人 API Key
 - `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
-- `GET /rai/install.sh|install.ps1`：本站下发的 rai 安装脚本，装好后对 PublicURL 执行 `rai login`
+- `GET /rai/install.sh|install.ps1`：本站下发的 rai 安装脚本，从 `/rai/download/{os}-{arch}` 取与当前部署同构建的二进制，再对 PublicURL 执行 `rai login`
+- `GET /rai/download/{os}-{arch}`：本站随镜像发布的 rai 二进制（darwin/linux/windows × amd64/arm64）
 - `POST /api/agent-setup`：创建 5 分钟有效的短随机安装令牌与跨平台一键命令；数据库只保存令牌哈希和加密配置
 - `GET /setup/{token}/install.sh|install.ps1`：读取禁止缓存的短时安装脚本
 

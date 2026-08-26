@@ -113,13 +113,14 @@ func TestLoginOpensBrowserByDefault(t *testing.T) {
 	}
 }
 
-func TestSelectReleaseAsset(t *testing.T) {
-	asset, ok := selectReleaseAsset([]ReleaseAsset{
-		{Name: "relayapi-linux-amd64", URL: "no"},
-		{Name: "rai-linux-amd64", URL: "yes"},
-	}, "linux", "amd64")
-	if !ok || asset.URL != "yes" {
-		t.Fatalf("asset = %#v ok=%v", asset, ok)
+func TestRAIDownloadURL(t *testing.T) {
+	got := raiDownloadURL("https://relay.example", "/rai/download", "linux", "amd64")
+	if got != "https://relay.example/rai/download/linux-amd64" {
+		t.Fatalf("got %q", got)
+	}
+	got = raiDownloadURL("https://relay.example", "https://cdn.example/rai", "darwin", "arm64")
+	if got != "https://cdn.example/rai/darwin-arm64" {
+		t.Fatalf("absolute = %q", got)
 	}
 }
 
