@@ -23,9 +23,9 @@ fi
 # 2. Go dependencies.
 go mod download
 
-# 3. Web dependencies (pnpm via corepack, pinned to the CI major).
+# 3. Web dependencies (pnpm via corepack, pinned to the CI version).
 corepack enable
-corepack prepare pnpm@10 --activate
+corepack prepare pnpm@11.24.0 --activate
 (cd web && pnpm install --frozen-lockfile)
 
 echo "install.sh completed"
