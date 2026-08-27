@@ -10,7 +10,7 @@ Moonshot validates `tools.function.parameters` against [Moonshot Flavored JSON S
 
 `$defs.__schemaN` is the Zod / Codex generated wrapper shape. Relay forwarded those schemas unchanged on the native Kimi path, so one MCP/Codex tool 400'd the whole turn. The same validator block also rejects `type` next to `anyOf`.
 
-Upstream CPA (`CLIProxyAPI` v7.2.143, also the in-tree `v7.2.137` pin) has not shipped this rewrite. `kimi_executor.go` only normalizes `tool_call_id` / `reasoning_content`. Open PR [#4406](https://github.com/router-for-me/CLIProxyAPI/pull/4406) only coerces boolean subschemas and is still unmerged.
+Upstream CPA (`CLIProxyAPI` v7.2.143) has not shipped this rewrite. `kimi_executor.go` only normalizes `tool_call_id` / `reasoning_content`. Open PR [#4406](https://github.com/router-for-me/CLIProxyAPI/pull/4406) only coerces boolean subschemas and is still unmerged.
 
 ## Decision
 
