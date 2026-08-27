@@ -1,5 +1,10 @@
 packages: []
 
+# pnpm 11 defaults this to 1440. Frozen lockfile installs then 400 after a
+# same-day upgrade (rolldown, eslint-plugin-react-refresh, systeminformation).
+# This repo upgrades the lockfile and builds the image in the same change.
+minimumReleaseAge: 0
+
 allowBuilds:
   esbuild: true
   msw: false

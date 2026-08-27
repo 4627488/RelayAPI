@@ -1,7 +1,8 @@
 FROM node:24-alpine AS web-build
 WORKDIR /web
-RUN corepack enable
-COPY web/package.json web/pnpm-lock.yaml ./
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
 ARG VITE_GIT_COMMIT=dev
