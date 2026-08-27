@@ -193,6 +193,7 @@ export function ProxiesView() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="出站代理"
+        description="给模型账户复用的出站 HTTP 代理。"
         actions={
           <Button onClick={() => setEditor({ item: null, open: true })}>
             <PlusIcon data-icon="inline-start" />

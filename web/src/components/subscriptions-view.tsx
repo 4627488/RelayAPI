@@ -50,7 +50,7 @@ export function TenantSubscriptionsView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="我的订阅" />
+      <PageHeader title="我的订阅" description="当前账户可用的模型容量。" />
       {loading ? (
         <div className="flex justify-center py-12">
           <Spinner />

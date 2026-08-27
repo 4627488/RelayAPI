@@ -237,7 +237,9 @@ function UsersHub({
 
   return (
     <div className="flex flex-col gap-4">
-      {tab === "accounts" ? <PageHeader title="用户" /> : null}
+      {tab === "accounts" ? (
+        <PageHeader title="用户" description="租户账户、余额和权限。" />
+      ) : null}
       <Tabs
         value={tab}
         onValueChange={(value) => {
@@ -276,7 +278,9 @@ function SettingsHub({
 }) {
   return (
     <div className="flex flex-col gap-4">
-      {tab === "runtime" ? <PageHeader title="系统设置" /> : null}
+      {tab === "runtime" ? (
+        <PageHeader title="系统设置" description="热更新运行策略和出站代理。" />
+      ) : null}
       <Tabs
         value={tab}
         onValueChange={(value) => {
@@ -333,7 +337,7 @@ function AdminOverviewPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="管理总览" />
+      <PageHeader title="管理总览" description="用户、模型和全局用量。" />
       <MetricGrid
         items={[
           {
@@ -923,6 +927,7 @@ function InvitationsView({
     <div className="flex flex-col gap-4">
       <PageHeader
         title="邀请"
+        description="生成邀请链接，让新用户加入。"
         actions={
           <Button
             onClick={() => {

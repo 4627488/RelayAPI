@@ -12,33 +12,42 @@ import { cn } from "@/lib/utils"
 
 export function PageHeader({
   title,
+  description,
   accessory,
   actions,
   className,
 }: {
   title?: ReactNode
+  description?: ReactNode
   accessory?: ReactNode
   actions?: ReactNode
   className?: string
 }) {
-  if (!title && !accessory && !actions) return null
+  if (!title && !description && !accessory && !actions) return null
   return (
     <header
       className={cn(
-        "flex min-h-9 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between",
         className
       )}
     >
-      {title || accessory ? (
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {title ? (
-              <h1 className="font-heading text-2xl font-semibold tracking-tight">
-                {title}
-              </h1>
-            ) : null}
-            {accessory}
-          </div>
+      {title || description || accessory ? (
+        <div className="min-w-0">
+          {title || accessory ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {title ? (
+                <h1 className="font-heading text-xl font-semibold tracking-tight">
+                  {title}
+                </h1>
+              ) : null}
+              {accessory}
+            </div>
+          ) : null}
+          {description ? (
+            <p className="mt-1 max-w-2xl text-xs/relaxed text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
         </div>
       ) : null}
       {actions ? (
@@ -75,7 +84,7 @@ export function StatStrip({
   return (
     <dl
       className={cn(
-        "grid grid-cols-2 border-y sm:auto-cols-fr sm:grid-flow-col sm:grid-cols-none",
+        "grid grid-cols-2 gap-px bg-foreground/10 ring-1 ring-foreground/10 sm:grid-cols-4",
         className
       )}
     >
@@ -84,24 +93,22 @@ export function StatStrip({
         return (
           <div
             key={`${String(item.label)}-${index}`}
-            className="min-w-0 border-r px-3 py-2 first:pl-0 last:border-r-0 last:pr-0"
+            className="min-w-0 bg-background px-4 py-3"
           >
             <dt className="flex items-start justify-between gap-2 text-xs text-muted-foreground">
               <span className="truncate">{item.label}</span>
-              {Icon ? (
-                <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/60" />
-              ) : null}
+              {Icon ? <Icon className="size-3.5 shrink-0" /> : null}
             </dt>
             <dd
               className={cn(
-                "mt-0.5 font-heading text-base font-semibold tabular-nums",
+                "mt-1 font-heading text-lg font-semibold tabular-nums",
                 statTones[item.tone ?? "default"]
               )}
             >
               {item.value}
             </dd>
             {item.detail ? (
-              <dd className="mt-0.5 truncate text-xs text-muted-foreground">
+              <dd className="mt-1 truncate text-xs text-muted-foreground">
                 {item.detail}
               </dd>
             ) : null}

@@ -1,12 +1,17 @@
-import { cn } from "@/lib/utils"
-import { Loader2Icon } from "lucide-react"
+import type { ComponentProps } from "react"
+import { SpinnerIcon } from "@phosphor-icons/react"
 
-function Spinner({ className, ...props }: React.ComponentProps<"svg">) {
+import { cn } from "@/lib/utils"
+
+function Spinner({
+  className,
+  ...props
+}: Omit<ComponentProps<typeof SpinnerIcon>, "strokeWidth">) {
   return (
-    <Loader2Icon
+    <SpinnerIcon
       data-slot="spinner"
       role="status"
-      aria-label="正在加载"
+      aria-label="Loading"
       className={cn("size-4 animate-spin", className)}
       {...props}
     />

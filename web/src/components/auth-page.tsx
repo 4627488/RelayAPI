@@ -68,118 +68,126 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
   }
 
   return (
-    <main className="flex min-h-svh items-center justify-center p-5 sm:p-10">
-      <section className="flex w-full max-w-sm flex-col gap-8">
-        <div>
-          <p className="mb-8 text-sm font-semibold">RelayAPI</p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {mode === "register"
-              ? setupRequired
-                ? "初始化 RelayAPI"
-                : "接受邀请"
-              : "登录 RelayAPI"}
-          </h1>
-          {mode === "register" && setupRequired ? (
-            <p className="mt-2 text-sm text-muted-foreground">
-              首个用户将拥有管理员权限。
-            </p>
+    <main className="grid min-h-svh lg:grid-cols-[20rem_minmax(0,1fr)]">
+      <aside className="flex flex-col justify-between border-b bg-foreground px-6 py-5 text-background lg:border-r lg:border-b-0 lg:px-8 lg:py-10">
+        <p className="font-heading text-sm font-semibold tracking-tight">
+          RelayAPI
+        </p>
+        <p className="text-xs/relaxed text-background/70">模型网关控制台</p>
+      </aside>
+
+      <section className="flex items-center justify-center p-6 sm:p-10">
+        <div className="flex w-full max-w-sm flex-col gap-8">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">
+              {mode === "register"
+                ? setupRequired
+                  ? "初始化 RelayAPI"
+                  : "接受邀请"
+                : "登录"}
+            </h1>
+            {mode === "register" && setupRequired ? (
+              <p className="mt-1 text-xs/relaxed text-muted-foreground">
+                首个用户将拥有管理员权限。
+              </p>
+            ) : null}
+          </div>
+
+          {error ? (
+            <Alert variant="destructive">
+              <AlertTitle>无法继续</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           ) : null}
-        </div>
 
-        {error ? (
-          <Alert variant="destructive">
-            <AlertTitle>无法继续</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {mode === "register" ? (
-          <form onSubmit={register}>
-            <FieldGroup>
-              {!setupRequired ? (
+          {mode === "register" ? (
+            <form onSubmit={register}>
+              <FieldGroup>
+                {!setupRequired ? (
+                  <Field>
+                    <FieldLabel htmlFor="token">邀请 Token</FieldLabel>
+                    <Input
+                      id="token"
+                      name="token"
+                      defaultValue={token ?? ""}
+                      required
+                    />
+                  </Field>
+                ) : null}
                 <Field>
-                  <FieldLabel htmlFor="token">邀请 Token</FieldLabel>
+                  <FieldLabel htmlFor="name">显示名称</FieldLabel>
+                  <Input id="name" name="name" autoComplete="name" required />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="register-email">邮箱</FieldLabel>
                   <Input
-                    id="token"
-                    name="token"
-                    defaultValue={token ?? ""}
+                    id="register-email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
                     required
                   />
                 </Field>
-              ) : null}
-              <Field>
-                <FieldLabel htmlFor="name">显示名称</FieldLabel>
-                <Input id="name" name="name" autoComplete="name" required />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="register-email">邮箱</FieldLabel>
-                <Input
-                  id="register-email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="register-password">密码</FieldLabel>
-                <Input
-                  id="register-password"
-                  name="password"
-                  type="password"
-                  minLength={8}
-                  autoComplete="new-password"
-                  required
-                />
-                <FieldDescription>至少 8 个字符。</FieldDescription>
-              </Field>
-              <Button type="submit" disabled={pending}>
-                {pending ? <Spinner data-icon="inline-start" /> : null}
-                创建账户
-              </Button>
-            </FieldGroup>
-          </form>
-        ) : (
-          <form onSubmit={login}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="email">邮箱</FieldLabel>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="username"
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="password">密码</FieldLabel>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                />
-              </Field>
-              <Button type="submit" disabled={pending}>
-                {pending ? <Spinner data-icon="inline-start" /> : null}
-                登录
-              </Button>
-            </FieldGroup>
-          </form>
-        )}
+                <Field>
+                  <FieldLabel htmlFor="register-password">密码</FieldLabel>
+                  <Input
+                    id="register-password"
+                    name="password"
+                    type="password"
+                    minLength={8}
+                    autoComplete="new-password"
+                    required
+                  />
+                  <FieldDescription>至少 8 个字符。</FieldDescription>
+                </Field>
+                <Button type="submit" disabled={pending}>
+                  {pending ? <Spinner data-icon="inline-start" /> : null}
+                  创建账户
+                </Button>
+              </FieldGroup>
+            </form>
+          ) : (
+            <form onSubmit={login}>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="email">邮箱</FieldLabel>
+                  <Input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="username"
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="password">密码</FieldLabel>
+                  <Input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                  />
+                </Field>
+                <Button type="submit" disabled={pending}>
+                  {pending ? <Spinner data-icon="inline-start" /> : null}
+                  登录
+                </Button>
+              </FieldGroup>
+            </form>
+          )}
 
-        <Button
-          variant="ghost"
-          onClick={() => setMode(mode === "register" ? "login" : "register")}
-        >
-          {mode === "register"
-            ? "已有账户？返回登录"
-            : setupRequired
-              ? "首次使用？创建首个用户"
-              : "已有邀请？创建账户"}
-        </Button>
+          <Button
+            variant="ghost"
+            onClick={() => setMode(mode === "register" ? "login" : "register")}
+          >
+            {mode === "register"
+              ? "已有账户？返回登录"
+              : setupRequired
+                ? "首次使用？创建首个用户"
+                : "已有邀请？创建账户"}
+          </Button>
+        </div>
       </section>
     </main>
   )

@@ -297,7 +297,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-4">
-      <PageHeader title="请求日志" />
+      <PageHeader title="请求日志" description="按请求排查延迟、错误和费用。" />
       <StatStrip
         items={[
           {

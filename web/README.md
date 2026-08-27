@@ -1,6 +1,6 @@
 # RelayAPI Web
 
-RelayAPI 的管理控制台，基于 React、TypeScript、Vite、Tailwind CSS v4 与 shadcn/ui（Base UI）构建。
+RelayAPI 的管理控制台，基于 React、TypeScript、Vite、Tailwind CSS v4 与 shadcn/ui **Lyra**（Base UI）构建。视觉合同见仓库根目录 `DESIGN.md`。
 
 ## 本地开发
 
@@ -49,4 +49,4 @@ pnpm check
 pnpm exec shadcn@latest add <component>
 ```
 
-保持 `components.json` 中的 `base-nova`、Base UI 和 Lucide 配置，不混用另一套组件基础或图标库。
+保持 `components.json` 中的 `base-lyra`、Base UI 和 Phosphor 原语配置。业务页可以继续用 Lucide，不要再引入第三套图标或手调主题色。

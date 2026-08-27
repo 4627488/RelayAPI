@@ -394,7 +394,7 @@ export function AdminSubscriptionsView() {
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="订阅分配" />
+      <PageHeader title="订阅分配" description="把上游容量分配给租户。" />
 
       {loading ? (
         <AllocationSkeleton />

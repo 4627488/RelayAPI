@@ -273,6 +273,7 @@ export function PricingView() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="目录与计费"
+        description="同步模型目录并维护计费单价。"
         actions={
           <>
             <Button

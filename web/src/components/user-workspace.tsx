@@ -21,7 +21,13 @@ import { toast } from "sonner"
 import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -172,7 +178,7 @@ function KeysPage({ tenantModels }: { tenantModels: string[] }) {
 function GuidePage() {
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="接入指南" />
+      <PageHeader title="接入指南" description="把 RelayAPI 接到常用客户端。" />
       <ConnectionGuide />
     </div>
   )
@@ -226,8 +232,9 @@ function UserOverview({
     <div className="flex flex-col gap-4">
       <PageHeader
         title="总览"
+        description="账户余额、近期用量和最近请求。"
         actions={
-          <dl className="flex items-baseline gap-5 text-sm">
+          <dl className="flex items-baseline gap-5 text-xs">
             <div>
               <dt className="inline text-muted-foreground">余额 </dt>
               <dd className="inline font-medium tabular-nums">
@@ -472,6 +479,7 @@ function KeysView({
     <div className="flex flex-col gap-4">
       <PageHeader
         title="API Keys"
+        description="创建密钥，并限制可用模型和别名。"
         actions={
           <Button onClick={openCreateDialog}>
             <PlusIcon data-icon="inline-start" />
@@ -481,6 +489,12 @@ function KeysView({
       />
 
       <Card>
+        <CardHeader className="border-b">
+          <CardTitle>密钥列表</CardTitle>
+          <CardDescription>
+            {keys.length ? `${keys.length} 个 Key` : "还没有密钥"}
+          </CardDescription>
+        </CardHeader>
         <CardContent>
           {keys.length ? (
             <Table pinEdges>

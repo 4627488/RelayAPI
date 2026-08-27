@@ -2,11 +2,7 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Table({
-  className,
-  pinEdges = false,
-  ...props
-}: React.ComponentProps<"table"> & { pinEdges?: boolean }) {
+function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div
       data-slot="table-container"
@@ -14,11 +10,7 @@ function Table({
     >
       <table
         data-slot="table"
-        data-pinned-edges={pinEdges}
-        className={cn(
-          "w-full caption-bottom text-sm data-[pinned-edges=true]:[&_td:first-child]:sticky data-[pinned-edges=true]:[&_td:first-child]:left-0 data-[pinned-edges=true]:[&_td:first-child]:z-10 data-[pinned-edges=true]:[&_td:first-child]:bg-card data-[pinned-edges=true]:[&_td:last-child]:sticky data-[pinned-edges=true]:[&_td:last-child]:right-0 data-[pinned-edges=true]:[&_td:last-child]:z-10 data-[pinned-edges=true]:[&_td:last-child]:bg-card data-[pinned-edges=true]:[&_th:first-child]:sticky data-[pinned-edges=true]:[&_th:first-child]:left-0 data-[pinned-edges=true]:[&_th:first-child]:z-20 data-[pinned-edges=true]:[&_th:first-child]:bg-card data-[pinned-edges=true]:[&_th:last-child]:sticky data-[pinned-edges=true]:[&_th:last-child]:right-0 data-[pinned-edges=true]:[&_th:last-child]:z-20 data-[pinned-edges=true]:[&_th:last-child]:bg-card",
-          className
-        )}
+        className={cn("w-full caption-bottom text-xs", className)}
         {...props}
       />
     </div>
@@ -104,7 +96,7 @@ function TableCaption({
   return (
     <caption
       data-slot="table-caption"
-      className={cn("mt-4 text-sm text-muted-foreground", className)}
+      className={cn("mt-4 text-xs text-muted-foreground", className)}
       {...props}
     />
   )

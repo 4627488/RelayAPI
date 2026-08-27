@@ -19,7 +19,7 @@ export function LoadErrorView({
   return (
     <Card className="mx-auto w-full max-w-xl">
       <CardHeader>
-        <div className="flex size-10 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+        <div className="flex size-10 items-center justify-center bg-destructive/10 text-destructive">
           <TriangleAlertIcon className="size-5" />
         </div>
         <CardTitle>页面数据加载失败</CardTitle>

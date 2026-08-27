@@ -620,6 +620,7 @@ export function UsageView({
     <div className="flex flex-col gap-4">
       <PageHeader
         title={admin ? "全局用量" : "用量"}
+        description="按周期查看请求、Token 和费用。"
         actions={
           <>
             {admin ? (
