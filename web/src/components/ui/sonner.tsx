@@ -1,11 +1,11 @@
 import type { CSSProperties } from "react"
 import {
-  CheckCircleIcon,
+  CircleCheckIcon,
   InfoIcon,
-  SpinnerIcon,
-  WarningIcon,
-  XCircleIcon,
-} from "@phosphor-icons/react"
+  Loader2Icon,
+  OctagonXIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
 import { useTheme } from "@/components/theme-provider"
@@ -18,11 +18,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
       icons={{
-        success: <CheckCircleIcon className="size-4" />,
+        success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,
-        warning: <WarningIcon className="size-4" />,
-        error: <XCircleIcon className="size-4" />,
-        loading: <SpinnerIcon className="size-4 animate-spin" />,
+        warning: <TriangleAlertIcon className="size-4" />,
+        error: <OctagonXIcon className="size-4" />,
+        loading: <Loader2Icon className="size-4 animate-spin" />,
       }}
       style={
         {

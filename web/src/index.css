@@ -1,13 +1,16 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
 @import "@fontsource-variable/jetbrains-mono";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-heading: var(--font-mono);
-  --font-sans: var(--font-mono);
+  --font-heading: var(--font-sans);
+  --font-sans:
+    "Geist Variable", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI",
+    "Noto Sans CJK SC", ui-sans-serif, system-ui, sans-serif;
   --font-mono:
     "JetBrains Mono Variable", "Sarasa Mono SC", "Noto Sans Mono CJK SC",
     "Source Han Mono SC", "PingFang SC", "Microsoft YaHei UI", ui-monospace,
@@ -82,7 +85,7 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --radius: 0;
+  --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -155,7 +158,7 @@
   :where(*)::-webkit-scrollbar-thumb {
     min-height: 2.5rem;
     border: 0.1875rem solid transparent;
-    border-radius: 0;
+    border-radius: 999px;
     background: var(--scrollbar-thumb);
     background-clip: content-box;
   }
@@ -174,7 +177,7 @@
     display: none;
   }
   html {
-    @apply font-mono;
+    @apply font-sans;
     font-kerning: normal;
     font-optical-sizing: auto;
     text-rendering: optimizeLegibility;
@@ -198,7 +201,7 @@
     @apply font-heading;
     font-optical-sizing: auto;
     font-weight: 600;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.018em;
     text-wrap: balance;
   }
   button,

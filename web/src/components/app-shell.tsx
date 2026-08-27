@@ -143,15 +143,15 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
   }, [email])
 
   return (
-    <Avatar className="size-8 rounded-none">
+    <Avatar className="size-8 rounded-lg">
       {source ? (
         <AvatarImage
           src={source}
           alt={`${name} 的头像`}
-          className="rounded-none"
+          className="rounded-lg"
         />
       ) : null}
-      <AvatarFallback className="rounded-none">{initials(name)}</AvatarFallback>
+      <AvatarFallback className="rounded-lg">{initials(name)}</AvatarFallback>
     </Avatar>
   )
 }
@@ -288,7 +288,7 @@ export function AppShell({
                   onPageChange("overview")
                 }}
               >
-                <div className="flex size-8 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                   <SendIcon />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
