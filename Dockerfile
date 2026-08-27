@@ -1,6 +1,8 @@
 FROM node:24-alpine AS web-build
 WORKDIR /web
-RUN corepack enable
+# Match CI / install.sh. Unpinned corepack on Node 24 pulls pnpm 11 (24h release age).
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@10 --activate
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
