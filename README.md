@@ -22,8 +22,8 @@ Compose 中单个 RelayAPI 镜像同时提供前端与统一 API 入口，默认
 
 ## 前端
 
-`web/` 是基于 Vite、React 19、Tailwind CSS v4 和 shadcn/ui Nova（Base UI）
-构建的独立源码应用。生产镜像会把其构建产物打包进 Go 服务，因此部署时不再需要
+`web/` 是基于 Vite、React 19、Tailwind CSS v4 和 shadcn/ui Lyra（Base UI）
+构建的独立源码应用。视觉合同见 [DESIGN.md](DESIGN.md)。生产镜像会把其构建产物打包进 Go 服务，因此部署时不再需要
 单独的 Web/Nginx 容器。
 
 ```bash
@@ -40,10 +40,10 @@ WebSocket 入口。
 
 ## 必需配置
 
-| 变量 | 用途 |
-| --- | --- |
-| `DATABASE_URL` | PostgreSQL DSN |
-| `RELAY_SESSION_SECRET` | Cookie 签名密钥（至少 32 字符） |
+| 变量                           | 用途                                               |
+| ------------------------------ | -------------------------------------------------- |
+| `DATABASE_URL`                 | PostgreSQL DSN                                     |
+| `RELAY_SESSION_SECRET`         | Cookie 签名密钥（至少 32 字符）                    |
 | `RELAY_API_KEY_ENCRYPTION_KEY` | API Key 静态加密密钥（至少 32 字符，必须稳定备份） |
 
 `RELAY_API_KEY_ENCRYPTION_KEY` 未设置时兼容性回退到 `RELAY_SESSION_SECRET`。生产环境
