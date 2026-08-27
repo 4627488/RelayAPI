@@ -102,7 +102,7 @@ func applyMFJSTypePlacement(node, root map[string]any) bool {
 	}
 	if ref, _ := node["$ref"].(string); strings.TrimSpace(ref) != "" {
 		if target := resolveJSONSchemaRef(root, ref); target != nil {
-			if _, exists := target["type"]; !exists && target != node {
+			if _, exists := target["type"]; !exists {
 				target["type"] = rawType
 			}
 		}
