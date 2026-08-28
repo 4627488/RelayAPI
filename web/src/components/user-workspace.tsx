@@ -579,9 +579,7 @@ function KeysView({
                           size="icon-sm"
                           aria-label={`续期 ${key.name}`}
                           title={
-                            key.expires_at
-                              ? "续期 90 天"
-                              : "此密钥没有到期时间"
+                            key.expires_at ? "续期 90 天" : "此密钥没有到期时间"
                           }
                           disabled={!key.expires_at}
                           onClick={() => void renew(key)}
@@ -719,8 +717,7 @@ function KeysView({
                   defaultValue={localDateTime(editingKey?.expires_at)}
                 />
                 <FieldDescription>
-                  留空表示永不过期。过期后可点续期，按当前到期时间再延长
-                  90 天。
+                  留空表示永不过期。过期后可点续期，按当前到期时间再延长 90 天。
                 </FieldDescription>
               </Field>
               <ApiKeyModelAliasEditor
