@@ -122,6 +122,25 @@ type keyInput struct {
 	TokenLimitDaily    *int64
 	ModelAllowlist     []string
 	ModelAliases       []db.APIKeyModelAlias
+	ExpiresAt          string `json:"expires_at"`
+}
+
+func parseOptionalExpiry(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		parsed, err = time.Parse(time.RFC3339Nano, raw)
+	}
+	if err != nil {
+		return nil, errors.New("到期时间格式无效")
+	}
+	if !parsed.After(time.Now()) {
+		return nil, errors.New("到期时间必须晚于当前时间")
+	}
+	return &parsed, nil
 }
 
 func normalizeKeyInput(input *keyInput) error {
@@ -239,7 +258,12 @@ func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "validation_error", err.Error())
 		return
 	}
-	item, plain, err := a.store.CreateKey(r.Context(), tenantID, input.Name, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases)
+	expiresAt, err := parseOptionalExpiry(input.ExpiresAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	item, plain, err := a.store.CreateKey(r.Context(), tenantID, input.Name, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases, expiresAt)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
@@ -257,8 +281,44 @@ func (a *App) keyUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
+	expiresAt, err := parseOptionalExpiry(input.ExpiresAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
 	item, err := a.store.UpdateKey(r.Context(), currentSession(r).TenantID, r.PathValue("id"), input.Name,
-		input.Enabled, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases)
+		input.Enabled, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases, expiresAt)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "密钥不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+}
+
+func (a *App) keyRenew(w http.ResponseWriter, r *http.Request) {
+	a.writeKeyRenew(w, r, currentSession(r).TenantID, r.PathValue("id"))
+}
+
+func (a *App) writeKeyRenew(w http.ResponseWriter, r *http.Request, tenantID, id string) {
+	var input struct {
+		Days int `json:"days"`
+	}
+	if r.ContentLength != 0 && !decodeJSON(w, r, &input) {
+		return
+	}
+	extend := store.DefaultAPIKeyRenewal
+	if input.Days > 0 {
+		if input.Days > 3650 {
+			writeError(w, http.StatusBadRequest, "validation_error", "续期天数不能超过 3650")
+			return
+		}
+		extend = time.Duration(input.Days) * 24 * time.Hour
+	}
+	item, err := a.store.RenewKey(r.Context(), tenantID, id, time.Now(), extend)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "密钥不存在")
 		return
@@ -571,7 +631,12 @@ func (a *App) adminTenantKeys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
-	item, plain, err := a.store.CreateKey(r.Context(), tenantID, input.Name, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases)
+	expiresAt, err := parseOptionalExpiry(input.ExpiresAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	item, plain, err := a.store.CreateKey(r.Context(), tenantID, input.Name, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases, expiresAt)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
@@ -589,8 +654,13 @@ func (a *App) adminTenantKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
+	expiresAt, err := parseOptionalExpiry(input.ExpiresAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
 	item, err := a.store.UpdateKey(r.Context(), r.PathValue("id"), r.PathValue("keyID"), input.Name,
-		input.Enabled, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases)
+		input.Enabled, input.RateLimitPerMinute, input.TokenLimitDaily, input.ModelAllowlist, input.ModelAliases, expiresAt)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "密钥不存在")
 		return
@@ -600,6 +670,10 @@ func (a *App) adminTenantKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+}
+
+func (a *App) adminTenantKeyRenew(w http.ResponseWriter, r *http.Request) {
+	a.writeKeyRenew(w, r, r.PathValue("id"), r.PathValue("keyID"))
 }
 
 func (a *App) adminTenantKeySecret(w http.ResponseWriter, r *http.Request) {

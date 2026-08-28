@@ -225,7 +225,19 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	if row.ExpiresAt != nil {
 		result["expires_at"] = row.ExpiresAt
 	}
+	if tokenExpiry := firstNonEmptyString(
+		stringValue(document["expired"]),
+		stringValue(document["expires_at"]),
+		stringValue(document["expire"]),
+	); tokenExpiry != "" {
+		result["token_expires_at"] = tokenExpiry
+	}
 	return result
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
 }
 
 func nativeCredentialAuthKind(document map[string]any, source string) string {
@@ -550,6 +562,40 @@ func (a *App) nativeProviderAccountUpdate(w http.ResponseWriter, r *http.Request
 	}
 	if _, err = a.syncNativeParentSubscriptionRows(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "subscription_sync_failed", "账户已更新，但父订阅同步失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, nativeProviderAccount(row))
+}
+
+func (a *App) nativeProviderAccountRefresh(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("name"))
+	if a.nativeRuntime == nil {
+		writeError(w, http.StatusServiceUnavailable, "runtime_unavailable", "运行时不可用")
+		return
+	}
+	if _, err := a.store.GetUpstreamCredential(r.Context(), id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "凭据不存在")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "credential_unavailable", "无法读取凭据")
+		return
+	}
+	document, refreshed, err := a.nativeRuntime.RefreshCredential(r.Context(), id, true)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "credential_refresh_failed", err.Error())
+		return
+	}
+	if !refreshed {
+		writeError(w, http.StatusConflict, "refresh_not_supported", "该账户没有可续期的 refresh token")
+		return
+	}
+	if persistErr := a.persistEmbeddedCredential(r.Context(), id, document); persistErr != nil {
+		writeError(w, http.StatusInternalServerError, "credential_save_failed", "令牌已刷新，但保存失败")
+		return
+	}
+	row, err := a.store.GetUpstreamCredential(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "credential_unavailable", "无法读取续期后的账户")
 		return
 	}
 	writeJSON(w, http.StatusOK, nativeProviderAccount(row))

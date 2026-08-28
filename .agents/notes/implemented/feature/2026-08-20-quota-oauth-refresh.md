@@ -45,9 +45,9 @@ Inference still does not retry the user request after 401.
 **Delete the stale 5h window.** Hides the observation failure; the next
 successful probe should roll the window.
 
-**Copy CPA's standalone refresh loop.** The 5-minute quota tick plus
-refresh-before-probe covers idle parents; inference already refreshes on
-expiry and 401.
+**Copy CPA's standalone refresh loop.** Deferred here; idle parents that
+quota sync skips still went stale. A dedicated minute-tick renew now lives
+in [2026-08-28-oauth-and-api-key-renew](2026-08-28-oauth-and-api-key-renew.md).
 
 ## Consequences
 

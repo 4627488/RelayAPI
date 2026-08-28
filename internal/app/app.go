@@ -201,6 +201,7 @@ func (a *App) maintenance() {
 		select {
 		case <-ticker.C:
 			a.reclaimRuntimeMemoryUnderPressure()
+			a.refreshDueOAuthCredentials(context.Background())
 			if count, err := a.store.DeleteExpiredAgentSetups(context.Background(), time.Now()); err != nil {
 				slog.Error("delete expired agent setups", "error", err)
 			} else if count > 0 {
@@ -360,6 +361,7 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("GET /api/keys/{id}/secret", a.withTenant(http.HandlerFunc(a.keySecret)))
 	a.mux.Handle("PUT /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyUpdate)))
+	a.mux.Handle("POST /api/keys/{id}/renew", a.withTenant(http.HandlerFunc(a.keyRenew)))
 	a.mux.Handle("DELETE /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyDelete)))
 	a.mux.Handle("GET /api/logs", a.withTenant(http.HandlerFunc(a.logs)))
 	a.mux.Handle("GET /api/logs/{id}", a.withTenant(http.HandlerFunc(a.logDetail)))
@@ -374,6 +376,7 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/admin/tenants/{id}/keys", a.withAdmin(http.HandlerFunc(a.adminTenantKeys)))
 	a.mux.Handle("GET /api/admin/tenants/{id}/keys/{keyID}/secret", a.withAdmin(http.HandlerFunc(a.adminTenantKeySecret)))
 	a.mux.Handle("PUT /api/admin/tenants/{id}/keys/{keyID}", a.withAdmin(http.HandlerFunc(a.adminTenantKeyUpdate)))
+	a.mux.Handle("POST /api/admin/tenants/{id}/keys/{keyID}/renew", a.withAdmin(http.HandlerFunc(a.adminTenantKeyRenew)))
 	a.mux.Handle("GET /api/admin/prices", a.withAdmin(http.HandlerFunc(a.adminPrices)))
 	a.mux.Handle("PUT /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceUpdate)))
 	a.mux.Handle("DELETE /api/admin/prices/{model}", a.withAdmin(http.HandlerFunc(a.adminPriceDelete)))
@@ -389,6 +392,7 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/admin/providers/accounts", a.withAdmin(http.HandlerFunc(a.adminProviderAccounts)))
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/models", a.withAdmin(http.HandlerFunc(a.adminProviderModels)))
 	a.mux.Handle("POST /api/admin/providers/accounts/{name}/test", a.withAdmin(http.HandlerFunc(a.adminProviderAccountTest)))
+	a.mux.Handle("POST /api/admin/providers/accounts/{name}/refresh", a.withAdmin(http.HandlerFunc(a.adminProviderAccountRefresh)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
 	a.mux.Handle("POST /api/admin/providers/oauth/sessions", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthStart)))

@@ -173,6 +173,11 @@ function accountKey(account: ProviderAccount) {
   return account.id || account.name
 }
 
+function tokenExpired(account: ProviderAccount, now = Date.now()) {
+  const expiry = account.token_expires_at || account.expires_at
+  return Boolean(expiry && Date.parse(expiry) <= now)
+}
+
 function accountStatus(account: ProviderAccount) {
   if (account.disabled)
     return { label: "已停用", variant: "secondary" as const }
@@ -184,6 +189,9 @@ function accountStatus(account: ProviderAccount) {
       return { label: "故障冷却", variant: "destructive" as const }
     }
     return { label: "暂不可用", variant: "secondary" as const }
+  }
+  if (isOAuthAccount(account) && tokenExpired(account)) {
+    return { label: "令牌过期", variant: "destructive" as const }
   }
   return { label: "可用", variant: "outline" as const }
 }
@@ -357,6 +365,22 @@ export function ProvidersView() {
     }
   }
 
+  async function refreshTokens(account: ProviderAccount) {
+    setPending(true)
+    try {
+      await postJSON(
+        `/api/admin/providers/accounts/${encodeURIComponent(account.id || account.name)}/refresh`,
+        {}
+      )
+      toast.success("OAuth 令牌已续期")
+      await load()
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "续期失败")
+    } finally {
+      setPending(false)
+    }
+  }
+
   async function remove() {
     if (!deleting) return
     setPending(true)
@@ -505,6 +529,15 @@ export function ProvidersView() {
                             {lastTest.latency_ms} ms
                           </p>
                         ) : null}
+                        {isOAuthAccount(account) &&
+                        (account.token_expires_at ||
+                          account.last_refreshed_at) ? (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {account.last_refreshed_at
+                              ? `续期于 ${dateTime(account.last_refreshed_at)}`
+                              : `令牌至 ${dateTime(account.token_expires_at)}`}
+                          </p>
+                        ) : null}
                       </TableCell>
                       <TableCell className="max-w-64 whitespace-normal">
                         <p
@@ -619,6 +652,7 @@ export function ProvidersView() {
           setSelected(null)
           setReauthenticating(account)
         }}
+        onRefresh={(account) => void refreshTokens(account)}
         onTest={(account) => {
           setSelected(null)
           setTesting(account)
@@ -1350,6 +1384,7 @@ function ManageAccountDialog({
   onToggle,
   onDelete,
   onReauthenticate,
+  onRefresh,
   onTest,
   lastTest,
   proxies,
@@ -1364,6 +1399,7 @@ function ManageAccountDialog({
   onToggle: (account: ProviderAccount, disabled: boolean) => Promise<void>
   onDelete: (account: ProviderAccount) => void
   onReauthenticate: (account: ProviderAccount) => void
+  onRefresh: (account: ProviderAccount) => void
   onTest: (account: ProviderAccount) => void
   lastTest?: ProviderAccountTestResult
   proxies: OutboundProxy[]
@@ -1824,7 +1860,8 @@ function ManageAccountDialog({
                       <AlertTitle>OAuth 凭据由 Relay 管理</AlertTitle>
                       <AlertDescription>
                         OAuth
-                        令牌会自动刷新；掉登录或需要更换授权身份时，可使用下方“重新认证”。
+                        令牌会在过期前自动续期。也可手动点“续期令牌”；refresh
+                        token 失效时才需要“重新认证”。
                       </AlertDescription>
                     </Alert>
                   )}
@@ -1861,13 +1898,22 @@ function ManageAccountDialog({
                         {account.disabled ? "启用账户" : "停用账户"}
                       </DropdownMenuItem>
                       {isOAuthAccount(account) ? (
-                        <DropdownMenuItem
-                          disabled={pending}
-                          onClick={() => onReauthenticate(account)}
-                        >
-                          <RefreshCwIcon />
-                          重新认证
-                        </DropdownMenuItem>
+                        <>
+                          <DropdownMenuItem
+                            disabled={pending}
+                            onClick={() => onRefresh(account)}
+                          >
+                            <RefreshCwIcon />
+                            续期令牌
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={pending}
+                            onClick={() => onReauthenticate(account)}
+                          >
+                            <RefreshCwIcon />
+                            重新认证
+                          </DropdownMenuItem>
+                        </>
                       ) : null}
                     </DropdownMenuGroup>
                     <DropdownMenuSeparator />

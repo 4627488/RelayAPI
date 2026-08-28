@@ -328,6 +328,10 @@ func (e *embeddedCPAAdapter) RefreshCredential(context.Context, string, bool) ([
 	return nil, false, nil
 }
 
+func (e *embeddedCPAAdapter) RefreshDueCredentials(context.Context) (int, int) {
+	return 0, 0
+}
+
 func (e *embeddedCPAAdapter) TakeRequestTrace(requestID string) (upstream.RequestTrace, bool) {
 	runtime := e.runtime()
 	if runtime == nil {

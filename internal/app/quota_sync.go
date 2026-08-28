@@ -50,6 +50,18 @@ func (a *App) adminSyncParentQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, result)
 }
 
+func (a *App) refreshDueOAuthCredentials(ctx context.Context) {
+	if a == nil || a.nativeRuntime == nil {
+		return
+	}
+	refreshed, failed := a.nativeRuntime.RefreshDueCredentials(ctx)
+	if refreshed > 0 {
+		slog.Info("renewed upstream oauth credentials", "refreshed", refreshed, "failed", failed)
+	} else if failed > 0 {
+		slog.Warn("renew upstream oauth credentials", "refreshed", refreshed, "failed", failed)
+	}
+}
+
 func (a *App) refreshParentQuotas(ctx context.Context) {
 	parents, err := a.store.ListParentSubscriptions(ctx)
 	if err != nil {

@@ -14,6 +14,7 @@ import {
   KeyRoundIcon,
   PencilIcon,
   PlusIcon,
+  RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -360,6 +361,7 @@ function KeysView({
             alias,
             model,
           })),
+          expires_at: expiryPayload(String(data.get("expires_at") ?? "")),
         }
       )
       setRevealedKeys((current) => ({
@@ -420,6 +422,7 @@ function KeysView({
             alias,
             model,
           })),
+          expires_at: expiryPayload(String(data.get("expires_at") ?? "")),
         }),
       })
       setCreateOpen(false)
@@ -430,6 +433,20 @@ function KeysView({
       toast.error(cause instanceof Error ? cause.message : "更新失败")
     } finally {
       setPending(false)
+    }
+  }
+
+  async function renew(key: ApiKey) {
+    try {
+      await postJSON<{ item: ApiKey }>(`/api/keys/${key.id}/renew`, {
+        days: 90,
+      })
+      await onChanged()
+      toast.success(
+        key.expires_at ? "API Key 已续期 90 天" : "此密钥没有到期时间，无需续期"
+      )
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "续期失败")
     }
   }
 
@@ -489,6 +506,7 @@ function KeysView({
                   <TableHead>名称</TableHead>
                   <TableHead>前缀</TableHead>
                   <TableHead>最后使用</TableHead>
+                  <TableHead>到期</TableHead>
                   <TableHead>模型 / 别名</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead className="text-right">操作</TableHead>
@@ -506,14 +524,27 @@ function KeysView({
                         {dateTime(key.last_used_at)}
                       </TableCell>
                       <TableCell className="text-muted-foreground">
+                        {key.expires_at ? dateTime(key.expires_at) : "永不过期"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
                         {key.model_allowlist?.length
                           ? `${key.model_allowlist.length} 个模型`
                           : "全部模型"}{" "}
                         · {key.model_aliases?.length ?? 0} 个别名
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">
-                          {key.enabled ? "有效" : "停用"}
+                        <Badge
+                          variant={
+                            !key.enabled || keyExpired(key)
+                              ? "outline"
+                              : "secondary"
+                          }
+                        >
+                          {!key.enabled
+                            ? "停用"
+                            : keyExpired(key)
+                              ? "已过期"
+                              : "有效"}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
@@ -546,6 +577,20 @@ function KeysView({
                         <Button
                           variant="ghost"
                           size="icon-sm"
+                          aria-label={`续期 ${key.name}`}
+                          title={
+                            key.expires_at
+                              ? "续期 90 天"
+                              : "此密钥没有到期时间"
+                          }
+                          disabled={!key.expires_at}
+                          onClick={() => void renew(key)}
+                        >
+                          <RefreshCwIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
                           aria-label={`编辑 ${key.name}`}
                           onClick={() => openEditDialog(key)}
                         >
@@ -563,7 +608,7 @@ function KeysView({
                     </TableRow>
                     {revealedKeys[key.id] ? (
                       <TableRow>
-                        <TableCell colSpan={6}>
+                        <TableCell colSpan={7}>
                           <PlainKeyField
                             id={`plain-key-${key.id}`}
                             value={revealedKeys[key.id]}
@@ -665,6 +710,19 @@ function KeysView({
                 />
                 <FieldDescription>不选择模型表示不限制。</FieldDescription>
               </Field>
+              <Field>
+                <FieldLabel htmlFor="key-expires">到期时间</FieldLabel>
+                <Input
+                  id="key-expires"
+                  name="expires_at"
+                  type="datetime-local"
+                  defaultValue={localDateTime(editingKey?.expires_at)}
+                />
+                <FieldDescription>
+                  留空表示永不过期。过期后可点续期，按当前到期时间再延长
+                  90 天。
+                </FieldDescription>
+              </Field>
               <ApiKeyModelAliasEditor
                 aliases={modelAliases}
                 models={selectedModels.length ? selectedModels : modelOptions}
@@ -730,4 +788,21 @@ function PlainKeyField({ id, value }: { id: string; value: string }) {
 function numberOrNull(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim()
   return text ? Number(text) : null
+}
+
+function expiryPayload(value: string) {
+  const text = value.trim()
+  if (!text) return ""
+  return new Date(text).toISOString()
+}
+
+function localDateTime(value?: string | null) {
+  if (!value) return ""
+  const date = new Date(value)
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+function keyExpired(key: ApiKey, now = Date.now()) {
+  return Boolean(key.expires_at && Date.parse(key.expires_at) <= now)
 }

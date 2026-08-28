@@ -372,6 +372,9 @@ func applyRefreshedTokens(credential *nativeCredential, tokens map[string]any, t
 	}
 	credential.expiresAt = oauthExpiry(tokens, credential.AccessToken, now)
 	credential.document["expired"] = credential.expiresAt.UTC().Format(time.RFC3339)
+	credential.mu.Lock()
+	credential.Status.LastRefreshedAt = now
+	credential.mu.Unlock()
 }
 
 func oauthExpiry(tokens map[string]any, accessToken string, now time.Time) time.Time {

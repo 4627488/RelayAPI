@@ -72,6 +72,34 @@ func (r *nativeRuntime) RefreshCredential(ctx context.Context, id string, force 
 	return credential.currentDocument(), true, nil
 }
 
+func (r *nativeRuntime) RefreshDueCredentials(ctx context.Context) (refreshed, failed int) {
+	if r == nil {
+		return 0, 0
+	}
+	r.mu.RLock()
+	ids := make([]string, 0, len(r.credentials))
+	for id, credential := range r.credentials {
+		if credential.hasRefreshToken() && credential.tokenNeedsRefresh() {
+			ids = append(ids, id)
+		}
+	}
+	r.mu.RUnlock()
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return refreshed, failed
+		}
+		_, did, err := r.RefreshCredential(ctx, id, false)
+		if err != nil {
+			failed++
+			continue
+		}
+		if did {
+			refreshed++
+		}
+	}
+	return refreshed, failed
+}
+
 func (r *nativeRuntime) refreshCredential(ctx context.Context, credential *nativeCredential) error {
 	credential.tokenMu.Lock()
 	defer credential.tokenMu.Unlock()

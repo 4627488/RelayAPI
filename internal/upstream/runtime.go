@@ -27,6 +27,7 @@ type Runtime interface {
 	SubmitOAuthCallback(context.Context, string, string, string) error
 	CancelOAuth(context.Context, string) error
 	RefreshCredential(context.Context, string, bool) ([]byte, bool, error)
+	RefreshDueCredentials(context.Context) (int, int)
 	TakeRequestTrace(string) (RequestTrace, bool)
 	Close(context.Context) error
 }
