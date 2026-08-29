@@ -1,9 +1,9 @@
 # Agent notes
 
-UI work follows [DESIGN.md](DESIGN.md) and `.agents/skills/shadcn/SKILL.md`.
+UI work follows [DESIGN.md](DESIGN.md) and the Kumo design skill.
 
-- Style: official **Nova** (`base-nova`, Base UI, Lucide).
-- Theme: official **Neutral** (black / white).
-- Preset: `pnpm exec shadcn apply nova` in `web/`.
-- Do not invent a palette. Change the look only by applying another official named preset.
+- Style: **Cloudflare Kumo** (`@cloudflare/kumo`).
+- Theme: `data-mode` on `html`. Use `bg-kumo-*` / `text-kumo-*` tokens.
+- Icons: `@phosphor-icons/react`.
 - Product copy is Chinese. English is for proper nouns and code.
+- Pages map to `/api` and `/api/admin` resources. Do not restore the old shadcn/Nova tree.

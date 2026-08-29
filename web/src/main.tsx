@@ -1,22 +1,21 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
+import { Toasty } from "@cloudflare/kumo/components/toast"
 
 import "./index.css"
 import App from "./App.tsx"
-import { ErrorBoundary } from "@/components/error-boundary"
-import { ThemeProvider } from "@/components/theme-provider.tsx"
-import { Toaster } from "@/components/ui/sonner"
-import { TooltipProvider } from "@/components/ui/tooltip"
+import { ErrorBoundary } from "@/console/error-boundary"
+import { ThemeProvider } from "@/lib/theme"
+import { toastManager } from "@/lib/toast"
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
-      <TooltipProvider>
+      <Toasty toastManager={toastManager}>
         <ErrorBoundary>
           <App />
         </ErrorBoundary>
-        <Toaster />
-      </TooltipProvider>
+      </Toasty>
     </ThemeProvider>
   </StrictMode>
 )
