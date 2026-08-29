@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react"
 import { Button } from "@cloudflare/kumo/components/button"
 import { Dialog } from "@cloudflare/kumo/components/dialog"
-import { Field } from "@cloudflare/kumo/components/field"
 import { Input } from "@cloudflare/kumo/components/input"
 import { Select } from "@cloudflare/kumo/components/select"
 import { SensitiveInput } from "@cloudflare/kumo/components/sensitive-input"
@@ -197,13 +196,12 @@ export function AdminSettingsPage() {
                   ),
                 }}
               />
-              <Field label="凭据失败阈值">
-                <Input
-                  name="credential_failure_threshold"
-                  type="number"
-                  defaultValue={settings.data.credential_failure_threshold}
-                />
-              </Field>
+              <Input
+                name="credential_failure_threshold"
+                type="number"
+                label="凭据失败阈值"
+                defaultValue={settings.data.credential_failure_threshold}
+              />
               <Switch
                 label="上游 WebSocket"
                 checked={websockets}
@@ -283,9 +281,7 @@ export function AdminSettingsPage() {
         <Dialog>
           <Dialog.Title>添加代理</Dialog.Title>
           <form className="mt-4 flex flex-col gap-4" onSubmit={createProxy}>
-            <Field label="名称">
-              <Input name="name" required />
-            </Field>
+            <Input name="name" label="名称" required />
             <SensitiveInput
               label="代理地址"
               name="url"

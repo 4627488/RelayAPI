@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -41,5 +42,34 @@ func TestNormalizeKeyInputRejectsUnsafeAliases(t *testing.T) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestTenantAndKeyWriteJSONUsesSnakeCase(t *testing.T) {
+	var tenant tenantInput
+	if err := json.Unmarshal([]byte(`{
+		"name":"demo",
+		"owner_email":"demo@example.test",
+		"password":"password1",
+		"enabled":true,
+		"model_allowlist":[]
+	}`), &tenant); err != nil {
+		t.Fatal(err)
+	}
+	if tenant.Name != "demo" || tenant.OwnerEmail != "demo@example.test" || !tenant.Enabled {
+		t.Fatalf("tenant = %+v", tenant)
+	}
+
+	var key keyInput
+	if err := json.Unmarshal([]byte(`{
+		"name":"default",
+		"enabled":true,
+		"model_allowlist":[],
+		"model_aliases":[]
+	}`), &key); err != nil {
+		t.Fatal(err)
+	}
+	if key.Name != "default" || !key.Enabled {
+		t.Fatalf("key = %+v", key)
 	}
 }

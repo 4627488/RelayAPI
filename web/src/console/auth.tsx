@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from "react"
 import { PaperPlaneTiltIcon } from "@phosphor-icons/react"
 import { Banner } from "@cloudflare/kumo/components/banner"
 import { Button } from "@cloudflare/kumo/components/button"
-import { Field } from "@cloudflare/kumo/components/field"
 import { Input } from "@cloudflare/kumo/components/input"
 import { LayerCard } from "@cloudflare/kumo/components/layer-card"
 import { SensitiveInput } from "@cloudflare/kumo/components/sensitive-input"
@@ -123,21 +122,26 @@ export function AuthPage({
             {mode === "register" ? (
               <form className="flex flex-col gap-4" onSubmit={onRegister}>
                 {!setupRequired ? (
-                  <Field label="邀请 Token">
-                    <Input name="token" defaultValue={token ?? ""} required />
-                  </Field>
-                ) : null}
-                <Field label="显示名称">
-                  <Input name="name" autoComplete="name" required />
-                </Field>
-                <Field label="邮箱">
                   <Input
-                    name="email"
-                    type="email"
-                    autoComplete="email"
+                    name="token"
+                    label="邀请 Token"
+                    defaultValue={token ?? ""}
                     required
                   />
-                </Field>
+                ) : null}
+                <Input
+                  name="name"
+                  label="显示名称"
+                  autoComplete="name"
+                  required
+                />
+                <Input
+                  name="email"
+                  type="email"
+                  label="邮箱"
+                  autoComplete="email"
+                  required
+                />
                 <SensitiveInput
                   label="密码"
                   name="password"
@@ -151,14 +155,13 @@ export function AuthPage({
               </form>
             ) : (
               <form className="flex flex-col gap-4" onSubmit={onLogin}>
-                <Field label="邮箱">
-                  <Input
-                    name="email"
-                    type="email"
-                    autoComplete="username"
-                    required
-                  />
-                </Field>
+                <Input
+                  name="email"
+                  type="email"
+                  label="邮箱"
+                  autoComplete="username"
+                  required
+                />
                 <SensitiveInput
                   label="密码"
                   name="password"

@@ -2,7 +2,6 @@ import { useCallback, useState, type FormEvent } from "react"
 import { Button } from "@cloudflare/kumo/components/button"
 import { ClipboardText } from "@cloudflare/kumo/components/clipboard-text"
 import { Dialog } from "@cloudflare/kumo/components/dialog"
-import { Field } from "@cloudflare/kumo/components/field"
 import { Input } from "@cloudflare/kumo/components/input"
 import { useAsyncResource } from "@/hooks/use-async-resource"
 import { api, deleteRequest, postJSON, type ApiKey } from "@/lib/api"
@@ -183,9 +182,7 @@ export function KeysPage() {
           <Dialog.Title>新建 API Key</Dialog.Title>
           <Dialog.Description>创建后明文只返回一次。</Dialog.Description>
           <form className="mt-4 flex flex-col gap-4" onSubmit={create}>
-            <Field label="名称">
-              <Input name="name" defaultValue="default" required />
-            </Field>
+            <Input name="name" label="名称" defaultValue="default" required />
             <div className="flex justify-end gap-2">
               <Dialog.Close
                 render={<Button variant="secondary">取消</Button>}

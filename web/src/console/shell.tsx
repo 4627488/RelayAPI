@@ -154,47 +154,51 @@ export function AppShell({
           ))}
         </Sidebar.Content>
         <Sidebar.Footer>
-          <DropdownMenu>
-            <DropdownMenu.Trigger
-              render={
-                <Sidebar.MenuButton icon={admin ? ShieldCheckIcon : UserIcon} />
-              }
-            >
-              {name}
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Content>
-              <DropdownMenu.Group>
-                <DropdownMenu.Label>{email || name}</DropdownMenu.Label>
-              </DropdownMenu.Group>
-              {session.is_admin ? (
-                <DropdownMenu.Item
-                  onClick={() => onWorkspaceChange(admin ? "user" : "admin")}
-                >
-                  {admin ? "返回个人面板" : "进入管理员面板"}
-                </DropdownMenu.Item>
-              ) : null}
-              <DropdownMenu.Separator />
-              <DropdownMenu.RadioGroup
-                value={theme}
-                onValueChange={(value) => {
-                  if (isTheme(value)) setTheme(value)
-                }}
+          <Sidebar.Menu>
+            <DropdownMenu>
+              <DropdownMenu.Trigger
+                render={
+                  <Sidebar.MenuButton
+                    icon={admin ? ShieldCheckIcon : UserIcon}
+                  />
+                }
               >
-                {themes.map((item) => (
-                  <DropdownMenu.RadioItem key={item.value} value={item.value}>
-                    {item.label}
-                  </DropdownMenu.RadioItem>
-                ))}
-              </DropdownMenu.RadioGroup>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Item onClick={onLogout}>
-                <SignOutIcon />
-                退出登录
-              </DropdownMenu.Item>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Label>版本 {buildVersion}</DropdownMenu.Label>
-            </DropdownMenu.Content>
-          </DropdownMenu>
+                {name}
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content>
+                <DropdownMenu.Group>
+                  <DropdownMenu.Label>{email || name}</DropdownMenu.Label>
+                </DropdownMenu.Group>
+                {session.is_admin ? (
+                  <DropdownMenu.Item
+                    onClick={() => onWorkspaceChange(admin ? "user" : "admin")}
+                  >
+                    {admin ? "返回个人面板" : "进入管理员面板"}
+                  </DropdownMenu.Item>
+                ) : null}
+                <DropdownMenu.Separator />
+                <DropdownMenu.RadioGroup
+                  value={theme}
+                  onValueChange={(value) => {
+                    if (isTheme(value)) setTheme(value)
+                  }}
+                >
+                  {themes.map((item) => (
+                    <DropdownMenu.RadioItem key={item.value} value={item.value}>
+                      {item.label}
+                    </DropdownMenu.RadioItem>
+                  ))}
+                </DropdownMenu.RadioGroup>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item onClick={onLogout}>
+                  <SignOutIcon />
+                  退出登录
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Label>版本 {buildVersion}</DropdownMenu.Label>
+              </DropdownMenu.Content>
+            </DropdownMenu>
+          </Sidebar.Menu>
           <Sidebar.Trigger />
         </Sidebar.Footer>
       </Sidebar>

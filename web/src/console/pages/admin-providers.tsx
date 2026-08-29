@@ -1,7 +1,6 @@
 import { useCallback, useState, type FormEvent } from "react"
 import { Button } from "@cloudflare/kumo/components/button"
 import { Dialog } from "@cloudflare/kumo/components/dialog"
-import { Field } from "@cloudflare/kumo/components/field"
 import { Input } from "@cloudflare/kumo/components/input"
 import { Select } from "@cloudflare/kumo/components/select"
 import { SensitiveInput } from "@cloudflare/kumo/components/sensitive-input"
@@ -250,9 +249,7 @@ export function AdminProvidersPage() {
         <Dialog>
           <Dialog.Title>用 API Key 添加账户</Dialog.Title>
           <form className="mt-4 flex flex-col gap-4" onSubmit={create}>
-            <Field label="名称">
-              <Input name="name" required />
-            </Field>
+            <Input name="name" label="名称" required />
             <Select
               label="提供商"
               required
@@ -261,9 +258,12 @@ export function AdminProvidersPage() {
               items={providers}
             />
             <SensitiveInput label="API Key" name="api_key" required />
-            <Field label="接口地址" required={false}>
-              <Input name="base_url" placeholder="可留空使用默认端点" />
-            </Field>
+            <Input
+              name="base_url"
+              label="接口地址"
+              required={false}
+              placeholder="可留空使用默认端点"
+            />
             <div className="flex justify-end gap-2">
               <Dialog.Close
                 render={<Button variant="secondary">取消</Button>}
@@ -306,20 +306,18 @@ export function AdminProvidersPage() {
           ) : (
             <div className="mt-4 flex flex-col gap-4">
               <form className="flex flex-col gap-4" onSubmit={submitCallback}>
-                <Field
+                <Input
+                  name="redirect_url"
                   label="回调地址"
                   description="授权完成后把浏览器地址贴回来。"
-                >
-                  <Input name="redirect_url" required />
-                </Field>
+                  required
+                />
                 <Button type="submit" variant="secondary" loading={pending}>
                   提交回调
                 </Button>
               </form>
               <form className="flex flex-col gap-4" onSubmit={finalize}>
-                <Field label="账户名称">
-                  <Input name="name" required />
-                </Field>
+                <Input name="name" label="账户名称" required />
                 <Button type="submit" variant="primary" loading={pending}>
                   完成并保存
                 </Button>

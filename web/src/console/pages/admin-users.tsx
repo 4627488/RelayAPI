@@ -2,7 +2,6 @@ import { useCallback, useState, type FormEvent } from "react"
 import { Button } from "@cloudflare/kumo/components/button"
 import { ClipboardText } from "@cloudflare/kumo/components/clipboard-text"
 import { Dialog } from "@cloudflare/kumo/components/dialog"
-import { Field } from "@cloudflare/kumo/components/field"
 import { Input } from "@cloudflare/kumo/components/input"
 import { Tabs } from "@cloudflare/kumo/components/tabs"
 import { useAsyncResource } from "@/hooks/use-async-resource"
@@ -312,15 +311,16 @@ export function AdminUsersPage({ currentUserId }: { currentUserId: string }) {
         <Dialog>
           <Dialog.Title>新建用户</Dialog.Title>
           <form className="mt-4 flex flex-col gap-4" onSubmit={createUser}>
-            <Field label="显示名称">
-              <Input name="name" required />
-            </Field>
-            <Field label="邮箱">
-              <Input name="owner_email" type="email" required />
-            </Field>
-            <Field label="初始密码" description="至少 8 位。">
-              <Input name="password" type="password" minLength={8} required />
-            </Field>
+            <Input name="name" label="显示名称" required />
+            <Input name="owner_email" type="email" label="邮箱" required />
+            <Input
+              name="password"
+              type="password"
+              label="初始密码"
+              description="至少 8 位。"
+              minLength={8}
+              required
+            />
             <div className="flex justify-end gap-2">
               <Dialog.Close
                 render={<Button variant="secondary">取消</Button>}
@@ -337,17 +337,19 @@ export function AdminUsersPage({ currentUserId }: { currentUserId: string }) {
         <Dialog>
           <Dialog.Title>生成邀请</Dialog.Title>
           <form className="mt-4 flex flex-col gap-4" onSubmit={createInvite}>
-            <Field label="限制邮箱" required={false}>
-              <Input name="email" type="email" />
-            </Field>
-            <Field label="有效小时">
-              <Input
-                name="expires_in_hours"
-                type="number"
-                defaultValue="72"
-                min={1}
-              />
-            </Field>
+            <Input
+              name="email"
+              type="email"
+              label="限制邮箱"
+              required={false}
+            />
+            <Input
+              name="expires_in_hours"
+              type="number"
+              label="有效小时"
+              defaultValue="72"
+              min={1}
+            />
             <div className="flex justify-end gap-2">
               <Dialog.Close
                 render={<Button variant="secondary">取消</Button>}

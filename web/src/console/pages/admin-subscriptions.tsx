@@ -1,7 +1,6 @@
 import { useCallback, useState, type FormEvent } from "react"
 import { Button } from "@cloudflare/kumo/components/button"
 import { Dialog } from "@cloudflare/kumo/components/dialog"
-import { Field } from "@cloudflare/kumo/components/field"
 import { Input } from "@cloudflare/kumo/components/input"
 import { Select } from "@cloudflare/kumo/components/select"
 import { useAsyncResource } from "@/hooks/use-async-resource"
@@ -234,19 +233,16 @@ export function AdminSubscriptionsPage() {
                 data.parents.map((row) => [row.item.id, row.item.name])
               )}
             />
-            <Field label="名称">
-              <Input name="name" required />
-            </Field>
-            <Field label="分配比例（%）">
-              <Input
-                name="allocation_percent"
-                type="number"
-                defaultValue="100"
-                min={1}
-                max={100}
-                required
-              />
-            </Field>
+            <Input name="name" label="名称" required />
+            <Input
+              name="allocation_percent"
+              type="number"
+              label="分配比例（%）"
+              defaultValue="100"
+              min={1}
+              max={100}
+              required
+            />
             <div className="flex justify-end gap-2">
               <Dialog.Close
                 render={<Button variant="secondary">取消</Button>}

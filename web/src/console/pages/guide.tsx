@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState, type FormEvent } from "react"
 import { Banner } from "@cloudflare/kumo/components/banner"
 import { Button } from "@cloudflare/kumo/components/button"
 import { ClipboardText } from "@cloudflare/kumo/components/clipboard-text"
-import { Field } from "@cloudflare/kumo/components/field"
 import { Input } from "@cloudflare/kumo/components/input"
 import { Select } from "@cloudflare/kumo/components/select"
 import { Tabs } from "@cloudflare/kumo/components/tabs"
@@ -106,9 +105,12 @@ export function GuidePage() {
             onValueChange={(value) => setAgent(value ?? "codex")}
             items={{ codex: "Codex", opencode: "OpenCode" }}
           />
-          <Field label="默认模型">
-            <Input name="model" required placeholder="例如 gpt-5" />
-          </Field>
+          <Input
+            name="model"
+            label="默认模型"
+            required
+            placeholder="例如 gpt-5"
+          />
           <Button
             type="submit"
             variant="primary"
