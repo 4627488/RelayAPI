@@ -10,7 +10,7 @@ Moonshot validates `tools.function.parameters` against [Moonshot Flavored JSON S
 
 `$defs.__schemaN` is the Zod / Codex generated wrapper shape. Relay forwarded those schemas unchanged on the native Kimi path, so one MCP/Codex tool 400'd the whole turn. The same validator block also rejects `type` next to `anyOf`.
 
-Upstream CPA (`CLIProxyAPI` v7.2.145) has not shipped this rewrite. `kimi_executor.go` only normalizes `tool_call_id` / `reasoning_content`. Open PR [#4406](https://github.com/router-for-me/CLIProxyAPI/pull/4406) only coerces boolean subschemas and is still unmerged.
+Upstream CPA (`CLIProxyAPI` v7.2.146) now inlines local `$ref`s and strips `$defs` / `definitions` on the CPA hop (`normalizeKimiTools`). That is a different rewrite from this note: native inference still does not go through `KimiExecutor`, so Relay keeps the sibling-`type` sanitizer. Open PR [#4406](https://github.com/router-for-me/CLIProxyAPI/pull/4406) only coerces boolean subschemas and is still unmerged.
 
 ## Decision
 
@@ -23,7 +23,7 @@ Do not bump CPA. Native inference does not go through `KimiExecutor`.
 
 ## Alternatives considered
 
-**Wait for CPA and bump `CLIProxyAPI`.** Latest `v7.2.145` still has no MFJS schema pass. Even after a bump, Relay's Kimi requests would still miss the rewrite.
+**Wait for CPA and bump `CLIProxyAPI`.** v7.2.146 inlines `$ref` on the CPA hop, but native Kimi traffic still misses that pass. The sibling-`type` sanitizer stays in Relay.
 
 **Port CPA PR #4406 only.** That fixes `outputSchema: true`, not this `$ref` + `type` 400.
 
