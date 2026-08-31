@@ -33,4 +33,4 @@ Do not bump CPA. Native inference does not go through `KimiExecutor`.
 
 ## Consequences
 
-Codex and Chat clients can send Zod-style `$defs.__schemaN` tools to Kimi without a 400. Schemas that already satisfy MFJS stay byte-identical. Other MFJS rejections (boolean subschemas, non-`#/$defs/` refs) are still possible and should be added only when a real payload hits them.
+Codex and Chat clients can send Zod-style `$defs.__schemaN` tools to Kimi without a 400 on the native path. Production boots embedded CPA (`data_plane=embedded_cpa`), so this sanitizer did not run until the 2026-08-31 CPA-hop follow-up. Schemas that already satisfy MFJS stay byte-identical. Other MFJS rejections (boolean subschemas, non-`#/$defs/` refs) are still possible and should be added only when a real payload hits them.

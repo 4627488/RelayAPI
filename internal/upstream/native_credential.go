@@ -184,6 +184,9 @@ func compileNativeCredential(source Credential, globalProxy string, headerTimeou
 			}
 		}
 	}
+	if provider == "kimi" {
+		applyDefaultKimiCodingPlanRoutes(credential.ModelRoutes)
+	}
 	credential.Models = normalizedModelList(source.Models)
 	if len(credential.Models) == 0 {
 		credential.Models = defaultModels(provider)
@@ -212,6 +215,23 @@ func canonicalProvider(value string) string {
 		return "openai-compatibility"
 	default:
 		return ""
+	}
+}
+
+// applyDefaultKimiCodingPlanRoutes maps Relay catalog slugs to Kimi Coding
+// Plan wire IDs. Document model_routes win when already set. Production 401:
+// "Your model id does not exist, recognized as other:kimi-k3-256k. Please set model id as `k3`."
+func applyDefaultKimiCodingPlanRoutes(routes map[string]string) {
+	if routes == nil {
+		return
+	}
+	for public, upstream := range map[string]string{
+		"kimi-k3":      "k3",
+		"kimi-k3-256k": "k3",
+	} {
+		if _, exists := routes[public]; !exists {
+			routes[public] = upstream
+		}
 	}
 }
 
