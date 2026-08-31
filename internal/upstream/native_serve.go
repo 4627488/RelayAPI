@@ -110,9 +110,6 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	if credential.Provider == "xai" && !isImagesPath(requestPath) {
 		body, toolRestorer = lowerCodexTools(body)
 	}
-	if credential.Provider == "kimi" && !isImagesPath(requestPath) {
-		body = sanitizeKimiToolSchemas(body)
-	}
 	target := credential.upstreamURL(requestPath)
 	response, err := r.doProviderRequest(request, credential, target, requestPath, body, trace)
 	if err != nil {

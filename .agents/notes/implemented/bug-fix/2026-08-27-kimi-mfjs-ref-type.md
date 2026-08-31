@@ -1,4 +1,4 @@
-# Agent Note: Sanitize Kimi tool schemas for MFJS `$ref` + `type`
+# Agent Note: Let CPA own Kimi MFJS `$ref` sanitization
 
 Status: implemented
 
@@ -8,29 +8,24 @@ Moonshot validates `tools.function.parameters` against [Moonshot Flavored JSON S
 
 `At path '$defs.__schema20': when using $ref, type should be defined in the referenced schema instead of the parent schema`
 
-`$defs.__schemaN` is the Zod / Codex generated wrapper shape. Relay forwarded those schemas unchanged on the native Kimi path, so one MCP/Codex tool 400'd the whole turn. The same validator block also rejects `type` next to `anyOf`.
-
-Upstream CPA (`CLIProxyAPI` v7.2.146) now inlines local `$ref`s and strips `$defs` / `definitions` on the CPA hop (`normalizeKimiTools`). That is a different rewrite from this note: native inference still does not go through `KimiExecutor`, so Relay keeps the sibling-`type` sanitizer. Open PR [#4406](https://github.com/router-for-me/CLIProxyAPI/pull/4406) only coerces boolean subschemas and is still unmerged.
+`$defs.__schemaN` is the Zod / Codex generated wrapper shape. Relay briefly kept a sibling-`type` sanitizer on the leftover native Kimi path. Production inference now goes through embedded CPA, so that pass never ran on live traffic.
 
 ## Decision
 
-Sanitize outbound Kimi Chat bodies in the native runtime after Responses→Chat translation. For every tool `parameters` (and `response_format` schema):
+Drop `sanitizeKimiToolSchemas` from `internal/upstream`. Production Kimi requests hit `KimiExecutor`, and CPA `v7.2.146` `normalizeKimiTools` inlines local `$ref`s and strips `$defs` / `definitions` before Moonshot sees the body.
 
-- If a node has `$ref` and `type`, copy `type` onto the referenced schema when it is missing, then delete `type` from the parent (Walle's own `SimplifyRemoveType`).
-- If a node has `anyOf` and `type`, copy `type` into branches that lack one, then delete it from the parent.
-
-Do not bump CPA. Native inference does not go through `KimiExecutor`.
+Do not keep a second MFJS rewrite in Relay. Open PR [#4406](https://github.com/router-for-me/CLIProxyAPI/pull/4406) still only covers boolean subschemas; add a new pass only when a real payload hits a remaining Walle rule.
 
 ## Alternatives considered
 
-**Wait for CPA and bump `CLIProxyAPI`.** v7.2.146 inlines `$ref` on the CPA hop, but native Kimi traffic still misses that pass. The sibling-`type` sanitizer stays in Relay.
+**Keep Relay's sibling-`type` sanitizer.** It never ran on the embedded CPA hop. CPA's inlining already removes the `$ref`+`type` pair that 400'd Codex tools.
 
-**Port CPA PR #4406 only.** That fixes `outputSchema: true`, not this `$ref` + `type` 400.
+**Port CPA's inliner into the leftover native runtime.** `startNativeRuntime` is unused; duplicating `normalizeKimiTools` would rot.
 
-**Drop or flatten `$ref`s.** Loses recursive / shared structure that MFJS actually allows when `$ref` is a pure pointer into root `$defs`.
+**Port CPA PR #4406.** That fixes `outputSchema: true`, not this `$ref` + `type` 400, and it is still unmerged.
 
-**Add `moonshotai/walle` as a dependency.** Useful for tests, not needed to apply the two sibling-`type` rules the validator already names.
+**Add `moonshotai/walle` as a dependency.** Useful for tests, not needed once the production hop owns the rewrite.
 
 ## Consequences
 
-Codex and Chat clients can send Zod-style `$defs.__schemaN` tools to Kimi without a 400. Schemas that already satisfy MFJS stay byte-identical. Other MFJS rejections (boolean subschemas, non-`#/$defs/` refs) are still possible and should be added only when a real payload hits them.
+Kimi tool schemas are rewritten only by CPA. Relay no longer moves sibling `type` off `$ref` / `anyOf`, and it does not touch `response_format`. Boolean subschemas and other MFJS rejections stay CPA gaps until a real payload hits them.
