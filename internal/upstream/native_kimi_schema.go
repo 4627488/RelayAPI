@@ -6,6 +6,34 @@ import (
 	"strings"
 )
 
+// PrepareKimiCPABody sanitizes tool schemas on the live embedded-CPA hop.
+// Production boots CPA, not the native executor, so the native-only call in
+// native_serve.go never sees these requests.
+func PrepareKimiCPABody(credentialID string, payload []byte) []byte {
+	if !isKimiCPARequest(credentialID, payload) {
+		return payload
+	}
+	return sanitizeKimiToolSchemas(payload)
+}
+
+func isKimiCPARequest(credentialID string, payload []byte) bool {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(credentialID)), "kimi") {
+		return true
+	}
+	model := strings.ToLower(strings.TrimSpace(jsonModelName(payload)))
+	return strings.HasPrefix(model, "kimi-") || strings.HasPrefix(model, "k3")
+}
+
+func jsonModelName(payload []byte) string {
+	var root struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(payload, &root) != nil {
+		return ""
+	}
+	return root.Model
+}
+
 // sanitizeKimiToolSchemas rewrites tool and structured-output schemas so they
 // pass Moonshot Flavored JSON Schema (MFJS). Walle rejects a node that carries
 // both `type` and `$ref` (or `type` and `anyOf`); Codex/Zod-generated

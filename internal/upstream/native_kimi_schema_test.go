@@ -9,6 +9,38 @@ import (
 	"testing"
 )
 
+func TestPrepareKimiCPABodySanitizesPinnedKimiCredential(t *testing.T) {
+	input := []byte(`{
+		"model":"kimi-k3",
+		"tools":[{
+			"type":"function",
+			"function":{
+				"name":"search",
+				"parameters":{
+					"type":"object",
+					"$defs":{"__schema20":{"type":"object","$ref":"#/$defs/Item"},"Item":{"properties":{"name":{"type":"string"}}}}
+				}
+			}
+		}]
+	}`)
+	rewritten := PrepareKimiCPABody("kimi-d2f83569e3dd08d9", input)
+	var root map[string]any
+	if err := json.Unmarshal(rewritten, &root); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := toolParameters(t, root)["$defs"].(map[string]any)["__schema20"].(map[string]any)
+	if _, hasType := wrapper["type"]; hasType {
+		t.Fatalf("CPA hop still has type beside $ref: %#v", wrapper)
+	}
+}
+
+func TestPrepareKimiCPABodyLeavesNonKimiRequests(t *testing.T) {
+	input := []byte(`{"model":"gpt-5.4","tools":[{"type":"function","function":{"name":"search","parameters":{"type":"object","$defs":{"__schema20":{"type":"object","$ref":"#/$defs/Item"}}}}}]}`)
+	if got := PrepareKimiCPABody("codex-56a34c57", input); string(got) != string(input) {
+		t.Fatalf("non-Kimi body was rewritten: %s", got)
+	}
+}
+
 func TestSanitizeKimiToolSchemasMovesTypeOffRefParent(t *testing.T) {
 	input := []byte(`{
 		"model":"kimi-k3",

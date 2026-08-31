@@ -402,6 +402,50 @@ func TestImagesEndpointNoLongerReturnsUnsupportedAPIPath(t *testing.T) {
 	}
 }
 
+func TestRuntimeDefaultsKimiK3ToCodingPlanID(t *testing.T) {
+	document, _ := json.Marshal(map[string]any{
+		"type": "kimi", "access_token": "secret", "base_url": "https://api.kimi.com/coding/v1",
+	})
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "kimi-d2f83569e3dd08d9", Provider: "kimi", Enabled: true,
+		Models: []string{"kimi-k3", "kimi-k3-256k"}, Document: document,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+	for _, public := range []string{"kimi-k3", "kimi-k3-256k"} {
+		response, ok := runtime.RouteModel(context.Background(), pluginapi.ModelRouteRequest{
+			RequestedModel: public,
+			Headers:        http.Header{"X-Relay-Cpa-Auth-Id": []string{"kimi-d2f83569e3dd08d9"}},
+		})
+		if !ok || !response.Handled {
+			t.Fatalf("%s was not routed", public)
+		}
+		if response.Target != "kimi" || response.TargetModel != "k3" {
+			t.Fatalf("%s route = %#v", public, response)
+		}
+	}
+}
+
+func TestRuntimeKeepsExplicitKimiModelRoute(t *testing.T) {
+	document, _ := json.Marshal(map[string]any{
+		"type": "kimi", "access_token": "secret",
+		"model_routes": []map[string]string{{"public": "kimi-k3-256k", "upstream": "k3-256k"}},
+	})
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "kimi-1", Provider: "kimi", Enabled: true,
+		Models: []string{"kimi-k3-256k"}, Document: document,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+	if got := runtime.ResolveCredentialModel("kimi-1", "kimi-k3-256k"); got != "k3-256k" {
+		t.Fatalf("explicit route = %q", got)
+	}
+}
+
 func TestRuntimeRoutesPinnedCredentialAndModelAlias(t *testing.T) {
 	document, _ := json.Marshal(map[string]any{
 		"api_key": "secret", "base_url": "https://example.test/v1",

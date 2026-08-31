@@ -372,6 +372,8 @@ func (a *App) proxyEmbeddedCPA(w http.ResponseWriter, r *http.Request, body []by
 		http.Error(w, "embedded CPA is not available", http.StatusServiceUnavailable)
 		return
 	}
+	cred := strings.TrimSpace(r.Header.Get("X-Relay-Upstream-Credential-ID"))
+	body = upstream.PrepareKimiCPABody(cred, body)
 	var reader io.Reader
 	if len(body) > 0 {
 		reader = bytes.NewReader(body)
@@ -385,7 +387,7 @@ func (a *App) proxyEmbeddedCPA(w http.ResponseWriter, r *http.Request, body []by
 	request.Header.Set("Authorization", "Bearer "+client.APIKey)
 	request.Header.Del("X-API-Key")
 	request.Header.Del("X-Goog-API-Key")
-	if cred := strings.TrimSpace(r.Header.Get("X-Relay-Upstream-Credential-ID")); cred != "" {
+	if cred != "" {
 		request.Header.Set("X-Relay-CPA-Auth-ID", cred)
 	}
 	if requestID := strings.TrimSpace(r.Header.Get("X-Relay-Request-ID")); requestID != "" {

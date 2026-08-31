@@ -83,6 +83,28 @@ func TestRuntimeFlushesPassthroughStreamImmediately(t *testing.T) {
 	_ = response.Body.Close()
 }
 
+func TestKimiDefaultsCodingPlanWireID(t *testing.T) {
+	observed := make(chan map[string]any, 1)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		observed <- body
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "chat_1", "choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "ok"}, "finish_reason": "stop"}},
+		})
+	}))
+	defer provider.Close()
+	runtime := newTestRuntime(t, Credential{ID: "kimi", Provider: "kimi", Enabled: true, Models: []string{"kimi-k3-256k"}, Document: testJSON(t, map[string]any{"type": "kimi", "access_token": "token", "base_url": provider.URL})})
+	response := runtimeRequest(t, runtime, http.MethodPost, "/v1/chat/completions", `{"model":"kimi-k3-256k","messages":[{"role":"user","content":"hi"}]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	request := <-observed
+	if request["model"] != "k3" {
+		t.Fatalf("upstream model = %#v, want k3", request["model"])
+	}
+}
+
 func TestKimiResponsesTranslationPreservesToolsAndUsage(t *testing.T) {
 	observed := make(chan map[string]any, 1)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

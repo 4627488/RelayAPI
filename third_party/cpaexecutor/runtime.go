@@ -845,6 +845,9 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	}
 
 	aliases := modelAliases(metadata)
+	if provider == "kimi" {
+		applyDefaultKimiCodingPlanAliases(aliases)
+	}
 	publicModels := append([]string(nil), item.Models...)
 	if len(publicModels) == 0 {
 		publicModels = modelIDs(cpaStaticModelsForAuth(provider, auth))
@@ -971,6 +974,20 @@ func filterExcludedModelIDs(models []string, auth *coreauth.Auth) []string {
 		}
 	}
 	return filtered
+}
+
+func applyDefaultKimiCodingPlanAliases(aliases map[string]modelRoute) {
+	if aliases == nil {
+		return
+	}
+	for public, upstream := range map[string]string{
+		"kimi-k3":      "k3",
+		"kimi-k3-256k": "k3",
+	} {
+		if _, exists := aliases[public]; !exists {
+			aliases[public] = modelRoute{upstream: upstream}
+		}
+	}
 }
 
 func modelAliases(metadata map[string]any) map[string]modelRoute {
