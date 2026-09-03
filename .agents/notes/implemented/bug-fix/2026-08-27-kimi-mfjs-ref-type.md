@@ -12,7 +12,7 @@ Moonshot validates `tools.function.parameters` against [Moonshot Flavored JSON S
 
 ## Decision
 
-Drop `sanitizeKimiToolSchemas` from `internal/upstream`. Production Kimi requests hit `KimiExecutor`, and CPA `v7.2.146` `normalizeKimiTools` inlines local `$ref`s and strips `$defs` / `definitions` before Moonshot sees the body.
+Drop `sanitizeKimiToolSchemas` from `internal/upstream`. Production Kimi requests hit `KimiExecutor`, and CPA `v7.2.147` `normalizeKimiTools` inlines local `$ref`s and strips `$defs` / `definitions` before Moonshot sees the body.
 
 Do not keep a second MFJS rewrite in Relay. Open PR [#4406](https://github.com/router-for-me/CLIProxyAPI/pull/4406) still only covers boolean subschemas; add a new pass only when a real payload hits a remaining Walle rule.
 
