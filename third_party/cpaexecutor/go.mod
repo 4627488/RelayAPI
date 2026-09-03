@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/gin-gonic/gin v1.10.1
-	github.com/router-for-me/CLIProxyAPI/v7 v7.2.145
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.147
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/sjson v1.2.5
 	golang.org/x/crypto v0.54.0
