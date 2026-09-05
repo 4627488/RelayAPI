@@ -1,23 +1,13 @@
-import { lazy, Suspense, useEffect, useState } from "react"
-import { toast } from "sonner"
+import { useEffect, useState } from "react"
 
-import { AppShell } from "@/components/app-shell"
-import { AuthPage } from "@/components/auth-page"
-import { ForcePasswordChange } from "@/components/force-password-change"
-import { LoadingView } from "@/components/loading-view"
+import { AuthPage } from "@/console/auth"
+import { ForcePasswordChange } from "@/console/password"
+import { AppShell } from "@/console/shell"
+import { Workspace } from "@/console/workspace"
+import { LoadingState } from "@/console/kit"
 import { api, type Session } from "@/lib/api"
 import { navigateTo, useAppRoute } from "@/lib/routes"
-
-const AdminWorkspace = lazy(() =>
-  import("@/components/admin-workspace").then((module) => ({
-    default: module.AdminWorkspace,
-  }))
-)
-const UserWorkspace = lazy(() =>
-  import("@/components/user-workspace").then((module) => ({
-    default: module.UserWorkspace,
-  }))
-)
+import { errorMessage, toast } from "@/lib/toast"
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -50,31 +40,18 @@ export function App() {
   async function logout() {
     try {
       await api("/api/auth/logout", { method: "POST" })
-      try {
-        for (
-          let index = window.sessionStorage.length - 1;
-          index >= 0;
-          index -= 1
-        ) {
-          const key = window.sessionStorage.key(index)
-          if (key?.startsWith("relayapi.latest-"))
-            window.sessionStorage.removeItem(key)
-        }
-      } catch {
-        // Session storage may be disabled; logout must still succeed.
-      }
       setSession(null)
       navigateTo({ workspace: "user", page: "overview" }, { replace: true })
       toast.success("已退出登录")
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "退出失败")
+      toast.error(errorMessage(cause, "退出失败"))
     }
   }
 
   if (checking) {
     return (
       <main className="p-6">
-        <LoadingView />
+        <LoadingState />
       </main>
     )
   }
@@ -110,21 +87,15 @@ export function App() {
       }}
       onLogout={() => void logout()}
     >
-      <Suspense fallback={<LoadingView />}>
-        {route.workspace === "admin" && session.is_admin ? (
-          <AdminWorkspace
-            page={route.page}
-            currentUserId={session.tenant.id}
-            onPageChange={(page) => navigateTo({ workspace: "admin", page })}
-          />
-        ) : (
-          <UserWorkspace
-            page={route.page}
-            session={session}
-            onPageChange={(page) => navigateTo({ workspace: "user", page })}
-          />
-        )}
-      </Suspense>
+      <Workspace
+        session={session}
+        page={route.page}
+        logId={route.logId}
+        admin={route.workspace === "admin" && session.is_admin}
+        onPageChange={(page, logId) =>
+          navigateTo({ workspace: route.workspace, page, logId })
+        }
+      />
     </AppShell>
   )
 }

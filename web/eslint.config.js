@@ -25,9 +25,8 @@ export default defineConfig([
     },
   },
   {
-    files: ['src/components/ui/**/*.{ts,tsx}'],
+    files: ['src/lib/theme.tsx', 'src/lib/toast.ts'],
     rules: {
-      // shadcn registry files intentionally export component variants/hooks.
       'react-refresh/only-export-components': 'off',
     },
   },

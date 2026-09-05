@@ -108,20 +108,22 @@ func (a *App) adminInvitationRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 type tenantInput struct {
-	Name, OwnerEmail, Password string
-	Enabled                    bool
-	RateLimitPerMinute         *int
-	TokenLimitDaily            *int64
-	ModelAllowlist             []string
+	Name               string   `json:"name"`
+	OwnerEmail         string   `json:"owner_email"`
+	Password           string   `json:"password"`
+	Enabled            bool     `json:"enabled"`
+	RateLimitPerMinute *int     `json:"rate_limit_per_minute"`
+	TokenLimitDaily    *int64   `json:"token_limit_daily"`
+	ModelAllowlist     []string `json:"model_allowlist"`
 }
 
 type keyInput struct {
-	Name               string
-	Enabled            bool
-	RateLimitPerMinute *int
-	TokenLimitDaily    *int64
-	ModelAllowlist     []string
-	ModelAliases       []db.APIKeyModelAlias
+	Name               string                `json:"name"`
+	Enabled            bool                  `json:"enabled"`
+	RateLimitPerMinute *int                  `json:"rate_limit_per_minute"`
+	TokenLimitDaily    *int64                `json:"token_limit_daily"`
+	ModelAllowlist     []string              `json:"model_allowlist"`
+	ModelAliases       []db.APIKeyModelAlias `json:"model_aliases"`
 }
 
 func normalizeKeyInput(input *keyInput) error {

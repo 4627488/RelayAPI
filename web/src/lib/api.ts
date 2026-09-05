@@ -25,6 +25,33 @@ export interface AuthStatus {
   setup_required: boolean
 }
 
+export interface Dashboard {
+  tenant: User
+  requests_30d: number
+  tokens_30d: number
+  cost_nano_usd_30d: number
+}
+
+export interface AgentSetupCommands {
+  expires_at: string
+  bash_command: string
+  bash_check_command: string
+  powershell_command: string
+  powershell_check_command: string
+}
+
+export interface OAuthStart {
+  state: string
+  url: string
+}
+
+export interface CatalogSyncPreview {
+  source: string
+  version: string
+  url: string
+  count?: number
+}
+
 export interface ApiKey {
   id: string
   name: string
