@@ -19,16 +19,31 @@ pnpm check
 
 ## 界面规范
 
+采用官方预设 [`bbVJxYW`](https://ui.shadcn.com/create?preset=bbVJxYW)：Maia、Neutral 基色与主题、Neutral 图表、Inter、Lucide。以官方生成的组件和主题变量为准。
+
+现有项目应用预设使用 `pnpm dlx shadcn@latest apply bbVJxYW`；`init --preset bbVJxYW --template vite` 用于新项目初始化。
+
 - 组件优先使用 `src/components/ui` 中的 shadcn 原语，业务页面不要手写按钮、选择器、对话框、提示框、空状态、进度条或开关。
 - 页面必须通过 `PageHeader` 提供唯一的一级标题和简短说明；区块标题从二级开始，不用大小相同的文字模拟层级。
-- 颜色只使用 `background`、`foreground`、`muted`、`primary`、`positive`、`warning`、`info`、`destructive` 等语义令牌。业务组件不得直接写 `emerald-*`、`amber-*` 等具体色阶。
-- 正文采用系统中文无衬线字体栈；模型名、请求 ID、金额明细和代码使用等宽字体。圆角基准为 6px，只有头像、开关和进度轨道使用全圆角。
+- 颜色只使用预设提供的 `background`、`foreground`、`muted`、`primary`、`destructive` 等令牌，不额外调色。状态优先使用官方 Badge 变体和文字。
+- 字体、圆角、阴影、控件高度和内边距遵循预设。业务 `className` 用于布局、响应式尺寸和数据可读性，不覆盖组件外观；不添加全局字体渲染、滚动条或表单样式。
+- 表格使用官方横向滚动容器，不在基础 Table 中添加固定列接口。提示消息使用 Base UI 的 `toast.add`，复用 `components/ui/toast`。
 - 状态不能只靠颜色表达；错误、成功、加载和空状态同时提供文字或图标。所有仅图标按钮必须有可读名称。
 - 页面导航使用 `src/lib/routes.ts` 的地址生成与解析函数，不在组件里维护另一套页面状态，也不新增自定义 hash 路由。
 - 数据页面必须覆盖首次加载、保留旧数据的刷新、可重试错误和空结果；共用 `LoadingView`、`LoadErrorView`、`Empty` 与 `InfoBar`。
 - 大型页面功能通过 `React.lazy` 按路由加载。不要把图表、日志详情或管理弹窗重新打进首屏共享包。
 
 ## 路由约定
+
+### 页面组织
+
+- `components/app-shell.tsx` 负责工作区外壳，`lib/navigation.ts` 集中维护导航分组和显示名称。
+- `components/user-workspace.tsx` 与 `components/admin-workspace.tsx` 只负责路由分发；具体页面放在 `components/user/`、`components/admin/`，按需加载。
+- 模型账户的连接、管理、测试弹窗放在 `components/providers/`；共用类型和纯函数放在同目录的 `provider-helpers.ts`，弹窗不要反向引用列表页面。
+- `workspace-ui.tsx` 维护页面标题、统计栏和搜索框；页面说明使用 `PageHeader.description`，优先在这里调整共用布局。
+- 列表筛选要区分“尚无数据”和“筛选无结果”，后者提供清除筛选入口。手机端隐藏列时，仍需保留名称、状态和主要操作。
+
+### 地址
 
 - 用户工作台：`/app`、`/app/usage`、`/app/keys`、`/app/logs/:id`
 - 管理工作台：`/admin`、`/admin/users/invitations`、`/admin/settings/proxies`、`/admin/logs/:id`
@@ -46,7 +61,7 @@ pnpm check
 先确认项目中没有等价原语，再通过 shadcn CLI 添加：
 
 ```bash
-pnpm exec shadcn@latest add <component>
+pnpm dlx shadcn@latest add <component>
 ```
 
-保持 `components.json` 中的 `base-nova`、Base UI 和 Lucide 配置，不混用另一套组件基础或图标库。
+保持 `components.json` 中的 `base-maia`、Base UI 和 Lucide 配置。官方组件更新通过 CLI 比较后应用，功能组合放在业务模块，避免修改基础组件。

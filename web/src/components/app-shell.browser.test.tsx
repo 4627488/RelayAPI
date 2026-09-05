@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { page as browserPage } from "vitest/browser"
 import { render } from "vitest-browser-react"
 
 import { AppShell } from "@/components/app-shell"
@@ -27,6 +28,7 @@ const session: Session = {
 describe("application shell", () => {
   it("uses real links while keeping client-side navigation accessible", async () => {
     const onPageChange = vi.fn()
+    const onWorkspaceChange = vi.fn()
     const screen = await render(
       <ThemeProvider defaultTheme="light" disableTransitionOnChange={false}>
         <AppShell
@@ -34,7 +36,7 @@ describe("application shell", () => {
           workspace="user"
           page="overview"
           onPageChange={onPageChange}
-          onWorkspaceChange={() => undefined}
+          onWorkspaceChange={onWorkspaceChange}
           onLogout={() => undefined}
         >
           <h1>总览</h1>
@@ -44,8 +46,47 @@ describe("application shell", () => {
 
     const logsLink = screen.getByRole("link", { name: "请求日志" })
     await expect.element(logsLink).toHaveAttribute("href", "/app/logs")
+    await expect
+      .element(screen.getByRole("link", { name: "总览" }))
+      .toHaveAttribute("aria-current", "page")
+    await expect
+      .element(screen.getByRole("link", { name: "跳到主内容" }))
+      .toHaveAttribute("href", "#main-content")
     await logsLink.click()
     expect(onPageChange).toHaveBeenCalledWith("logs")
+
+    await screen.getByRole("button", { name: "进入管理员面板" }).click()
+    expect(onWorkspaceChange).toHaveBeenCalledWith("admin")
     await expectNoA11yViolations()
+  })
+
+  it("closes the navigation sheet after a mobile route selection", async () => {
+    const onPageChange = vi.fn()
+    await browserPage.viewport(390, 844)
+    try {
+      const screen = await render(
+        <ThemeProvider defaultTheme="light" disableTransitionOnChange={false}>
+          <AppShell
+            session={session}
+            workspace="user"
+            page="overview"
+            onPageChange={onPageChange}
+            onWorkspaceChange={() => undefined}
+            onLogout={() => undefined}
+          >
+            <h1>总览</h1>
+          </AppShell>
+        </ThemeProvider>
+      )
+
+      await screen.getByRole("button", { name: "Toggle Sidebar" }).click()
+      const navigationSheet = screen.getByRole("dialog")
+      await expect.element(navigationSheet).toBeVisible()
+      await screen.getByRole("link", { name: "请求日志" }).click()
+      expect(onPageChange).toHaveBeenCalledWith("logs")
+      await expect.element(navigationSheet).not.toBeInTheDocument()
+    } finally {
+      await browserPage.viewport(1280, 800)
+    }
   })
 })

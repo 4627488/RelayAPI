@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { AppShell } from "@/components/app-shell"
 import { AuthPage } from "@/components/auth-page"
@@ -65,9 +65,12 @@ export function App() {
       }
       setSession(null)
       navigateTo({ workspace: "user", page: "overview" }, { replace: true })
-      toast.success("已退出登录")
+      toast.add({ title: "已退出登录", type: "success" })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "退出失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "退出失败",
+        type: "error",
+      })
     }
   }
 

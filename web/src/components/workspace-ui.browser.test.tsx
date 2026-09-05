@@ -15,7 +15,7 @@ describe("workspace UI contract", () => {
     const onClear = vi.fn()
     const screen = await render(
       <main>
-        <PageHeader title="请求日志" />
+        <PageHeader title="请求日志" description="查看最近的请求与响应状态。" />
         <SearchField
           value="gpt"
           onChange={() => undefined}
@@ -30,6 +30,9 @@ describe("workspace UI contract", () => {
     await expect
       .element(screen.getByRole("heading", { level: 1 }))
       .toHaveTextContent("请求日志")
+    await expect
+      .element(screen.getByText("查看最近的请求与响应状态。"))
+      .toBeVisible()
     await screen.getByRole("button", { name: "清除搜索" }).click()
     expect(onClear).toHaveBeenCalledOnce()
     await expectNoA11yViolations()

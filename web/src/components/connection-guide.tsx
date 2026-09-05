@@ -5,7 +5,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -127,8 +127,8 @@ export function ConnectionGuide() {
 async function copy(value: string) {
   try {
     await copyText(value)
-    toast.success("安装命令已复制")
+    toast.add({ title: "安装命令已复制", type: "success" })
   } catch {
-    toast.error("复制失败")
+    toast.add({ title: "复制失败", type: "error" })
   }
 }

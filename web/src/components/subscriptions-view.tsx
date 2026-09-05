@@ -1,6 +1,6 @@
 import { useCallback } from "react"
 import { AlertTriangleIcon, GaugeIcon, PackageOpenIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -45,7 +45,8 @@ export function TenantSubscriptionsView() {
   } = useAsyncResource(loadSubscriptions, {
     initialData: [],
     errorMessage: "无法读取订阅",
-    onBackgroundError: (message) => toast.error(message),
+    onBackgroundError: (message) =>
+      toast.add({ title: message, type: "error" }),
   })
 
   return (
@@ -84,7 +85,7 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
 
   return (
     <Card>
-      <CardHeader className="border-b bg-muted/15">
+      <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div>
             <CardTitle>{item.name}</CardTitle>
@@ -160,7 +161,7 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
               ))}
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            <div className="p-4 text-sm text-muted-foreground">
               此授权继承账户全部可用模型，或账户尚未提供可枚举的模型清单。
             </div>
           )}
@@ -187,7 +188,7 @@ function EntitlementWindow({
   return (
     <Progress
       value={remaining}
-      className="gap-2 border-t pt-3 first:border-t-0 [&_[data-slot=progress-track]]:h-2"
+      className="gap-2 pt-3 [&_[data-slot=progress-track]]:h-2"
     >
       <ProgressLabel className="text-base">
         {quotaWindowLabel(window.kind)}

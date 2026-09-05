@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
 import {
   ActivityIcon,
@@ -38,7 +38,9 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { StatStrip } from "@/components/workspace-ui"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { RequestLog, UsageReport } from "@/lib/api"
+import { routeHref, type Workspace } from "@/lib/routes"
 import {
   compact,
   compactTokens,
@@ -77,13 +79,29 @@ const chartConfig = {
 
 export function UsageChart({ report }: { report: UsageReport }) {
   const daily = report.daily ?? []
+  const [metric, setMetric] = useState<"requests" | "tokens">("requests")
+  const metricLabel = metric === "requests" ? "请求数" : "Token 数"
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>用量趋势</CardTitle>
-        <CardDescription>
-          最近 {report.days} 天的请求与 Token 消耗。
-        </CardDescription>
+      <CardHeader className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
+        <div>
+          <CardTitle>用量趋势</CardTitle>
+          <CardDescription>
+            最近 {report.days} 天，当前显示单位：{metricLabel}。
+          </CardDescription>
+        </div>
+        <ToggleGroup
+          value={[metric]}
+          onValueChange={(value) =>
+            value[0] && setMetric(value[0] as "requests" | "tokens")
+          }
+          variant="outline"
+          size="sm"
+          aria-label="选择用量趋势指标"
+        >
+          <ToggleGroupItem value="requests">请求</ToggleGroupItem>
+          <ToggleGroupItem value="tokens">Tokens</ToggleGroupItem>
+        </ToggleGroup>
       </CardHeader>
       <CardContent>
         {daily.length ? (
@@ -101,19 +119,12 @@ export function UsageChart({ report }: { report: UsageReport }) {
                 content={<ChartTooltipContent indicator="line" />}
               />
               <Area
-                dataKey="tokens"
+                dataKey={metric}
+                name={metricLabel}
                 type="monotone"
-                fill="var(--color-tokens)"
+                fill={`var(--color-${metric})`}
                 fillOpacity={0.12}
-                stroke="var(--color-tokens)"
-                strokeWidth={2}
-              />
-              <Area
-                dataKey="requests"
-                type="monotone"
-                fill="var(--color-requests)"
-                fillOpacity={0.12}
-                stroke="var(--color-requests)"
+                stroke={`var(--color-${metric})`}
                 strokeWidth={2}
               />
             </AreaChart>
@@ -274,13 +285,15 @@ export function ApiKeyUsageTable({
 export function LogsTable({
   logs,
   action,
+  workspace = "user",
 }: {
   logs: RequestLog[]
   action?: ReactNode
+  workspace?: Workspace
 }) {
   return (
     <Card>
-      <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <CardHeader className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
         <div>
           <CardTitle>最近请求</CardTitle>
           <CardDescription>状态、模型、Token 和响应耗时。</CardDescription>
@@ -299,6 +312,7 @@ export function LogsTable({
                 <TableHead className="text-right">Tokens</TableHead>
                 <TableHead className="text-right">耗时</TableHead>
                 <TableHead className="text-right">费用</TableHead>
+                <TableHead className="text-right">详情</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -343,6 +357,19 @@ export function LogsTable({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {money(log.cost_nano_usd)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <a
+                      className="text-sm text-primary underline-offset-4 hover:underline focus-visible:underline"
+                      aria-label={`查看日志 ${log.model || log.path} ${dateTime(log.started_at)}`}
+                      href={routeHref({
+                        workspace,
+                        page: "logs",
+                        logId: log.id,
+                      })}
+                    >
+                      查看
+                    </a>
                   </TableCell>
                 </TableRow>
               ))}

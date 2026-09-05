@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { CheckIcon, RotateCcwIcon, SaveIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -309,7 +309,10 @@ export function RuntimeSettingsView() {
       setRuntime(result.runtime)
       setProxies(proxyResult.items ?? [])
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取运行配置")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "无法读取运行配置",
+        type: "error",
+      })
     } finally {
       setLoading(false)
     }
@@ -349,9 +352,12 @@ export function RuntimeSettingsView() {
       setValue(result.settings)
       setSaved(result.settings)
       setRuntime(result.runtime)
-      toast.success("运行策略已更新")
+      toast.add({ title: "运行策略已更新", type: "success" })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "保存失败",
+        type: "error",
+      })
     } finally {
       setSaving(false)
     }
@@ -744,7 +750,7 @@ export function RuntimeSettingsView() {
       </div>
 
       {dirty ? (
-        <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background px-4 py-3">
+        <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 bg-background px-4 py-3">
           <p className="text-sm">有未保存的更改</p>
           <div className="flex flex-wrap items-center gap-2">
             <Button

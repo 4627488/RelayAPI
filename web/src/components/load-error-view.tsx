@@ -1,13 +1,12 @@
 import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 
 export function LoadErrorView({
   message,
@@ -17,20 +16,16 @@ export function LoadErrorView({
   onRetry: () => void
 }) {
   return (
-    <Card className="mx-auto w-full max-w-xl">
-      <CardHeader>
-        <div className="flex size-10 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
-          <TriangleAlertIcon className="size-5" />
-        </div>
-        <CardTitle>页面数据加载失败</CardTitle>
-        <CardDescription>{message}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Button onClick={onRetry}>
+    <Alert className="mx-auto w-full max-w-xl" variant="destructive">
+      <TriangleAlertIcon />
+      <AlertTitle>页面数据加载失败</AlertTitle>
+      <AlertDescription>{message}</AlertDescription>
+      <AlertAction>
+        <Button onClick={onRetry} size="sm" variant="outline">
           <RefreshCwIcon data-icon="inline-start" />
           重试
         </Button>
-      </CardContent>
-    </Card>
+      </AlertAction>
+    </Alert>
   )
 }

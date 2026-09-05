@@ -4,6 +4,13 @@ import { SearchIcon, XIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card"
+import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
@@ -12,33 +19,40 @@ import { cn } from "@/lib/utils"
 
 export function PageHeader({
   title,
+  description,
   accessory,
   actions,
   className,
 }: {
   title?: ReactNode
+  description?: ReactNode
   accessory?: ReactNode
   actions?: ReactNode
   className?: string
 }) {
-  if (!title && !accessory && !actions) return null
+  if (!title && !description && !accessory && !actions) return null
   return (
     <header
       className={cn(
-        "flex min-h-9 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between",
+        "flex min-h-9 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between",
         className
       )}
     >
-      {title || accessory ? (
-        <div className="flex min-w-0 items-center gap-2">
+      {title || description || accessory ? (
+        <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {title ? (
-              <h1 className="font-heading text-2xl font-semibold tracking-tight">
+              <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
                 {title}
               </h1>
             ) : null}
             {accessory}
           </div>
+          {description ? (
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
         </div>
       ) : null}
       {actions ? (
@@ -58,13 +72,6 @@ export interface StatItem {
   tone?: "default" | "positive" | "warning" | "negative"
 }
 
-const statTones = {
-  default: "text-foreground",
-  positive: "text-positive",
-  warning: "text-warning",
-  negative: "text-destructive",
-}
-
 export function StatStrip({
   items,
   className,
@@ -73,42 +80,49 @@ export function StatStrip({
   className?: string
 }) {
   return (
-    <dl
-      className={cn(
-        "grid grid-cols-2 border-y sm:auto-cols-fr sm:grid-flow-col sm:grid-cols-none",
-        className
-      )}
+    <div
+      className={cn("grid grid-cols-2 gap-4 lg:grid-cols-4", className)}
+      role="list"
+      aria-label="统计"
     >
       {items.map((item, index) => {
         const Icon = item.icon
         return (
-          <div
+          <Card
             key={`${String(item.label)}-${index}`}
-            className="min-w-0 border-r px-3 py-2 first:pl-0 last:border-r-0 last:pr-0"
+            className="min-w-0"
+            role="listitem"
+            size="sm"
           >
-            <dt className="flex items-start justify-between gap-2 text-xs text-muted-foreground">
-              <span className="truncate">{item.label}</span>
+            <CardHeader>
+              <CardDescription>{item.label}</CardDescription>
               {Icon ? (
-                <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/60" />
+                <CardAction>
+                  <Icon className="text-muted-foreground" />
+                </CardAction>
               ) : null}
-            </dt>
-            <dd
-              className={cn(
-                "mt-0.5 font-heading text-base font-semibold tabular-nums",
-                statTones[item.tone ?? "default"]
-              )}
-            >
-              {item.value}
-            </dd>
-            {item.detail ? (
-              <dd className="mt-0.5 truncate text-xs text-muted-foreground">
-                {item.detail}
-              </dd>
-            ) : null}
-          </div>
+            </CardHeader>
+            <CardContent>
+              <div
+                className={cn(
+                  "text-xl leading-tight font-semibold break-words tabular-nums sm:text-2xl",
+                  item.tone === "negative"
+                    ? "text-destructive"
+                    : "text-foreground"
+                )}
+              >
+                {item.value}
+              </div>
+              {item.detail ? (
+                <div className="mt-1 text-xs leading-5 break-words text-muted-foreground">
+                  {item.detail}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
         )
       })}
-    </dl>
+    </div>
   )
 }
 

@@ -11,7 +11,7 @@ import {
   UsersIcon,
   WalletCardsIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -164,7 +164,7 @@ function CostBreakdown({ report }: { report: UsageReport }) {
         <CardDescription>区分订阅容量承担与账户余额实际扣费。</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
-        <div className="flex h-2 overflow-hidden rounded-full bg-muted">
+        <div className="flex h-2 overflow-hidden bg-muted">
           <div
             className="bg-foreground"
             style={{
@@ -185,7 +185,7 @@ function CostBreakdown({ report }: { report: UsageReport }) {
           />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border p-3">
+          <div className="p-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <ShieldCheckIcon className="size-3.5" />
               订阅承担
@@ -197,7 +197,7 @@ function CostBreakdown({ report }: { report: UsageReport }) {
               </span>
             </div>
           </div>
-          <div className="rounded-lg border p-3">
+          <div className="p-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <WalletCardsIcon className="size-3.5" />
               余额支付
@@ -210,7 +210,7 @@ function CostBreakdown({ report }: { report: UsageReport }) {
             </div>
           </div>
         </div>
-        <div className="flex items-center justify-between border-t pt-4 text-sm">
+        <div className="flex items-center justify-between pt-4 text-sm">
           <span className="text-muted-foreground">单次请求平均成本</span>
           <span className="font-medium tabular-nums">
             {averageCost(total, summary.requests)}
@@ -261,7 +261,7 @@ function UsageTrend({ report }: { report: UsageReport }) {
       </CardHeader>
       <CardContent>
         {empty ? (
-          <Empty className="h-72 border-0 p-0">
+          <Empty className="h-72 p-0">
             <EmptyHeader>
               <EmptyTitle>暂无用量</EmptyTitle>
               <EmptyDescription>当前时间范围内没有请求记录。</EmptyDescription>
@@ -374,12 +374,10 @@ function ShareCell({ value, total }: { value: number; total: number }) {
         <span>{compactTokens(value)}</span>
         <span className="text-muted-foreground">{percent(value, total)}</span>
       </div>
-      <div className="h-1 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-foreground/65"
-          style={{ width: `${share}%` }}
-        />
-      </div>
+      <Progress
+        value={share}
+        className="w-full gap-0 [&_[data-slot=progress-track]]:h-1"
+      />
     </div>
   )
 }
@@ -556,7 +554,10 @@ export function UsageView({
       if (currentRequest === requestID.current) setReport(next)
     } catch (cause) {
       if (currentRequest === requestID.current)
-        toast.error(cause instanceof Error ? cause.message : "读取用量失败")
+        toast.add({
+          title: cause instanceof Error ? cause.message : "读取用量失败",
+          type: "error",
+        })
     } finally {
       if (currentRequest === requestID.current) setLoading(false)
     }
@@ -574,7 +575,10 @@ export function UsageView({
         })
         .catch((cause) => {
           if (active)
-            toast.error(cause instanceof Error ? cause.message : "读取用量失败")
+            toast.add({
+              title: cause instanceof Error ? cause.message : "读取用量失败",
+              type: "error",
+            })
         })
         .finally(() => {
           if (active) setLoading(false)
@@ -747,7 +751,7 @@ export function UsageView({
               dimension={dimension}
             />
           ) : (
-            <Empty className="h-32 border-0 p-0">
+            <Empty className="h-32 p-0">
               <EmptyHeader>
                 <EmptyTitle>暂无归因数据</EmptyTitle>
                 <EmptyDescription>

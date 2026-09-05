@@ -106,12 +106,10 @@ function CompactWindow({ item }: { item: DisplayWindow }) {
         </span>
       </div>
       {used == null ? null : (
-        <div className="h-1 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full bg-primary"
-            style={{ width: `${Math.min(100, Math.max(0, used))}%` }}
-          />
-        </div>
+        <Progress
+          value={Math.min(100, Math.max(0, used))}
+          className="w-full gap-0 [&_[data-slot=progress-track]]:h-1"
+        />
       )}
       {window.resets_at || configured?.resets_at ? (
         <span className="text-[11px] text-muted-foreground">
@@ -127,7 +125,7 @@ function DetailedWindow({ item }: { item: DisplayWindow }) {
   const used = usedPercent(window)
   if (used == null) {
     return (
-      <div className="rounded-md border bg-muted/30 p-3">
+      <div className="p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-medium">{window.label || window.kind}</span>
           {configured ? (
@@ -143,10 +141,7 @@ function DetailedWindow({ item }: { item: DisplayWindow }) {
     )
   }
   return (
-    <Progress
-      value={Math.min(100, Math.max(0, used))}
-      className="rounded-md border bg-muted/20 p-3"
-    >
+    <Progress value={Math.min(100, Math.max(0, used))} className="p-3">
       <ProgressLabel>{window.label || window.kind}</ProgressLabel>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
         {configured ? <CapacityBadge window={configured} /> : null}

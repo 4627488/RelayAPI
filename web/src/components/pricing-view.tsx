@@ -13,7 +13,7 @@ import {
   SearchIcon,
   Trash2Icon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -143,7 +143,10 @@ export function PricingView() {
 
   useEffect(() => {
     void load().catch((cause) =>
-      toast.error(cause instanceof Error ? cause.message : "读取模型设置失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "读取模型设置失败",
+        type: "error",
+      })
     )
   }, [load])
 
@@ -199,9 +202,12 @@ export function PricingView() {
           provider: String(data.get("provider") ?? "").trim(),
         }),
       })
-      toast.success("模型设置已保存")
+      toast.add({ title: "模型设置已保存", type: "success" })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存模型设置失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "保存模型设置失败",
+        type: "error",
+      })
     } finally {
       setPending(false)
     }
@@ -218,11 +224,15 @@ export function PricingView() {
         method: apply ? "POST" : "GET",
       })
       if (apply) await load()
-      toast.success(
-        `${apply ? "已同步" : "同步预览"} ${result.count} 个价格，版本 ${result.version.slice(0, 20)}…`
-      )
+      toast.add({
+        title: `${apply ? "已同步" : "同步预览"} ${result.count} 个价格，版本 ${result.version.slice(0, 20)}…`,
+        type: "success",
+      })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "同步价格失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "同步价格失败",
+        type: "error",
+      })
     } finally {
       setPending(false)
     }
@@ -239,9 +249,15 @@ export function PricingView() {
         body: JSON.stringify({ items: value }),
       })
       await load()
-      toast.success(kind === "aliases" ? "模型别名已保存" : "定价规则已保存")
+      toast.add({
+        title: kind === "aliases" ? "模型别名已保存" : "定价规则已保存",
+        type: "success",
+      })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "JSON 或规则无效")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "JSON 或规则无效",
+        type: "error",
+      })
     }
   }
 
@@ -252,9 +268,15 @@ export function PricingView() {
       )
       setEditingPrice(null)
       await load()
-      toast.success("已移除能力覆盖，将回退到 Models.dev 或模板")
+      toast.add({
+        title: "已移除能力覆盖，将回退到 Models.dev 或模板",
+        type: "success",
+      })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "删除能力覆盖失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "删除能力覆盖失败",
+        type: "error",
+      })
     }
   }
 
@@ -263,9 +285,15 @@ export function PricingView() {
       await deleteRequest(`/api/admin/prices/${encodeURIComponent(model)}`)
       setEditingPrice(null)
       await load()
-      toast.success("已移除管理员价格覆盖，将回退到目录价格")
+      toast.add({
+        title: "已移除管理员价格覆盖，将回退到目录价格",
+        type: "success",
+      })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "删除失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "删除失败",
+        type: "error",
+      })
     }
   }
 
@@ -363,7 +391,7 @@ export function PricingView() {
               </EmptyHeader>
             </Empty>
           ) : filteredModels.length ? (
-            <Table pinEdges>
+            <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>模型</TableHead>

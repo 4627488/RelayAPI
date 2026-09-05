@@ -44,7 +44,7 @@ export function ModelSelector({
   }
 
   return (
-    <div id={id} className="flex flex-col gap-2 rounded-lg border p-3">
+    <div id={id} className="flex flex-col gap-2 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button
           type="button"
@@ -78,7 +78,7 @@ export function ModelSelector({
               type="button"
               size="sm"
               variant={selected.has(model) ? "secondary" : "ghost"}
-              className="h-7 max-w-full"
+              className="max-w-full"
               onClick={() => toggle(model)}
               title={model}
             >

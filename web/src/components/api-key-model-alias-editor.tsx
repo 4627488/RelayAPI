@@ -83,7 +83,8 @@ export function ApiKeyModelAliasEditor({
               key={preset.id}
               type="button"
               variant="outline"
-              className="h-auto items-start justify-start py-3 text-left whitespace-normal"
+              size="lg"
+              className="items-start justify-start text-left whitespace-normal"
               disabled={!target}
               title={
                 target ? preset.description : "当前账户没有可用的 Grok 模型"

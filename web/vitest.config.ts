@@ -18,7 +18,7 @@ export default mergeConfig(
         "@base-ui/react/toggle",
         "@base-ui/react/toggle-group",
         "@base-ui/react/use-render",
-        "sonner",
+        "@base-ui/react/toast",
       ],
     },
     test: {

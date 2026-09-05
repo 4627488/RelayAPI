@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react"
-import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
+import { RefreshCwIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -35,16 +35,15 @@ export class ErrorBoundary extends Component<
       <main className="flex min-h-svh items-center justify-center p-6">
         <Card className="w-full max-w-lg">
           <CardHeader>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
-              <TriangleAlertIcon className="size-5" />
-            </div>
-            <CardTitle>控制台遇到运行时错误</CardTitle>
+            <CardTitle>
+              <h1>页面暂时无法显示</h1>
+            </CardTitle>
             <CardDescription>
-              页面没有继续白屏。请刷新重试；若问题持续存在，请提供下方错误信息。
+              请刷新重试；若问题持续存在，请提供下方错误信息。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <pre className="max-h-40 overflow-auto rounded-lg bg-muted p-3 text-xs whitespace-pre-wrap">
+            <pre className="max-h-40 overflow-auto text-sm whitespace-pre-wrap">
               {this.state.error.message || "未知错误"}
             </pre>
             <Button onClick={() => window.location.reload()}>

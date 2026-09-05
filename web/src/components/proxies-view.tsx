@@ -12,7 +12,7 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import {
   AlertDialog,
@@ -101,7 +101,8 @@ export function ProxiesView() {
   } = useAsyncResource(loadProxies, {
     initialData: [],
     errorMessage: "无法读取代理列表",
-    onBackgroundError: (message) => toast.error(message),
+    onBackgroundError: (message) =>
+      toast.add({ title: message, type: "error" }),
   })
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -110,7 +111,7 @@ export function ProxiesView() {
     const name = String(form.get("name") ?? "").trim()
     const url = String(form.get("url") ?? "").trim()
     if (!name || (!editor.item && !url)) {
-      toast.error("请填写代理名称和地址")
+      toast.add({ title: "请填写代理名称和地址", type: "error" })
       return
     }
     setPending(true)
@@ -122,11 +123,17 @@ export function ProxiesView() {
         method: editor.item ? "PATCH" : "POST",
         body: JSON.stringify({ name, ...(url ? { url } : {}) }),
       })
-      toast.success(editor.item ? "代理已更新" : "代理已添加")
+      toast.add({
+        title: editor.item ? "代理已更新" : "代理已添加",
+        type: "success",
+      })
       setEditor({ item: null, open: false })
       await reload()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存代理失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "保存代理失败",
+        type: "error",
+      })
     } finally {
       setPending(false)
     }
@@ -141,11 +148,12 @@ export function ProxiesView() {
       )
       setResults((current) => ({ ...current, [item.id]: result }))
       if (result.ok) {
-        toast.success(
-          `代理可用，落地 ${result.ip ?? "IP 未知"}，${result.latency_ms} ms`
-        )
+        toast.add({
+          title: `代理可用，落地 ${result.ip ?? "IP 未知"}，${result.latency_ms} ms`,
+          type: "success",
+        })
       } else {
-        toast.error(result.error || "代理测试失败")
+        toast.add({ title: result.error || "代理测试失败", type: "error" })
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "代理测试失败"
@@ -153,7 +161,7 @@ export function ProxiesView() {
         ...current,
         [item.id]: { ok: false, latency_ms: 0, error: message },
       }))
-      toast.error(message)
+      toast.add({ title: message, type: "error" })
     } finally {
       setTestingID("")
     }
@@ -166,11 +174,14 @@ export function ProxiesView() {
       await deleteRequest(
         `/api/admin/proxies/${encodeURIComponent(deleting.id)}`
       )
-      toast.success("代理已删除")
+      toast.add({ title: "代理已删除", type: "success" })
       setDeleting(null)
       await reload()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "删除代理失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "删除代理失败",
+        type: "error",
+      })
     } finally {
       setPending(false)
     }
@@ -233,8 +244,8 @@ export function ProxiesView() {
                   </Badge>
                 </CardHeader>
                 <CardContent className="flex flex-1 flex-col gap-4">
-                  <dl className="grid grid-cols-2 border-y py-2 text-sm">
-                    <div className="border-r pr-3">
+                  <dl className="grid grid-cols-2 py-2 text-sm">
+                    <div className="pr-3">
                       <dt className="text-xs text-muted-foreground">
                         系统请求
                       </dt>
@@ -254,7 +265,7 @@ export function ProxiesView() {
                   {result ? (
                     result.ok ? (
                       <Alert>
-                        <CircleCheckIcon className="text-positive" />
+                        <CircleCheckIcon className="text-muted-foreground" />
                         <AlertTitle>代理可用</AlertTitle>
                         <AlertAction>
                           <Badge variant="outline">
@@ -305,7 +316,7 @@ export function ProxiesView() {
                     )
                   ) : null}
                 </CardContent>
-                <CardFooter className="mt-auto flex flex-wrap gap-2 border-t bg-muted/20 pt-4">
+                <CardFooter className="mt-auto flex flex-wrap gap-2 pt-4">
                   <Button
                     size="sm"
                     variant="outline"

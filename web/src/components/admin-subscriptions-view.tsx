@@ -16,7 +16,7 @@ import {
   UserPlusIcon,
   UsersIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { ModelSelector } from "@/components/model-selector"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
@@ -187,7 +187,10 @@ export function AdminSubscriptionsView() {
           : (nextVisibleParents[0]?.item.id ?? "")
       )
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "无法读取订阅分配")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "无法读取订阅分配",
+        type: "error",
+      })
     } finally {
       setLoading(false)
     }
@@ -282,11 +285,14 @@ export function AdminSubscriptionsView() {
       !view ||
       (balanceMode ? assignTenantIDs.length === 0 : !assignTenantID)
     ) {
-      toast.error(balanceMode ? "请至少选择一位用户" : "请选择模型账户和租户")
+      toast.add({
+        title: balanceMode ? "请至少选择一位用户" : "请选择模型账户和租户",
+        type: "error",
+      })
       return
     }
     if (!isAllocatable(view)) {
-      toast.error(accountBlockReason(view))
+      toast.add({ title: accountBlockReason(view), type: "error" })
       return
     }
     const allocationPPM =
@@ -297,7 +303,7 @@ export function AdminSubscriptionsView() {
       view.item.capacity_mode !== "unmetered" &&
       (!Number.isFinite(allocationPPM) || allocationPPM <= 0)
     ) {
-      toast.error("请输入有效的账户额度占比")
+      toast.add({ title: "请输入有效的账户额度占比", type: "error" })
       return
     }
     setPending(true)
@@ -322,12 +328,18 @@ export function AdminSubscriptionsView() {
             }
       )
       setAssignOpen(false)
-      toast.success(
-        balanceMode ? `已授权 ${assignTenantIDs.length} 位用户` : "已分配给租户"
-      )
+      toast.add({
+        title: balanceMode
+          ? `已授权 ${assignTenantIDs.length} 位用户`
+          : "已分配给租户",
+        type: "success",
+      })
       await load()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "分配失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "分配失败",
+        type: "error",
+      })
     } finally {
       setPending(false)
     }
@@ -350,10 +362,16 @@ export function AdminSubscriptionsView() {
           expires_at: child.expires_at ?? "",
         }),
       })
-      toast.success(child.enabled ? "授权已停用" : "授权已启用")
+      toast.add({
+        title: child.enabled ? "授权已停用" : "授权已启用",
+        type: "success",
+      })
       await load()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "更新失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "更新失败",
+        type: "error",
+      })
     } finally {
       setPending(false)
     }
@@ -367,10 +385,13 @@ export function AdminSubscriptionsView() {
         `/api/admin/subscriptions/children/${deletingChild.id}`
       )
       setDeletingChild(null)
-      toast.success("租户授权已删除")
+      toast.add({ title: "租户授权已删除", type: "success" })
       await load()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "删除失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "删除失败",
+        type: "error",
+      })
     } finally {
       setPending(false)
     }
@@ -409,8 +430,8 @@ export function AdminSubscriptionsView() {
           </EmptyHeader>
         </Empty>
       ) : (
-        <Card className="gap-0 py-0 lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
-          <aside className="border-b bg-muted/20 lg:border-r lg:border-b-0">
+        <Card className="lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
+          <aside>
             <div className="flex flex-col gap-3 p-4 lg:sticky lg:top-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -547,13 +568,13 @@ export function AdminSubscriptionsView() {
                 <Field>
                   <FieldLabel>用户</FieldLabel>
                   {balanceGrantTenants.length ? (
-                    <div className="flex max-h-64 flex-col gap-1 overflow-y-auto rounded-lg border p-2">
+                    <div className="flex max-h-64 flex-col gap-1 overflow-y-auto p-2">
                       {balanceGrantTenants.map((tenant) => {
                         const checked = assignTenantIDs.includes(tenant.id)
                         return (
                           <label
                             key={tenant.id}
-                            className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 hover:bg-muted/60"
+                            className="flex cursor-pointer items-center gap-3 px-2 py-2 hover:bg-muted/60"
                           >
                             <Checkbox
                               checked={checked}
@@ -578,7 +599,7 @@ export function AdminSubscriptionsView() {
                       })}
                     </div>
                   ) : (
-                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    <div className="p-4 text-sm text-muted-foreground">
                       所有可用用户都已获得该账户权限。
                     </div>
                   )}
@@ -774,7 +795,8 @@ function ParentListButton({
   return (
     <Button
       variant={active ? "secondary" : "ghost"}
-      className="h-auto w-full justify-start px-2 py-2 text-left"
+      size="lg"
+      className="w-full justify-start text-left whitespace-normal"
       onClick={onSelect}
     >
       <div className="min-w-0 flex-1">
@@ -821,7 +843,7 @@ function AccountAllocationPanel({
 
   return (
     <div className="flex min-w-0 flex-col">
-      <div className="flex flex-col gap-4 border-b px-4 py-4 sm:px-6 sm:py-5 md:flex-row md:items-start md:justify-between">
+      <div className="flex flex-col gap-4 px-4 py-4 sm:px-6 sm:py-5 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="font-heading text-xl leading-tight font-semibold">
@@ -1032,7 +1054,7 @@ function AccountAllocationPanel({
               </div>
             </>
           ) : (
-            <Empty className="border">
+            <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <UsersIcon />
@@ -1055,7 +1077,7 @@ function AccountAllocationPanel({
         </section>
       </div>
 
-      <div className="mt-auto flex items-center justify-between gap-3 border-t bg-muted/30 px-4 py-3 sm:px-6">
+      <div className="mt-auto flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <p className="text-xs text-muted-foreground">
           账户与授权数据保存后立即生效。
         </p>
@@ -1085,7 +1107,7 @@ function MobileChildGrant({
   const balanceMode = view.item.capacity_mode === "unmetered"
   const modelCount = parentModelOptions(view).length
   return (
-    <div className="rounded-lg border p-3">
+    <div className="p-3">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">
@@ -1106,7 +1128,7 @@ function MobileChildGrant({
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-muted/50 p-3">
+      <div className="mt-3 grid grid-cols-2 gap-3 bg-muted/50 p-3">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">
             {balanceMode ? "可用模型" : "授权范围"}
@@ -1311,7 +1333,10 @@ function ParentSettingsDialog({
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     if (mode === "observed" && !windows.length) {
-      toast.error("这个账户没有可配置的额度窗口，请选择余额结算")
+      toast.add({
+        title: "这个账户没有可配置的额度窗口，请选择余额结算",
+        type: "error",
+      })
       return
     }
     onPending(true)
@@ -1340,11 +1365,14 @@ function ParentSettingsDialog({
           { method: "PUT", body: JSON.stringify({ items: windowItems }) }
         )
       }
-      toast.success("账户分配规则已保存")
+      toast.add({ title: "账户分配规则已保存", type: "success" })
       onClose()
       await onSaved()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "保存失败",
+        type: "error",
+      })
     } finally {
       onPending(false)
     }
@@ -1550,7 +1578,7 @@ function ChildSettingsDialog({
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!selectedParent) {
-      toast.error("请选择模型账户")
+      toast.add({ title: "请选择模型账户", type: "error" })
       return
     }
     const form = new FormData(event.currentTarget)
@@ -1575,11 +1603,14 @@ function ChildSettingsDialog({
             : "",
         }),
       })
-      toast.success("租户授权已保存")
+      toast.add({ title: "租户授权已保存", type: "success" })
       onClose()
       await onSaved()
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "保存失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "保存失败",
+        type: "error",
+      })
     } finally {
       onPending(false)
     }
@@ -1881,8 +1912,8 @@ function localDateTime(value?: string) {
 
 function AllocationSkeleton() {
   return (
-    <Card className="gap-0 py-0 lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
-      <div className="flex flex-col gap-3 border-b bg-muted/20 p-4 lg:border-r lg:border-b-0">
+    <Card className="lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
+      <div className="flex flex-col gap-3 p-4">
         <Skeleton className="h-5 w-24" />
         <Skeleton className="h-8 w-full" />
         {Array.from({ length: 4 }, (_, index) => (
@@ -1890,7 +1921,7 @@ function AllocationSkeleton() {
         ))}
       </div>
       <div className="flex flex-col">
-        <div className="flex flex-col gap-2 border-b px-4 py-5 sm:px-6">
+        <div className="flex flex-col gap-2 px-4 py-5 sm:px-6">
           <Skeleton className="h-6 w-48" />
           <Skeleton className="h-4 w-64 max-w-full" />
         </div>

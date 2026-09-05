@@ -18,7 +18,7 @@ import {
   SlidersHorizontalIcon,
   XIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -152,7 +152,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       const prefix = admin ? "/api/admin/logs" : "/api/logs"
       setData(await api<RequestLogPage>(`${prefix}?${params}`))
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "读取请求日志失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "读取请求日志失败",
+        type: "error",
+      })
     } finally {
       setLoading(false)
     }
@@ -188,7 +191,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       } catch (cause) {
         if (detailRequest.current !== token) return
         setSelected(null)
-        toast.error(cause instanceof Error ? cause.message : "读取日志详情失败")
+        toast.add({
+          title: cause instanceof Error ? cause.message : "读取日志详情失败",
+          type: "error",
+        })
         if (route.logId === id) {
           navigateTo(
             { workspace: admin ? "admin" : "user", page: "logs" },
@@ -326,7 +332,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       />
 
       <Card>
-        <CardHeader className="border-b">
+        <CardHeader>
           <CardTitle>请求明细</CardTitle>
           <FieldGroup className="grid min-w-0 gap-2 pt-1 md:grid-cols-[minmax(0,1fr)_9rem_auto_auto]">
             <Field className="min-w-0">
@@ -556,7 +562,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                         variant="link"
                         size="sm"
                         nativeButton={false}
-                        className="h-auto p-0 font-normal"
+                        className="p-0 font-normal"
                         aria-label={`查看 ${dateTime(log.started_at)} 的请求日志`}
                         onClick={(event) => {
                           if (
@@ -659,7 +665,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               </TableBody>
             </Table>
           ) : (
-            <Empty className="min-h-72 rounded-none border-0">
+            <Empty className="min-h-72">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <SearchIcon />
@@ -810,7 +816,7 @@ function LogDetailPage({
       <Card>
         {detailSections ? (
           <Tabs defaultValue="overview" className="gap-0">
-            <div className="border-b px-4 pt-3">
+            <div className="px-4 pt-3">
               <TabsList
                 variant="line"
                 className="w-full justify-start overflow-x-auto"
@@ -1283,7 +1289,7 @@ function Payload({
         {truncated ? <Badge variant="outline">已截断</Badge> : null}
         <CopyButton value={value} label={`复制 ${title}`} className="ml-auto" />
       </div>
-      <pre className="max-h-[min(40rem,70vh)] overflow-auto rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed break-all whitespace-pre-wrap">
+      <pre className="max-h-[min(40rem,70vh)] overflow-auto bg-muted/40 p-3 text-xs leading-relaxed break-all whitespace-pre-wrap">
         {value}
       </pre>
     </section>
@@ -1302,9 +1308,9 @@ function CopyButton({
   async function copy() {
     try {
       await navigator.clipboard.writeText(value)
-      toast.success("已复制")
+      toast.add({ title: "已复制", type: "success" })
     } catch {
-      toast.error("复制失败")
+      toast.add({ title: "复制失败", type: "error" })
     }
   }
   return (

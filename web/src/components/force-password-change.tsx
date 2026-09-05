@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react"
 import { KeyRoundIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/components/ui/toast"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -37,11 +37,11 @@ export function ForcePasswordChange({
     const password = String(data.get("password") ?? "")
     const confirmation = String(data.get("confirmation") ?? "")
     if (password.length < 12) {
-      toast.error("新密码至少 12 位")
+      toast.add({ title: "新密码至少 12 位", type: "error" })
       return
     }
     if (password !== confirmation) {
-      toast.error("两次输入的密码不一致")
+      toast.add({ title: "两次输入的密码不一致", type: "error" })
       return
     }
     setPending(true)
@@ -49,9 +49,12 @@ export function ForcePasswordChange({
       await postJSON("/api/auth/password", { password })
       await onChanged()
       form.reset()
-      toast.success("密码已修改")
+      toast.add({ title: "密码已修改", type: "success" })
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "密码修改失败")
+      toast.add({
+        title: cause instanceof Error ? cause.message : "密码修改失败",
+        type: "error",
+      })
     } finally {
       setPending(false)
     }
@@ -61,7 +64,9 @@ export function ForcePasswordChange({
     <main className="flex min-h-svh items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>设置新密码</CardTitle>
+          <CardTitle>
+            <h1>设置新密码</h1>
+          </CardTitle>
           <CardDescription>
             当前密码由管理员临时生成。设置新密码后才能继续使用账户。
           </CardDescription>

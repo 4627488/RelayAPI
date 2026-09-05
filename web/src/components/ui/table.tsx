@@ -1,12 +1,7 @@
 import * as React from "react"
+import { cn } from "cn"
 
-import { cn } from "@/lib/utils"
-
-function Table({
-  className,
-  pinEdges = false,
-  ...props
-}: React.ComponentProps<"table"> & { pinEdges?: boolean }) {
+function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div
       data-slot="table-container"
@@ -14,11 +9,7 @@ function Table({
     >
       <table
         data-slot="table"
-        data-pinned-edges={pinEdges}
-        className={cn(
-          "w-full caption-bottom text-sm data-[pinned-edges=true]:[&_td:first-child]:sticky data-[pinned-edges=true]:[&_td:first-child]:left-0 data-[pinned-edges=true]:[&_td:first-child]:z-10 data-[pinned-edges=true]:[&_td:first-child]:bg-card data-[pinned-edges=true]:[&_td:last-child]:sticky data-[pinned-edges=true]:[&_td:last-child]:right-0 data-[pinned-edges=true]:[&_td:last-child]:z-10 data-[pinned-edges=true]:[&_td:last-child]:bg-card data-[pinned-edges=true]:[&_th:first-child]:sticky data-[pinned-edges=true]:[&_th:first-child]:left-0 data-[pinned-edges=true]:[&_th:first-child]:z-20 data-[pinned-edges=true]:[&_th:first-child]:bg-card data-[pinned-edges=true]:[&_th:last-child]:sticky data-[pinned-edges=true]:[&_th:last-child]:right-0 data-[pinned-edges=true]:[&_th:last-child]:z-20 data-[pinned-edges=true]:[&_th:last-child]:bg-card",
-          className
-        )}
+        className={cn("w-full caption-bottom text-sm", className)}
         {...props}
       />
     </div>
@@ -76,7 +67,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
+        "h-12 px-3 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
@@ -89,7 +80,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
+        "p-3 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
         className
       )}
       {...props}
