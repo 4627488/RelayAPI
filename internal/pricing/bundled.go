@@ -9,6 +9,10 @@ var BundledPrices = []Price{
 	{Model: "gpt-5.6", InputNanoUSDPerToken: 5000, OutputNanoUSDPerToken: 30000, CachedInputNanoUSDPerToken: 500, CacheWriteNanoUSDPerToken: 5000, ReasoningNanoUSDPerToken: 30000, Source: SourceBundled, Version: "bundled-2026-07-23", PriceMultiplier: 1},
 	{Model: "gpt-5.6-terra", InputNanoUSDPerToken: 2500, OutputNanoUSDPerToken: 15000, CachedInputNanoUSDPerToken: 250, CacheWriteNanoUSDPerToken: 2500, ReasoningNanoUSDPerToken: 15000, Source: SourceBundled, Version: "bundled-2026-07-23", PriceMultiplier: 1},
 	{Model: "gpt-5.6-sol", InputNanoUSDPerToken: 5000, OutputNanoUSDPerToken: 30000, CachedInputNanoUSDPerToken: 500, CacheWriteNanoUSDPerToken: 6250, ReasoningNanoUSDPerToken: 30000, Source: SourceBundled, Version: "bundled-2026-07-23", PriceMultiplier: 1},
+	// OpenAI Standard short-context rates for GPT-6 Astra (≤272k input).
+	// Requests above that threshold reprice the whole call at 2× input / 1.5×
+	// output; models.dev stores that as a tier Relay does not compile yet.
+	{Model: "gpt-6-astra", InputNanoUSDPerToken: 10000, OutputNanoUSDPerToken: 50000, CachedInputNanoUSDPerToken: 1000, CacheWriteNanoUSDPerToken: 12500, ReasoningNanoUSDPerToken: 50000, Source: SourceBundled, Version: "openai-standard-2026-09-03", PriceMultiplier: 1},
 	// OpenAI Standard pricing separates text input from image input/output.
 	// The Images API reports the exact modality token counts, so production
 	// billing uses those counts instead of an estimated flat per-image price.

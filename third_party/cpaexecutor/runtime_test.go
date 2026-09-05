@@ -28,6 +28,39 @@ func TestRuntimeLeavesOfficialCodexMultiAgentDefault(t *testing.T) {
 	}
 }
 
+func TestRuntimeUnionsCPAStaticCodexModelsWithStoredAllowlist(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "codex-stale", Provider: "codex", Enabled: true,
+		Models:   []string{"gpt-5.6-sol", "gpt-5.4"},
+		Document: []byte(`{"type":"codex","access_token":"test-token"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+
+	got := runtime.CredentialModels("codex-stale")
+	joined := "\n" + strings.Join(got, "\n") + "\n"
+	if !strings.Contains(joined, "\ngpt-6-astra\n") {
+		t.Fatalf("stale Codex allowlist did not pick up gpt-6-astra: %v", got)
+	}
+	if !strings.Contains(joined, "\ngpt-5.6-sol\n") || !strings.Contains(joined, "\ngpt-5.4\n") {
+		t.Fatalf("stored Codex models were dropped: %v", got)
+	}
+	if !containsString(runtime.Models(), "gpt-6-astra") {
+		t.Fatalf("public catalog missing gpt-6-astra: %v", runtime.Models())
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRuntimeUsesCPAStaticModelsWhenCredentialModelsAreEmpty(t *testing.T) {
 	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
 		ID: "codex-static", Provider: "codex", Enabled: true,
