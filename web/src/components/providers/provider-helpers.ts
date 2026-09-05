@@ -37,7 +37,7 @@ export type OAuthStatus = {
 export type ConnectMode = "oauth" | "api_key" | "import"
 export type ProviderAccountUpdate = {
   name: string
-  models: string[]
+  models?: string[]
   base_url?: string
   websockets?: boolean
   proxy_id: string
@@ -84,7 +84,9 @@ export function accountStatus(account: ProviderAccount) {
     }
     return { label: "暂不可用", variant: "secondary" as const }
   }
-  return { label: "可用", variant: "outline" as const }
+  if (!account.models?.length)
+    return { label: "未发布模型", variant: "secondary" as const }
+  return { label: "可调度", variant: "outline" as const }
 }
 
 export function publishedModels(account: ProviderAccount) {
@@ -117,9 +119,6 @@ export function quotaSummary(account: ProviderAccount) {
   if (account.quota_probe_status === "unsupported") return "上游无自动额度"
   if (account.quota_probe_status === "error") {
     return account.quota_probe_error || "额度探测失败"
-  }
-  if (account.success || account.failed) {
-    return `${account.success ?? 0} 成功 / ${account.failed ?? 0} 失败`
   }
   return "尚未探测"
 }

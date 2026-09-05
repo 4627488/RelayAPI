@@ -62,7 +62,10 @@ describe("admin overview", () => {
       <AdminOverviewPage onPageChange={onPageChange} />
     )
 
-    await screen.getByRole("button", { name: /今日错误/ }).click()
+    await expect
+      .element(screen.getByRole("link", { name: /今日错误/ }))
+      .toHaveAttribute("href", "/admin/logs")
+    await screen.getByRole("link", { name: /今日错误/ }).click()
     expect(onPageChange).toHaveBeenCalledWith("logs")
   })
 })

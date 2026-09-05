@@ -1,10 +1,20 @@
 import { useMemo, useState } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { Tick02Icon, Search01Icon } from "@hugeicons/core-free-icons"
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item"
+import { toast } from "@/components/ui/toast"
 
 type Props = {
   id: string
@@ -14,6 +24,8 @@ type Props = {
   allLabel?: string
 }
 
+const ALL_VALUE_PREFIX = "__all_available_models__"
+
 export function ModelSelector({
   id,
   options,
@@ -21,7 +33,7 @@ export function ModelSelector({
   onChange,
   allLabel = "全部可用模型",
 }: Props) {
-  const [query, setQuery] = useState("")
+  const [open, setOpen] = useState(false)
   const models = useMemo(
     () =>
       Array.from(
@@ -31,79 +43,76 @@ export function ModelSelector({
       ).sort(),
     [options, value]
   )
-  const filtered = models.filter((model) =>
-    model.toLowerCase().includes(query.trim().toLowerCase())
-  )
-  const selected = new Set(value)
-
-  function toggle(model: string) {
-    onChange(
-      selected.has(model)
-        ? value.filter((item) => item !== model)
-        : [...value, model]
-    )
-  }
+  let ALL_VALUE = ALL_VALUE_PREFIX
+  while (models.includes(ALL_VALUE)) ALL_VALUE += "_"
+  const comboValue = value.length ? value : [ALL_VALUE]
+  const items = [ALL_VALUE, ...models]
 
   return (
-    <div id={id} className="flex flex-col gap-2 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant={!value.length ? "secondary" : "outline"}
-          onClick={() => onChange([])}
-        >
-          {!value.length ? (
-            <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
-          ) : null}
-          {allLabel}
-        </Button>
-        <Badge variant="outline">
-          {value.length ? `已选 ${value.length}` : `共 ${options.length} 个`}
-        </Badge>
-      </div>
-      {models.length > 8 ? (
-        <div className="relative">
-          <HugeiconsIcon
-            strokeWidth={2}
-            icon={Search01Icon}
-            className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="筛选模型"
-            className="pl-8"
-          />
-        </div>
-      ) : null}
-      {models.length ? (
-        <div className="flex max-h-48 flex-wrap gap-1.5 overflow-y-auto">
-          {filtered.map((model) => (
-            <Button
-              key={model}
-              type="button"
-              size="sm"
-              variant={selected.has(model) ? "secondary" : "ghost"}
-              className="max-w-full"
-              onClick={() => toggle(model)}
-              title={model}
-            >
-              {selected.has(model) ? (
-                <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
-              ) : null}
-              <span className="truncate">{model}</span>
-            </Button>
-          ))}
-          {!filtered.length ? (
-            <p className="py-3 text-sm text-muted-foreground">没有匹配的模型</p>
-          ) : null}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          这个账户没有可枚举的模型列表；当前将继承账户全部模型。
-        </p>
-      )}
+    <div id={id} className="flex flex-col gap-2">
+      <Combobox
+        multiple
+        items={items}
+        itemToStringLabel={(item) =>
+          item === ALL_VALUE ? allLabel : String(item)
+        }
+        value={comboValue}
+        onValueChange={(next) => {
+          const nextValues = next as string[]
+          if (!nextValues.length && value.length > 0) {
+            toast.add({
+              title: "请先选择“全部可用模型”以继承权限",
+              type: "error",
+            })
+            return
+          }
+          if (nextValues.includes(ALL_VALUE)) {
+            onChange(
+              value.length
+                ? []
+                : nextValues.filter((item) => item !== ALL_VALUE)
+            )
+            return
+          }
+          onChange(nextValues)
+        }}
+        open={open}
+        onOpenChange={setOpen}
+      >
+        <ComboboxInput
+          aria-label={allLabel}
+          placeholder={
+            value.length ? `已选择 ${value.length} 个模型` : allLabel
+          }
+          showClear
+        />
+        <ComboboxContent>
+          <ComboboxEmpty>没有匹配的模型</ComboboxEmpty>
+          <ComboboxList>
+            {(item: (typeof items)[number]) => (
+              <ComboboxItem
+                key={item}
+                value={item}
+                title={item === ALL_VALUE ? allLabel : item}
+              >
+                {item === ALL_VALUE ? allLabel : item}
+              </ComboboxItem>
+            )}
+          </ComboboxList>
+        </ComboboxContent>
+      </Combobox>
+      <Item variant="muted" size="xs">
+        <ItemContent>
+          <ItemTitle>
+            {value.length ? `已选择 ${value.length} 个模型` : allLabel}
+          </ItemTitle>
+          <ItemDescription>
+            {value.length
+              ? value.join(", ")
+              : "继承账户允许的全部模型；选择具体模型可缩小范围。"}
+          </ItemDescription>
+        </ItemContent>
+      </Item>
     </div>
   )
 }

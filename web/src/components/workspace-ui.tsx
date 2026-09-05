@@ -4,13 +4,7 @@ import { Search01Icon, XIcon } from "@hugeicons/core-free-icons"
 
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-} from "@/components/ui/card"
+import { Card, CardContent, CardDescription } from "@/components/ui/card"
 import {
   InputGroup,
   InputGroupAddon,
@@ -35,7 +29,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "flex min-h-9 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between",
+        "flex min-h-8 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between",
         className
       )}
     >
@@ -43,14 +37,14 @@ export function PageHeader({
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {title ? (
-              <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
+              <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
                 {title}
               </h1>
             ) : null}
             {accessory}
           </div>
           {description ? (
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+            <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
               {description}
             </p>
           ) : null}
@@ -81,53 +75,43 @@ export function StatStrip({
   className?: string
 }) {
   return (
-    <div
-      className={cn("grid grid-cols-2 gap-4 lg:grid-cols-4", className)}
-      role="list"
-      aria-label="统计"
-    >
-      {items.map((item, index) => {
-        const Icon = item.icon
-        return (
-          <Card
-            key={`${String(item.label)}-${index}`}
-            className="min-w-0"
+    <Card size="sm" className={className}>
+      <CardContent
+        className="grid grid-cols-2 gap-x-6 gap-y-3 lg:grid-cols-4"
+        role="list"
+        aria-label="统计"
+      >
+        {items.map((item, index) => (
+          <div
+            key={index}
             role="listitem"
-            size="sm"
+            className="flex min-w-0 flex-col gap-1"
           >
-            <CardHeader>
+            <div className="flex items-baseline justify-between gap-2">
               <CardDescription>{item.label}</CardDescription>
-              {Icon ? (
-                <CardAction>
-                  <HugeiconsIcon
-                    icon={Icon}
-                    strokeWidth={2}
-                    className="text-muted-foreground"
-                  />
-                </CardAction>
-              ) : null}
-            </CardHeader>
-            <CardContent>
-              <div
+              <span
                 className={cn(
-                  "text-xl leading-tight font-semibold break-words tabular-nums sm:text-2xl",
-                  item.tone === "negative"
-                    ? "text-destructive"
-                    : "text-foreground"
+                  "text-lg font-semibold tabular-nums",
+                  item.tone === "negative" && "text-destructive"
                 )}
               >
                 {item.value}
-              </div>
-              {item.detail ? (
-                <div className="mt-1 text-xs leading-5 break-words text-muted-foreground">
-                  {item.detail}
-                </div>
-              ) : null}
-            </CardContent>
-          </Card>
-        )
-      })}
-    </div>
+              </span>
+            </div>
+            {item.detail ? (
+              <p
+                className="truncate text-xs text-muted-foreground"
+                title={
+                  typeof item.detail === "string" ? item.detail : undefined
+                }
+              >
+                {item.detail}
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   )
 }
 

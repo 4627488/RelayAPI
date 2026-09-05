@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Tick02Icon,
@@ -58,6 +58,11 @@ import {
   type OAuthStatus,
 } from "@/components/providers/provider-helpers"
 
+function credentialTemplate(provider: string) {
+  const type = provider === "aliyun-bailian" ? "openai-compatibility" : provider
+  return JSON.stringify({ type }, null, 2)
+}
+
 export function ConnectAccountDialog({
   open,
   reauthAccount,
@@ -76,10 +81,14 @@ export function ConnectAccountDialog({
   const [pending, setPending] = useState(false)
   const [oauth, setOAuth] = useState<OAuthStart | null>(null)
   const [oauthStatus, setOAuthStatus] = useState<OAuthStatus | null>(null)
+  const [oauthStartedAt, setOAuthStartedAt] = useState<number | null>(null)
+  const [oauthExpired, setOAuthExpired] = useState(false)
   const [callbackURL, setCallbackURL] = useState("")
   const [name, setName] = useState("")
   const [document, setDocument] = useState('{\n  "type": "codex"\n}')
   const [proxyID, setProxyID] = useState("")
+  const [documentEdited, setDocumentEdited] = useState(false)
+  const oauthGeneration = useRef(0)
 
   const cancelOAuth = useCallback(async (state: string) => {
     try {
@@ -97,12 +106,17 @@ export function ConnectAccountDialog({
     setPending(false)
     setOAuth(null)
     setOAuthStatus(null)
+    setOAuthStartedAt(null)
+    setOAuthExpired(false)
     setCallbackURL("")
     setName("")
     setProxyID("")
+    setDocument('{\n  "type": "codex"\n}')
+    setDocumentEdited(false)
   }
 
   function close(next: boolean) {
+    if (!next) oauthGeneration.current += 1
     if (!next && oauth?.state) void cancelOAuth(oauth.state)
     if (!next) reset()
     onOpenChange(next)
@@ -121,7 +135,8 @@ export function ConnectAccountDialog({
       !open ||
       !oauth?.state ||
       oauthStatus?.status === "authorized" ||
-      oauthStatus?.status === "error"
+      oauthStatus?.status === "error" ||
+      oauthExpired
     )
       return
     let active = true
@@ -150,9 +165,33 @@ export function ConnectAccountDialog({
       active = false
       window.clearInterval(timer)
     }
-  }, [oauth?.state, oauthStatus?.status, open, provider, reauthAccount])
+  }, [
+    oauth?.state,
+    oauthExpired,
+    oauthStatus?.status,
+    open,
+    provider,
+    reauthAccount,
+  ])
+
+  useEffect(() => {
+    if (
+      !oauth?.expires_in ||
+      !oauthStartedAt ||
+      oauthStatus?.status !== "waiting"
+    ) {
+      return
+    }
+    const update = () => {
+      setOAuthExpired(Date.now() >= oauthStartedAt + oauth.expires_in! * 1000)
+    }
+    update()
+    const timer = window.setInterval(update, 1000)
+    return () => window.clearInterval(timer)
+  }, [oauth, oauthStartedAt, oauthStatus?.status])
 
   async function startOAuth() {
+    const generation = ++oauthGeneration.current
     setPending(true)
     try {
       const result = await api<OAuthStart>(
@@ -167,16 +206,38 @@ export function ConnectAccountDialog({
           }),
         }
       )
+      if (generation !== oauthGeneration.current) {
+        if (result.state) await cancelOAuth(result.state)
+        return
+      }
       setOAuth(result)
+      setOAuthStartedAt(Date.now())
+      setOAuthExpired(false)
       setOAuthStatus({ status: "waiting" })
     } catch (cause) {
+      if (generation !== oauthGeneration.current) return
       toast.add({
         title: cause instanceof Error ? cause.message : "无法创建授权链接",
         type: "error",
       })
     } finally {
-      setPending(false)
+      if (generation === oauthGeneration.current) setPending(false)
     }
+  }
+
+  async function restartOAuth() {
+    if (oauth?.state) await cancelOAuth(oauth.state)
+    setOAuth(null)
+    setOAuthStatus(null)
+    setOAuthStartedAt(null)
+    setOAuthExpired(false)
+    setCallbackURL("")
+    await startOAuth()
+  }
+
+  function updateImportProvider(next: string) {
+    setProvider(next)
+    if (!documentEdited) setDocument(credentialTemplate(next))
   }
 
   async function submitCallback() {
@@ -299,7 +360,7 @@ export function ConnectAccountDialog({
           <DialogDescription>
             {reauthAccount
               ? `为 ${displayName(reauthAccount)} 更新 OAuth 登录，不改变已有订阅分配。`
-              : "选择最适合该账户的连接方式。OAuth 不需要手动复制令牌。"}
+              : "先选择认证方式和提供商。连接成功后会读取上游模型目录，再由你选择对外发布的模型。"}
           </DialogDescription>
         </DialogHeader>
 
@@ -372,7 +433,9 @@ export function ConnectAccountDialog({
                       : "在新页面登录并确认授权。"}
                   </p>
                 </div>
-                {oauthStatus?.status === "error" ? (
+                {oauthExpired ? (
+                  <Badge variant="destructive">已过期</Badge>
+                ) : oauthStatus?.status === "error" ? (
                   <Badge variant="destructive">失败</Badge>
                 ) : (
                   <Badge variant="secondary">等待授权</Badge>
@@ -385,6 +448,7 @@ export function ConnectAccountDialog({
               ) : null}
               <Button
                 className="mt-4 w-full"
+                disabled={oauthExpired}
                 onClick={() =>
                   window.open(oauth.url, "_blank", "noopener,noreferrer")
                 }
@@ -415,7 +479,14 @@ export function ConnectAccountDialog({
                 </Button>
               </Field>
             ) : null}
-            {oauthStatus?.status === "error" ? (
+            {oauthExpired ? (
+              <Alert variant="destructive">
+                <AlertTitle>授权会话已过期</AlertTitle>
+                <AlertDescription>
+                  请重新生成授权链接后再完成登录。
+                </AlertDescription>
+              </Alert>
+            ) : oauthStatus?.status === "error" ? (
               <Alert variant="destructive">
                 <AlertTitle>授权未完成</AlertTitle>
                 <AlertDescription>
@@ -450,6 +521,9 @@ export function ConnectAccountDialog({
                     ? "openai"
                     : "codex"
               )
+              if (next === "import" && !documentEdited) {
+                setDocument(credentialTemplate("codex"))
+              }
             }}
           >
             <TabsList className="grid w-full grid-cols-3">
@@ -496,7 +570,7 @@ export function ConnectAccountDialog({
                 <AlertTitle>推荐连接方式</AlertTitle>
                 <AlertDescription>
                   Relay
-                  创建一次性授权会话。授权完成后你仍可检查账户名称和模型范围，再决定保存。
+                  创建一次性授权会话。授权完成后会显示账户身份；保存后自动发现上游模型，发布范围可在账户配置中调整。
                 </AlertDescription>
               </Alert>
             </TabsContent>
@@ -516,10 +590,11 @@ export function ConnectAccountDialog({
               <form id="import-credential" onSubmit={submitCredential}>
                 <CredentialFields
                   provider={provider}
-                  setProvider={setProvider}
+                  setProvider={updateImportProvider}
                   mode="import"
                   document={document}
                   setDocument={setDocument}
+                  setDocumentEdited={setDocumentEdited}
                   proxies={proxies}
                   proxyID={proxyID}
                   setProxyID={setProxyID}
@@ -542,7 +617,18 @@ export function ConnectAccountDialog({
               )}
               保存账户
             </Button>
-          ) : oauth ? null : mode === "oauth" ? (
+          ) : oauth ? (
+            oauthExpired || oauthStatus?.status === "error" ? (
+              <Button disabled={pending} onClick={() => void restartOAuth()}>
+                {pending ? (
+                  <Spinner />
+                ) : (
+                  <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
+                )}
+                重新生成授权链接
+              </Button>
+            ) : null
+          ) : mode === "oauth" ? (
             <Button disabled={pending} onClick={() => void startOAuth()}>
               {pending ? (
                 <Spinner />
@@ -579,6 +665,7 @@ function CredentialFields({
   mode,
   document,
   setDocument,
+  setDocumentEdited,
   proxies,
   proxyID,
   setProxyID,
@@ -588,6 +675,7 @@ function CredentialFields({
   mode: "api_key" | "import"
   document?: string
   setDocument?: (value: string) => void
+  setDocumentEdited?: (value: boolean) => void
   proxies: OutboundProxy[]
   proxyID: string
   setProxyID: (value: string) => void
@@ -634,9 +722,9 @@ function CredentialFields({
       </div>
       <Alert>
         <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
-        <AlertTitle>模型目录来自上游</AlertTitle>
+        <AlertTitle>自动发现并发布模型</AlertTitle>
         <AlertDescription>
-          连接成功后自动读取该凭据的模型目录，再到“管理”里勾选要对外发布的范围。
+          凭据验证成功后自动读取上游模型目录并发布；之后可在“配置”中调整对外发布的模型范围。
         </AlertDescription>
       </Alert>
       {mode === "api_key" ? (
@@ -711,7 +799,10 @@ function CredentialFields({
             <Textarea
               id="credential-document"
               value={document}
-              onChange={(event) => setDocument?.(event.target.value)}
+              onChange={(event) => {
+                setDocumentEdited?.(true)
+                setDocument?.(event.target.value)
+              }}
               rows={10}
               required
               spellCheck={false}

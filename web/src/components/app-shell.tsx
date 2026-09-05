@@ -397,7 +397,7 @@ export function AppShell({
             </Button>
           ) : null}
         </header>
-        <div className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-1 flex-col p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-1 flex-col p-4 sm:p-5 lg:p-4">
           {children}
         </div>
       </SidebarInset>

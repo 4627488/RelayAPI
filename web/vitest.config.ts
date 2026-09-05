@@ -9,6 +9,8 @@ export default mergeConfig(
   defineConfig({
     optimizeDeps: {
       include: [
+        "@base-ui/react",
+        "@base-ui/react/alert-dialog",
         "@base-ui/react/avatar",
         "@base-ui/react/dialog",
         "@base-ui/react/menu",

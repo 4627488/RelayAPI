@@ -1,43 +1,27 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import {
-  Activity01Icon,
-  Tick02Icon,
-  FileIcon,
-  MoreHorizontalIcon,
-  NetworkIcon,
-  RefreshCwIcon,
-  ShieldCheckIcon,
-  Delete02Icon,
-} from "@hugeicons/core-free-icons"
-import { toast } from "@/components/ui/toast"
-
+import { useEffect, useRef, useState } from "react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
   Field,
   FieldContent,
   FieldDescription,
+  FieldError,
   FieldGroup,
   FieldLabel,
-  FieldTitle,
+  FieldSet,
+  FieldLegend,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
@@ -48,11 +32,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { QuotaSnapshot } from "@/components/quota-snapshot"
+import { AccountStatusPanel } from "@/components/providers/account-status-panel"
+import { SearchField } from "@/components/workspace-ui"
 import {
   api,
   type OutboundProxy,
@@ -60,26 +53,16 @@ import {
   type ProviderAccountTestResult,
 } from "@/lib/api"
 import {
+  accountKey,
+  accountStatus,
   displayName,
   isOAuthAccount,
   providerLabel,
-  publishedModels,
   sourceLabel,
   type ProviderAccountUpdate,
-} from "@/components/providers/provider-helpers"
+} from "./provider-helpers"
 
-export function ManageAccountDialog({
-  account,
-  pending,
-  onOpenChange,
-  onSave,
-  onToggle,
-  onDelete,
-  onReauthenticate,
-  onTest,
-  lastTest,
-  proxies,
-}: {
+type Props = {
   account: ProviderAccount | null
   pending: boolean
   onOpenChange: (open: boolean) => void
@@ -93,447 +76,628 @@ export function ManageAccountDialog({
   onTest: (account: ProviderAccount) => void
   lastTest?: ProviderAccountTestResult
   proxies: OutboundProxy[]
-}) {
-  const [name, setName] = useState("")
-  const [baseURL, setBaseURL] = useState("")
-  const [websockets, setWebsockets] = useState(false)
-  const [proxyID, setProxyID] = useState("")
-  const [apiKey, setAPIKey] = useState("")
-  const [headersText, setHeadersText] = useState("{}")
-  const [headersDirty, setHeadersDirty] = useState(false)
-  const [documentText, setDocumentText] = useState("")
-  const [candidates, setCandidates] = useState<string[]>([])
-  const [selectedModels, setSelectedModels] = useState<string[]>([])
-  const [modelSearch, setModelSearch] = useState("")
+}
+export function ManageAccountDialog(props: Props) {
+  return props.account ? (
+    <AccountDetails
+      key={accountKey(props.account)}
+      {...props}
+      account={props.account}
+    />
+  ) : null
+}
+function AccountDetails({
+  account,
+  pending,
+  onOpenChange,
+  onSave,
+  onToggle,
+  onDelete,
+  onReauthenticate,
+  onTest,
+  lastTest,
+  proxies,
+}: Props & { account: ProviderAccount }) {
+  const [tab, setTab] = useState("status")
+  const [name, setName] = useState(displayName(account))
+  const [baseURL, setBaseURL] = useState(account.base_url ?? "")
+  const [proxyID, setProxyID] = useState(account.proxy_id ?? "")
+  const [websockets, setWebsockets] = useState(account.websockets ?? false)
+  const [selectedModels, setSelectedModels] = useState(account.models ?? [])
+  const [candidates, setCandidates] = useState(account.models ?? [])
+  const [query, setQuery] = useState("")
+  const [catalogSource, setCatalogSource] = useState("当前已发布模型")
+  const [catalogError, setCatalogError] = useState("")
   const [modelLoading, setModelLoading] = useState(false)
-
-  const loadModels = useCallback(
-    async (target: ProviderAccount, announce: boolean) => {
-      setModelLoading(true)
-      try {
-        const result = await api<{
-          models: string[]
-          source: string
-          warning?: string
-        }>(
-          `/api/admin/providers/accounts/${encodeURIComponent(target.id || target.name)}/models`
-        )
-        const nextCandidates = result.models ?? []
-        const current = new Set(target.models ?? [])
-        const retained = nextCandidates.filter((model) => current.has(model))
-        setCandidates(nextCandidates)
-        setSelectedModels(retained.length ? retained : nextCandidates)
-        if (announce) {
-          if (result.warning)
-            toast.add({
-              title: "已返回缓存目录",
-              type: "warning",
-              description: result.warning,
-            })
-          else
-            toast.add({
-              title:
-                result.source === "upstream"
-                  ? "已从上游枚举模型"
-                  : "已读取模型目录",
-              type: "success",
-            })
-        }
-      } catch (cause) {
-        setCandidates([])
-        setSelectedModels([])
-        toast.add({
-          title: cause instanceof Error ? cause.message : "无法获取模型目录",
-          type: "error",
-        })
-      } finally {
-        setModelLoading(false)
-      }
-    },
-    []
+  const [apiKey, setAPIKey] = useState("")
+  const [headerMode, setHeaderMode] = useState("keep")
+  const [headers, setHeaders] = useState([{ name: "", value: "" }])
+  const [documentText, setDocumentText] = useState("")
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [discardOpen, setDiscardOpen] = useState(false)
+  const request = useRef<AbortController | null>(null)
+  useEffect(() => () => request.current?.abort(), [])
+  const oauth = isOAuthAccount(account)
+  const supportsWebsocket = ["codex", "xai", "grok"].includes(
+    account.provider.toLowerCase()
   )
-
-  useEffect(() => {
-    if (!account) return
-    setName(displayName(account))
-    setBaseURL(account.base_url ?? "")
-    setWebsockets(account.websockets ?? false)
-    setProxyID(account.proxy_id ?? "")
-    setAPIKey("")
-    setHeadersText("{}")
-    setHeadersDirty(false)
-    setDocumentText("")
-    setModelSearch("")
-    setCandidates(account.models ?? [])
-    setSelectedModels(account.models ?? [])
-    if (!account.disabled) void loadModels(account, false)
-  }, [account, loadModels])
-
-  const visibleModels = useMemo(() => {
-    const needle = modelSearch.trim().toLowerCase()
-    return needle
-      ? candidates.filter((model) => model.toLowerCase().includes(needle))
-      : candidates
-  }, [candidates, modelSearch])
-
-  function toggleModel(model: string, checked: boolean) {
-    setSelectedModels((current) =>
-      checked ? [...current, model] : current.filter((item) => item !== model)
-    )
+  const status = accountStatus(account)
+  const busy = pending || saving
+  const modelsDirty =
+    JSON.stringify([...selectedModels].sort()) !==
+    JSON.stringify([...(account.models ?? [])].sort())
+  const connectionDirty =
+    name !== displayName(account) ||
+    baseURL !== (account.base_url ?? "") ||
+    proxyID !== (account.proxy_id ?? "") ||
+    websockets !== (account.websockets ?? false)
+  const credentialsDirty = Boolean(
+    apiKey.trim() || documentText.trim() || headerMode !== "keep"
+  )
+  const dirty = modelsDirty || connectionDirty || credentialsDirty
+  const dirtyPages = [
+    modelsDirty && "模型发布",
+    connectionDirty && "连接设置",
+    credentialsDirty && "凭据",
+  ]
+    .filter(Boolean)
+    .join("、")
+  const currentDirty =
+    tab === "models"
+      ? modelsDirty
+      : tab === "connection"
+        ? connectionDirty
+        : tab === "credentials"
+          ? credentialsDirty
+          : false
+  const allModels = [
+    ...new Map(
+      [...candidates, ...selectedModels].map((model) => [
+        model.toLowerCase(),
+        model,
+      ])
+    ).values(),
+  ].sort()
+  const visible = allModels.filter((model) =>
+    model.toLowerCase().includes(query.trim().toLowerCase())
+  )
+  const missing = selectedModels.filter(
+    (model) =>
+      !candidates.some(
+        (candidate) => candidate.toLowerCase() === model.toLowerCase()
+      )
+  )
+  function close(open: boolean) {
+    if (open || busy) return
+    if (dirty) setDiscardOpen(true)
+    else onOpenChange(false)
   }
-
-  function save() {
-    if (!account) return
-    let headers: Record<string, string> | undefined
-    let document: Record<string, unknown> | undefined
-    if (headersDirty) {
-      try {
-        const parsed = JSON.parse(headersText) as unknown
-        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object")
-          throw new Error()
-        const entries = Object.entries(parsed)
-        if (entries.some(([, value]) => typeof value !== "string"))
-          throw new Error()
-        headers = Object.fromEntries(entries) as Record<string, string>
-      } catch {
-        toast.add({ title: "自定义请求头必须是 JSON 对象", type: "error" })
+  async function refreshModels() {
+    request.current?.abort()
+    const controller = new AbortController()
+    request.current = controller
+    setModelLoading(true)
+    setCatalogError("")
+    try {
+      const result = await api<{
+        models: string[]
+        source: string
+        warning?: string
+      }>(
+        `/api/admin/providers/accounts/${encodeURIComponent(accountKey(account))}/models`,
+        { signal: controller.signal }
+      )
+      if (controller.signal.aborted) return
+      setCandidates(result.models ?? [])
+      setCatalogSource(
+        result.source === "upstream"
+          ? "上游实时目录"
+          : result.source === "configured"
+            ? "当前配置目录"
+            : "提供商目录 / 缓存"
+      )
+      setCatalogError(result.warning ?? "")
+    } catch (cause) {
+      if (!controller.signal.aborted)
+        setCatalogError(
+          cause instanceof Error ? cause.message : "模型目录读取失败"
+        )
+    } finally {
+      if (!controller.signal.aborted) setModelLoading(false)
+    }
+  }
+  async function save() {
+    setError("")
+    const value: ProviderAccountUpdate = {
+      name: displayName(account),
+      proxy_id: account.proxy_id ?? "",
+    }
+    if (tab === "models") {
+      if (!selectedModels.length) {
+        setError("至少发布一个模型；如需停止接收请求，请停用账户。")
         return
       }
-    }
-    if (documentText.trim()) {
-      try {
-        const parsed = JSON.parse(documentText) as unknown
-        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object")
-          throw new Error()
-        document = parsed as Record<string, unknown>
-      } catch {
-        toast.add({ title: "替换凭据必须是有效的 JSON 对象", type: "error" })
+      value.models = selectedModels
+    } else if (tab === "connection") {
+      if (!name.trim()) {
+        setError("请填写账户名称。")
         return
       }
+      if (!oauth && baseURL.trim()) {
+        try {
+          const url = new URL(baseURL.trim())
+          if (
+            !["http:", "https:"].includes(url.protocol) ||
+            url.username ||
+            url.password
+          )
+            throw new Error()
+        } catch {
+          setError("接口地址需为有效的 HTTP(S) 地址，凭据请在凭据页填写。")
+          return
+        }
+      }
+      value.name = name.trim()
+      value.proxy_id = proxyID
+      if (!oauth) value.base_url = baseURL.trim()
+      if (supportsWebsocket) value.websockets = websockets
+    } else if (tab === "credentials") {
+      if (apiKey.trim()) value.api_key = apiKey.trim()
+      if (headerMode === "clear") value.headers = {}
+      if (headerMode === "replace") {
+        const rows = headers.filter((row) => row.name.trim() || row.value)
+        const names = rows.map((row) => row.name.trim().toLowerCase())
+        if (
+          !rows.length ||
+          rows.some(
+            (row) =>
+              !/^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(row.name.trim()) ||
+              /[\r\n]/.test(row.value)
+          ) ||
+          new Set(names).size !== rows.length
+        ) {
+          setError(
+            "请填写有效且不重复的请求头名称；值不能包含换行。清空配置请选“清除全部”。"
+          )
+          return
+        }
+        value.headers = Object.fromEntries(
+          rows.map((row) => [row.name.trim(), row.value])
+        )
+      }
+      if (documentText.trim()) {
+        try {
+          const parsed: unknown = JSON.parse(documentText)
+          if (!parsed || Array.isArray(parsed) || typeof parsed !== "object")
+            throw new Error()
+          value.document = parsed as Record<string, unknown>
+        } catch {
+          setError("替换凭据必须是有效的 JSON 对象。")
+          return
+        }
+      }
     }
-    void onSave(account, {
-      name,
-      models: selectedModels,
-      ...(["codex", "xai", "grok"].includes(account.provider.toLowerCase())
-        ? { websockets }
-        : {}),
-      proxy_id: proxyID,
-      ...(account.auth_kind !== "oauth" ? { base_url: baseURL.trim() } : {}),
-      ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
-      ...(headersDirty ? { headers } : {}),
-      ...(document ? { document } : {}),
-    })
+    setSaving(true)
+    try {
+      await onSave(account, value)
+      if (tab === "connection") {
+        setName(name.trim())
+        setBaseURL(baseURL.trim())
+      }
+      if (tab === "credentials") {
+        setAPIKey("")
+        setDocumentText("")
+        setHeaderMode("keep")
+        setHeaders([{ name: "", value: "" }])
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "保存失败，请重试。")
+    } finally {
+      setSaving(false)
+    }
   }
   return (
-    <Dialog open={Boolean(account)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        {account ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>管理账户</DialogTitle>
-              <DialogDescription>
-                {providerLabel(account.provider)} · {sourceLabel(account)}
-              </DialogDescription>
-            </DialogHeader>
-            <Tabs defaultValue="general">
-              <TabsList className="w-full">
-                <TabsTrigger value="general">
-                  <HugeiconsIcon strokeWidth={2} icon={ShieldCheckIcon} />
-                  常规
-                </TabsTrigger>
-                <TabsTrigger value="connection">
-                  <HugeiconsIcon strokeWidth={2} icon={NetworkIcon} />
-                  连接
-                </TabsTrigger>
-                <TabsTrigger value="advanced">
-                  <HugeiconsIcon strokeWidth={2} icon={FileIcon} />
-                  高级
-                </TabsTrigger>
-              </TabsList>
-              <TabsContent value="general">
+    <>
+      <Sheet open onOpenChange={close}>
+        <SheetContent
+          className="data-[side=right]:w-full data-[side=right]:sm:max-w-2xl"
+          showCloseButton={!busy}
+        >
+          <SheetHeader>
+            <SheetTitle>{displayName(account)}</SheetTitle>
+            <SheetDescription>
+              {providerLabel(account.provider)} · {sourceLabel(account)}
+              {account.email ? ` · ${account.email}` : ""}
+            </SheetDescription>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={status.variant}>{status.label}</Badge>
+              {account.plan_type ? (
+                <Badge variant="secondary">{account.plan_type}</Badge>
+              ) : null}
+              <span className="text-xs text-muted-foreground">
+                已发布 {account.models?.length ?? 0} 个模型
+              </span>
+            </div>
+          </SheetHeader>
+          <Tabs
+            value={tab}
+            onValueChange={(value) => {
+              setTab(String(value))
+              setError("")
+            }}
+            className="min-h-0 flex-1 px-6"
+          >
+            <TabsList variant="line" className="w-full shrink-0">
+              <TabsTrigger disabled={busy} value="status">
+                运行状态
+              </TabsTrigger>
+              <TabsTrigger disabled={busy} value="models">
+                模型发布
+              </TabsTrigger>
+              <TabsTrigger disabled={busy} value="connection">
+                连接设置
+              </TabsTrigger>
+              <TabsTrigger disabled={busy} value="credentials">
+                凭据
+              </TabsTrigger>
+            </TabsList>
+            <fieldset
+              disabled={busy}
+              className="min-h-0 min-w-0 flex-1 overflow-y-auto py-3"
+            >
+              <TabsContent value="status">
+                <AccountStatusPanel
+                  account={account}
+                  proxies={proxies}
+                  lastTest={lastTest}
+                  busy={busy}
+                  dirty={dirty}
+                  onTest={onTest}
+                  onToggle={onToggle}
+                  onDelete={onDelete}
+                  onReauthenticate={onReauthenticate}
+                  onEditCredentials={() => setTab("credentials")}
+                />
+              </TabsContent>
+              <TabsContent value="models" className="flex flex-col gap-3">
+                <FieldDescription>
+                  勾选的模型会出现在用户可用目录中，并参与该账户的请求路由。刷新目录不会自动改变发布范围。
+                </FieldDescription>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs">
+                    已选 {selectedModels.length} / 目录 {candidates.length}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={account.disabled || modelLoading || busy}
+                    onClick={() => void refreshModels()}
+                  >
+                    {modelLoading ? <Spinner data-icon="inline-start" /> : null}
+                    刷新模型目录
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {catalogSource}
+                  {account.disabled ? " · 启用账户后可修改发布范围" : ""}
+                </p>
+                {catalogError ? (
+                  <Alert>
+                    <AlertTitle>目录刷新未完全成功</AlertTitle>
+                    <AlertDescription>
+                      {catalogError}。已保留当前选择。
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                {missing.length ? (
+                  <Alert>
+                    <AlertTitle>
+                      有 {missing.length} 个已选模型不在本次目录中
+                    </AlertTitle>
+                    <AlertDescription>
+                      已保留它们，避免静默取消发布；请检查上游或明确取消选择后再保存。
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                <SearchField
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onClear={() => setQuery("")}
+                  placeholder="搜索模型"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={account.disabled || !visible.length || busy}
+                    onClick={() =>
+                      setSelectedModels((current) => [
+                        ...new Set([...current, ...visible]),
+                      ])
+                    }
+                  >
+                    选择搜索结果
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={
+                      account.disabled || !selectedModels.length || busy
+                    }
+                    onClick={() =>
+                      setSelectedModels((current) =>
+                        current.filter((model) => !visible.includes(model))
+                      )
+                    }
+                  >
+                    取消搜索结果
+                  </Button>
+                </div>
                 <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="manage-account-name">
-                      账户名称
-                    </FieldLabel>
-                    <Input
-                      id="manage-account-name"
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
-                    />
-                    {account.email ? (
-                      <FieldDescription>
-                        授权账户：{account.email}
-                      </FieldDescription>
-                    ) : null}
-                  </Field>
-                  {isOAuthAccount(account) || account.quota_snapshot ? (
-                    <Field>
-                      <FieldLabel>账户额度</FieldLabel>
-                      <QuotaSnapshot
-                        snapshot={account.quota_snapshot}
-                        status={account.quota_probe_status}
-                        error={account.quota_probe_error}
-                        observedAt={account.quota_observed_at}
-                      />
-                      {lastTest ? (
-                        <FieldDescription>
-                          上次测试 {lastTest.ok ? "通过" : "失败"} ·{" "}
-                          {lastTest.model} · {lastTest.latency_ms} ms
-                        </FieldDescription>
-                      ) : null}
-                    </Field>
-                  ) : lastTest ? (
-                    <Field>
-                      <FieldLabel>上次测试</FieldLabel>
-                      <FieldDescription>
-                        {lastTest.ok ? "通过" : "失败"} · {lastTest.model} ·{" "}
-                        {lastTest.latency_ms} ms
-                      </FieldDescription>
-                    </Field>
-                  ) : null}
-                  <Field>
-                    <div className="flex items-center justify-between gap-3">
-                      <FieldLabel htmlFor="manage-model-search">
-                        公开模型
-                      </FieldLabel>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="xs"
-                        disabled={modelLoading || account.disabled}
-                        onClick={() => void loadModels(account, true)}
-                      >
-                        {modelLoading ? (
-                          <Spinner data-icon="inline-start" />
-                        ) : (
-                          <HugeiconsIcon
-                            strokeWidth={2}
-                            icon={RefreshCwIcon}
-                            data-icon="inline-start"
-                          />
-                        )}
-                        刷新
-                      </Button>
-                    </div>
-                    <Input
-                      id="manage-model-search"
-                      value={modelSearch}
-                      onChange={(event) => setModelSearch(event.target.value)}
-                      placeholder="筛选模型"
-                      disabled={modelLoading || account.disabled}
-                    />
-                    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                      <span>
-                        已选择 {selectedModels.length} / {candidates.length}
-                      </span>
-                      <div className="flex gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="xs"
-                          disabled={!candidates.length || account.disabled}
-                          onClick={() => setSelectedModels(candidates)}
-                        >
-                          全选
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="xs"
-                          disabled={!selectedModels.length || account.disabled}
-                          onClick={() => setSelectedModels([])}
-                        >
-                          清空
-                        </Button>
-                      </div>
-                    </div>
-                    <FieldGroup className="max-h-64 overflow-y-auto p-3">
-                      {modelLoading ? (
-                        <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-                          <Spinner />
-                          读取模型目录…
-                        </div>
-                      ) : visibleModels.length ? (
-                        visibleModels.map((model, index) => {
-                          const id = `upstream-model-${index}`
-                          return (
-                            <Field key={model} orientation="horizontal">
-                              <Checkbox
-                                id={id}
-                                checked={selectedModels.includes(model)}
-                                disabled={account.disabled}
-                                onCheckedChange={(checked) =>
-                                  toggleModel(model, checked)
-                                }
-                              />
-                              <FieldLabel
-                                htmlFor={id}
-                                className="font-mono text-xs font-normal"
-                              >
-                                {model}
-                              </FieldLabel>
-                            </Field>
+                  {visible.map((model, index) => (
+                    <Field key={model} orientation="horizontal">
+                      <Checkbox
+                        id={`publish-model-${index}`}
+                        checked={selectedModels.includes(model)}
+                        disabled={account.disabled || busy}
+                        onCheckedChange={(checked) =>
+                          setSelectedModels((current) =>
+                            checked
+                              ? [...new Set([...current, model])]
+                              : current.filter((item) => item !== model)
                           )
-                        })
-                      ) : (
-                        <p className="py-8 text-center text-sm text-muted-foreground">
-                          {account.disabled
-                            ? "账户已停用；启用后才能刷新模型目录"
-                            : "没有匹配的模型"}
-                        </p>
-                      )}
-                    </FieldGroup>
+                        }
+                      />
+                      <FieldLabel htmlFor={`publish-model-${index}`}>
+                        {model}
+                      </FieldLabel>
+                    </Field>
+                  ))}
+                  {!visible.length ? (
                     <FieldDescription>
-                      公开范围独立于凭据本身；保存后立即重建模型路由。
+                      没有匹配的模型。可清除搜索或刷新目录。
                     </FieldDescription>
-                  </Field>
+                  ) : null}
                 </FieldGroup>
               </TabsContent>
               <TabsContent value="connection">
                 <FieldGroup>
-                  <Field
-                    data-disabled={account.auth_kind === "oauth" || undefined}
-                  >
-                    <FieldLabel htmlFor="manage-base-url">
-                      上游接口地址
+                  <Field orientation="responsive">
+                    <FieldLabel htmlFor="manage-account-name">
+                      账户名称
                     </FieldLabel>
-                    <Input
-                      id="manage-base-url"
-                      type="url"
-                      className="font-mono"
-                      value={baseURL}
-                      onChange={(event) => setBaseURL(event.target.value)}
-                      placeholder="https://api.example.com/v1"
-                      disabled={account.auth_kind === "oauth"}
-                      spellCheck={false}
-                    />
-                    <FieldDescription>
-                      {account.auth_kind === "oauth"
-                        ? "OAuth 端点由提供商固定，避免令牌被发送到非预期地址。"
-                        : "留空使用提供商默认端点；修改后会重新加载该账户。"}
-                    </FieldDescription>
+                    <FieldContent>
+                      <Input
+                        id="manage-account-name"
+                        value={name}
+                        onChange={(event) => setName(event.target.value)}
+                      />
+                    </FieldContent>
                   </Field>
-                  <Field>
-                    <FieldLabel>账户代理</FieldLabel>
-                    <Select
-                      items={[
-                        { value: "direct", label: "不使用代理（直连）" },
-                        ...proxies.map((item) => ({
-                          value: item.id,
-                          label: `${item.name} · ${item.endpoint}`,
-                        })),
-                      ]}
-                      value={proxyID || "direct"}
-                      onValueChange={(next) =>
-                        setProxyID(next === "direct" || !next ? "" : next)
-                      }
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="direct">
-                            不使用代理（直连）
-                          </SelectItem>
-                          {proxies.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.name} · {item.endpoint}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FieldDescription>
-                      该选择用于此账户的推理、模型发现、令牌刷新与额度查询；未选择时明确直连。
-                    </FieldDescription>
+                  <Field orientation="responsive">
+                    <FieldLabel htmlFor="manage-base-url">接口地址</FieldLabel>
+                    <FieldContent>
+                      <Input
+                        id="manage-base-url"
+                        type="url"
+                        value={baseURL}
+                        onChange={(event) => setBaseURL(event.target.value)}
+                        disabled={oauth}
+                        placeholder="提供商默认地址"
+                      />
+                      <FieldDescription>
+                        {oauth
+                          ? "OAuth 使用提供商固定端点。"
+                          : "填写兼容接口的基础地址；留空使用提供商默认值。"}
+                      </FieldDescription>
+                    </FieldContent>
                   </Field>
-                  {["codex", "xai", "grok"].includes(
-                    account.provider.toLowerCase()
-                  ) ? (
+                  <Field orientation="responsive">
+                    <FieldLabel htmlFor="manage-proxy">账户代理</FieldLabel>
+                    <FieldContent>
+                      <Select
+                        value={proxyID || "direct"}
+                        items={[
+                          { value: "direct", label: "直连上游" },
+                          ...proxies.map((item) => ({
+                            value: item.id,
+                            label: item.name,
+                          })),
+                        ]}
+                        onValueChange={(value) =>
+                          setProxyID(value === "direct" || !value ? "" : value)
+                        }
+                      >
+                        <SelectTrigger id="manage-proxy" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="direct">直连上游</SelectItem>
+                            {proxies.map((item) => (
+                              <SelectItem key={item.id} value={item.id}>
+                                {item.name}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FieldDescription>
+                        {proxyID
+                          ? proxies.find((item) => item.id === proxyID)
+                              ?.endpoint || "当前代理详情不可用"
+                          : "推理、模型发现、令牌刷新与额度查询均直连。"}
+                      </FieldDescription>
+                    </FieldContent>
+                  </Field>
+                  {supportsWebsocket ? (
                     <Field orientation="horizontal">
                       <FieldContent>
-                        <FieldTitle>上游 WebSocket</FieldTitle>
+                        <FieldLabel htmlFor="manage-websockets">
+                          上游 WebSocket
+                        </FieldLabel>
                         <FieldDescription>
-                          对该账户启用原生多轮 Responses WebSocket；HTTP 与 SSE
-                          不受影响。
+                          支持原生多轮 Responses；HTTP 和 SSE 仍可使用。
                         </FieldDescription>
                       </FieldContent>
                       <Switch
                         id="manage-websockets"
                         checked={websockets}
                         onCheckedChange={setWebsockets}
-                        aria-label="上游 WebSocket"
                       />
                     </Field>
                   ) : null}
+                  <FieldDescription>
+                    保存连接不会重新发布模型。修改地址或代理后，请先测试，再刷新模型目录。
+                  </FieldDescription>
+                </FieldGroup>
+              </TabsContent>
+              <TabsContent value="credentials">
+                <FieldGroup>
                   {account.auth_kind === "api_key" ? (
                     <Field>
                       <FieldLabel htmlFor="manage-api-key">
-                        轮换 API Key
+                        替换 API Key
                       </FieldLabel>
                       <Input
                         id="manage-api-key"
                         type="password"
+                        autoComplete="new-password"
                         value={apiKey}
                         onChange={(event) => setAPIKey(event.target.value)}
-                        placeholder="留空保持现有 Key"
-                        autoComplete="new-password"
+                        placeholder="留空保留当前密钥"
                       />
                       <FieldDescription>
-                        仅在填写时替换；现有 Key 永远不会返回浏览器。
+                        已保存的密钥不会回显。
                       </FieldDescription>
                     </Field>
                   ) : null}
-                </FieldGroup>
-              </TabsContent>
-              <TabsContent value="advanced">
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="manage-headers">
-                      替换自定义请求头
-                    </FieldLabel>
-                    <Textarea
-                      id="manage-headers"
-                      value={headersText}
-                      onChange={(event) => {
-                        setHeadersText(event.target.value)
-                        setHeadersDirty(true)
-                      }}
-                      rows={6}
-                      className="font-mono text-xs"
-                      spellCheck={false}
-                    />
+                  {oauth ? (
+                    <Alert>
+                      <AlertTitle>OAuth 授权</AlertTitle>
+                      <AlertDescription>
+                        令牌由系统自动刷新。需要更换身份时，请在运行状态中重新授权。
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                  <FieldSet>
+                    <FieldLegend>自定义请求头</FieldLegend>
                     <FieldDescription>
                       {account.custom_header_names?.length
-                        ? `当前已配置：${account.custom_header_names.join("、")}。值不会回显；编辑后将整体替换。`
-                        : 'JSON 对象，例如 {"X-Tenant":"tenant-a"}；不编辑则保持现状。'}
+                        ? `已配置：${account.custom_header_names.join("、")}。现有值不会回显。`
+                        : "未配置自定义请求头。"}
                     </FieldDescription>
-                    {headersDirty ? (
-                      <div className="flex gap-2">
+                    <Field>
+                      <FieldLabel htmlFor="header-mode">修改方式</FieldLabel>
+                      <Select
+                        value={headerMode}
+                        items={[
+                          { value: "keep", label: "保留当前配置" },
+                          { value: "replace", label: "整体替换" },
+                          { value: "clear", label: "清除全部" },
+                        ]}
+                        onValueChange={(value) =>
+                          setHeaderMode(value || "keep")
+                        }
+                      >
+                        <SelectTrigger id="header-mode" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem value="keep">保留当前配置</SelectItem>
+                            <SelectItem value="replace">整体替换</SelectItem>
+                            <SelectItem value="clear">清除全部</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                    {headerMode === "replace" ? (
+                      <>
+                        <FieldDescription>
+                          保存后只保留下方请求头；请填写所有需要保留的项。
+                        </FieldDescription>
+                        {headers.map((row, index) => (
+                          <div
+                            key={index}
+                            className="grid grid-cols-[1fr_1fr_auto] items-end gap-2"
+                          >
+                            <Field>
+                              <FieldLabel htmlFor={`header-name-${index}`}>
+                                名称 {index + 1}
+                              </FieldLabel>
+                              <Input
+                                id={`header-name-${index}`}
+                                value={row.name}
+                                onChange={(event) =>
+                                  setHeaders((current) =>
+                                    current.map((item, i) =>
+                                      i === index
+                                        ? { ...item, name: event.target.value }
+                                        : item
+                                    )
+                                  )
+                                }
+                                placeholder="X-Tenant"
+                              />
+                            </Field>
+                            <Field>
+                              <FieldLabel htmlFor={`header-value-${index}`}>
+                                值 {index + 1}
+                              </FieldLabel>
+                              <Input
+                                id={`header-value-${index}`}
+                                type="password"
+                                autoComplete="new-password"
+                                value={row.value}
+                                onChange={(event) =>
+                                  setHeaders((current) =>
+                                    current.map((item, i) =>
+                                      i === index
+                                        ? { ...item, value: event.target.value }
+                                        : item
+                                    )
+                                  )
+                                }
+                              />
+                            </Field>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`移除请求头 ${index + 1}`}
+                              onClick={() =>
+                                setHeaders((current) =>
+                                  current.filter((_, i) => i !== index)
+                                )
+                              }
+                            >
+                              移除
+                            </Button>
+                          </div>
+                        ))}
                         <Button
-                          type="button"
                           variant="outline"
                           size="sm"
-                          onClick={() => setHeadersText("{}")}
+                          onClick={() =>
+                            setHeaders((current) => [
+                              ...current,
+                              { name: "", value: "" },
+                            ])
+                          }
                         >
-                          清除全部请求头
+                          添加请求头
                         </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setHeadersText("{}")
-                            setHeadersDirty(false)
-                          }}
-                        >
-                          保留原配置
-                        </Button>
-                      </div>
+                      </>
                     ) : null}
-                  </Field>
+                    {headerMode === "clear" ? (
+                      <Alert>
+                        <AlertDescription>
+                          保存后将删除此账户的全部自定义请求头。
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                  </FieldSet>
                   {account.can_replace_document ? (
                     <Field>
                       <FieldLabel htmlFor="manage-document">
@@ -541,108 +705,77 @@ export function ManageAccountDialog({
                       </FieldLabel>
                       <Textarea
                         id="manage-document"
+                        rows={6}
                         value={documentText}
                         onChange={(event) =>
                           setDocumentText(event.target.value)
                         }
-                        rows={9}
-                        className="font-mono text-xs"
+                        placeholder="留空保留当前凭据"
                         spellCheck={false}
-                        placeholder="留空保持现有加密凭据"
                       />
                       <FieldDescription>
-                        用于更新导入凭据、服务账户或其他高级字段。上方连接设置会覆盖同名
-                        JSON 字段。
+                        仅供导入凭据更新。需要完整 JSON
+                        对象；此操作会替换原凭据内容。
                       </FieldDescription>
                     </Field>
-                  ) : (
-                    <Alert>
-                      <HugeiconsIcon strokeWidth={2} icon={ShieldCheckIcon} />
-                      <AlertTitle>OAuth 凭据由 Relay 管理</AlertTitle>
-                      <AlertDescription>
-                        OAuth
-                        令牌会自动刷新；掉登录或需要更换授权身份时，可使用下方“重新认证”。
-                      </AlertDescription>
-                    </Alert>
-                  )}
+                  ) : null}
                 </FieldGroup>
               </TabsContent>
-            </Tabs>
-            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  disabled={
-                    pending ||
-                    account.disabled ||
-                    !publishedModels(account).length
-                  }
-                  onClick={() => onTest(account)}
-                >
-                  <HugeiconsIcon
-                    strokeWidth={2}
-                    icon={Activity01Icon}
-                    data-icon="inline-start"
-                  />
-                  测试
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger render={<Button variant="outline" />}>
-                    <HugeiconsIcon
-                      strokeWidth={2}
-                      icon={MoreHorizontalIcon}
-                      data-icon="inline-start"
-                    />
-                    更多
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuGroup>
-                      <DropdownMenuItem
-                        disabled={pending}
-                        onClick={() =>
-                          void onToggle(account, !account.disabled)
-                        }
-                      >
-                        {account.disabled ? "启用账户" : "停用账户"}
-                      </DropdownMenuItem>
-                      {isOAuthAccount(account) ? (
-                        <DropdownMenuItem
-                          disabled={pending}
-                          onClick={() => onReauthenticate(account)}
-                        >
-                          <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
-                          重新认证
-                        </DropdownMenuItem>
-                      ) : null}
-                    </DropdownMenuGroup>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuGroup>
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onClick={() => onDelete(account)}
-                      >
-                        <HugeiconsIcon strokeWidth={2} icon={Delete02Icon} />
-                        删除账户
-                      </DropdownMenuItem>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+            </fieldset>
+          </Tabs>
+          <SheetFooter>
+            {error ? <FieldError role="alert">{error}</FieldError> : null}
+            {dirty ? (
+              <p className="text-xs text-muted-foreground">
+                {dirtyPages}
+                有未保存修改。每次保存只应用当前页；执行诊断或账户操作前请先保存或关闭并放弃修改。
+              </p>
+            ) : null}
+            <div className="flex items-center justify-end gap-2">
               <Button
-                disabled={pending || modelLoading || !selectedModels.length}
-                onClick={save}
+                variant="outline"
+                disabled={busy}
+                onClick={() => close(false)}
               >
-                {pending ? (
-                  <Spinner />
-                ) : (
-                  <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
-                )}
-                保存更改
+                关闭
               </Button>
-            </DialogFooter>
-          </>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+              {tab !== "status" ? (
+                <Button
+                  disabled={
+                    busy ||
+                    !currentDirty ||
+                    (tab === "models" && (account.disabled || modelLoading))
+                  }
+                  onClick={() => void save()}
+                >
+                  {busy ? <Spinner data-icon="inline-start" /> : null}
+                  {tab === "models"
+                    ? "保存模型发布"
+                    : tab === "connection"
+                      ? "保存连接设置"
+                      : "保存凭据"}
+                </Button>
+              ) : null}
+            </div>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+      <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将放弃{dirtyPages}的草稿。已保存的账户配置不会改变。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>继续编辑</AlertDialogCancel>
+            <AlertDialogAction onClick={() => onOpenChange(false)}>
+              放弃修改
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }

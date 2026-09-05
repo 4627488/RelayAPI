@@ -83,4 +83,48 @@ describe("user API keys", () => {
       .toBeVisible()
     await expectNoA11yViolations()
   })
+
+  it("requires confirmation before deleting a key", async () => {
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input)
+        if (path.includes("/api/subscriptions")) {
+          return new Response(JSON.stringify({ items: [] }), { status: 200 })
+        }
+        if (
+          path.includes("/api/keys/key-production") &&
+          init?.method === "DELETE"
+        ) {
+          return new Response(JSON.stringify({}), { status: 204 })
+        }
+        return new Response(JSON.stringify({ items: keys }), { status: 200 })
+      }
+    )
+    vi.stubGlobal("fetch", fetchMock)
+    const screen = await render(<UserKeys tenantModels={[]} />)
+
+    await screen.getByRole("button", { name: "更多操作 生产环境" }).click()
+    await screen.getByRole("menuitem", { name: "删除密钥" }).click()
+    await expect.element(screen.getByText("删除 API Key？")).toBeVisible()
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")
+    ).toBe(false)
+
+    await screen.getByRole("button", { name: "取消" }).click()
+    await expect
+      .element(screen.getByText("删除 API Key？"))
+      .not.toBeInTheDocument()
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")
+    ).toBe(false)
+
+    await screen.getByRole("button", { name: "更多操作 生产环境" }).click()
+    await screen.getByRole("menuitem", { name: "删除密钥" }).click()
+    await screen.getByRole("button", { name: "删除" }).click()
+    await expect
+      .poll(() =>
+        fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")
+      )
+      .toBe(true)
+  })
 })

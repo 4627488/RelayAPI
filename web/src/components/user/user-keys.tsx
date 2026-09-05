@@ -29,7 +29,6 @@ import { ModelSelector } from "@/components/model-selector"
 import { PageHeader, SearchField } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -37,6 +36,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Empty,
   EmptyContent,
@@ -131,6 +146,7 @@ function KeysView({
   const [modelAliases, setModelAliases] = useState<ModelAliasDraft[]>([])
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("all")
+  const [deletingKey, setDeletingKey] = useState<ApiKey | null>(null)
   const modelSelectionTouched = useRef(false)
 
   useEffect(() => {
@@ -364,192 +380,194 @@ function KeysView({
           </Button>
         }
       />
-      <Card className="min-w-0 overflow-hidden">
-        <CardContent className="flex min-w-0 flex-col gap-4">
-          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <SearchField
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onClear={() => setQuery("")}
-              placeholder="搜索名称、前缀、模型或别名"
-              aria-label="搜索 API 密钥"
-              className="w-full sm:max-w-sm"
-            />
-            <ToggleGroup
-              value={[status]}
-              onValueChange={(value) => value[0] && setStatus(value[0])}
-              variant="outline"
-              size="sm"
-              aria-label="按状态筛选密钥"
-              className="max-w-full flex-wrap"
-            >
-              <ToggleGroupItem value="all">
-                全部 ({keys.length})
-              </ToggleGroupItem>
-              <ToggleGroupItem value="enabled">
-                有效 ({keys.filter((key) => key.enabled).length})
-              </ToggleGroupItem>
-              <ToggleGroupItem value="disabled">
-                停用 ({keys.filter((key) => !key.enabled).length})
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-          {keys.length ? (
-            filteredKeys.length ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>名称</TableHead>
-                    <TableHead>前缀</TableHead>
-                    <TableHead>最后使用</TableHead>
-                    <TableHead>模型 / 别名</TableHead>
-                    <TableHead>状态</TableHead>
-                    <TableHead className="text-right">操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredKeys.map((key) => (
-                    <Fragment key={key.id}>
-                      <TableRow>
-                        <TableCell className="font-medium">
-                          <div className="flex flex-col gap-1">
-                            <span>{key.name}</span>
-                            <span className="text-xs font-normal text-muted-foreground sm:hidden">
-                              状态：{key.enabled ? "有效" : "停用"}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {key.prefix}…
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {dateTime(key.last_used_at)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {key.model_allowlist?.length
-                            ? `${key.model_allowlist.length} 个模型`
-                            : "全部模型"}{" "}
-                          · {key.model_aliases?.length ?? 0} 个别名
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">
-                            {key.enabled ? "有效" : "停用"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={
-                              revealedKeys[key.id]
-                                ? `隐藏 ${key.name}`
-                                : `查看 ${key.name}`
-                            }
-                            title={
-                              key.recoverable
-                                ? "查看完整密钥"
-                                : "旧版密钥无法恢复，请新建替换"
-                            }
-                            disabled={
-                              !key.recoverable || revealingKeyID === key.id
-                            }
-                            onClick={() => void toggleReveal(key)}
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <SearchField
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onClear={() => setQuery("")}
+            placeholder="搜索名称、前缀、模型或别名"
+            aria-label="搜索 API 密钥"
+            className="w-full sm:max-w-sm"
+          />
+          <ToggleGroup
+            value={[status]}
+            onValueChange={(value) => value[0] && setStatus(value[0])}
+            variant="outline"
+            size="sm"
+            aria-label="按状态筛选密钥"
+            className="max-w-full flex-wrap"
+          >
+            <ToggleGroupItem value="all">全部 ({keys.length})</ToggleGroupItem>
+            <ToggleGroupItem value="enabled">
+              有效 ({keys.filter((key) => key.enabled).length})
+            </ToggleGroupItem>
+            <ToggleGroupItem value="disabled">
+              停用 ({keys.filter((key) => !key.enabled).length})
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        {keys.length ? (
+          filteredKeys.length ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>名称</TableHead>
+                  <TableHead>前缀</TableHead>
+                  <TableHead>最后使用</TableHead>
+                  <TableHead>模型 / 别名</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredKeys.map((key) => (
+                  <Fragment key={key.id}>
+                    <TableRow>
+                      <TableCell className="font-medium">
+                        <div className="flex flex-col gap-1">
+                          <span>{key.name}</span>
+                          <span className="text-xs font-normal text-muted-foreground sm:hidden">
+                            状态：{key.enabled ? "有效" : "停用"}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {key.prefix}…
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {dateTime(key.last_used_at)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {key.model_allowlist?.length
+                          ? `${key.model_allowlist.length} 个模型`
+                          : "全部模型"}{" "}
+                        · {key.model_aliases?.length ?? 0} 个别名
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">
+                          {key.enabled ? "有效" : "停用"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={
+                            revealedKeys[key.id]
+                              ? `隐藏 ${key.name}`
+                              : `查看 ${key.name}`
+                          }
+                          title={
+                            key.recoverable
+                              ? "查看完整密钥"
+                              : "旧版密钥无法恢复，请新建替换"
+                          }
+                          disabled={
+                            !key.recoverable || revealingKeyID === key.id
+                          }
+                          onClick={() => void toggleReveal(key)}
+                        >
+                          {revealingKeyID === key.id ? (
+                            <Spinner />
+                          ) : revealedKeys[key.id] ? (
+                            <HugeiconsIcon strokeWidth={2} icon={EyeOffIcon} />
+                          ) : (
+                            <HugeiconsIcon strokeWidth={2} icon={EyeIcon} />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`编辑 ${key.name}`}
+                          onClick={() => openEditDialog(key)}
+                        >
+                          <HugeiconsIcon strokeWidth={2} icon={PencilIcon} />
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={<Button variant="ghost" size="icon-sm" />}
+                            aria-label={`更多操作 ${key.name}`}
                           >
-                            {revealingKeyID === key.id ? (
-                              <Spinner />
-                            ) : revealedKeys[key.id] ? (
+                            <span aria-hidden>•••</span>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() => setDeletingKey(key)}
+                            >
                               <HugeiconsIcon
                                 strokeWidth={2}
-                                icon={EyeOffIcon}
+                                icon={Delete02Icon}
                               />
-                            ) : (
-                              <HugeiconsIcon strokeWidth={2} icon={EyeIcon} />
-                            )}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`编辑 ${key.name}`}
-                            onClick={() => openEditDialog(key)}
-                          >
-                            <HugeiconsIcon strokeWidth={2} icon={PencilIcon} />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`删除 ${key.name}`}
-                            onClick={() => void remove(key.id)}
-                          >
-                            <HugeiconsIcon
-                              strokeWidth={2}
-                              icon={Delete02Icon}
-                            />
-                          </Button>
+                              删除密钥
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                    {revealedKeys[key.id] ? (
+                      <TableRow>
+                        <TableCell colSpan={6}>
+                          <PlainKeyField
+                            id={`plain-key-${key.id}`}
+                            value={revealedKeys[key.id]}
+                          />
                         </TableCell>
                       </TableRow>
-                      {revealedKeys[key.id] ? (
-                        <TableRow>
-                          <TableCell colSpan={6}>
-                            <PlainKeyField
-                              id={`plain-key-${key.id}`}
-                              value={revealedKeys[key.id]}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ) : null}
-                    </Fragment>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
-                  </EmptyMedia>
-                  <EmptyTitle>没有匹配的 API Key</EmptyTitle>
-                  <EmptyDescription>
-                    尝试清除搜索或切换状态筛选。
-                  </EmptyDescription>
-                </EmptyHeader>
-                <EmptyContent>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setQuery("")
-                      setStatus("all")
-                    }}
-                  >
-                    清除筛选
-                  </Button>
-                </EmptyContent>
-              </Empty>
-            )
+                    ) : null}
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
           ) : (
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
                 </EmptyMedia>
-                <EmptyTitle>还没有 API Key</EmptyTitle>
+                <EmptyTitle>没有匹配的 API Key</EmptyTitle>
                 <EmptyDescription>
-                  创建密钥后即可调用所有已授权模型。
+                  尝试清除搜索或切换状态筛选。
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
-                <Button onClick={openCreateDialog}>
-                  <HugeiconsIcon
-                    strokeWidth={2}
-                    icon={PlusIcon}
-                    data-icon="inline-start"
-                  />
-                  创建第一个 Key
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setQuery("")
+                    setStatus("all")
+                  }}
+                >
+                  清除筛选
                 </Button>
               </EmptyContent>
             </Empty>
-          )}
-        </CardContent>
-      </Card>
+          )
+        ) : (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
+              </EmptyMedia>
+              <EmptyTitle>还没有 API Key</EmptyTitle>
+              <EmptyDescription>
+                创建密钥后即可调用所有已授权模型。
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button onClick={openCreateDialog}>
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={PlusIcon}
+                  data-icon="inline-start"
+                />
+                创建第一个 Key
+              </Button>
+            </EmptyContent>
+          </Empty>
+        )}
+      </div>
       <Dialog
         open={createOpen}
         onOpenChange={(open) => {
@@ -584,7 +602,7 @@ function KeysView({
                 />
               </Field>
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field>
+                <Field orientation="responsive">
                   <FieldLabel htmlFor="key-rate">每分钟请求</FieldLabel>
                   <Input
                     id="key-rate"
@@ -594,8 +612,9 @@ function KeysView({
                     defaultValue={editingKey?.rate_limit_per_minute ?? ""}
                     placeholder="不限"
                   />
+                  <FieldDescription>留空表示不限。</FieldDescription>
                 </Field>
-                <Field>
+                <Field orientation="responsive">
                   <FieldLabel htmlFor="key-tokens">每日 Tokens</FieldLabel>
                   <Input
                     id="key-tokens"
@@ -605,6 +624,7 @@ function KeysView({
                     defaultValue={editingKey?.token_limit_daily ?? ""}
                     placeholder="不限"
                   />
+                  <FieldDescription>留空表示不限。</FieldDescription>
                 </Field>
               </div>
               <Field>
@@ -616,7 +636,9 @@ function KeysView({
                   onChange={changeSelectedModels}
                   allLabel="全部可用模型"
                 />
-                <FieldDescription>不选择模型表示不限制。</FieldDescription>
+                <FieldDescription>
+                  选择“全部可用模型”表示继承账户权限；选择具体模型后仅允许这些模型。
+                </FieldDescription>
               </Field>
               <ApiKeyModelAliasEditor
                 aliases={modelAliases}
@@ -652,6 +674,36 @@ function KeysView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {deletingKey ? (
+        <AlertDialog
+          open={!!deletingKey}
+          onOpenChange={(open) => {
+            if (!open) setDeletingKey(null)
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>删除 API Key？</AlertDialogTitle>
+              <AlertDialogDescription>
+                将永久删除“{deletingKey.name}”，使用它的客户端将无法继续调用
+                API。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => {
+                  void remove(deletingKey.id)
+                  setDeletingKey(null)
+                }}
+              >
+                删除
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
     </div>
   )
 }

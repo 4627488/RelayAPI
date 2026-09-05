@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Activity01Icon,
@@ -59,8 +59,15 @@ export function TestAccountDialog({
   const [model, setModel] = useState("")
   const [pending, setPending] = useState(false)
   const [result, setResult] = useState<ProviderAccountTestResult | null>(null)
+  const request = useRef<AbortController | null>(null)
+  const runGeneration = useRef(0)
+
+  useEffect(() => () => request.current?.abort(), [])
 
   useEffect(() => {
+    runGeneration.current += 1
+    request.current?.abort()
+    request.current = null
     if (!account) {
       setModel("")
       setPending(false)
@@ -74,12 +81,22 @@ export function TestAccountDialog({
 
   async function run() {
     if (!account || !model) return
+    const generation = ++runGeneration.current
+    const controller = new AbortController()
+    request.current?.abort()
+    request.current = controller
     setPending(true)
     try {
       const next = await api<ProviderAccountTestResult>(
         `/api/admin/providers/accounts/${encodeURIComponent(accountKey(account))}/test`,
-        { method: "POST", body: JSON.stringify({ model }) }
+        {
+          method: "POST",
+          body: JSON.stringify({ model }),
+          signal: controller.signal,
+        }
       )
+      if (generation !== runGeneration.current || controller.signal.aborted)
+        return
       setResult(next)
       onResult(account, next)
       if (next.ok) {
@@ -91,6 +108,8 @@ export function TestAccountDialog({
         toast.add({ title: next.error || `${model} 测试失败`, type: "error" })
       }
     } catch (cause) {
+      if (generation !== runGeneration.current || controller.signal.aborted)
+        return
       const message = cause instanceof Error ? cause.message : "测试失败"
       const failed: ProviderAccountTestResult = {
         ok: false,
@@ -104,12 +123,20 @@ export function TestAccountDialog({
       onResult(account, failed)
       toast.add({ title: message, type: "error" })
     } finally {
-      setPending(false)
+      if (generation === runGeneration.current) setPending(false)
     }
   }
 
+  function close() {
+    runGeneration.current += 1
+    request.current?.abort()
+    request.current = null
+    setPending(false)
+    onOpenChange(false)
+  }
+
   return (
-    <Dialog open={Boolean(account)} onOpenChange={onOpenChange}>
+    <Dialog open={Boolean(account)} onOpenChange={(open) => !open && close()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>测试模型</DialogTitle>
@@ -168,7 +195,7 @@ export function TestAccountDialog({
           ) : null}
         </FieldGroup>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={close}>
             关闭
           </Button>
           <Button disabled={pending || !model} onClick={() => void run()}>

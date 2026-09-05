@@ -9,12 +9,15 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Activity01Icon,
+  Alert02Icon,
   KeyRoundIcon,
   PlusIcon,
   RefreshCwIcon,
 } from "@hugeicons/core-free-icons"
+import { dateTime } from "@/lib/format"
 import { toast } from "@/components/ui/toast"
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,7 +30,6 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import {
   Empty,
   EmptyDescription,
@@ -43,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
@@ -89,14 +92,37 @@ const TestAccountDialog = lazy(() =>
   }))
 )
 
+function statusKey(account: ProviderAccount) {
+  if (account.disabled) return "disabled"
+  if (
+    account.unavailable &&
+    (account.quota_exceeded || account.status === "cooldown")
+  )
+    return "cooldown"
+  if (account.unavailable) return "unavailable"
+  if (!account.models?.length) return "unpublished"
+  return "available"
+}
+
+function authKey(account: ProviderAccount) {
+  if (account.auth_kind === "oauth" || account.source === "oauth")
+    return "oauth"
+  if (account.auth_kind === "api_key" || account.source === "api_key")
+    return "api_key"
+  return "import"
+}
+
 export function ProvidersView() {
   const [accounts, setAccounts] = useState<ProviderAccount[]>([])
   const [proxies, setProxies] = useState<OutboundProxy[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [syncingQuota, setSyncingQuota] = useState(false)
   const [search, setSearch] = useState("")
   const [provider, setProvider] = useState("all")
+  const [statusFilter, setStatusFilter] = useState("all")
+  const [authFilter, setAuthFilter] = useState("all")
   const [connectOpen, setConnectOpen] = useState(false)
   const [reauthenticating, setReauthenticating] =
     useState<ProviderAccount | null>(null)
@@ -109,6 +135,7 @@ export function ProvidersView() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const [result, proxyResult] = await Promise.all([
         api<{ files: ProviderAccount[] }>("/api/admin/providers/accounts"),
@@ -117,6 +144,7 @@ export function ProvidersView() {
       setAccounts(result.files ?? [])
       setProxies(proxyResult.items ?? [])
     } catch (cause) {
+      setLoadError(cause instanceof Error ? cause.message : "无法读取模型账户")
       toast.add({
         title: cause instanceof Error ? cause.message : "无法读取模型账户",
         type: "error",
@@ -138,15 +166,39 @@ export function ProvidersView() {
     return accounts.filter(
       (item) =>
         (provider === "all" || item.provider === provider) &&
+        (statusFilter === "all" || statusKey(item) === statusFilter) &&
+        (authFilter === "all" || authKey(item) === authFilter) &&
         (!needle ||
           [
             displayName(item),
             item.name,
             item.provider,
+            item.email,
+            item.base_url,
             ...(item.models ?? []),
-          ].some((part) => part.toLowerCase().includes(needle)))
+          ]
+            .filter(Boolean)
+            .some((part) => part!.toLowerCase().includes(needle)))
     )
-  }, [accounts, provider, search])
+  }, [accounts, provider, search, statusFilter, authFilter])
+
+  const counts = useMemo(() => {
+    const result = {
+      total: accounts.length,
+      available: 0,
+      disabled: 0,
+      cooldown: 0,
+      unavailable: 0,
+      unpublished: 0,
+    }
+    for (const item of accounts) {
+      result[
+        statusKey(item) as
+          "available" | "disabled" | "cooldown" | "unavailable" | "unpublished"
+      ]++
+    }
+    return result
+  }, [accounts])
   async function toggle(account: ProviderAccount, disabled: boolean) {
     setPending(true)
     try {
@@ -204,13 +256,14 @@ export function ProvidersView() {
     account: ProviderAccount,
     value: ProviderAccountUpdate
   ) {
-    if (!value.name.trim() || !value.models.length) {
-      toast.add({ title: "账户名称和至少一个公开模型为必填项", type: "error" })
-      return
-    }
+    if (
+      !value.name.trim() ||
+      (value.models !== undefined && !value.models.length)
+    )
+      throw new Error("账户名称不能为空；修改发布范围时至少选择一个模型。")
     setPending(true)
     try {
-      await api(
+      const updated = await api<ProviderAccount>(
         `/api/admin/providers/accounts/${encodeURIComponent(account.id || account.name)}`,
         {
           method: "PATCH",
@@ -218,13 +271,18 @@ export function ProvidersView() {
         }
       )
       toast.add({ title: "账户设置已保存", type: "success" })
-      setSelected(null)
+      setSelected((current) =>
+        current && accountKey(current) === accountKey(account)
+          ? { ...current, ...updated }
+          : current
+      )
       await load()
     } catch (cause) {
       toast.add({
         title: cause instanceof Error ? cause.message : "保存失败",
         type: "error",
       })
+      throw cause
     } finally {
       setPending(false)
     }
@@ -251,7 +309,7 @@ export function ProvidersView() {
     }
   }
 
-  if (loading)
+  if (loading && !accounts.length)
     return (
       <div className="flex min-h-56 items-center justify-center">
         <Spinner />
@@ -297,12 +355,54 @@ export function ProvidersView() {
         }
       />
 
+      {loadError ? (
+        <Alert variant="destructive">
+          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
+          <AlertTitle>账户数据读取失败</AlertTitle>
+          <AlertDescription className="flex items-center justify-between gap-3">
+            <span>
+              {loadError}
+              {accounts.length ? "。页面保留了上次成功读取的数据。" : ""}
+            </span>
+            <Button size="sm" variant="outline" onClick={() => void load()}>
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={RefreshCwIcon}
+                data-icon="inline-start"
+              />
+              重试
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <ToggleGroup
+        value={[statusFilter]}
+        onValueChange={(value) => value[0] && setStatusFilter(value[0])}
+        variant="outline"
+        aria-label="账户状态"
+        className="flex-wrap"
+      >
+        {[
+          ["全部", counts.total, "all"],
+          ["可调度", counts.available, "available"],
+          ["停用", counts.disabled, "disabled"],
+          ["冷却", counts.cooldown, "cooldown"],
+          ["暂不可用", counts.unavailable, "unavailable"],
+          ["未发布", counts.unpublished, "unpublished"],
+        ].map(([label, count, key]) => (
+          <ToggleGroupItem key={key} value={String(key)}>
+            {label} ({count})
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+
       <div className="flex flex-col gap-3 sm:flex-row">
         <SearchField
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           onClear={() => setSearch("")}
-          placeholder="搜索账户或模型"
+          placeholder="搜索名称、邮箱、模型或 Base URL"
           className="flex-1"
         />
         <Select
@@ -318,7 +418,7 @@ export function ProvidersView() {
             if (next) setProvider(next)
           }}
         >
-          <SelectTrigger className="w-full sm:w-52">
+          <SelectTrigger aria-label="提供商" className="w-full sm:w-52">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -332,11 +432,40 @@ export function ProvidersView() {
             </SelectGroup>
           </SelectContent>
         </Select>
+
+        <Select
+          items={[
+            { value: "all", label: "全部认证" },
+            { value: "oauth", label: "OAuth" },
+            { value: "api_key", label: "API Key" },
+            { value: "import", label: "导入" },
+          ]}
+          value={authFilter}
+          onValueChange={(next) => next && setAuthFilter(next)}
+        >
+          <SelectTrigger aria-label="认证方式" className="w-full sm:w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {[
+                ["all", "全部认证"],
+                ["oauth", "OAuth"],
+                ["api_key", "API Key"],
+                ["import", "导入"],
+              ].map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
 
       {filtered.length ? (
-        <Card>
-          <CardContent className="px-0">
+        <>
+          <div className="min-w-0">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -344,7 +473,8 @@ export function ProvidersView() {
                   <TableHead>提供商</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead>公开模型</TableHead>
-                  <TableHead>额度</TableHead>
+                  <TableHead>端点 / 代理</TableHead>
+                  <TableHead>额度 / 请求</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -389,6 +519,12 @@ export function ProvidersView() {
                             {lastTest.latency_ms} ms
                           </p>
                         ) : null}
+                        {account.status_message || account.next_retry_after ? (
+                          <p className="mt-1 max-w-44 text-xs text-muted-foreground">
+                            {account.status_message ||
+                              `重试时间：${dateTime(account.next_retry_after)}`}
+                          </p>
+                        ) : null}
                       </TableCell>
                       <TableCell className="max-w-64 whitespace-normal">
                         <p
@@ -407,8 +543,26 @@ export function ProvidersView() {
                           </p>
                         ) : null}
                       </TableCell>
+                      <TableCell className="max-w-56 text-xs whitespace-normal">
+                        <p className="truncate">
+                          {account.base_url || "默认端点"}
+                        </p>
+                        <p className="text-muted-foreground">{proxyName}</p>
+                      </TableCell>
                       <TableCell className="max-w-48 text-xs whitespace-normal text-muted-foreground">
-                        {quotaSummary(account)}
+                        <p>{quotaSummary(account)}</p>
+                        {account.success !== undefined ||
+                        account.failed !== undefined ? (
+                          <p className="mt-1">
+                            运行时累计：{account.success ?? "—"} 成功 /{" "}
+                            {account.failed ?? "—"} 失败
+                          </p>
+                        ) : null}
+                        {account.quota_observed_at ? (
+                          <p className="mt-1">
+                            观测于 {dateTime(account.quota_observed_at)}
+                          </p>
+                        ) : null}
                       </TableCell>
                       <TableCell className="text-right">
                         <span className="inline-flex justify-end gap-2">
@@ -438,9 +592,10 @@ export function ProvidersView() {
                           <Button
                             size="sm"
                             variant="ghost"
+                            disabled={account.can_inspect === false}
                             onClick={() => setSelected(account)}
                           >
-                            管理
+                            配置
                           </Button>
                         </span>
                       </TableCell>
@@ -449,11 +604,11 @@ export function ProvidersView() {
                 })}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardContent className="py-12">
+          </div>
+        </>
+      ) : loadError ? null : (
+        <>
+          <div className="min-w-0">
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
@@ -468,7 +623,19 @@ export function ProvidersView() {
                     : "连接 OAuth 账户或 API Key 后即可开始路由。"}
                 </EmptyDescription>
               </EmptyHeader>
-              {!accounts.length ? (
+              {accounts.length ? (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setSearch("")
+                    setProvider("all")
+                    setStatusFilter("all")
+                    setAuthFilter("all")
+                  }}
+                >
+                  清除筛选
+                </Button>
+              ) : (
                 <Button
                   onClick={() => {
                     setReauthenticating(null)
@@ -478,10 +645,10 @@ export function ProvidersView() {
                   <HugeiconsIcon strokeWidth={2} icon={PlusIcon} />
                   连接账户
                 </Button>
-              ) : null}
+              )}
             </Empty>
-          </CardContent>
-        </Card>
+          </div>
+        </>
       )}
 
       <Suspense fallback={null}>
@@ -512,7 +679,6 @@ export function ProvidersView() {
               setReauthenticating(account)
             }}
             onTest={(account) => {
-              setSelected(null)
               setTesting(account)
             }}
             lastTest={testResults[accountKey(selected)]}

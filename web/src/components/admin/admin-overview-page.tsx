@@ -9,12 +9,21 @@ import {
   UsersIcon,
 } from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
-import type { Page } from "@/lib/routes"
+import { routeHref, type Page } from "@/lib/routes"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
 import { PageHeader } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   api,
@@ -82,10 +91,7 @@ export function AdminOverviewPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader
-        title="管理总览"
-        description="查看系统运行情况，并从待处理项直接进入下一步。"
-      />
+      <PageHeader title="管理总览" />
       <MetricGrid
         items={[
           {
@@ -114,102 +120,158 @@ export function AdminOverviewPage({
           },
         ]}
       />
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+      <div className="grid items-start gap-4 xl:grid-cols-[1.6fr_1fr]">
         <UsageChart report={usage} />
         <Card>
           <CardHeader>
             <CardTitle>待处理与管理</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <Button
-              type="button"
-              variant="ghost"
-              size="lg"
-              className="w-full justify-between text-left whitespace-normal"
-              onClick={() => onPageChange("logs")}
-            >
-              <div className="flex items-center gap-3">
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={TriangleAlertIcon}
-                  className="text-muted-foreground"
-                />
-                <div>
-                  <p className="text-sm font-medium">今日错误</p>
-                  <p className="text-xs text-muted-foreground">
-                    查看请求日志定位失败原因
-                  </p>
-                </div>
-              </div>
-              <Badge
-                variant={overview.today.errors ? "destructive" : "secondary"}
-              >
-                {overview.today.errors}
-              </Badge>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="lg"
-              className="w-full justify-between text-left whitespace-normal"
-              onClick={() => onPageChange("users")}
-            >
-              <div className="flex items-center gap-3">
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={BanIcon}
-                  className="text-muted-foreground"
-                />
-                <div>
-                  <p className="text-sm font-medium">停用用户</p>
-                  <p className="text-xs text-muted-foreground">
-                    检查登录权限与账户状态
-                  </p>
-                </div>
-              </div>
-              <Badge
-                variant={
-                  overview.users - overview.enabled_users
-                    ? "destructive"
-                    : "secondary"
+          <CardContent>
+            <ItemGroup>
+              <Item
+                size="sm"
+                render={
+                  <a href={routeHref({ workspace: "admin", page: "logs" })} />
                 }
+                onClick={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return
+                  if (!event.defaultPrevented) {
+                    event.preventDefault()
+                    onPageChange("logs")
+                  }
+                }}
               >
-                {overview.users - overview.enabled_users}
-              </Badge>
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="lg"
-              className="w-full justify-between text-left whitespace-normal"
-              onClick={() => onPageChange("invitations")}
-            >
-              <div className="flex items-center gap-3">
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={SendIcon}
-                  className="text-muted-foreground"
-                />
-                <div>
-                  <p className="text-sm font-medium">待使用邀请</p>
-                  <p className="text-xs text-muted-foreground">仍在有效期内</p>
-                </div>
-              </div>
-              <Badge variant="secondary">{overview.pending_invitations}</Badge>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="justify-start"
-              onClick={() => onPageChange("providers")}
-            >
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={KeyRoundIcon}
-                data-icon="inline-start"
-              />
-              管理模型账户
-            </Button>
+                <ItemMedia variant="icon">
+                  <HugeiconsIcon strokeWidth={2} icon={TriangleAlertIcon} />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>今日错误</ItemTitle>
+                  <ItemDescription>请求日志</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Badge
+                    variant={
+                      overview.today.errors ? "destructive" : "secondary"
+                    }
+                  >
+                    {overview.today.errors}
+                  </Badge>
+                </ItemActions>
+              </Item>
+              <Item
+                size="sm"
+                render={
+                  <a href={routeHref({ workspace: "admin", page: "users" })} />
+                }
+                onClick={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return
+                  if (!event.defaultPrevented) {
+                    event.preventDefault()
+                    onPageChange("users")
+                  }
+                }}
+              >
+                <ItemMedia variant="icon">
+                  <HugeiconsIcon strokeWidth={2} icon={BanIcon} />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>停用用户</ItemTitle>
+                  <ItemDescription>账户状态</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Badge
+                    variant={
+                      overview.users - overview.enabled_users
+                        ? "destructive"
+                        : "secondary"
+                    }
+                  >
+                    {overview.users - overview.enabled_users}
+                  </Badge>
+                </ItemActions>
+              </Item>
+              <Item
+                size="sm"
+                render={
+                  <a
+                    href={routeHref({
+                      workspace: "admin",
+                      page: "invitations",
+                    })}
+                  />
+                }
+                onClick={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return
+                  if (!event.defaultPrevented) {
+                    event.preventDefault()
+                    onPageChange("invitations")
+                  }
+                }}
+              >
+                <ItemMedia variant="icon">
+                  <HugeiconsIcon strokeWidth={2} icon={SendIcon} />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>待使用邀请</ItemTitle>
+                  <ItemDescription>仍在有效期内</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Badge variant="secondary">
+                    {overview.pending_invitations}
+                  </Badge>
+                </ItemActions>
+              </Item>
+              <Item
+                size="sm"
+                render={
+                  <a
+                    href={routeHref({ workspace: "admin", page: "providers" })}
+                  />
+                }
+                onClick={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return
+                  if (!event.defaultPrevented) {
+                    event.preventDefault()
+                    onPageChange("providers")
+                  }
+                }}
+              >
+                <ItemMedia variant="icon">
+                  <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>管理模型账户</ItemTitle>
+                </ItemContent>
+              </Item>
+            </ItemGroup>
           </CardContent>
         </Card>
       </div>

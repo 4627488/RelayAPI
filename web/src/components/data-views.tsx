@@ -84,7 +84,7 @@ export function UsageChart({ report }: { report: UsageReport }) {
   const metricLabel = metric === "requests" ? "请求数" : "Token 数"
   return (
     <Card>
-      <CardHeader className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
+      <CardHeader className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-start">
         <div>
           <CardTitle>用量趋势</CardTitle>
           <CardDescription>
@@ -106,7 +106,7 @@ export function UsageChart({ report }: { report: UsageReport }) {
       </CardHeader>
       <CardContent>
         {daily.length ? (
-          <ChartContainer config={chartConfig} className="h-72 w-full">
+          <ChartContainer config={chartConfig} className="h-52 w-full sm:h-56">
             <AreaChart data={daily} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis
