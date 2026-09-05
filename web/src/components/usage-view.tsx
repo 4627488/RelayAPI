@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from "react"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  ActivityIcon,
+  Activity01Icon,
   BoxesIcon,
   CircleDollarSignIcon,
-  CoinsIcon,
+  Coins01Icon,
   DatabaseIcon,
   KeyRoundIcon,
   ShieldCheckIcon,
   UsersIcon,
   WalletCardsIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Badge } from "@/components/ui/badge"
@@ -187,7 +188,11 @@ function CostBreakdown({ report }: { report: UsageReport }) {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="p-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <ShieldCheckIcon className="size-3.5" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={ShieldCheckIcon}
+                className="size-3.5"
+              />
               订阅承担
             </div>
             <div className="mt-2 flex items-baseline justify-between gap-2">
@@ -199,7 +204,11 @@ function CostBreakdown({ report }: { report: UsageReport }) {
           </div>
           <div className="p-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <WalletCardsIcon className="size-3.5" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={WalletCardsIcon}
+                className="size-3.5"
+              />
               余额支付
             </div>
             <div className="mt-2 flex items-baseline justify-between gap-2">
@@ -685,13 +694,13 @@ export function UsageView({
             label: "请求",
             value: compact(report.summary.requests),
             detail: `${successRate(report.summary.errors, report.summary.requests)} 成功 · ${compact(report.summary.errors)} 错误`,
-            icon: ActivityIcon,
+            icon: Activity01Icon,
           },
           {
             label: "Tokens",
             value: compactTokens(report.summary.tokens),
             detail: `${compactTokens(report.summary.prompt_tokens)} 输入 · ${compactTokens(report.summary.completion_tokens)} 输出`,
-            icon: CoinsIcon,
+            icon: Coins01Icon,
           },
           {
             label: "缓存命中",
@@ -728,16 +737,16 @@ export function UsageView({
             <TabsList>
               {admin && userID === "all" ? (
                 <TabsTrigger value="users">
-                  <UsersIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={UsersIcon} />
                   用户
                 </TabsTrigger>
               ) : null}
               <TabsTrigger value="models">
-                <BoxesIcon />
+                <HugeiconsIcon strokeWidth={2} icon={BoxesIcon} />
                 模型
               </TabsTrigger>
               <TabsTrigger value="keys">
-                <KeyRoundIcon />
+                <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
                 Keys
               </TabsTrigger>
             </TabsList>

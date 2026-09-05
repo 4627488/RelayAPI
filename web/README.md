@@ -19,9 +19,9 @@ pnpm check
 
 ## 界面规范
 
-采用官方预设 [`bbVJxYW`](https://ui.shadcn.com/create?preset=bbVJxYW)：Maia、Neutral 基色与主题、Neutral 图表、Inter、Lucide。以官方生成的组件和主题变量为准。
+采用官方预设 [`b1D0eCSe`](https://ui.shadcn.com/create?preset=b1D0eCSe)：Mira、Neutral 基色/主题/图表、Hugeicons、Noto Sans、小圆角，以及 Subtle 菜单强调色和 Default 菜单色。以官方生成的组件和主题变量为准。
 
-现有项目应用预设使用 `pnpm dlx shadcn@latest apply bbVJxYW`；`init --preset bbVJxYW --template vite` 用于新项目初始化。
+现有项目应用预设使用 `pnpm dlx shadcn@latest apply b1D0eCSe`；`init --preset b1D0eCSe --template vite` 用于新项目初始化。
 
 - 组件优先使用 `src/components/ui` 中的 shadcn 原语，业务页面不要手写按钮、选择器、对话框、提示框、空状态、进度条或开关。
 - 页面必须通过 `PageHeader` 提供唯一的一级标题和简短说明；区块标题从二级开始，不用大小相同的文字模拟层级。
@@ -64,4 +64,6 @@ pnpm check
 pnpm dlx shadcn@latest add <component>
 ```
 
-保持 `components.json` 中的 `base-maia`、Base UI 和 Lucide 配置。官方组件更新通过 CLI 比较后应用，功能组合放在业务模块，避免修改基础组件。
+保持 `components.json` 中的 `base-mira`、Base UI 和 Hugeicons 配置。官方组件更新通过 CLI 比较后应用，功能组合放在业务模块，避免修改基础组件。
+
+当前 CLI 生成的 Spinner 使用原生 SVG 属性类型，与 Hugeicons 的 `strokeWidth` 类型不兼容；本地仅将其属性类型改为 `Omit<React.ComponentProps<typeof HugeiconsIcon>, "icon">`，保留官方渲染与样式。重新应用预设后需运行类型检查，确认上游是否已修复。

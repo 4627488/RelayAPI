@@ -1,5 +1,10 @@
 import { useCallback } from "react"
-import { AlertTriangleIcon, GaugeIcon, PackageOpenIcon } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import {
+  Alert02Icon,
+  GaugeIcon,
+  PackageOpenIcon,
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -68,7 +73,7 @@ export function TenantSubscriptionsView() {
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <PackageOpenIcon />
+              <HugeiconsIcon strokeWidth={2} icon={PackageOpenIcon} />
             </EmptyMedia>
             <EmptyTitle>尚未获得订阅授权</EmptyTitle>
           </EmptyHeader>
@@ -123,12 +128,12 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
           </section>
         ) : item.capacity_mode === "unmetered" ? (
           <Alert>
-            <GaugeIcon />
+            <HugeiconsIcon strokeWidth={2} icon={GaugeIcon} />
             <AlertTitle>按账户余额结算</AlertTitle>
           </Alert>
         ) : item.parent_quota_probe_status === "unsupported" ? (
           <Alert variant="destructive">
-            <AlertTriangleIcon />
+            <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
             <AlertTitle>额度不可用</AlertTitle>
             <AlertDescription>
               {item.availability_message ||
@@ -137,7 +142,7 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
           </Alert>
         ) : (
           <Alert>
-            <GaugeIcon />
+            <HugeiconsIcon strokeWidth={2} icon={GaugeIcon} />
             <AlertTitle>当前按账户余额结算</AlertTitle>
           </Alert>
         )}

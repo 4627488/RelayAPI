@@ -6,6 +6,7 @@ import {
   useState,
   type FormEvent,
 } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
   CopyIcon,
   EyeIcon,
@@ -13,8 +14,8 @@ import {
   KeyRoundIcon,
   PencilIcon,
   PlusIcon,
-  Trash2Icon,
-} from "lucide-react"
+  Delete02Icon,
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import {
@@ -354,7 +355,11 @@ function KeysView({
         description="创建、查看和管理用于调用模型的 API Key。"
         actions={
           <Button onClick={openCreateDialog}>
-            <PlusIcon data-icon="inline-start" />
+            <HugeiconsIcon
+              strokeWidth={2}
+              icon={PlusIcon}
+              data-icon="inline-start"
+            />
             创建密钥
           </Button>
         }
@@ -453,9 +458,12 @@ function KeysView({
                             {revealingKeyID === key.id ? (
                               <Spinner />
                             ) : revealedKeys[key.id] ? (
-                              <EyeOffIcon />
+                              <HugeiconsIcon
+                                strokeWidth={2}
+                                icon={EyeOffIcon}
+                              />
                             ) : (
-                              <EyeIcon />
+                              <HugeiconsIcon strokeWidth={2} icon={EyeIcon} />
                             )}
                           </Button>
                           <Button
@@ -464,7 +472,7 @@ function KeysView({
                             aria-label={`编辑 ${key.name}`}
                             onClick={() => openEditDialog(key)}
                           >
-                            <PencilIcon />
+                            <HugeiconsIcon strokeWidth={2} icon={PencilIcon} />
                           </Button>
                           <Button
                             variant="ghost"
@@ -472,7 +480,10 @@ function KeysView({
                             aria-label={`删除 ${key.name}`}
                             onClick={() => void remove(key.id)}
                           >
-                            <Trash2Icon />
+                            <HugeiconsIcon
+                              strokeWidth={2}
+                              icon={Delete02Icon}
+                            />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -494,7 +505,7 @@ function KeysView({
               <Empty>
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
-                    <KeyRoundIcon />
+                    <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
                   </EmptyMedia>
                   <EmptyTitle>没有匹配的 API Key</EmptyTitle>
                   <EmptyDescription>
@@ -518,7 +529,7 @@ function KeysView({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <KeyRoundIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
                 </EmptyMedia>
                 <EmptyTitle>还没有 API Key</EmptyTitle>
                 <EmptyDescription>
@@ -527,7 +538,11 @@ function KeysView({
               </EmptyHeader>
               <EmptyContent>
                 <Button onClick={openCreateDialog}>
-                  <PlusIcon data-icon="inline-start" />
+                  <HugeiconsIcon
+                    strokeWidth={2}
+                    icon={PlusIcon}
+                    data-icon="inline-start"
+                  />
                   创建第一个 Key
                 </Button>
               </EmptyContent>
@@ -620,9 +635,17 @@ function KeysView({
               {pending ? (
                 <Spinner data-icon="inline-start" />
               ) : editingKey ? (
-                <PencilIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={PencilIcon}
+                  data-icon="inline-start"
+                />
               ) : (
-                <PlusIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={PlusIcon}
+                  data-icon="inline-start"
+                />
               )}
               {editingKey ? "保存" : "创建"}
             </Button>
@@ -661,7 +684,7 @@ function PlainKeyField({ id, value }: { id: string; value: string }) {
                   )
               }}
             >
-              <CopyIcon />
+              <HugeiconsIcon strokeWidth={2} icon={CopyIcon} />
             </Button>
           </InputGroupAddon>
         </InputGroup>

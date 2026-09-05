@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react"
-import { ActivityIcon, CircleCheckIcon, TriangleAlertIcon } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import {
+  Activity01Icon,
+  CircleCheckIcon,
+  TriangleAlertIcon,
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Button } from "@/components/ui/button"
@@ -145,7 +150,11 @@ export function TestAccountDialog({
             <div className="px-3 py-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="flex items-center gap-2 text-sm font-medium">
-                  {result.ok ? <CircleCheckIcon /> : <TriangleAlertIcon />}
+                  {result.ok ? (
+                    <HugeiconsIcon strokeWidth={2} icon={CircleCheckIcon} />
+                  ) : (
+                    <HugeiconsIcon strokeWidth={2} icon={TriangleAlertIcon} />
+                  )}
                   {result.ok ? "通过" : "失败"}
                 </p>
                 <p className="text-xs text-muted-foreground tabular-nums">
@@ -163,7 +172,11 @@ export function TestAccountDialog({
             关闭
           </Button>
           <Button disabled={pending || !model} onClick={() => void run()}>
-            {pending ? <Spinner /> : <ActivityIcon />}
+            {pending ? (
+              <Spinner />
+            ) : (
+              <HugeiconsIcon strokeWidth={2} icon={Activity01Icon} />
+            )}
             {result ? "再测一次" : "发送测试"}
           </Button>
         </DialogFooter>

@@ -1,11 +1,12 @@
 import { lazy, useCallback } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  BookOpenIcon,
+  BookOpen01Icon,
   FileClockIcon,
   KeyRoundIcon,
   PlusIcon,
   WalletCardsIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { LoadErrorView } from "@/components/load-error-view"
@@ -107,15 +108,27 @@ export function UserOverview({
       />
       <div className="flex min-w-0 flex-wrap gap-2" aria-label="快捷操作">
         <Button onClick={() => onPageChange("keys")}>
-          <PlusIcon data-icon="inline-start" />
+          <HugeiconsIcon
+            strokeWidth={2}
+            icon={PlusIcon}
+            data-icon="inline-start"
+          />
           创建或管理密钥
         </Button>
         <Button variant="outline" onClick={() => onPageChange("guide")}>
-          <BookOpenIcon data-icon="inline-start" />
+          <HugeiconsIcon
+            strokeWidth={2}
+            icon={BookOpen01Icon}
+            data-icon="inline-start"
+          />
           查看接入指南
         </Button>
         <Button variant="outline" onClick={() => onPageChange("logs")}>
-          <FileClockIcon data-icon="inline-start" />
+          <HugeiconsIcon
+            strokeWidth={2}
+            icon={FileClockIcon}
+            data-icon="inline-start"
+          />
           查看请求日志
         </Button>
       </div>

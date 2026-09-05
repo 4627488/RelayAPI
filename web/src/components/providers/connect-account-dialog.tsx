@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  CheckIcon,
+  Tick02Icon,
   ExternalLinkIcon,
-  FileJson2Icon,
+  FileIcon,
   KeyRoundIcon,
-  Link2Icon,
+  Link02Icon,
   PlusIcon,
   RefreshCwIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -306,7 +307,7 @@ export function ConnectAccountDialog({
           <form id="finalize-oauth" onSubmit={finalizeOAuth}>
             <FieldGroup>
               <Alert>
-                <CheckIcon />
+                <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
                 <AlertTitle>授权完成</AlertTitle>
                 <AlertDescription>
                   {oauthStatus.email
@@ -388,7 +389,7 @@ export function ConnectAccountDialog({
                   window.open(oauth.url, "_blank", "noopener,noreferrer")
                 }
               >
-                <ExternalLinkIcon />
+                <HugeiconsIcon strokeWidth={2} icon={ExternalLinkIcon} />
                 打开授权页面
               </Button>
             </div>
@@ -430,7 +431,7 @@ export function ConnectAccountDialog({
           </div>
         ) : reauthAccount ? (
           <Alert>
-            <RefreshCwIcon />
+            <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
             <AlertTitle>原位更新授权</AlertTitle>
             <AlertDescription>
               完成登录后会替换过期令牌，并保留账户设置、模型范围和所有子订阅。
@@ -453,15 +454,15 @@ export function ConnectAccountDialog({
           >
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="oauth">
-                <Link2Icon />
+                <HugeiconsIcon strokeWidth={2} icon={Link02Icon} />
                 OAuth
               </TabsTrigger>
               <TabsTrigger value="api_key">
-                <KeyRoundIcon />
+                <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
                 API Key
               </TabsTrigger>
               <TabsTrigger value="import">
-                <FileJson2Icon />
+                <HugeiconsIcon strokeWidth={2} icon={FileIcon} />
                 导入
               </TabsTrigger>
             </TabsList>
@@ -491,7 +492,7 @@ export function ConnectAccountDialog({
                 <FieldDescription>{selectedOAuth?.detail}</FieldDescription>
               </Field>
               <Alert>
-                <Link2Icon />
+                <HugeiconsIcon strokeWidth={2} icon={Link02Icon} />
                 <AlertTitle>推荐连接方式</AlertTitle>
                 <AlertDescription>
                   Relay
@@ -534,11 +535,20 @@ export function ConnectAccountDialog({
           </Button>
           {oauthStatus?.status === "authorized" ? (
             <Button type="submit" form="finalize-oauth" disabled={pending}>
-              {pending ? <Spinner /> : <CheckIcon />}保存账户
+              {pending ? (
+                <Spinner />
+              ) : (
+                <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
+              )}
+              保存账户
             </Button>
           ) : oauth ? null : mode === "oauth" ? (
             <Button disabled={pending} onClick={() => void startOAuth()}>
-              {pending ? <Spinner /> : <Link2Icon />}
+              {pending ? (
+                <Spinner />
+              ) : (
+                <HugeiconsIcon strokeWidth={2} icon={Link02Icon} />
+              )}
               {reauthAccount ? "开始重新认证" : "生成授权链接"}
             </Button>
           ) : (
@@ -549,7 +559,11 @@ export function ConnectAccountDialog({
               }
               disabled={pending}
             >
-              {pending ? <Spinner /> : <PlusIcon />}
+              {pending ? (
+                <Spinner />
+              ) : (
+                <HugeiconsIcon strokeWidth={2} icon={PlusIcon} />
+              )}
               {mode === "api_key" ? "添加账户" : "验证并导入"}
             </Button>
           )}
@@ -619,7 +633,7 @@ function CredentialFields({
         </Field>
       </div>
       <Alert>
-        <RefreshCwIcon />
+        <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
         <AlertTitle>模型目录来自上游</AlertTitle>
         <AlertDescription>
           连接成功后自动读取该凭据的模型目录，再到“管理”里勾选要对外发布的范围。

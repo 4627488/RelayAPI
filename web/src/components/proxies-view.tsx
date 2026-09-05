@@ -1,17 +1,18 @@
 import { useCallback, useState, type FormEvent } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
   CableIcon,
   CircleCheckIcon,
-  Clock3Icon,
-  Globe2Icon,
+  Clock03Icon,
+  Globe02Icon,
   MapPinIcon,
   NetworkIcon,
   PencilIcon,
   PlusIcon,
   ServerIcon,
-  Trash2Icon,
+  Delete02Icon,
   TriangleAlertIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import {
@@ -206,7 +207,11 @@ export function ProxiesView() {
         title="出站代理"
         actions={
           <Button onClick={() => setEditor({ item: null, open: true })}>
-            <PlusIcon data-icon="inline-start" />
+            <HugeiconsIcon
+              strokeWidth={2}
+              icon={PlusIcon}
+              data-icon="inline-start"
+            />
             添加代理
           </Button>
         }
@@ -265,18 +270,26 @@ export function ProxiesView() {
                   {result ? (
                     result.ok ? (
                       <Alert>
-                        <CircleCheckIcon className="text-muted-foreground" />
+                        <HugeiconsIcon
+                          strokeWidth={2}
+                          icon={CircleCheckIcon}
+                          className="text-muted-foreground"
+                        />
                         <AlertTitle>代理可用</AlertTitle>
                         <AlertAction>
                           <Badge variant="outline">
-                            <Clock3Icon />
+                            <HugeiconsIcon strokeWidth={2} icon={Clock03Icon} />
                             {result.latency_ms} ms
                           </Badge>
                         </AlertAction>
                         <AlertDescription>
                           <div className="mt-2 grid gap-2 text-sm text-foreground sm:grid-cols-2">
                             <p className="flex min-w-0 items-center gap-2">
-                              <Globe2Icon className="size-4 shrink-0 text-muted-foreground" />
+                              <HugeiconsIcon
+                                strokeWidth={2}
+                                icon={Globe02Icon}
+                                className="size-4 shrink-0 text-muted-foreground"
+                              />
                               <span
                                 className="truncate font-mono"
                                 title={result.ip}
@@ -285,13 +298,21 @@ export function ProxiesView() {
                               </span>
                             </p>
                             <p className="flex min-w-0 items-center gap-2">
-                              <MapPinIcon className="size-4 shrink-0 text-muted-foreground" />
+                              <HugeiconsIcon
+                                strokeWidth={2}
+                                icon={MapPinIcon}
+                                className="size-4 shrink-0 text-muted-foreground"
+                              />
                               <span className="truncate">
                                 {result.flag} {proxyLocation(result)}
                               </span>
                             </p>
                             <p className="flex min-w-0 items-center gap-2 sm:col-span-2">
-                              <ServerIcon className="size-4 shrink-0 text-muted-foreground" />
+                              <HugeiconsIcon
+                                strokeWidth={2}
+                                icon={ServerIcon}
+                                className="size-4 shrink-0 text-muted-foreground"
+                              />
                               <span
                                 className="truncate"
                                 title={result.organization}
@@ -307,7 +328,10 @@ export function ProxiesView() {
                       </Alert>
                     ) : (
                       <Alert variant="destructive">
-                        <TriangleAlertIcon />
+                        <HugeiconsIcon
+                          strokeWidth={2}
+                          icon={TriangleAlertIcon}
+                        />
                         <AlertTitle>代理测试失败</AlertTitle>
                         <AlertDescription>
                           {result.error || "未能通过该代理访问测试地址。"}
@@ -323,7 +347,11 @@ export function ProxiesView() {
                     disabled={Boolean(testingID)}
                     onClick={() => void test(item)}
                   >
-                    {testingID === item.id ? <Spinner /> : <CableIcon />}
+                    {testingID === item.id ? (
+                      <Spinner />
+                    ) : (
+                      <HugeiconsIcon strokeWidth={2} icon={CableIcon} />
+                    )}
                     测试代理
                   </Button>
                   <Button
@@ -331,7 +359,7 @@ export function ProxiesView() {
                     variant="ghost"
                     onClick={() => setEditor({ item, open: true })}
                   >
-                    <PencilIcon />
+                    <HugeiconsIcon strokeWidth={2} icon={PencilIcon} />
                     编辑
                   </Button>
                   <Button
@@ -342,7 +370,7 @@ export function ProxiesView() {
                     title={inUse ? "请先取消系统或账户绑定" : undefined}
                     onClick={() => setDeleting(item)}
                   >
-                    <Trash2Icon />
+                    <HugeiconsIcon strokeWidth={2} icon={Delete02Icon} />
                     删除
                   </Button>
                 </CardFooter>
@@ -356,7 +384,7 @@ export function ProxiesView() {
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <NetworkIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={NetworkIcon} />
                 </EmptyMedia>
                 <EmptyTitle>还没有代理</EmptyTitle>
                 <EmptyDescription>
@@ -364,7 +392,7 @@ export function ProxiesView() {
                 </EmptyDescription>
               </EmptyHeader>
               <Button onClick={() => setEditor({ item: null, open: true })}>
-                <PlusIcon />
+                <HugeiconsIcon strokeWidth={2} icon={PlusIcon} />
                 添加第一个代理
               </Button>
             </Empty>

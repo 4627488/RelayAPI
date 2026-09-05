@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  ActivityIcon,
-  CheckIcon,
-  FileJson2Icon,
+  Activity01Icon,
+  Tick02Icon,
+  FileIcon,
   MoreHorizontalIcon,
   NetworkIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
-  Trash2Icon,
-} from "lucide-react"
+  Delete02Icon,
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -237,15 +238,15 @@ export function ManageAccountDialog({
             <Tabs defaultValue="general">
               <TabsList className="w-full">
                 <TabsTrigger value="general">
-                  <ShieldCheckIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={ShieldCheckIcon} />
                   常规
                 </TabsTrigger>
                 <TabsTrigger value="connection">
-                  <NetworkIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={NetworkIcon} />
                   连接
                 </TabsTrigger>
                 <TabsTrigger value="advanced">
-                  <FileJson2Icon />
+                  <HugeiconsIcon strokeWidth={2} icon={FileIcon} />
                   高级
                 </TabsTrigger>
               </TabsList>
@@ -306,7 +307,11 @@ export function ManageAccountDialog({
                         {modelLoading ? (
                           <Spinner data-icon="inline-start" />
                         ) : (
-                          <RefreshCwIcon data-icon="inline-start" />
+                          <HugeiconsIcon
+                            strokeWidth={2}
+                            icon={RefreshCwIcon}
+                            data-icon="inline-start"
+                          />
                         )}
                         刷新
                       </Button>
@@ -552,7 +557,7 @@ export function ManageAccountDialog({
                     </Field>
                   ) : (
                     <Alert>
-                      <ShieldCheckIcon />
+                      <HugeiconsIcon strokeWidth={2} icon={ShieldCheckIcon} />
                       <AlertTitle>OAuth 凭据由 Relay 管理</AlertTitle>
                       <AlertDescription>
                         OAuth
@@ -574,12 +579,20 @@ export function ManageAccountDialog({
                   }
                   onClick={() => onTest(account)}
                 >
-                  <ActivityIcon data-icon="inline-start" />
+                  <HugeiconsIcon
+                    strokeWidth={2}
+                    icon={Activity01Icon}
+                    data-icon="inline-start"
+                  />
                   测试
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger render={<Button variant="outline" />}>
-                    <MoreHorizontalIcon data-icon="inline-start" />
+                    <HugeiconsIcon
+                      strokeWidth={2}
+                      icon={MoreHorizontalIcon}
+                      data-icon="inline-start"
+                    />
                     更多
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start">
@@ -597,7 +610,7 @@ export function ManageAccountDialog({
                           disabled={pending}
                           onClick={() => onReauthenticate(account)}
                         >
-                          <RefreshCwIcon />
+                          <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
                           重新认证
                         </DropdownMenuItem>
                       ) : null}
@@ -608,7 +621,7 @@ export function ManageAccountDialog({
                         variant="destructive"
                         onClick={() => onDelete(account)}
                       >
-                        <Trash2Icon />
+                        <HugeiconsIcon strokeWidth={2} icon={Delete02Icon} />
                         删除账户
                       </DropdownMenuItem>
                     </DropdownMenuGroup>
@@ -619,7 +632,12 @@ export function ManageAccountDialog({
                 disabled={pending || modelLoading || !selectedModels.length}
                 onClick={save}
               >
-                {pending ? <Spinner /> : <CheckIcon />}保存更改
+                {pending ? (
+                  <Spinner />
+                ) : (
+                  <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
+                )}
+                保存更改
               </Button>
             </DialogFooter>
           </>

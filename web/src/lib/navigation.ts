@@ -1,31 +1,32 @@
-import type { ComponentType } from "react"
+import type { ComponentProps } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  BarChart3Icon,
-  BookOpenIcon,
+  ChartBarBigIcon,
+  BookOpen01Icon,
   GaugeIcon,
   KeyRoundIcon,
   ListIcon,
   PackageOpenIcon,
   PlugIcon,
-  Settings2Icon,
+  Settings01Icon,
   SlidersHorizontalIcon,
   UsersIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 
 import type { Page, Workspace } from "@/lib/routes"
 
 export interface NavigationItem {
   id: Page
   label: string
-  icon: ComponentType
+  icon: ComponentProps<typeof HugeiconsIcon>["icon"]
   section: string
 }
 
 export const userNavigation: NavigationItem[] = [
   { id: "overview", label: "总览", icon: GaugeIcon, section: "开始使用" },
-  { id: "guide", label: "接入指南", icon: BookOpenIcon, section: "开始使用" },
+  { id: "guide", label: "接入指南", icon: BookOpen01Icon, section: "开始使用" },
   { id: "keys", label: "API 密钥", icon: KeyRoundIcon, section: "开始使用" },
-  { id: "usage", label: "用量", icon: BarChart3Icon, section: "运行与观测" },
+  { id: "usage", label: "用量", icon: ChartBarBigIcon, section: "运行与观测" },
   { id: "logs", label: "请求日志", icon: ListIcon, section: "运行与观测" },
   {
     id: "subscriptions",
@@ -48,7 +49,7 @@ export const adminNavigation: NavigationItem[] = [
   {
     id: "pricing",
     label: "目录与计费",
-    icon: Settings2Icon,
+    icon: Settings01Icon,
     section: "模型与计费",
   },
   {
@@ -57,7 +58,7 @@ export const adminNavigation: NavigationItem[] = [
     icon: SlidersHorizontalIcon,
     section: "模型与计费",
   },
-  { id: "usage", label: "全局用量", icon: BarChart3Icon, section: "观测" },
+  { id: "usage", label: "全局用量", icon: ChartBarBigIcon, section: "观测" },
   { id: "logs", label: "请求日志", icon: ListIcon, section: "观测" },
 ]
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react"
-import { SendIcon } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { SendIcon } from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -41,7 +42,7 @@ function AuthFrame({
     <main className="flex min-h-svh items-center justify-center bg-muted/30 px-4 py-8 sm:px-6">
       <section className="w-full max-w-md" aria-labelledby="auth-title">
         <div className="mb-6 flex items-center gap-3 px-1">
-          <SendIcon />
+          <HugeiconsIcon strokeWidth={2} icon={SendIcon} />
           <div className="leading-tight">
             <p className="text-base font-semibold">RelayAPI</p>
             <p className="text-xs text-muted-foreground">管理控制台</p>

@@ -6,12 +6,13 @@ import {
   useMemo,
   useState,
 } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  ActivityIcon,
+  Activity01Icon,
   KeyRoundIcon,
   PlusIcon,
   RefreshCwIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import {
@@ -271,7 +272,11 @@ export function ProvidersView() {
               {syncingQuota ? (
                 <Spinner />
               ) : (
-                <RefreshCwIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={RefreshCwIcon}
+                  data-icon="inline-start"
+                />
               )}
               刷新额度
             </Button>
@@ -281,7 +286,11 @@ export function ProvidersView() {
                 setConnectOpen(true)
               }}
             >
-              <PlusIcon data-icon="inline-start" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={PlusIcon}
+                data-icon="inline-start"
+              />
               连接账户
             </Button>
           </>
@@ -419,7 +428,11 @@ export function ProvidersView() {
                             }
                             onClick={() => setTesting(account)}
                           >
-                            <ActivityIcon data-icon="inline-start" />
+                            <HugeiconsIcon
+                              strokeWidth={2}
+                              icon={Activity01Icon}
+                              data-icon="inline-start"
+                            />
                             测试
                           </Button>
                           <Button
@@ -444,7 +457,7 @@ export function ProvidersView() {
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <KeyRoundIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
                 </EmptyMedia>
                 <EmptyTitle>
                   {accounts.length ? "没有匹配的账户" : "还没有模型账户"}
@@ -462,7 +475,7 @@ export function ProvidersView() {
                     setConnectOpen(true)
                   }}
                 >
-                  <PlusIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={PlusIcon} />
                   连接账户
                 </Button>
               ) : null}

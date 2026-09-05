@@ -1,12 +1,13 @@
 import { useState, type ReactNode } from "react"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  ActivityIcon,
+  Activity01Icon,
   CircleDollarSignIcon,
-  Clock3Icon,
-  CoinsIcon,
+  Clock03Icon,
+  Coins01Icon,
   TriangleAlertIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 
 import { Badge } from "@/components/ui/badge"
 import {
@@ -55,7 +56,7 @@ interface Metric {
   label: string
   value: string
   hint: string
-  icon: typeof ActivityIcon
+  icon: typeof Activity01Icon
 }
 
 export function MetricGrid({ items }: { items: Metric[] }) {
@@ -133,7 +134,7 @@ export function UsageChart({ report }: { report: UsageReport }) {
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <ActivityIcon />
+                <HugeiconsIcon strokeWidth={2} icon={Activity01Icon} />
               </EmptyMedia>
               <EmptyTitle>暂无用量</EmptyTitle>
               <EmptyDescription>
@@ -189,7 +190,7 @@ export function ModelTable({ report }: { report: UsageReport }) {
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <CoinsIcon />
+                <HugeiconsIcon strokeWidth={2} icon={Coins01Icon} />
               </EmptyMedia>
               <EmptyTitle>没有模型数据</EmptyTitle>
               <EmptyDescription>当前时间范围内没有请求。</EmptyDescription>
@@ -268,7 +269,7 @@ export function ApiKeyUsageTable({
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <CoinsIcon />
+                <HugeiconsIcon strokeWidth={2} icon={Coins01Icon} />
               </EmptyMedia>
               <EmptyTitle>没有 Key 用量</EmptyTitle>
               <EmptyDescription>
@@ -379,7 +380,7 @@ export function LogsTable({
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <Clock3Icon />
+                <HugeiconsIcon strokeWidth={2} icon={Clock03Icon} />
               </EmptyMedia>
               <EmptyTitle>暂无请求记录</EmptyTitle>
               <EmptyDescription>API 调用记录会显示在这里。</EmptyDescription>
@@ -399,13 +400,13 @@ export function UsageMetrics({ report }: { report: UsageReport }) {
           label: "请求",
           value: compact(report.summary.requests),
           hint: `最近 ${report.days} 天`,
-          icon: ActivityIcon,
+          icon: Activity01Icon,
         },
         {
           label: "Tokens",
           value: compactTokens(report.summary.tokens),
           hint: "输入与输出合计",
-          icon: CoinsIcon,
+          icon: Coins01Icon,
         },
         {
           label: "错误",

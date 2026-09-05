@@ -5,14 +5,15 @@ import {
   useState,
   type FormEvent,
 } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  AlertTriangleIcon,
+  Alert02Icon,
   CircleDollarSignIcon,
   CloudDownloadIcon,
   PencilIcon,
-  SearchIcon,
-  Trash2Icon,
-} from "lucide-react"
+  Search01Icon,
+  Delete02Icon,
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Badge } from "@/components/ui/badge"
@@ -308,7 +309,11 @@ export function PricingView() {
               disabled={pending}
               onClick={() => void syncCatalog(false)}
             >
-              <CloudDownloadIcon data-icon="inline-start" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={CloudDownloadIcon}
+                data-icon="inline-start"
+              />
               预览同步
             </Button>
             <Button
@@ -316,7 +321,11 @@ export function PricingView() {
               disabled={pending}
               onClick={() => void syncCatalog(true)}
             >
-              <CloudDownloadIcon data-icon="inline-start" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={CloudDownloadIcon}
+                data-icon="inline-start"
+              />
               应用 Models.dev
             </Button>
           </>
@@ -345,21 +354,21 @@ export function PricingView() {
       />
       {loadError ? (
         <Alert variant="destructive">
-          <AlertTriangleIcon />
+          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
           <AlertTitle>定价数据加载失败</AlertTitle>
           <AlertDescription>{loadError}</AlertDescription>
         </Alert>
       ) : null}
       {prices.catalog_sync_error ? (
         <Alert>
-          <AlertTriangleIcon />
+          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
           <AlertTitle>Models.dev 暂时不可用，当前使用内置目录</AlertTitle>
           <AlertDescription>{prices.catalog_sync_error}</AlertDescription>
         </Alert>
       ) : null}
       {prices.available_models_error ? (
         <Alert variant="destructive">
-          <AlertTriangleIcon />
+          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
           <AlertTitle>无法读取本站模型</AlertTitle>
           <AlertDescription>{prices.available_models_error}</AlertDescription>
         </Alert>
@@ -455,7 +464,7 @@ export function PricingView() {
                           aria-label={`配置 ${price.model}`}
                           onClick={() => setEditingPrice(price)}
                         >
-                          <PencilIcon />
+                          <HugeiconsIcon strokeWidth={2} icon={PencilIcon} />
                         </Button>
                         {price.source === "admin" ? (
                           <Button
@@ -464,7 +473,10 @@ export function PricingView() {
                             aria-label={`删除 ${price.model} 的管理员价格`}
                             onClick={() => void remove(price.model)}
                           >
-                            <Trash2Icon />
+                            <HugeiconsIcon
+                              strokeWidth={2}
+                              icon={Delete02Icon}
+                            />
                           </Button>
                         ) : null}
                       </span>
@@ -477,7 +489,7 @@ export function PricingView() {
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <SearchIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={Search01Icon} />
                 </EmptyMedia>
                 <EmptyTitle>
                   {prices.available_models.length
@@ -778,7 +790,11 @@ export function PricingView() {
               {pending ? (
                 <Spinner />
               ) : (
-                <CircleDollarSignIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={CircleDollarSignIcon}
+                  data-icon="inline-start"
+                />
               )}
               保存
             </Button>

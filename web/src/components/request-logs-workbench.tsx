@@ -6,18 +6,19 @@ import {
   useState,
   type ReactNode,
 } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  AlertTriangleIcon,
-  ArrowRightIcon,
+  Alert02Icon,
+  ArrowRight01Icon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
   RefreshCwIcon,
-  SearchIcon,
+  Search01Icon,
   SlidersHorizontalIcon,
   XIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -388,9 +389,15 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               className="contents"
             >
               <CollapsibleTrigger render={<Button variant="outline" />}>
-                <SlidersHorizontalIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={SlidersHorizontalIcon}
+                  data-icon="inline-start"
+                />
                 筛选{advancedFilterCount ? ` ${advancedFilterCount}` : ""}
-                <ChevronDownIcon
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={ChevronDownIcon}
                   data-icon="inline-end"
                   className={cn(
                     "transition-transform",
@@ -406,7 +413,11 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                 {loading ? (
                   <Spinner data-icon="inline-start" />
                 ) : (
-                  <RefreshCwIcon data-icon="inline-start" />
+                  <HugeiconsIcon
+                    strokeWidth={2}
+                    icon={RefreshCwIcon}
+                    data-icon="inline-start"
+                  />
                 )}
                 刷新
               </Button>
@@ -506,7 +517,11 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                     className="mt-3"
                     onClick={resetFilters}
                   >
-                    <XIcon data-icon="inline-start" />
+                    <HugeiconsIcon
+                      strokeWidth={2}
+                      icon={XIcon}
+                      data-icon="inline-start"
+                    />
                     清除全部筛选
                   </Button>
                 ) : null}
@@ -646,7 +661,11 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                     </TableCell>
                     <TableCell className="text-right text-xs whitespace-nowrap tabular-nums">
                       <span>{bytes(log.request_body_bytes)}</span>
-                      <ArrowRightIcon className="mx-1 inline size-3 text-muted-foreground" />
+                      <HugeiconsIcon
+                        strokeWidth={2}
+                        icon={ArrowRight01Icon}
+                        className="mx-1 inline size-3 text-muted-foreground"
+                      />
                       <span>{bytes(log.response_body_bytes)}</span>
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap tabular-nums">
@@ -668,7 +687,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
             <Empty className="min-h-72">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <SearchIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={Search01Icon} />
                 </EmptyMedia>
                 <EmptyTitle>
                   {hasFilters ? "没有匹配的请求" : "暂无请求记录"}
@@ -728,7 +747,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               onClick={() => setPage((value) => value - 1)}
               aria-label="上一页"
             >
-              <ChevronLeftIcon />
+              <HugeiconsIcon strokeWidth={2} icon={ChevronLeftIcon} />
             </Button>
             <Button
               variant="outline"
@@ -737,7 +756,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               onClick={() => setPage((value) => value + 1)}
               aria-label="下一页"
             >
-              <ChevronRightIcon />
+              <HugeiconsIcon strokeWidth={2} icon={ChevronRightIcon} />
             </Button>
           </div>
         </CardFooter>
@@ -784,7 +803,11 @@ function LogDetailPage({
     <div className="flex w-full min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-start gap-3">
         <Button variant="outline" onClick={onBack}>
-          <ChevronLeftIcon data-icon="inline-start" />
+          <HugeiconsIcon
+            strokeWidth={2}
+            icon={ChevronLeftIcon}
+            data-icon="inline-start"
+          />
           返回列表
         </Button>
         <div className="min-w-0 flex-1">
@@ -963,7 +986,7 @@ function LogOverview({
     <div className="flex flex-col gap-5 p-4 sm:p-5">
       {errorTitle || errorMessage ? (
         <Alert variant="destructive">
-          <AlertTriangleIcon />
+          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
           <AlertTitle>{errorTitle || "请求失败"}</AlertTitle>
           {errorMessage ? (
             <AlertDescription className="break-words">
@@ -1321,7 +1344,7 @@ function CopyButton({
       onClick={() => void copy()}
       aria-label={label}
     >
-      <CopyIcon />
+      <HugeiconsIcon strokeWidth={2} icon={CopyIcon} />
     </Button>
   )
 }

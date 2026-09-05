@@ -1,21 +1,22 @@
 import {
   useEffect,
   useState,
-  type ComponentType,
+  type ComponentProps,
   type MouseEvent,
   type ReactNode,
 } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
   ChevronRightIcon,
-  ChevronsUpDownIcon,
+  UnfoldMoreIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
   SendIcon,
   ShieldCheckIcon,
-  SunIcon,
+  Sun01Icon,
   UserRoundIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -109,14 +110,22 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
     <Avatar className="size-8">
       {source ? <AvatarImage src={source} alt={`${name} 的头像`} /> : null}
       <AvatarFallback>
-        <UserRoundIcon aria-hidden="true" />
+        <HugeiconsIcon
+          strokeWidth={2}
+          icon={UserRoundIcon}
+          aria-hidden="true"
+        />
       </AvatarFallback>
     </Avatar>
   )
 }
 
-const themes: Array<{ value: Theme; label: string; icon: ComponentType }> = [
-  { value: "light", label: "浅色", icon: SunIcon },
+const themes: Array<{
+  value: Theme
+  label: string
+  icon: ComponentProps<typeof HugeiconsIcon>["icon"]
+}> = [
+  { value: "light", label: "浅色", icon: Sun01Icon },
   { value: "dark", label: "深色", icon: MoonIcon },
   { value: "system", label: "跟随系统", icon: MonitorIcon },
 ]
@@ -143,7 +152,7 @@ function ThemeChoices({
     >
       {themes.map((item) => (
         <DropdownMenuRadioItem key={item.value} value={item.value}>
-          <item.icon />
+          <HugeiconsIcon icon={item.icon} strokeWidth={2} />
           {item.label}
         </DropdownMenuRadioItem>
       ))}
@@ -197,7 +206,7 @@ function SidebarNav({
                       if (isMobile) setOpenMobile(false)
                     }}
                   >
-                    <item.icon />
+                    <HugeiconsIcon icon={item.icon} strokeWidth={2} />
                     <span>{item.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -256,7 +265,7 @@ export function AppShell({
                   onPageChange("overview")
                 }}
               >
-                <SendIcon />
+                <HugeiconsIcon strokeWidth={2} icon={SendIcon} />
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold">RelayAPI</span>
                   <span className="truncate text-xs text-muted-foreground">
@@ -288,7 +297,7 @@ export function AppShell({
                       {subtitle}
                     </span>
                   </div>
-                  <ChevronsUpDownIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={UnfoldMoreIcon} />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="end" className="w-56">
                   <DropdownMenuLabel>{name}</DropdownMenuLabel>
@@ -302,7 +311,17 @@ export function AppShell({
                             onWorkspaceChange(admin ? "user" : "admin")
                           }
                         >
-                          {admin ? <UserRoundIcon /> : <ShieldCheckIcon />}
+                          {admin ? (
+                            <HugeiconsIcon
+                              strokeWidth={2}
+                              icon={UserRoundIcon}
+                            />
+                          ) : (
+                            <HugeiconsIcon
+                              strokeWidth={2}
+                              icon={ShieldCheckIcon}
+                            />
+                          )}
                           {admin ? "返回个人面板" : "进入管理员面板"}
                         </DropdownMenuItem>
                       </DropdownMenuGroup>
@@ -314,7 +333,7 @@ export function AppShell({
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuItem variant="destructive" onClick={onLogout}>
-                      <LogOutIcon />
+                      <HugeiconsIcon strokeWidth={2} icon={LogOutIcon} />
                       退出登录
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
@@ -346,7 +365,11 @@ export function AppShell({
               <span className="hidden text-xs text-muted-foreground sm:inline">
                 {workspaceLabels[workspace]}
               </span>
-              <ChevronRightIcon className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={ChevronRightIcon}
+                className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline"
+              />
               <span className="truncate font-medium">{currentPageLabel}</span>
             </div>
           </div>
@@ -358,9 +381,17 @@ export function AppShell({
               aria-label={workspaceActionLabel}
             >
               {admin ? (
-                <UserRoundIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={UserRoundIcon}
+                  data-icon="inline-start"
+                />
               ) : (
-                <ShieldCheckIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={ShieldCheckIcon}
+                  data-icon="inline-start"
+                />
               )}
               <span className="hidden sm:inline">{workspaceActionLabel}</span>
             </Button>

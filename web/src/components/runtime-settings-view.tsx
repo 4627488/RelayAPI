@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { CheckIcon, RotateCcwIcon, SaveIcon } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Tick02Icon, RotateCcwIcon, SaveIcon } from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { Button } from "@/components/ui/button"
@@ -255,7 +256,9 @@ function ChoiceField<T extends string | number>({
             value={String(option.value)}
             className="min-w-24 flex-1"
           >
-            {String(value) === String(option.value) ? <CheckIcon /> : null}
+            {String(value) === String(option.value) ? (
+              <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
+            ) : null}
             {option.label}
           </ToggleGroupItem>
         ))}
@@ -758,13 +761,22 @@ export function RuntimeSettingsView() {
               disabled={saving}
               onClick={() => saved && setValue(saved)}
             >
-              <RotateCcwIcon data-icon="inline-start" /> 撤销
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={RotateCcwIcon}
+                data-icon="inline-start"
+              />{" "}
+              撤销
             </Button>
             <Button disabled={saving} onClick={() => void save()}>
               {saving ? (
                 <Spinner data-icon="inline-start" />
               ) : (
-                <SaveIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={SaveIcon}
+                  data-icon="inline-start"
+                />
               )}
               保存
             </Button>

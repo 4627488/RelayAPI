@@ -1,5 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { CopyIcon, PlusIcon, SendIcon, Trash2Icon, XIcon } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import {
+  CopyIcon,
+  PlusIcon,
+  SendIcon,
+  Delete02Icon,
+  XIcon,
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -158,7 +165,11 @@ export function InvitationsView({
               setOpen(true)
             }}
           >
-            <PlusIcon data-icon="inline-start" />
+            <HugeiconsIcon
+              strokeWidth={2}
+              icon={PlusIcon}
+              data-icon="inline-start"
+            />
             生成邀请
           </Button>
         }
@@ -176,7 +187,7 @@ export function InvitationsView({
               aria-label="清除邀请链接"
               onClick={() => setResult(null)}
             >
-              <XIcon />
+              <HugeiconsIcon strokeWidth={2} icon={XIcon} />
             </Button>
           </CardHeader>
           <CardContent>
@@ -234,7 +245,7 @@ export function InvitationsView({
                           disabled={!active}
                           onClick={() => void revoke(item.id)}
                         >
-                          <Trash2Icon />
+                          <HugeiconsIcon strokeWidth={2} icon={Delete02Icon} />
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -246,7 +257,7 @@ export function InvitationsView({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <SendIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={SendIcon} />
                 </EmptyMedia>
                 <EmptyTitle>还没有邀请</EmptyTitle>
                 <EmptyDescription>
@@ -311,7 +322,11 @@ export function InvitationsView({
                 {pending ? (
                   <Spinner data-icon="inline-start" />
                 ) : (
-                  <SendIcon data-icon="inline-start" />
+                  <HugeiconsIcon
+                    strokeWidth={2}
+                    icon={SendIcon}
+                    data-icon="inline-start"
+                  />
                 )}
                 生成
               </Button>
@@ -348,7 +363,7 @@ function InviteLinkField({ id, value }: { id: string; value: string }) {
                   )
               }}
             >
-              <CopyIcon />
+              <HugeiconsIcon strokeWidth={2} icon={CopyIcon} />
             </Button>
           </InputGroupAddon>
         </InputGroup>

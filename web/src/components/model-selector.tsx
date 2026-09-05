@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react"
-import { CheckIcon, SearchIcon } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Tick02Icon, Search01Icon } from "@hugeicons/core-free-icons"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -52,7 +53,9 @@ export function ModelSelector({
           variant={!value.length ? "secondary" : "outline"}
           onClick={() => onChange([])}
         >
-          {!value.length ? <CheckIcon /> : null}
+          {!value.length ? (
+            <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
+          ) : null}
           {allLabel}
         </Button>
         <Badge variant="outline">
@@ -61,7 +64,11 @@ export function ModelSelector({
       </div>
       {models.length > 8 ? (
         <div className="relative">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <HugeiconsIcon
+            strokeWidth={2}
+            icon={Search01Icon}
+            className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+          />
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -82,7 +89,9 @@ export function ModelSelector({
               onClick={() => toggle(model)}
               title={model}
             >
-              {selected.has(model) ? <CheckIcon /> : null}
+              {selected.has(model) ? (
+                <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
+              ) : null}
               <span className="truncate">{model}</span>
             </Button>
           ))}

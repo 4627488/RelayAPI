@@ -1,12 +1,13 @@
 import { lazy, useCallback } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  ActivityIcon,
+  Activity01Icon,
   BanIcon,
   KeyRoundIcon,
   SendIcon,
   TriangleAlertIcon,
   UsersIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 import type { Page } from "@/lib/routes"
 import { LoadingView } from "@/components/loading-view"
@@ -103,7 +104,7 @@ export function AdminOverviewPage({
             label: "今日请求",
             value: compact(overview.today.requests),
             hint: `${compactTokens(overview.today.tokens)} tokens`,
-            icon: ActivityIcon,
+            icon: Activity01Icon,
           },
           {
             label: "今日错误",
@@ -128,7 +129,11 @@ export function AdminOverviewPage({
               onClick={() => onPageChange("logs")}
             >
               <div className="flex items-center gap-3">
-                <TriangleAlertIcon className="text-muted-foreground" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={TriangleAlertIcon}
+                  className="text-muted-foreground"
+                />
                 <div>
                   <p className="text-sm font-medium">今日错误</p>
                   <p className="text-xs text-muted-foreground">
@@ -150,7 +155,11 @@ export function AdminOverviewPage({
               onClick={() => onPageChange("users")}
             >
               <div className="flex items-center gap-3">
-                <BanIcon className="text-muted-foreground" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={BanIcon}
+                  className="text-muted-foreground"
+                />
                 <div>
                   <p className="text-sm font-medium">停用用户</p>
                   <p className="text-xs text-muted-foreground">
@@ -176,7 +185,11 @@ export function AdminOverviewPage({
               onClick={() => onPageChange("invitations")}
             >
               <div className="flex items-center gap-3">
-                <SendIcon className="text-muted-foreground" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={SendIcon}
+                  className="text-muted-foreground"
+                />
                 <div>
                   <p className="text-sm font-medium">待使用邀请</p>
                   <p className="text-xs text-muted-foreground">仍在有效期内</p>
@@ -190,7 +203,11 @@ export function AdminOverviewPage({
               className="justify-start"
               onClick={() => onPageChange("providers")}
             >
-              <KeyRoundIcon data-icon="inline-start" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={KeyRoundIcon}
+                data-icon="inline-start"
+              />
               管理模型账户
             </Button>
           </CardContent>

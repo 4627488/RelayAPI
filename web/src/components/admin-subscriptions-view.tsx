@@ -5,17 +5,18 @@ import {
   useState,
   type FormEvent,
 } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  AlertTriangleIcon,
+  Alert02Icon,
   EllipsisIcon,
   PackageOpenIcon,
   PlusIcon,
-  SearchIcon,
-  Settings2Icon,
-  Trash2Icon,
+  Search01Icon,
+  Settings01Icon,
+  Delete02Icon,
   UserPlusIcon,
   UsersIcon,
-} from "lucide-react"
+} from "@hugeicons/core-free-icons"
 import { toast } from "@/components/ui/toast"
 
 import { ModelSelector } from "@/components/model-selector"
@@ -423,7 +424,7 @@ export function AdminSubscriptionsView() {
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <PackageOpenIcon />
+              <HugeiconsIcon strokeWidth={2} icon={PackageOpenIcon} />
             </EmptyMedia>
             <EmptyTitle>还没有可分配的模型账户</EmptyTitle>
             <EmptyDescription>请先连接模型账户。</EmptyDescription>
@@ -444,7 +445,7 @@ export function AdminSubscriptionsView() {
               </div>
               <InputGroup>
                 <InputGroupAddon>
-                  <SearchIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={Search01Icon} />
                 </InputGroupAddon>
                 <InputGroupInput
                   value={query}
@@ -724,7 +725,15 @@ export function AdminSubscriptionsView() {
                   assignTenantIDs.length === 0)
               }
             >
-              {pending ? <Spinner /> : <PlusIcon data-icon="inline-start" />}
+              {pending ? (
+                <Spinner />
+              ) : (
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={PlusIcon}
+                  data-icon="inline-start"
+                />
+              )}
               {assignParent?.item.capacity_mode === "unmetered"
                 ? "确认授权"
                 : "确认分配"}
@@ -771,7 +780,15 @@ export function AdminSubscriptionsView() {
               disabled={pending}
               onClick={() => void removeChild()}
             >
-              {pending ? <Spinner /> : <Trash2Icon data-icon="inline-start" />}
+              {pending ? (
+                <Spinner />
+              ) : (
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={Delete02Icon}
+                  data-icon="inline-start"
+                />
+              )}
               删除授权
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -862,7 +879,11 @@ function AccountAllocationPanel({
         {view.item.status !== "missing" ? (
           <div className="shrink-0">
             <Button size="sm" variant="outline" onClick={onConfigure}>
-              <Settings2Icon data-icon="inline-start" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={Settings01Icon}
+                data-icon="inline-start"
+              />
               账户规则
             </Button>
           </div>
@@ -922,7 +943,7 @@ function AccountAllocationPanel({
 
         {!isAllocatable(view) ? (
           <Alert variant="destructive">
-            <AlertTriangleIcon />
+            <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
             <AlertTitle>当前账户不能继续分配</AlertTitle>
             <AlertDescription>{accountBlockReason(view)}</AlertDescription>
           </Alert>
@@ -946,7 +967,11 @@ function AccountAllocationPanel({
               disabled={!isAllocatable(view)}
               onClick={onAssign}
             >
-              <PlusIcon data-icon="inline-start" />
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={PlusIcon}
+                data-icon="inline-start"
+              />
               {view.item.capacity_mode === "unmetered"
                 ? "添加用户"
                 : "新增授权"}
@@ -1057,7 +1082,7 @@ function AccountAllocationPanel({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <UsersIcon />
+                  <HugeiconsIcon strokeWidth={2} icon={UsersIcon} />
                 </EmptyMedia>
                 <EmptyTitle>尚未分配给任何租户</EmptyTitle>
                 <EmptyDescription>
@@ -1067,7 +1092,11 @@ function AccountAllocationPanel({
                 </EmptyDescription>
               </EmptyHeader>
               <Button disabled={!isAllocatable(view)} onClick={onAssign}>
-                <UserPlusIcon data-icon="inline-start" />
+                <HugeiconsIcon
+                  strokeWidth={2}
+                  icon={UserPlusIcon}
+                  data-icon="inline-start"
+                />
                 {view.item.capacity_mode === "unmetered"
                   ? "添加用户"
                   : "分配给租户"}
@@ -1169,7 +1198,7 @@ function MobileChildGrant({
 function OversubscriptionWarning({ allocatedPPM }: { allocatedPPM: number }) {
   return (
     <Alert>
-      <AlertTriangleIcon />
+      <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
       <AlertTitle>共享额度已超卖</AlertTitle>
       <AlertDescription>
         当前总分配为 {percent(allocatedPPM)}
@@ -1205,7 +1234,7 @@ function ChildGrantMenu({
           />
         }
       >
-        <EllipsisIcon />
+        <HugeiconsIcon strokeWidth={2} icon={EllipsisIcon} />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuGroup>
@@ -1438,7 +1467,7 @@ function ParentSettingsDialog({
                   />
                   {!windows.length ? (
                     <Alert variant="destructive">
-                      <AlertTriangleIcon />
+                      <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
                       <AlertTitle>没有可分配的额度窗口</AlertTitle>
                       <AlertDescription>
                         这个账户当前只能使用余额结算。

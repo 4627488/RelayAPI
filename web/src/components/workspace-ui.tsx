@@ -1,5 +1,6 @@
-import type { ComponentType, InputHTMLAttributes, ReactNode } from "react"
-import { SearchIcon, XIcon } from "lucide-react"
+import type { ComponentProps, InputHTMLAttributes, ReactNode } from "react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Search01Icon, XIcon } from "@hugeicons/core-free-icons"
 
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -68,7 +69,7 @@ export interface StatItem {
   label: ReactNode
   value: ReactNode
   detail?: ReactNode
-  icon?: ComponentType<{ className?: string }>
+  icon?: ComponentProps<typeof HugeiconsIcon>["icon"]
   tone?: "default" | "positive" | "warning" | "negative"
 }
 
@@ -98,7 +99,11 @@ export function StatStrip({
               <CardDescription>{item.label}</CardDescription>
               {Icon ? (
                 <CardAction>
-                  <Icon className="text-muted-foreground" />
+                  <HugeiconsIcon
+                    icon={Icon}
+                    strokeWidth={2}
+                    className="text-muted-foreground"
+                  />
                 </CardAction>
               ) : null}
             </CardHeader>
@@ -138,7 +143,7 @@ export function SearchField({
   return (
     <InputGroup className={className}>
       <InputGroupAddon>
-        <SearchIcon />
+        <HugeiconsIcon strokeWidth={2} icon={Search01Icon} />
       </InputGroupAddon>
       <InputGroupInput
         value={value}
@@ -150,11 +155,11 @@ export function SearchField({
           <Button
             type="button"
             variant="ghost"
-            size="icon-xs"
+            size="icon-sm"
             onClick={onClear}
             aria-label="清除搜索"
           >
-            <XIcon />
+            <HugeiconsIcon strokeWidth={2} icon={XIcon} />
           </Button>
         </InputGroupAddon>
       ) : null}
@@ -167,13 +172,13 @@ export function InfoBar({
   children,
   className,
 }: {
-  icon?: ComponentType<{ className?: string }>
+  icon?: ComponentProps<typeof HugeiconsIcon>["icon"]
   children: ReactNode
   className?: string
 }) {
   return (
     <Alert className={className}>
-      {Icon ? <Icon /> : null}
+      {Icon ? <HugeiconsIcon icon={Icon} strokeWidth={2} /> : null}
       <AlertDescription>{children}</AlertDescription>
     </Alert>
   )
