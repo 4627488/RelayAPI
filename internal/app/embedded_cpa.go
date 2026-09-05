@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/cpa"
+	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
@@ -122,6 +123,14 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 	a.nativeCPARuntime = runtime
 	a.nativeCPAServer = server
 	a.nativeRuntime = &embeddedCPAAdapter{app: a}
+	if err = a.persistExpandedCodexCredentialModels(ctx); err != nil {
+		slog.Warn("persist expanded Codex credential models", "error", err)
+	}
+	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
+		_ = listener.Close()
+		_ = runtime.Close(context.Background())
+		return fmt.Errorf("synchronize native parent subscriptions after Codex catalog expand: %w", err)
+	}
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -130,6 +139,50 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 		}
 	}()
 	return nil
+}
+
+func (a *App) persistExpandedCodexCredentialModels(ctx context.Context) error {
+	if a == nil || a.nativeRuntime == nil || a.store.DB == nil {
+		return nil
+	}
+	rows, err := a.store.ListUpstreamCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if !strings.EqualFold(strings.TrimSpace(row.Provider), "codex") {
+			continue
+		}
+		live := a.nativeRuntime.CredentialModels(row.ID)
+		if len(live) == 0 || sameModelSet(live, row.Models) {
+			continue
+		}
+		if _, err = a.store.UpsertUpstreamCredential(ctx, store.UpstreamCredentialInput{
+			ID: row.ID, Name: row.Name, Provider: row.Provider, Enabled: row.Enabled,
+			Models: live, Document: row.Document, Source: row.Source, ProxyID: row.ProxyID, ExpiresAt: row.ExpiresAt,
+		}); err != nil {
+			return fmt.Errorf("persist Codex models for %s: %w", row.ID, err)
+		}
+	}
+	return nil
+}
+
+func sameModelSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, model := range left {
+		counts[strings.ToLower(strings.TrimSpace(model))]++
+	}
+	for _, model := range right {
+		key := strings.ToLower(strings.TrimSpace(model))
+		if counts[key] == 0 {
+			return false
+		}
+		counts[key]--
+	}
+	return true
 }
 
 func (a *App) migrateEmbeddedCPAData(ctx context.Context) error {

@@ -273,10 +273,16 @@ func (a *App) syncNativeParentSubscriptionRows(ctx context.Context) ([]store.Par
 			status = "disabled"
 		}
 		now := time.Now()
+		models := append([]string(nil), row.Models...)
+		if a.nativeRuntime != nil {
+			if live := a.nativeRuntime.CredentialModels(row.ID); len(live) > 0 {
+				models = live
+			}
+		}
 		item, syncErr := a.store.SyncNativeParentSubscription(ctx, store.ParentSubscription{
 			UpstreamCredentialID: row.ID, UpstreamCredentialName: row.ID, Name: row.Name, Provider: row.Provider,
 			PlanType: "native", Status: status, CapacityMode: db.ParentCapacityUnmetered, AllocationLimitPPM: 1_000_000,
-			Enabled: true, UpstreamUnavailable: !row.Enabled, UpstreamModelAllowlist: row.Models, Metadata: json.RawMessage(`{"source":"native"}`), LastSyncedAt: &now,
+			Enabled: true, UpstreamUnavailable: !row.Enabled, UpstreamModelAllowlist: models, Metadata: json.RawMessage(`{"source":"native"}`), LastSyncedAt: &now,
 		})
 		if syncErr != nil {
 			return nil, syncErr

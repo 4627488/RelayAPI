@@ -56,6 +56,19 @@ func TestResolveProviderCandidateAndBundledFallback(t *testing.T) {
 	}
 }
 
+func TestResolveGPT6AstraBundledPrice(t *testing.T) {
+	snapshot, err := Compile(nil, nil, BundledPrices, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := snapshot.Resolve(Dimensions{Model: "gpt-6-astra"})
+	if !ok || got.PricedModel != "gpt-6-astra" || got.Source != SourceBundled ||
+		got.InputNanoUSDPerToken != 10000 || got.CachedInputNanoUSDPerToken != 1000 ||
+		got.CacheWriteNanoUSDPerToken != 12500 || got.OutputNanoUSDPerToken != 50000 {
+		t.Fatalf("unexpected GPT-6 Astra bundled price: %+v, ok=%v", got, ok)
+	}
+}
+
 func TestResolveGrok46BundledPrice(t *testing.T) {
 	snapshot, err := Compile(nil, nil, BundledPrices, nil, nil)
 	if err != nil {

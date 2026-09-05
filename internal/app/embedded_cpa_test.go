@@ -8,6 +8,15 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
 
+func TestSameModelSetIgnoresOrderAndCase(t *testing.T) {
+	if !sameModelSet([]string{"gpt-6-astra", "gpt-5.6-sol"}, []string{"GPT-5.6-sol", "gpt-6-astra"}) {
+		t.Fatal("expected equal model sets")
+	}
+	if sameModelSet([]string{"gpt-6-astra"}, []string{"gpt-6-astra", "gpt-5.6-sol"}) {
+		t.Fatal("expected unequal model sets")
+	}
+}
+
 func TestToBridgeCredentialsCopiesDocuments(t *testing.T) {
 	original := []byte(`{"type":"codex","access_token":"secret"}`)
 	credentials := toBridgeCredentials([]upstream.Credential{{

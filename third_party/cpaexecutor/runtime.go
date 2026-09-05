@@ -537,6 +537,26 @@ func filterCPAExcludedModels(models []*registry.ModelInfo, auth *coreauth.Auth) 
 	return filtered
 }
 
+func unionModelIDs(base, extra []string) []string {
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	models := make([]string, 0, len(base)+len(extra))
+	for _, group := range [][]string{base, extra} {
+		for _, model := range group {
+			model = strings.TrimSpace(model)
+			if model == "" {
+				continue
+			}
+			key := strings.ToLower(model)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
 func modelIDs(infos []*registry.ModelInfo) []string {
 	seen := make(map[string]string, len(infos))
 	for _, info := range infos {
@@ -846,8 +866,14 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 
 	aliases := modelAliases(metadata)
 	publicModels := append([]string(nil), item.Models...)
+	staticModels := modelIDs(cpaStaticModelsForAuth(provider, auth))
 	if len(publicModels) == 0 {
-		publicModels = modelIDs(cpaStaticModelsForAuth(provider, auth))
+		publicModels = staticModels
+	} else if provider == "codex" && len(staticModels) > 0 {
+		// Stored Codex allowlists are discovery snapshots. Union CPA's current
+		// static catalog so newly shipped official slugs stay routable without
+		// an admin rediscover. excluded_models still subtracts.
+		publicModels = unionModelIDs(publicModels, staticModels)
 	}
 	publicModels = filterExcludedModelIDs(publicModels, auth)
 	route := credentialRoute{provider: provider, models: make(map[string]modelRoute)}
