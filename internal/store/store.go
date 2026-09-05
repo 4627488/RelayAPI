@@ -268,11 +268,12 @@ func keySecretAssociatedData(tenantID, keyID string) string {
 	return "api-key/" + tenantID + "/" + keyID
 }
 
-func (s Store) CreateKey(ctx context.Context, tenantID, name string, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias) (APIKey, string, error) {
+func (s Store) CreateKey(ctx context.Context, tenantID, name string, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias, expiresAt *time.Time) (APIKey, string, error) {
 	plain, prefix, hash := identity.NewAPIKey()
 	item := APIKey{
 		ID: identity.NewID(), TenantID: tenantID, Name: strings.TrimSpace(name), KeyHash: hash,
 		Prefix: prefix, Enabled: true, RateLimitPerMinute: rate, TokenLimitDaily: tokens, ModelAllowlist: models,
+		ExpiresAt: expiresAt,
 	}
 	ciphertext, err := s.secretBox.Seal([]byte(plain), keySecretAssociatedData(tenantID, item.ID))
 	if err != nil {
@@ -362,12 +363,13 @@ func (s Store) DeleteExpiredAgentSetups(ctx context.Context, now time.Time) (int
 	return result.RowsAffected, result.Error
 }
 
-func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled bool, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias) (APIKey, error) {
+func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled bool, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias, expiresAt *time.Time) (APIKey, error) {
 	database := scoped(ctx, s.DB)
 	err := database.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&APIKey{}).Where("id = ? AND tenant_id = ?", id, tenantID).Updates(map[string]any{
 			"name": strings.TrimSpace(name), "enabled": enabled, "rate_limit_per_minute": rate,
 			"token_limit_daily": tokens, "model_allowlist": postgresStringArray(models),
+			"expires_at": expiresAt,
 		})
 		if result.Error != nil {
 			return result.Error
@@ -396,6 +398,47 @@ func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled
 	}).Where("id = ? AND tenant_id = ?", id, tenantID).First(&item).Error
 	item.Recoverable = len(item.KeyCiphertext) > 0
 	return item, err
+}
+
+const DefaultAPIKeyRenewal = 90 * 24 * time.Hour
+
+func (s Store) RenewKey(ctx context.Context, tenantID, id string, now time.Time, extend time.Duration) (APIKey, error) {
+	if extend <= 0 {
+		extend = DefaultAPIKeyRenewal
+	}
+	var item APIKey
+	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ?", id, tenantID).First(&item).Error; err != nil {
+			return notFound(err)
+		}
+		if item.ExpiresAt == nil {
+			return nil
+		}
+		from := now
+		if item.ExpiresAt.After(now) {
+			from = *item.ExpiresAt
+		}
+		expires := from.Add(extend)
+		item.ExpiresAt = &expires
+		return tx.Model(&APIKey{}).Where("id = ?", id).Update("expires_at", expires).Error
+	})
+	if err != nil {
+		return APIKey{}, err
+	}
+	return s.getKey(ctx, tenantID, id)
+}
+
+func (s Store) getKey(ctx context.Context, tenantID, id string) (APIKey, error) {
+	var item APIKey
+	err := scoped(ctx, s.DB).Preload("ModelAliases", func(database *gorm.DB) *gorm.DB {
+		return database.Order("alias")
+	}).Where("id = ? AND tenant_id = ?", id, tenantID).First(&item).Error
+	if err != nil {
+		return APIKey{}, notFound(err)
+	}
+	item.Recoverable = len(item.KeyCiphertext) > 0
+	return item, nil
 }
 
 func (s Store) DeleteKey(ctx context.Context, tenantID, id string) error {

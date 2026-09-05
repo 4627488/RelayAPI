@@ -86,6 +86,53 @@ func TestRefreshCredentialRefreshesExpiredKimiToken(t *testing.T) {
 	if string(persisted) != string(document) {
 		t.Fatalf("persisted = %s, document = %s", persisted, document)
 	}
+	status, ok := runtime.CredentialStatus("kimi-1")
+	if !ok || status.LastRefreshedAt.IsZero() || time.Since(status.LastRefreshedAt) > time.Minute {
+		t.Fatalf("last refreshed = %+v ok=%v", status, ok)
+	}
+}
+
+func TestRefreshDueCredentialsRenewsExpiredTokens(t *testing.T) {
+	var oauthHits int
+	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		oauthHits++
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "due-access", "refresh_token": "due-refresh", "expires_in": 3600})
+	}))
+	defer oauth.Close()
+
+	runtime, err := NewRuntime(Options{}, []Credential{
+		{
+			ID: "kimi-stale", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+			Document: testJSON(t, map[string]any{
+				"type": "kimi", "access_token": "old", "refresh_token": "refresh",
+				"expired": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), "token_endpoint": oauth.URL,
+			}),
+		},
+		{
+			ID: "kimi-fresh", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+			Document: testJSON(t, map[string]any{
+				"type": "kimi", "access_token": "fresh", "refresh_token": "refresh",
+				"expired": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "token_endpoint": oauth.URL,
+			}),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
+
+	refreshed, failed := runtime.RefreshDueCredentials(t.Context())
+	if refreshed != 1 || failed != 0 || oauthHits != 1 {
+		t.Fatalf("due refresh refreshed=%d failed=%d hits=%d", refreshed, failed, oauthHits)
+	}
+	document, did, err := runtime.RefreshCredential(t.Context(), "kimi-stale", false)
+	if err != nil || did {
+		t.Fatalf("stale after renew = %v did=%v", err, did)
+	}
+	var payload map[string]any
+	if json.Unmarshal(document, &payload) != nil || payload["access_token"] != "due-access" {
+		t.Fatalf("stale document = %s", document)
+	}
 }
 
 func TestRefreshCredentialSkipsFreshTokenUnlessForced(t *testing.T) {

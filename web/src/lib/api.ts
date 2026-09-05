@@ -37,6 +37,7 @@ export interface ApiKey {
   model_aliases: ApiKeyModelAlias[]
   last_used_at: string | null
   created_at: string
+  expires_at?: string | null
 }
 
 export interface ApiKeyModelAlias {
@@ -312,6 +313,7 @@ export interface ProviderAccount {
   failed?: number
   plan_type?: string
   expires_at?: string | null
+  token_expires_at?: string | null
   last_refreshed_at?: string | null
   next_retry_after?: string | null
   quota_exceeded?: boolean

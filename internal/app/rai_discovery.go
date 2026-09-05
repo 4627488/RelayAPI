@@ -32,8 +32,12 @@ func (a *App) raiDiscovery(w http.ResponseWriter, _ *http.Request) {
 
 func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 	key, err := a.store.ResolveKey(r.Context(), bearer(r))
-	if err != nil || !key.Enabled || !key.TenantEnabled || expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
+	if err != nil || !key.Enabled || !key.TenantEnabled {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 无效或已停用")
+		return
+	}
+	if expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
+		writeError(w, http.StatusUnauthorized, "api_key_expired", "API Key 已过期，请在控制台续期后再试")
 		return
 	}
 	models := a.raiSessionModels(r, key)

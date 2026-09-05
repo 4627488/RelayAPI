@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/4627488/RelayAPI/internal/db"
 )
@@ -41,5 +42,22 @@ func TestNormalizeKeyInputRejectsUnsafeAliases(t *testing.T) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestParseOptionalExpiry(t *testing.T) {
+	if got, err := parseOptionalExpiry(""); err != nil || got != nil {
+		t.Fatalf("empty = %v, %v", got, err)
+	}
+	if _, err := parseOptionalExpiry("not-a-date"); err == nil {
+		t.Fatal("expected invalid format")
+	}
+	if _, err := parseOptionalExpiry(time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)); err == nil {
+		t.Fatal("expected past expiry to fail")
+	}
+	want := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	got, err := parseOptionalExpiry(want.Format(time.RFC3339))
+	if err != nil || got == nil || !got.Equal(want) {
+		t.Fatalf("future = %v, %v want %v", got, err, want)
 	}
 }
