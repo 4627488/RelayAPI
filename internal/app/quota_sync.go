@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -203,7 +204,7 @@ func (a *App) probeQuotaWithRefreshFn(
 	updated, refreshed, refreshErr := a.nativeRuntime.RefreshCredential(ctx, strings.TrimSpace(credential.ID), true)
 	if refreshErr != nil {
 		slog.Warn("refresh upstream credential after quota 401", "credential_id", credential.ID, "error", refreshErr)
-		return report, err
+		return report, errors.Join(err, fmt.Errorf("refresh upstream credential: %w", refreshErr))
 	}
 	if !refreshed || len(updated) == 0 {
 		return report, err

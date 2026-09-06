@@ -2,6 +2,9 @@ module github.com/router-for-me/CLIProxyAPI/v7/relaybridge
 
 go 1.26.6
 
+// Keep in sync with the root module; see docs/credential-refresh.md.
+replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260906154934-d285d1152ce8
+
 require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/router-for-me/CLIProxyAPI/v7 v7.2.151

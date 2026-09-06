@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,53 @@ import (
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
 )
+
+type quotaRefreshRuntime struct {
+	upstream.Runtime
+	refresh func(context.Context, string, bool) ([]byte, bool, error)
+}
+
+func (r quotaRefreshRuntime) RefreshCredential(ctx context.Context, id string, force bool) ([]byte, bool, error) {
+	return r.refresh(ctx, id, force)
+}
+
+func TestQuotaRefreshFailureIsVisibleAndRetryIsBounded(t *testing.T) {
+	for _, refreshFails := range []bool{false, true} {
+		t.Run(fmt.Sprint(refreshFails), func(t *testing.T) {
+			refreshErr := errors.New("invalid_grant")
+			forced, probes := 0, 0
+			application := &App{nativeRuntime: quotaRefreshRuntime{refresh: func(_ context.Context, id string, force bool) ([]byte, bool, error) {
+				if id != "kimi-1" {
+					t.Fatalf("id=%s", id)
+				}
+				if force {
+					forced++
+					if refreshFails {
+						return nil, false, refreshErr
+					}
+				}
+				return []byte(`{"access_token":"runtime-token"}`), force, nil
+			}}}
+			_, err := application.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{UpstreamCredentialID: "kimi-1", Provider: "kimi"}, store.UpstreamCredentialSnapshot{ID: "kimi-1", Document: []byte(`{"access_token":"old"}`)}, "", func(_ context.Context, input gateway.QuotaProbeCredential) (gateway.QuotaReport, error) {
+				probes++
+				if string(input.Document) != `{"access_token":"runtime-token"}` {
+					t.Fatal("probe used stale database document")
+				}
+				return gateway.QuotaReport{}, errors.New("upstream returned HTTP 401")
+			})
+			wantProbes := 2
+			if refreshFails {
+				wantProbes = 1
+				if !errors.Is(err, refreshErr) {
+					t.Fatalf("refresh failure hidden: %v", err)
+				}
+			}
+			if err == nil || forced != 1 || probes != wantProbes {
+				t.Fatalf("forced=%d probes=%d err=%v", forced, probes, err)
+			}
+		})
+	}
+}
 
 func TestQuotaProbeUnauthorized(t *testing.T) {
 	if quotaProbeUnauthorized(nil) {

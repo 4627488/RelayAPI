@@ -72,6 +72,13 @@ jobs:
       - name: Test
         run: go test -race -count=1 ./...
 
+      - name: Verify and test embedded CPA bridge
+        working-directory: third_party/cpaexecutor
+        run: |
+          go mod verify
+          go vet ./...
+          go test -race -count=1 ./...
+
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/relayapi ./cmd/rai
 

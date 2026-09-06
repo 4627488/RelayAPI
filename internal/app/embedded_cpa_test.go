@@ -1,12 +1,38 @@
 package app
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
 )
+
+func TestEmbeddedCPARefreshCredentialReturnsLiveDocument(t *testing.T) {
+	runtime, err := relaybridge.NewRuntime(relaybridge.Options{APIKey: "test-key"}, []relaybridge.Credential{{
+		ID: "kimi-live", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+		Document: mustJSON(t, map[string]any{"type": "kimi", "access_token": "live-access", "refresh_token": "refresh", "expired": time.Now().Add(time.Hour).Format(time.RFC3339)}),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
+	application := &App{nativeCPARuntime: runtime}
+	application.nativeRuntime = &embeddedCPAAdapter{app: application}
+	document := application.refreshQuotaCredentialDocument(t.Context(), "kimi-live", []byte(`{"access_token":"stale-database-token"}`), false)
+	var value map[string]any
+	if json.Unmarshal(document, &value) != nil || value["access_token"] != "live-access" {
+		t.Fatal("quota probe did not receive CPA's live token")
+	}
+	if _, _, err = application.nativeRuntime.RefreshCredential(t.Context(), "missing", true); err == nil {
+		t.Fatal("missing credential accepted")
+	}
+	var unavailable *embeddedCPAAdapter
+	if _, _, err = unavailable.RefreshCredential(t.Context(), "kimi-live", false); err == nil {
+		t.Fatal("missing runtime accepted")
+	}
+}
 
 func TestSameModelSetIgnoresOrderAndCase(t *testing.T) {
 	if !sameModelSet([]string{"gpt-6-astra", "gpt-5.6-sol"}, []string{"GPT-5.6-sol", "gpt-6-astra"}) {

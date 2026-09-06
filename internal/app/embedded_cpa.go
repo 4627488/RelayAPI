@@ -377,8 +377,11 @@ func (e *embeddedCPAAdapter) CancelOAuth(ctx context.Context, state string) erro
 	return nil
 }
 
-func (e *embeddedCPAAdapter) RefreshCredential(context.Context, string, bool) ([]byte, bool, error) {
-	return nil, false, nil
+func (e *embeddedCPAAdapter) RefreshCredential(ctx context.Context, id string, force bool) ([]byte, bool, error) {
+	if runtime := e.runtime(); runtime != nil {
+		return runtime.RefreshCredential(ctx, id, force)
+	}
+	return nil, false, fmt.Errorf("embedded CPA runtime is not available")
 }
 
 func (e *embeddedCPAAdapter) TakeRequestTrace(requestID string) (upstream.RequestTrace, bool) {
