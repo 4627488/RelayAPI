@@ -202,7 +202,7 @@ export function ProxiesView() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <PageHeader
         title="出站代理"
         actions={

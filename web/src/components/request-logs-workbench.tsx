@@ -294,7 +294,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   if (detailLoading && route.logId) {
     return (
-      <div className="flex w-full min-w-0 flex-col gap-4">
+      <div className="flex w-full min-w-0 flex-col gap-3">
         <Skeleton className="h-9 w-28" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-72 w-full" />
@@ -303,7 +303,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   }
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-4">
+    <div className="flex w-full min-w-0 flex-col gap-3">
       <PageHeader title="请求日志" />
       <StatStrip
         items={[
@@ -800,7 +800,7 @@ function LogDetailPage({
     Number(requestVisible) + Number(forwardedVisible) + Number(responseVisible)
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-4">
+    <div className="flex w-full min-w-0 flex-col gap-3">
       <div className="flex flex-wrap items-start gap-3">
         <Button variant="outline" onClick={onBack}>
           <HugeiconsIcon

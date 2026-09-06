@@ -208,7 +208,7 @@ export function UsersView({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <Card>
         <CardHeader>
           <CardTitle>全部用户</CardTitle>

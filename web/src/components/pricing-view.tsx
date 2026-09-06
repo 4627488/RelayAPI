@@ -299,7 +299,7 @@ export function PricingView() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <PageHeader
         title="目录与计费"
         actions={

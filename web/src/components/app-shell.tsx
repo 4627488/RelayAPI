@@ -2,6 +2,7 @@ import {
   useEffect,
   useState,
   type ComponentProps,
+  type CSSProperties,
   type MouseEvent,
   type ReactNode,
 } from "react"
@@ -107,7 +108,7 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
   }, [email])
 
   return (
-    <Avatar className="size-8">
+    <Avatar className="size-6">
       {source ? <AvatarImage src={source} alt={`${name} 的头像`} /> : null}
       <AvatarFallback>
         <HugeiconsIcon
@@ -187,12 +188,15 @@ function SidebarNav({
     <>
       {groups.map((group) => (
         <SidebarGroup key={group.title}>
-          <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
+          <SidebarGroupLabel className="h-6 group-data-[collapsible=icon]:-mt-6">
+            {group.title}
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {group.items.map((item) => (
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
+                    size="sm"
                     render={
                       <a href={routeHref({ workspace, page: item.id })} />
                     }
@@ -248,17 +252,16 @@ export function AppShell({
     (admin ? adminPageLabels : pageLabels)[navPage(page)] || "总览"
 
   return (
-    <SidebarProvider>
+    <SidebarProvider style={{ "--sidebar-width": "13rem" } as CSSProperties}>
       <a className="sr-only focus:not-sr-only" href="#main-content">
         跳到主内容
       </a>
-      <Sidebar variant="inset" collapsible="icon">
-        <SidebarHeader>
+      <Sidebar variant="sidebar" collapsible="icon">
+        <SidebarHeader className="h-10 justify-center py-1">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
                 render={<a href={routeHref({ workspace, page: "overview" })} />}
-                size="lg"
                 onClick={(event) => {
                   if (!shouldHandleClientNavigation(event)) return
                   event.preventDefault()
@@ -266,12 +269,7 @@ export function AppShell({
                 }}
               >
                 <HugeiconsIcon strokeWidth={2} icon={SendIcon} />
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">RelayAPI</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {workspaceLabels[workspace]}
-                  </span>
-                </div>
+                <span className="truncate font-semibold">RelayAPI</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -289,9 +287,11 @@ export function AppShell({
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
-                <DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
+                <DropdownMenuTrigger
+                  render={<SidebarMenuButton className="h-10" />}
+                >
                   <EmailAvatar email={subtitle} name={name} />
-                  <div className="grid flex-1 text-left text-sm leading-tight">
+                  <div className="grid min-w-0 flex-1 text-left text-xs leading-tight">
                     <span className="truncate font-medium">{name}</span>
                     <span className="truncate text-xs text-muted-foreground">
                       {subtitle}
@@ -357,7 +357,7 @@ export function AppShell({
       <SidebarInset id="main-content" tabIndex={-1} className="min-w-0">
         <header
           aria-label="当前位置"
-          className="sticky top-0 z-10 flex min-h-12 shrink-0 items-center justify-between gap-3 border-b bg-background px-3 sm:px-5"
+          className="sticky top-0 z-10 flex min-h-10 shrink-0 items-center justify-between gap-3 border-b bg-background px-3"
         >
           <div className="flex min-w-0 items-center gap-1">
             <SidebarTrigger />
@@ -397,7 +397,7 @@ export function AppShell({
             </Button>
           ) : null}
         </header>
-        <div className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-1 flex-col p-4 sm:p-5 lg:p-4">
+        <div className="flex w-full min-w-0 flex-1 flex-col p-3">
           {children}
         </div>
       </SidebarInset>

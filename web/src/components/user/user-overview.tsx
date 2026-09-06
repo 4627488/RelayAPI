@@ -84,13 +84,40 @@ export function UserOverview({
   const activeKeys = keys.filter((key) => key.enabled).length
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
+    <div className="flex min-w-0 flex-col gap-3">
       <PageHeader
         title="总览"
         description="查看余额、密钥状态和最近 30 天的 API 用量。"
+        actions={
+          <div className="flex min-w-0 flex-wrap gap-2" aria-label="快捷操作">
+            <Button onClick={() => onPageChange("keys")}>
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={PlusIcon}
+                data-icon="inline-start"
+              />
+              创建或管理密钥
+            </Button>
+            <Button variant="outline" onClick={() => onPageChange("guide")}>
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={BookOpen01Icon}
+                data-icon="inline-start"
+              />
+              查看接入指南
+            </Button>
+            <Button variant="outline" onClick={() => onPageChange("logs")}>
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={FileClockIcon}
+                data-icon="inline-start"
+              />
+              查看请求日志
+            </Button>
+          </div>
+        }
       />
       <StatStrip
-        className="sm:grid-cols-2 xl:grid-cols-2"
         items={[
           {
             label: "账户余额",
@@ -106,32 +133,7 @@ export function UserOverview({
           },
         ]}
       />
-      <div className="flex min-w-0 flex-wrap gap-2" aria-label="快捷操作">
-        <Button onClick={() => onPageChange("keys")}>
-          <HugeiconsIcon
-            strokeWidth={2}
-            icon={PlusIcon}
-            data-icon="inline-start"
-          />
-          创建或管理密钥
-        </Button>
-        <Button variant="outline" onClick={() => onPageChange("guide")}>
-          <HugeiconsIcon
-            strokeWidth={2}
-            icon={BookOpen01Icon}
-            data-icon="inline-start"
-          />
-          查看接入指南
-        </Button>
-        <Button variant="outline" onClick={() => onPageChange("logs")}>
-          <HugeiconsIcon
-            strokeWidth={2}
-            icon={FileClockIcon}
-            data-icon="inline-start"
-          />
-          查看请求日志
-        </Button>
-      </div>
+
       <section
         className="flex min-w-0 flex-col gap-3"
         aria-labelledby="overview-usage"

@@ -415,7 +415,7 @@ export function AdminSubscriptionsView() {
   )
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <PageHeader title="订阅分配" />
 
       {loading ? (
@@ -433,7 +433,7 @@ export function AdminSubscriptionsView() {
       ) : (
         <Card className="lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
           <aside>
-            <div className="flex flex-col gap-3 p-4 lg:sticky lg:top-4">
+            <div className="flex flex-col gap-3 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="font-heading font-medium">模型账户</h2>
@@ -454,7 +454,7 @@ export function AdminSubscriptionsView() {
                   aria-label="搜索模型账户"
                 />
               </InputGroup>
-              <div className="flex max-h-56 flex-col gap-1 overflow-y-auto pr-1 lg:max-h-[calc(100vh-14rem)]">
+              <div className="flex flex-col gap-1">
                 {filteredCurrentParents.map((view) => (
                   <ParentListButton
                     key={view.item.id}

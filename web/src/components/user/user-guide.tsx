@@ -10,7 +10,7 @@ const ConnectionGuide = lazy(() =>
 
 export function UserGuide() {
   return (
-    <div className="flex min-w-0 flex-col gap-5">
+    <div className="flex min-w-0 flex-col gap-3">
       <PageHeader
         title="接入指南"
         description="选择客户端并复制配置，使用 API Key 调用已授权模型。"

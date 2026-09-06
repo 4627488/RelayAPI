@@ -317,7 +317,7 @@ export function ProvidersView() {
     )
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <PageHeader
         title="模型账户"
         actions={

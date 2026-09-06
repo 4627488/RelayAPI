@@ -630,7 +630,7 @@ export function UsageView({
         : report.api_keys.length > 0
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <PageHeader
         title={admin ? "全局用量" : "用量"}
         actions={

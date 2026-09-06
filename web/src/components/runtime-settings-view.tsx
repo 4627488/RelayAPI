@@ -395,7 +395,7 @@ export function RuntimeSettingsView() {
     imageModeHelp[value.image_generation_mode] ?? "当前值不在预设选项中。"
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-3">
       <StatStrip
         className="lg:grid-cols-4"
         items={[

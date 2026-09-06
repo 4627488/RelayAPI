@@ -11,7 +11,7 @@ export function SettingsHub({
   onTabChange: (tab: "runtime" | "proxies") => void
 }) {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       {tab === "runtime" ? <PageHeader title="系统设置" /> : null}
       <Tabs
         value={tab}

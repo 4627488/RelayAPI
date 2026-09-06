@@ -29,7 +29,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "flex min-h-8 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between",
+        "flex min-h-8 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between",
         className
       )}
     >
@@ -37,14 +37,14 @@ export function PageHeader({
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {title ? (
-              <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
+              <h1 className="text-base font-semibold tracking-tight">
                 {title}
               </h1>
             ) : null}
             {accessory}
           </div>
           {description ? (
-            <p className="max-w-2xl text-xs leading-5 text-muted-foreground">
+            <p className="max-w-2xl text-xs leading-4 text-muted-foreground">
               {description}
             </p>
           ) : null}
@@ -77,7 +77,10 @@ export function StatStrip({
   return (
     <Card size="sm" className={className}>
       <CardContent
-        className="grid grid-cols-2 gap-x-6 gap-y-3 lg:grid-cols-4"
+        className={cn(
+          "grid grid-cols-2 gap-x-4 gap-y-2",
+          items.length > 2 && "lg:grid-cols-4"
+        )}
         role="list"
         aria-label="统计"
       >

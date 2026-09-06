@@ -365,7 +365,7 @@ function KeysView({
   })
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-3">
       <PageHeader
         title="API 密钥"
         description="创建、查看和管理用于调用模型的 API Key。"
@@ -380,7 +380,7 @@ function KeysView({
           </Button>
         }
       />
-      <div className="flex min-w-0 flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-3">
         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <SearchField
             value={query}
