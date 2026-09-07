@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/table"
 import type { RequestLog } from "@/lib/api"
 import {
+  cacheHitRateLabel,
   compactTokens,
   dateTime,
   money,
@@ -73,7 +74,7 @@ export function RequestLogList({
   function link(log: RequestLog) {
     return {
       href: routeHref({ workspace, page: "logs", logId: log.id }),
-      "aria-label": `查看日志 ${log.model || log.path} ${dateTime(log.started_at)}`,
+      "aria-label": `查看日志 ${log.model || log.path} ${dateTime(log.started_at)}${log.log_unit === "legacy_session" ? " · 历史会话" : ""}`,
       onClick: (event: MouseEvent<HTMLAnchorElement>) => {
         if (
           !onOpen ||
@@ -95,7 +96,7 @@ export function RequestLogList({
         <Table className="w-full table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[29%] pl-4">请求 / 时间</TableHead>
+              <TableHead className="w-[29%] pl-4">计费块 / 时间</TableHead>
               <TableHead className="w-[23%]">
                 {admin ? "用户 / Key" : "Key"}
               </TableHead>
@@ -121,6 +122,7 @@ export function RequestLogList({
                   </a>
                   <p className="mt-1 truncate text-xs text-muted-foreground">
                     {dateTime(log.started_at)}
+                    {log.log_unit === "legacy_session" ? " · 历史会话" : ""}
                   </p>
                   <p
                     className="truncate text-xs text-muted-foreground"
@@ -154,16 +156,21 @@ export function RequestLogList({
                 <TableCell className="text-right tabular-nums">
                   <p>{compactTokens(log.total_tokens)}</p>
                   <p className="text-xs text-muted-foreground">
-                    缓存 {compactTokens(log.cached_tokens)}
+                    缓存率{" "}
+                    {cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}
                   </p>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   <p>{duration(log.latency_ms)}</p>
-                  {log.ttft_ms != null && (
-                    <p className="text-xs text-muted-foreground">
-                      首字节 {duration(log.ttft_ms)}
-                    </p>
-                  )}
+                  <p
+                    className="text-xs text-muted-foreground"
+                    title="请求开始至 Relay 观测到首个非空生成内容（含推理或工具参数）；未观测时显示 —"
+                  >
+                    首 Token{" "}
+                    {log.first_token_ms != null
+                      ? duration(log.first_token_ms)
+                      : "—"}
+                  </p>
                 </TableCell>
                 <TableCell className="pr-4 text-right tabular-nums">
                   {money(log.cost_nano_usd)}
@@ -183,6 +190,7 @@ export function RequestLogList({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <time className="text-xs text-muted-foreground">
                   {dateTime(log.started_at)}
+                  {log.log_unit === "legacy_session" ? " · 历史会话" : ""}
                 </time>
                 <Result log={log} />
               </div>
@@ -225,6 +233,20 @@ export function RequestLogList({
                 <div className="text-right">
                   <dt className="text-xs text-muted-foreground">费用</dt>
                   <dd>{money(log.cost_nano_usd)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">缓存率</dt>
+                  <dd>
+                    {cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">首 Token</dt>
+                  <dd>
+                    {log.first_token_ms != null
+                      ? duration(log.first_token_ms)
+                      : "—"}
+                  </dd>
                 </div>
               </dl>
             </a>

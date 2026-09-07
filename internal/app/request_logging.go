@@ -218,6 +218,7 @@ func boundedErrorText(value string) string {
 }
 
 type requestLogContext struct {
+	firstTokenMS    *int64
 	price           *store.ResolvedPrice
 	detail          *store.LogDetailInput
 	ttftMS          *int64
@@ -343,7 +344,7 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
 		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: completedAt.Sub(started).Milliseconds(),
 		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
-		TTFTMS: logContext.ttftMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
+		TTFTMS: logContext.ttftMS, FirstTokenMS: logContext.firstTokenMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
 		StageTimings: logContext.stageTimings,
 		StartedAt:    started, CompletedAt: completedAt, Detail: detail,
 	}

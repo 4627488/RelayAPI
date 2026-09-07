@@ -935,6 +935,8 @@ function LogOverview({
                   .filter(Boolean)
                   .join(" / "),
               ],
+              ["计费块 ID", log.id],
+              ["关联会话", log.reservation_request_id],
               ["Upstream Trace", log.upstream_trace_id],
               ["Upstream Execution", log.upstream_execution_id],
             ]}
@@ -952,14 +954,24 @@ function LogOverview({
             ["客户端请求体", bytes(log.request_body_bytes)],
             ["上游转发体", bytes(log.forwarded_body_bytes)],
             ["上游响应体", bytes(log.response_body_bytes)],
+            [
+              "首 Token",
+              log.first_token_ms != null ? `${log.first_token_ms} ms` : "—",
+            ],
             ["首字节", log.ttft_ms != null ? `${log.ttft_ms} ms` : ""],
-            ["总耗时", `${log.latency_ms} ms`],
+            ["计费块耗时", `${log.latency_ms} ms`],
           ]}
         />
       </DetailGroup>
 
       {turns.length ? (
-        <DetailGroup title={`会话轮次 · ${turns.length}`}>
+        <DetailGroup
+          title={
+            log.log_unit !== "legacy_session"
+              ? "计费块账本"
+              : `历史会话轮次 · ${turns.length}`
+          }
+        >
           <Table>
             <TableHeader>
               <TableRow>

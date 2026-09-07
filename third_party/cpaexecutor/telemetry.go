@@ -396,6 +396,7 @@ func classifyTraceError(err error) string {
 }
 
 type attemptHTTPTrace struct {
+	acquisitions                                                   int
 	mu                                                             sync.Mutex
 	getConn, gotConn, dnsStart, dnsDone, connectStart, connectDone time.Time
 	tlsStart, tlsDone, wroteRequest, firstResponseByte             time.Time
@@ -405,7 +406,14 @@ type attemptHTTPTrace struct {
 
 func (t *attemptHTTPTrace) clientTrace() *httptrace.ClientTrace {
 	return &httptrace.ClientTrace{
-		GetConn: func(string) { t.set(&t.getConn, time.Now()) },
+		GetConn: func(string) {
+			t.mu.Lock()
+			t.acquisitions++
+			if t.getConn.IsZero() {
+				t.getConn = time.Now()
+			}
+			t.mu.Unlock()
+		},
 		GotConn: func(info httptrace.GotConnInfo) {
 			t.mu.Lock()
 			if t.gotConn.IsZero() {
@@ -417,13 +425,17 @@ func (t *attemptHTTPTrace) clientTrace() *httptrace.ClientTrace {
 			}
 			t.mu.Unlock()
 		},
-		DNSStart:             func(httptrace.DNSStartInfo) { t.set(&t.dnsStart, time.Now()) },
-		DNSDone:              func(httptrace.DNSDoneInfo) { t.set(&t.dnsDone, time.Now()) },
-		ConnectStart:         func(_, _ string) { t.set(&t.connectStart, time.Now()) },
-		ConnectDone:          func(_, _ string, _ error) { t.set(&t.connectDone, time.Now()) },
-		TLSHandshakeStart:    func() { t.set(&t.tlsStart, time.Now()) },
-		TLSHandshakeDone:     func(tls.ConnectionState, error) { t.set(&t.tlsDone, time.Now()) },
-		WroteRequest:         func(httptrace.WroteRequestInfo) { t.set(&t.wroteRequest, time.Now()) },
+		DNSStart:          func(httptrace.DNSStartInfo) { t.set(&t.dnsStart, time.Now()) },
+		DNSDone:           func(httptrace.DNSDoneInfo) { t.set(&t.dnsDone, time.Now()) },
+		ConnectStart:      func(_, _ string) { t.set(&t.connectStart, time.Now()) },
+		ConnectDone:       func(_, _ string, _ error) { t.set(&t.connectDone, time.Now()) },
+		TLSHandshakeStart: func() { t.set(&t.tlsStart, time.Now()) },
+		TLSHandshakeDone:  func(tls.ConnectionState, error) { t.set(&t.tlsDone, time.Now()) },
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				t.set(&t.wroteRequest, time.Now())
+			}
+		},
 		GotFirstResponseByte: func() { t.set(&t.firstResponseByte, time.Now()) },
 		Got1xxResponse:       func(int, textproto.MIMEHeader) error { return nil },
 	}
@@ -443,6 +455,10 @@ func (t *attemptHTTPTrace) snapshot() attemptHTTPTrace {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// Redirects or transport replays cannot be represented by a single pair.
+	if t.acquisitions > 1 {
+		return attemptHTTPTrace{}
+	}
 	return attemptHTTPTrace{
 		getConn: t.getConn, gotConn: t.gotConn, dnsStart: t.dnsStart, dnsDone: t.dnsDone,
 		connectStart: t.connectStart, connectDone: t.connectDone, tlsStart: t.tlsStart, tlsDone: t.tlsDone,

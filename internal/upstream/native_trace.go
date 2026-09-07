@@ -84,7 +84,14 @@ func (t *RequestTrace) addAttempt(attempt ExecutionAttempt) {
 func providerClientTrace() (*clientHTTPTrace, *httptrace.ClientTrace) {
 	state := &clientHTTPTrace{}
 	trace := &httptrace.ClientTrace{
-		GetConn: func(string) { state.setTime(&state.getConn, time.Now()) },
+		GetConn: func(string) {
+			state.mu.Lock()
+			state.acquisitions++
+			if state.getConn.IsZero() {
+				state.getConn = time.Now()
+			}
+			state.mu.Unlock()
+		},
 		GotConn: func(info httptrace.GotConnInfo) {
 			state.mu.Lock()
 			state.gotConn = time.Now()
@@ -94,19 +101,24 @@ func providerClientTrace() (*clientHTTPTrace, *httptrace.ClientTrace) {
 			}
 			state.mu.Unlock()
 		},
-		DNSStart:             func(httptrace.DNSStartInfo) { state.setTime(&state.dnsStart, time.Now()) },
-		DNSDone:              func(httptrace.DNSDoneInfo) { state.setTime(&state.dnsDone, time.Now()) },
-		ConnectStart:         func(_, _ string) { state.setTime(&state.connectStart, time.Now()) },
-		ConnectDone:          func(_, _ string, _ error) { state.setTime(&state.connectDone, time.Now()) },
-		TLSHandshakeStart:    func() { state.setTime(&state.tlsStart, time.Now()) },
-		TLSHandshakeDone:     func(tls.ConnectionState, error) { state.setTime(&state.tlsDone, time.Now()) },
-		WroteRequest:         func(httptrace.WroteRequestInfo) { state.setTime(&state.wroteRequest, time.Now()) },
+		DNSStart:          func(httptrace.DNSStartInfo) { state.setTime(&state.dnsStart, time.Now()) },
+		DNSDone:           func(httptrace.DNSDoneInfo) { state.setTime(&state.dnsDone, time.Now()) },
+		ConnectStart:      func(_, _ string) { state.setTime(&state.connectStart, time.Now()) },
+		ConnectDone:       func(_, _ string, _ error) { state.setTime(&state.connectDone, time.Now()) },
+		TLSHandshakeStart: func() { state.setTime(&state.tlsStart, time.Now()) },
+		TLSHandshakeDone:  func(tls.ConnectionState, error) { state.setTime(&state.tlsDone, time.Now()) },
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				state.setTime(&state.wroteRequest, time.Now())
+			}
+		},
 		GotFirstResponseByte: func() { state.setTime(&state.firstResponseByte, time.Now()) },
 	}
 	return state, trace
 }
 
 type clientHTTPTrace struct {
+	acquisitions                                                    int
 	mu                                                              sync.Mutex
 	getConn, gotConn, wroteRequest, firstResponseByte               time.Time
 	dnsStart, dnsDone, connectStart, connectDone, tlsStart, tlsDone time.Time
@@ -128,6 +140,10 @@ func (t *clientHTTPTrace) snapshot() clientHTTPTrace {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// Redirects or transport replays cannot be represented by a single pair.
+	if t.acquisitions > 1 {
+		return clientHTTPTrace{}
+	}
 	return clientHTTPTrace{
 		getConn: t.getConn, gotConn: t.gotConn, wroteRequest: t.wroteRequest, firstResponseByte: t.firstResponseByte,
 		dnsStart: t.dnsStart, dnsDone: t.dnsDone, connectStart: t.connectStart, connectDone: t.connectDone,

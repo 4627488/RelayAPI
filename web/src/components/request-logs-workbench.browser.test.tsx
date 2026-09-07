@@ -30,6 +30,7 @@ const log = {
   reasoning_tokens: 0,
   latency_ms: 12500,
   ttft_ms: 250,
+  first_token_ms: 480,
   cost_nano_usd: 1250000,
   request_body_bytes: 1024,
   response_body_bytes: 2048,
@@ -85,6 +86,9 @@ describe("responsive request logs", () => {
       await expect.element(entry).toBeVisible()
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width)
       expect(document.body.innerText).toContain("sk-relay-1234")
+      expect(document.body.innerText).toContain("首 Token")
+      expect(document.body.innerText).toContain("480 ms")
+      expect(document.body.innerText).toContain("80.0%")
       if (admin) expect(document.body.innerText).toContain(log.tenant_name)
       await expectNoA11yViolations()
       await screen.getByRole("button", { name: "筛选", exact: true }).click()

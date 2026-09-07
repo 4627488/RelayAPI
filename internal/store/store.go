@@ -78,6 +78,7 @@ type Usage struct {
 }
 
 type LogInput struct {
+	FirstTokenMS                                                                                                                                         *int64
 	ID, TenantID, APIKeyID, ReservationRequestID, UpstreamRequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
 	UpstreamTraceID, UpstreamExecutionID, RequestedModel, ActualModel, ModelAlias, ExecutorType, AuthType                                                string
 	ServiceTier, ResponseServiceTier, ReasoningEffort, TenantName, APIKeyName, APIKeyPrefix, RequestType                                                 string
@@ -783,7 +784,7 @@ func requestLogItem(l LogInput) db.RequestLog {
 		CachedTokens: l.Usage.Cached, CacheWriteTokens: l.Usage.CacheWrite, ReasoningTokens: l.Usage.Reasoning,
 		ImageInputTokens: l.Usage.ImageInput, CachedImageInputTokens: l.Usage.CachedImageInput,
 		ImageOutputTokens: l.Usage.ImageOutput, TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,
-		Settled: l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS,
+		Settled: l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS, FirstTokenMS: l.FirstTokenMS,
 		ErrorCode: l.ErrorCode, ErrorMessage: l.ErrorMessage, StageTimings: stageTimings, StartedAt: l.StartedAt, CompletedAt: l.CompletedAt,
 	}
 	if l.Price != nil {
@@ -807,8 +808,8 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 	return s.writeLog(ctx, l, false)
 }
 
-// UpsertLog supports durable WebSocket accounting and session-level failures.
-// The session request log is upserted in place; replaying a turn stays idempotent.
+// UpsertLog supports updating rejected or interrupted request logs.
+// Completed WebSocket billing steps use the accrual transaction instead.
 func (s Store) UpsertLog(ctx context.Context, l LogInput) error {
 	return s.writeLog(ctx, l, true)
 }
@@ -868,7 +869,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 				"output_price_nano_usd", "cached_price_nano_usd", "cache_write_price_nano_usd",
 				"reasoning_price_nano_usd", "image_input_price_nano_usd",
 				"cached_image_input_price_nano_usd", "image_output_price_nano_usd", "price_multiplier",
-				"pricing_complete", "settled", "reserved_nano_usd", "latency_ms", "ttftms",
+				"pricing_complete", "settled", "reserved_nano_usd", "latency_ms", "ttftms", "first_token_ms",
 				"error_code", "error_message", "stage_timings", "completed_at",
 			}),
 		})
@@ -913,7 +914,7 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 	type totals struct{ Requests, Tokens, Cost int64 }
 	var total totals
 	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
-		Select(requestLogUnitCountSQL()+" AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
+		Select("count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
 		Where("tenant_id = ? AND started_at >= ?", tenantID, since).Scan(&total).Error
 	if err != nil {
 		return nil, err
@@ -930,23 +931,6 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 	return map[string]any{"tenant": tenant, "requests_30d": total.Requests, "tokens_30d": total.Tokens, "cost_nano_usd_30d": total.Cost}, nil
 }
 
-const requestLogUnitSQL = "(reservation_request_id IS NULL OR reservation_request_id = id)"
-
-func requestLogUnitSQLOn(table string) string {
-	if table == "" {
-		return requestLogUnitSQL
-	}
-	return "(" + table + ".reservation_request_id IS NULL OR " + table + ".reservation_request_id = " + table + ".id)"
-}
-
-func requestLogUnitCountSQL() string {
-	return requestLogUnitCountSQLOn("")
-}
-
-func requestLogUnitCountSQLOn(table string) string {
-	return "count(*) FILTER (WHERE " + requestLogUnitSQLOn(table) + ")"
-}
-
 func requestLogUnitErrorSQL() string {
 	return requestLogUnitErrorSQLOn("")
 }
@@ -956,7 +940,7 @@ func requestLogUnitErrorSQLOn(table string) string {
 	if table != "" {
 		prefix = table + "."
 	}
-	return "COALESCE(sum(CASE WHEN (" + requestLogUnitSQLOn(table) + ") AND (" +
+	return "COALESCE(sum(CASE WHEN (" +
 		prefix + "status_code = 0 OR " + prefix + "status_code >= 400 OR COALESCE(" + prefix + "error_code, '') <> '') THEN 1 ELSE 0 END),0)"
 }
 
@@ -1055,19 +1039,19 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 		query = query.Where("latency_ms >= ?", input.MinLatencyMS)
 	}
 	summaryQuery := query.Session(&gorm.Session{})
-	itemsQuery := query.Session(&gorm.Session{}).Where(requestLogUnitSQL)
+	itemsQuery := query.Session(&gorm.Session{})
 	var summary LogSummary
 	if err := summaryQuery.Select(
-		requestLogUnitCountSQL() + " AS requests, " +
+		"count(*) AS requests, " +
 			requestLogUnitErrorSQL() + " AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
 			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, " +
-			"COALESCE(avg(latency_ms) FILTER (WHERE " + requestLogUnitSQL + "),0) AS average_latency, " +
-			"COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE " + requestLogUnitSQL + "),0) AS latency_p50, " +
-			"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE " + requestLogUnitSQL + "),0) AS latency_p95, " +
-			"COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE ttftms IS NOT NULL AND " + requestLogUnitSQL + "),0) AS ttft_p50, " +
-			"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE ttftms IS NOT NULL AND " + requestLogUnitSQL + "),0) AS ttft_p95, " +
-			"count(ttftms) FILTER (WHERE ttftms IS NOT NULL AND " + requestLogUnitSQL + ") AS ttft_samples, " +
+			"COALESCE(avg(latency_ms) FILTER (WHERE log_unit = 'step'),0) AS average_latency, " +
+			"COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE log_unit = 'step'),0) AS latency_p50, " +
+			"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE log_unit = 'step'),0) AS latency_p95, " +
+			"COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE ttftms IS NOT NULL AND log_unit = 'step'),0) AS ttft_p50, " +
+			"COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE ttftms IS NOT NULL AND log_unit = 'step'),0) AS ttft_p95, " +
+			"count(ttftms) FILTER (WHERE ttftms IS NOT NULL AND log_unit = 'step') AS ttft_samples, " +
 			"COALESCE(sum(request_body_bytes),0) AS request_bytes, COALESCE(sum(response_body_bytes),0) AS response_bytes",
 	).Scan(&summary).Error; err != nil {
 		return LogPage{}, err
@@ -1095,11 +1079,18 @@ func (s Store) RequestLogDetail(ctx context.Context, id, tenantID string) (LogWi
 		return LogWithDetail{}, notFound(err)
 	}
 	result := LogWithDetail{Log: item}
-	if turns, err := s.listWebSocketTurns(ctx, requestLogSessionID(item)); err != nil {
+	if item.ReservationRequestID != nil && item.ID != *item.ReservationRequestID {
+		if item.UpstreamRequestID != "" {
+			if err := scoped(ctx, s.DB).Where("request_id = ? AND turn_id = ?", *item.ReservationRequestID, item.UpstreamRequestID).Find(&result.Turns).Error; err != nil {
+				return LogWithDetail{}, err
+			}
+		}
+	} else if turns, err := s.listWebSocketTurns(ctx, requestLogSessionID(item)); err != nil {
 		return LogWithDetail{}, err
-	} else if len(turns) > 0 {
+	} else {
 		result.Turns = turns
 	}
+
 	var detail db.RequestLogDetail
 	err := scoped(ctx, s.DB).First(&detail, "request_log_id = ?", id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1234,7 +1225,7 @@ func (s Store) AdminOverview(ctx context.Context) (map[string]any, error) {
 	now := time.Now()
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	if err := database.Model(&db.RequestLog{}).Select(
-		requestLogUnitCountSQL()+" AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+
+		"count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+
 			"COALESCE(sum(cost_nano_usd),0) AS cost, "+
 			requestLogUnitErrorSQL()+" AS errors",
 	).Where("started_at >= ?", dayStart).Scan(&today).Error; err != nil {
@@ -1278,7 +1269,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	}
 	var total summary
 	if err := base.Joins("LEFT JOIN parent_subscriptions ON parent_subscriptions.id = request_logs.parent_subscription_id").Select(
-		requestLogUnitCountSQLOn("request_logs") + " AS requests, " +
+		"count(*) AS requests, " +
 			requestLogUnitErrorSQLOn("request_logs") + " AS errors, " +
 			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, " +
 			"COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, " +
@@ -1334,7 +1325,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	dailyItems := make([]daily, 0)
 	dailyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
-			"to_char(started_at, 'YYYY-MM-DD') AS date, "+requestLogUnitCountSQL()+" AS requests, "+
+			"to_char(started_at, 'YYYY-MM-DD') AS date, "+"count(*) AS requests, "+
 				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
 				"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
@@ -1391,7 +1382,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	models := make([]modelTotal, 0)
 	modelQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
-			"model, "+requestLogUnitCountSQL()+" AS requests, "+
+			"model, "+"count(*) AS requests, "+
 				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
 				"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
@@ -1447,7 +1438,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	apiKeys := make([]apiKeyTotal, 0)
 	apiKeyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select(
-			"api_key_id, api_key_name, api_key_prefix, tenant_name, "+requestLogUnitCountSQL()+" AS requests, "+
+			"api_key_id, api_key_name, api_key_prefix, tenant_name, "+"count(*) AS requests, "+
 				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
 		).Where("started_at >= ?", since)
@@ -1470,7 +1461,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	if tenantID == "" {
 		var liveUsers []userTotal
 		if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Select(
-			"tenant_id, tenant_name, "+requestLogUnitCountSQL()+" AS requests, "+
+			"tenant_id, tenant_name, "+"count(*) AS requests, "+
 				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
 		).Where("started_at >= ?", since).Group("tenant_id, tenant_name").Scan(&liveUsers).Error; err != nil {

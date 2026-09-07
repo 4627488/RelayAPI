@@ -25,27 +25,33 @@ import (
 )
 
 type nativeWebSocketAccounting struct {
-	mu               sync.Mutex
-	admission        store.Admission
-	price            *store.ResolvedPrice
-	billable         bool
-	result           billing.Result
-	errorCode        string
-	errorHTTP        int
-	requestBytes     int64
-	forwardedBytes   int64
-	responseBytes    int64
-	terminalSeen     bool
-	turnsSeen        int64
-	accruedNanoUSD   int64
-	pricingComplete  bool
-	currentMeta      requestMeta
-	currentStarted   time.Time
-	sessionStarted   time.Time
-	currentRequest   int64
-	currentForwarded int64
-	currentResponse  int64
-	persistTurn      func(nativeWebSocketBillingEntry, billing.Result) (bool, error)
+	mu                sync.Mutex
+	admission         store.Admission
+	price             *store.ResolvedPrice
+	billable          bool
+	result            billing.Result
+	errorCode         string
+	errorHTTP         int
+	requestBytes      int64
+	forwardedBytes    int64
+	responseBytes     int64
+	terminalSeen      bool
+	turnsSeen         int64
+	accruedNanoUSD    int64
+	pricingComplete   bool
+	currentMeta       requestMeta
+	currentStarted    time.Time
+	currentReady      time.Time
+	currentFirst      time.Time
+	currentFirstToken time.Time
+	currentBody       []byte
+	currentActive     bool
+	pending           []nativeWebSocketBillingEntry
+	seenTurns         map[string]struct{}
+	currentRequest    int64
+	currentForwarded  int64
+	currentResponse   int64
+	persistTurn       func(nativeWebSocketBillingEntry, billing.Result) (bool, error)
 }
 
 type nativeWebSocketBillingEntry struct {
@@ -53,9 +59,23 @@ type nativeWebSocketBillingEntry struct {
 	Result         billing.Result
 	Payload        []byte
 	StartedAt      time.Time
+	CompletedAt    time.Time
+	ReadyAt        time.Time
+	FirstAt        time.Time
+	FirstTokenAt   time.Time
+	RequestBody    []byte
 	RequestBytes   int64
 	ForwardedBytes int64
 	ResponseBytes  int64
+}
+
+func (a *nativeWebSocketAccounting) startStep(entry nativeWebSocketBillingEntry) {
+	a.currentActive = true
+	a.currentMeta, a.currentStarted, a.currentReady = entry.Meta, entry.StartedAt, entry.ReadyAt
+	a.currentFirst = time.Time{}
+	a.currentFirstToken = time.Time{}
+	a.currentBody = entry.RequestBody
+	a.currentRequest, a.currentForwarded, a.currentResponse = entry.RequestBytes, entry.ForwardedBytes, 0
 }
 
 type nativeWebSocketSessionState struct {
@@ -67,14 +87,14 @@ const nativeWebSocketHeartbeatInterval = 30 * time.Second
 
 func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext, timeline *latencyTimeline) {
-	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable, sessionStarted: started}
+	sessionID := requestID
+	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
 	accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
 		return a.persistNativeWebSocketTurn(context.WithoutCancel(r.Context()), r, key, requestID,
 			logContext, &accounting, entry, cumulative)
 	}
 	session, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
 	sessionObservedAt := time.Now()
-	timeline.Step(sessionObservedAt, "websocket_session", "WebSocket 会话", "downstream", "包含握手、上下行消息与模型响应等待")
 	if resolvedMeta.Model != "" {
 		meta = resolvedMeta
 	}
@@ -135,9 +155,43 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 		detail.ErrorName = logContext.errorCode
 		detail.ErrorMessage = boundedErrorText(err.Error())
 	}
-	completed := time.Now()
-	timeline.Step(completed, "websocket_settlement", "WebSocket 结算", "billing", "结算会话内已完成的计费用量")
-	timeline.Mark(completed, "complete", "会话结束")
+	// Completed steps are already durable. Closing the transport must never
+	// create an additional cumulative charge/log or overwrite a completed step.
+	if accounting.turnsSeen > 0 && !accounting.currentActive {
+		a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
+		return
+	}
+	if accounting.currentActive {
+		// An interrupted later step has no terminal usage. Preserve it separately
+		// without copying the already charged session totals.
+		requestID = store.WebSocketStepID(requestID, fmt.Sprintf("interrupted:%d", accounting.turnsSeen+1))
+		started = accounting.currentStarted
+		if !accounting.currentFirstToken.IsZero() {
+			elapsed := accounting.currentFirstToken.Sub(started).Milliseconds()
+			logContext.firstTokenMS = &elapsed
+		}
+		accounting.result = billing.Result{}
+		pricingComplete = false
+		actual = 0
+		logContext.detail = baseRequestDetail(r, accounting.currentBody)
+		logContext.detail.RequestBodyBytes = accounting.currentRequest
+		logContext.detail.RequestBodyTruncated = accounting.currentRequest > int64(len(accounting.currentBody))
+		accounting.requestBytes = accounting.currentRequest
+		accounting.forwardedBytes = accounting.currentForwarded
+		accounting.responseBytes = accounting.currentResponse
+		timeline = newLatencyTimeline(started)
+		if statusCode < http.StatusBadRequest {
+			statusCode = 499
+			logContext.errorCode = "step_interrupted"
+		}
+	}
+	completed := sessionObservedAt
+	if !accounting.currentStarted.IsZero() {
+		started = accounting.currentStarted
+		timeline = newLatencyTimeline(started)
+	}
+	timeline.Step(completed, "step_interrupted", "未完成的计费块", "runtime", "从收到请求到连接结束，未观测到终止用量")
+	logContext.completedAt = completed
 	logContext.requestBytes = accounting.requestBytes
 	logContext.forwardedBytes = accounting.forwardedBytes
 	logContext.responseBytes = accounting.responseBytes
@@ -148,13 +202,33 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 	logContext.stageTimings = stageTimings
 	input := requestLogInput(key, requestID, admission, meta, r, statusCode, started, &accounting.result,
 		pricingComplete, settled, actual, errorString(err), logContext)
-	input.ReservationRequestID = requestID
-	input.Stream = false
+	input.ReservationRequestID = sessionID
+	if accounting.turnsSeen > 0 {
+		input.ReservedNanoUSD = 0
+	}
+	input.Stream = true
 	if !shouldRetainRequestDetail(requestID, statusCode, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
 		input.Detail = nil
 	}
 	if logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input); logErr != nil {
 		slog.Error("upsert native websocket request log", "request_id", requestID, "error", logErr)
+	}
+	for index, pending := range accounting.pending {
+		id := store.WebSocketStepID(sessionID, fmt.Sprintf("interrupted:%d", accounting.turnsSeen+2+int64(index)))
+		trace := newLatencyTimeline(pending.StartedAt)
+		trace.Step(completed, "step_interrupted", "计费块中断", "runtime", "已接收请求，连接结束前未收到对应终止事件")
+		detail := baseRequestDetail(r, pending.RequestBody)
+		detail.RequestBodyBytes = pending.RequestBytes
+		detail.RequestBodyTruncated = pending.RequestBytes > int64(len(pending.RequestBody))
+		detail.StageTimings = trace.JSON(completed)
+		input := requestLogInput(key, id, admission, pending.Meta, r, 499, pending.StartedAt, nil, false, settled, 0,
+			"连接结束前未收到终止用量", requestLogContext{detail: detail, completedAt: completed, errorCode: "step_interrupted", stageTimings: detail.StageTimings,
+				requestBytes: pending.RequestBytes, forwardedBytes: pending.ForwardedBytes})
+		input.ReservationRequestID = sessionID
+		input.ReservedNanoUSD = 0
+		if logErr := a.store.WriteLog(context.WithoutCancel(r.Context()), input); logErr != nil {
+			slog.Error("write interrupted step", "step_id", id, "error", logErr)
+		}
 	}
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
@@ -163,6 +237,19 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	logContext requestLogContext, accounting *nativeWebSocketAccounting,
 	entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
 	turn, meta := entry.Result, entry.Meta
+	var event struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(entry.Payload, &event)
+	failed := event.Type == "error" || event.Type == "response.failed"
+	status := http.StatusOK
+	if failed {
+		status = http.StatusBadGateway
+		logContext.errorCode = "upstream_response_failed"
+	}
+	if event.Type == "response.incomplete" {
+		logContext.errorCode = "response_incomplete"
+	}
 	var turnPrice *store.ResolvedPrice
 	if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
 		APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(accounting.admission),
@@ -179,6 +266,10 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 			turnCost = billing.Cost(*turnPrice, turn.Usage)
 		}
 	}
+	if failed && !turn.Found {
+		turnCost = 0
+		turnComplete = true
+	}
 	aggregateComplete := turnComplete
 	if accounting.turnsSeen > 0 {
 		aggregateComplete = accounting.pricingComplete && turnComplete
@@ -189,31 +280,46 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 		turnID = fmt.Sprintf("sha256:%x", sha256.Sum256(entry.Payload))
 	}
 	logContext.price = turnPrice
-	logContext.requestBytes = accounting.requestBytes
-	logContext.forwardedBytes = accounting.forwardedBytes
-	logContext.responseBytes = accounting.responseBytes
-	turnCompleted := time.Now()
-	sessionStarted := accounting.sessionStarted
-	if sessionStarted.IsZero() {
-		sessionStarted = entry.StartedAt
+	logContext.requestBytes = entry.RequestBytes
+	logContext.forwardedBytes = entry.ForwardedBytes
+	logContext.responseBytes = entry.ResponseBytes
+	turnCompleted := entry.CompletedAt
+	if turnCompleted.IsZero() {
+		turnCompleted = time.Now()
 	}
-	sessionTimeline := newLatencyTimeline(sessionStarted)
-	sessionTimeline.Step(turnCompleted, "websocket_session", "WebSocket 会话", "downstream", "会话内已完成的计费轮次按累计用量写入同一条日志")
-	sessionTimeline.Mark(turnCompleted, "complete", "轮次已计入会话")
-	logContext.stageTimings = sessionTimeline.JSON(turnCompleted)
-	if !shouldRetainRequestDetail(requestID, http.StatusSwitchingProtocols, "", a.cfg.RequestSuccessSamplePPM) {
-		logContext.detail = nil
-	} else if logContext.detail != nil {
-		detail := *logContext.detail
-		detail.StageTimings = logContext.stageTimings
-		logContext.detail = &detail
+	logContext.completedAt = turnCompleted
+	stepTimeline := newLatencyTimeline(entry.StartedAt)
+	stepTimeline.Span(entry.StartedAt, entry.ReadyAt, "prepare", "计费块准备", "relay", "收到 response.create 到准备转发，首轮包含准入和运行时连接")
+	stepTimeline.Span(entry.ReadyAt, turnCompleted, "response", "等待与接收响应", "runtime", "准备转发到收到终止事件；包含运行时和上游处理，不含会话空闲和终止事件的客户端写入")
+	if !entry.FirstTokenAt.IsZero() {
+		elapsed := entry.FirstTokenAt.Sub(entry.StartedAt).Milliseconds()
+		logContext.firstTokenMS = &elapsed
+		stepTimeline.Mark(entry.FirstTokenAt, "first_token", "首个生成内容")
 	}
-	input := requestLogInput(key, requestID, accounting.admission, meta, r, http.StatusSwitchingProtocols,
-		sessionStarted, &cumulative, aggregateComplete, true, aggregateCost, "", logContext)
+	stepTimeline.Mark(entry.FirstAt, "first_byte", "收到首个响应事件")
+	stepTimeline.Span(turnCompleted, time.Now(), "pricing", "用量与价格处理", "billing", "终止事件到价格计算结束；不含后续数据库事务")
+	logContext.stageTimings = stepTimeline.JSON(turnCompleted)
+	if !entry.FirstAt.IsZero() {
+		first := entry.FirstAt.Sub(entry.StartedAt).Milliseconds()
+		logContext.ttftMS = &first
+	}
+	logContext.detail = nil
+	stepID := store.WebSocketStepID(requestID, turnID)
+	if shouldRetainRequestDetail(stepID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
+		logContext.detail = baseRequestDetail(r, entry.RequestBody)
+		logContext.detail.RequestBodyBytes = entry.RequestBytes
+		logContext.detail.RequestBodyTruncated = entry.RequestBytes > int64(len(entry.RequestBody))
+		logContext.detail.StageTimings = logContext.stageTimings
+		logContext.detail.UpstreamBody, logContext.detail.UpstreamBodyTruncated, logContext.detail.UpstreamBodyBytes = boundedDetail(entry.Payload)
+	}
+	errorMessage := ""
+	if failed {
+		errorMessage = upstreamErrorMessage(status, entry.Payload)
+	}
+	input := requestLogInput(key, stepID, accounting.admission, meta, r, status,
+		entry.StartedAt, &turn, turnComplete, true, turnCost, errorMessage, logContext)
 	input.ReservationRequestID = requestID
-	input.Stream = false
-	input.LatencyMS = turnCompleted.Sub(sessionStarted).Milliseconds()
-	input.CompletedAt = turnCompleted
+	input.Stream = true
 	inserted, err := a.store.AccrueWebSocketTurn(ctx, store.WebSocketTurnAccrual{
 		RequestID: requestID, TurnID: turnID, Model: meta.Model, Usage: turn.Usage, CostNanoUSD: turnCost,
 		PricingComplete: turnComplete, RequestBodyBytes: entry.RequestBytes, ResponseBodyBytes: entry.ResponseBytes,
@@ -252,6 +358,8 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	downstream.SetReadLimit(a.maxRequestBytes())
 	_ = downstream.SetReadDeadline(time.Now().Add(30 * time.Second))
 	messageType, firstFrame, err := downstream.ReadMessage()
+	firstReceivedAt := time.Now()
+	firstRequestBody := append([]byte(nil), firstFrame[:min(len(firstFrame), requestLogDetailLimit)]...)
 	_ = downstream.SetReadDeadline(time.Time{})
 	if err != nil {
 		if clientWebSocketDisconnect(err) {
@@ -311,7 +419,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		}
 	}
 	accounting.currentMeta = meta
-	accounting.currentStarted = time.Now()
+	accounting.currentStarted = firstReceivedAt
+	accounting.currentActive = true
+	accounting.currentBody = firstRequestBody
 	accounting.currentRequest = firstRequestBytes
 	accounting.currentForwarded = int64(len(firstFrame))
 	accounting.currentResponse = 0
@@ -337,6 +447,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	defer upstream.Close()
 	upstream.SetReadLimit(a.maxRequestBytes())
+	accounting.currentReady = time.Now()
 	if err = upstream.WriteMessage(messageType, firstFrame); err != nil {
 		return session, meta, err
 	}
@@ -363,20 +474,32 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	results := make(chan pumpResult, 2)
 	go func() {
 		results <- pumpResult{source: "downstream", err: pumpWebSocketMessages(downstream, upstream, func(payload []byte) ([]byte, error) {
+			receivedAt := time.Now()
 			accounting.mu.Lock()
 			defer accounting.mu.Unlock()
 			accounting.requestBytes += int64(len(payload))
 			forwarded, nextMeta, startsTurn, prepareErr := a.prepareNativeWebSocketRequest(payload, r.URL, key, accounting)
 			if prepareErr != nil {
+				accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "invalid_request"
+				rejected := nativeWebSocketBillingEntry{Meta: nextMeta, StartedAt: receivedAt,
+					RequestBody: append([]byte(nil), payload[:min(len(payload), requestLogDetailLimit)]...), RequestBytes: int64(len(payload))}
+				if accounting.currentActive {
+					accounting.pending = append(accounting.pending, rejected)
+				} else {
+					accounting.startStep(rejected)
+				}
 				return nil, prepareErr
 			}
 			accounting.forwardedBytes += int64(len(forwarded))
 			if startsTurn {
-				accounting.currentMeta = nextMeta
-				accounting.currentStarted = time.Now()
-				accounting.currentRequest = int64(len(payload))
-				accounting.currentForwarded = int64(len(forwarded))
-				accounting.currentResponse = 0
+				next := nativeWebSocketBillingEntry{Meta: nextMeta, StartedAt: receivedAt, ReadyAt: time.Now(),
+					RequestBody:  append([]byte(nil), payload[:min(len(payload), requestLogDetailLimit)]...),
+					RequestBytes: int64(len(payload)), ForwardedBytes: int64(len(forwarded))}
+				if accounting.currentActive {
+					accounting.pending = append(accounting.pending, next)
+				} else {
+					accounting.startStep(next)
+				}
 			} else {
 				accounting.currentRequest += int64(len(payload))
 				accounting.currentForwarded += int64(len(forwarded))
@@ -386,21 +509,43 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}()
 	go func() {
 		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) ([]byte, error) {
+			observedAt := time.Now()
 			accounting.mu.Lock()
 			defer accounting.mu.Unlock()
+			if !accounting.currentActive {
+				return payload, nil
+			}
+			terminal := isNativeWebSocketUsageTerminalEvent(payload)
+			turn := billing.Result{}
+			turnKey := ""
+			if terminal {
+				turn = parseNativeWebSocketUsage(payload)
+				turnKey = strings.TrimSpace(turn.RequestID)
+				if turnKey == "" {
+					turnKey = fmt.Sprintf("sha256:%x", sha256.Sum256(payload))
+				}
+				if _, duplicate := accounting.seenTurns[turnKey]; duplicate {
+					return payload, nil
+				}
+			}
+			if accounting.currentFirstToken.IsZero() && hasGeneratedDelta(payload) {
+				accounting.currentFirstToken = observedAt
+			}
+			if accounting.currentFirst.IsZero() {
+				accounting.currentFirst = observedAt
+			}
 			accounting.responseBytes += int64(len(payload))
 			accounting.currentResponse += int64(len(payload))
 			accounting.terminalSeen = accounting.terminalSeen || isNativeWebSocketTerminalEvent(payload)
-			if !isNativeWebSocketUsageTerminalEvent(payload) {
+			if !terminal {
 				return payload, nil
 			}
-			turn := parseNativeWebSocketUsage(payload)
 			cumulative := accounting.result
 			mergeNativeWebSocketResult(&cumulative, turn)
 			if accounting.persistTurn != nil {
 				entry := nativeWebSocketBillingEntry{
 					Meta: accounting.currentMeta, Result: turn, Payload: append([]byte(nil), payload...),
-					StartedAt: accounting.currentStarted, RequestBytes: accounting.currentRequest,
+					StartedAt: accounting.currentStarted, CompletedAt: observedAt, ReadyAt: accounting.currentReady, FirstAt: accounting.currentFirst, FirstTokenAt: accounting.currentFirstToken, RequestBody: accounting.currentBody, RequestBytes: accounting.currentRequest,
 					ForwardedBytes: accounting.currentForwarded, ResponseBytes: accounting.currentResponse,
 				}
 				inserted, persistErr := accounting.persistTurn(entry, cumulative)
@@ -417,6 +562,17 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 					accounting.pricingComplete = accounting.pricingComplete && turn.Found
 				}
 				accounting.turnsSeen++
+			}
+			if accounting.seenTurns == nil {
+				accounting.seenTurns = make(map[string]struct{})
+			}
+			accounting.seenTurns[turnKey] = struct{}{}
+			accounting.currentActive = false
+			if len(accounting.pending) > 0 {
+				next := accounting.pending[0]
+				accounting.pending[0] = nativeWebSocketBillingEntry{}
+				accounting.pending = accounting.pending[1:]
+				accounting.startStep(next)
 			}
 			accounting.result = cumulative
 			return payload, nil
@@ -435,6 +591,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	select {
 	case <-results:
 	case <-time.After(time.Second):
+		_ = downstream.Close()
+		_ = upstream.Close()
+		<-results
 	}
 	_ = downstream.Close()
 	_ = upstream.Close()
@@ -567,6 +726,9 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, requestURL *url.URL,
 	}
 	frameMeta := readRequestMeta(payload, "")
 	nextMeta := accounting.currentMeta
+	if len(accounting.pending) > 0 {
+		nextMeta = accounting.pending[len(accounting.pending)-1].Meta
+	}
 	if frameMeta.Model != "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
 		if !key.AllowsModel(resolved.Model) {
@@ -657,7 +819,7 @@ func parseNativeWebSocketUsage(payload []byte) billing.Result {
 		return billing.Result{}
 	}
 	switch event.Type {
-	case "response.completed", "response.incomplete", "response.done":
+	case "error", "response.failed", "response.completed", "response.incomplete", "response.done":
 		return billing.ParseResponse(payload)
 	default:
 		return billing.Result{}
@@ -672,7 +834,7 @@ func isNativeWebSocketTerminalEvent(payload []byte) bool {
 		return false
 	}
 	switch event.Type {
-	case "error", "response.completed", "response.incomplete", "response.done":
+	case "error", "response.failed", "response.completed", "response.incomplete", "response.done":
 		return true
 	default:
 		return false
@@ -687,7 +849,7 @@ func isNativeWebSocketUsageTerminalEvent(payload []byte) bool {
 		return false
 	}
 	switch event.Type {
-	case "response.completed", "response.incomplete", "response.done":
+	case "error", "response.failed", "response.completed", "response.incomplete", "response.done":
 		return true
 	default:
 		return false

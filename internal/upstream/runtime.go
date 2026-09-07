@@ -41,10 +41,10 @@ type RequestTrace struct {
 	Model        string
 	Translation  string
 	Attempts     []ExecutionAttempt
-	Transfer     TraceTransfer
 }
 
 type ExecutionAttempt struct {
+	Kind                                                string
 	Number                                              int
 	StartedAt, CompletedAt, HeadersAt, RequestWrittenAt time.Time
 	FirstResponseAt, GetConnAt, GotConnAt               time.Time

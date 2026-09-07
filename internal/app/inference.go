@@ -79,14 +79,15 @@ func (c *rollingCapture) Info() ([]byte, bool, int64) {
 // runtimeWriter tees the in-process runtime onto the client and a log capture.
 // Status and body are forwarded as written; Relay does not rewrite them.
 type runtimeWriter struct {
-	client    http.ResponseWriter
-	header    http.Header
-	status    int
-	stream    bool
-	capture   *rollingCapture
-	committed bool
-	writeErr  error
-	firstByte func()
+	firstToken *firstTokenObserver
+	client     http.ResponseWriter
+	header     http.Header
+	status     int
+	stream     bool
+	capture    *rollingCapture
+	committed  bool
+	writeErr   error
+	firstByte  func()
 }
 
 func (w *runtimeWriter) Header() http.Header {
@@ -108,10 +109,13 @@ func (w *runtimeWriter) WriteHeader(status int) {
 }
 
 func (w *runtimeWriter) Write(payload []byte) (int, error) {
+	if w.firstToken != nil {
+		w.firstToken.Write(payload, time.Now())
+	}
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
 	}
-	if w.firstByte != nil {
+	if len(payload) > 0 && w.firstByte != nil {
 		w.firstByte()
 		w.firstByte = nil
 	}
@@ -199,7 +203,12 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			firstByteAt = time.Now()
 		}
 	}}
+	runtimeStarted := time.Now()
+	if call.meta.Stream {
+		out.firstToken = &firstTokenObserver{}
+	}
 	a.nativeRuntime.Serve(out, r, call.body)
+	responseReadAt := time.Now()
 	status := out.statusCode()
 	errorForDetail := ""
 	if status >= http.StatusBadRequest {
@@ -211,12 +220,17 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 	call.targetAdmission.RecordOutcome(out.writeErr)
 	writeErr := out.writeErr
 	upstreamHeaders := out.Header().Clone()
-	responseReadAt := time.Now()
 	call.logContext.completedAt = responseReadAt
 	finalizeCtx := context.WithoutCancel(r.Context())
 	a.finalizeResponse(func() {
+		finalizeStarted := time.Now()
 		price := call.price
 		logContext := call.logContext
+		if out.firstToken != nil && !out.firstToken.At.IsZero() {
+			elapsed := out.firstToken.At.Sub(call.started).Milliseconds()
+			logContext.firstTokenMS = &elapsed
+			call.timeline.Mark(out.firstToken.At, "first_token", "首个生成内容")
+		}
 		if call.deferredAdmissionPrice != nil {
 			lookup := <-call.deferredAdmissionPrice
 			if lookup.err == nil {
@@ -256,6 +270,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			a.releaseReservation(call.requestID, true)
 			settled = true
 		}
+		settledAt := time.Now()
 		errorMessage := ""
 		rawResponse, responseTruncated, responseBytes := capture.Info()
 		if writeErr != nil {
@@ -272,7 +287,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		if !firstByteAt.IsZero() {
 			ttft := firstByteAt.Sub(call.started).Milliseconds()
 			logContext.ttftMS = &ttft
-			call.timeline.Mark(firstByteAt, "first_byte", "客户端首字节")
+			call.timeline.Mark(firstByteAt, "first_byte", "首个响应数据写入开始")
 		}
 		retainDetail := shouldRetainRequestDetail(call.requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM)
 		logContext.maybeCaptureUpstream(status, upstreamHeaders, rawResponse, responseTruncated, responseBytes, retainDetail)
@@ -281,6 +296,9 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			detail.ErrorName = logContext.errorCode
 			detail.ErrorMessage = errorMessage
 		}
+		call.timeline.Span(runtimeStarted, responseReadAt, "runtime", "运行时执行", "runtime", "进入运行时到返回，包含上游等待与向客户端写响应")
+		call.timeline.Span(responseReadAt, finalizeStarted, "finalizer_wait", "计费调度等待", "billing", "响应结束到计费处理开始，不计入响应总耗时")
+		call.timeline.Span(finalizeStarted, settledAt, "settlement", "计费处理", "billing", "解析用量、解析价格与结算；不含日志写入，不计入响应总耗时")
 		// Settlement and durable logging now run after the response boundary and
 		// must not inflate the latency reported to users.
 		call.timeline.Mark(responseReadAt, "complete", "响应完成")

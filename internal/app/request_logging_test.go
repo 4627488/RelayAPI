@@ -227,3 +227,17 @@ func TestRejectedRequestDetailMarksUnreadBody(t *testing.T) {
 		t.Fatalf("rejected detail = %+v", detail)
 	}
 }
+
+func TestEmptyWriteDoesNotBecomeFirstResponseByte(t *testing.T) {
+	calls := 0
+	writer := &runtimeWriter{client: httptest.NewRecorder(), firstByte: func() { calls++ }}
+	_, _ = writer.Write(nil)
+	if calls != 0 {
+		t.Fatal("empty write marked a first byte")
+	}
+	_, _ = writer.Write([]byte("data"))
+	_, _ = writer.Write([]byte("more"))
+	if calls != 1 {
+		t.Fatalf("first byte calls = %d", calls)
+	}
+}

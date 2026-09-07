@@ -407,9 +407,9 @@ func convertCPATrace(trace relaybridge.RequestTrace) upstream.RequestTrace {
 	out := upstream.RequestTrace{RequestID: trace.RequestID, StartedAt: trace.StartedAt, CompletedAt: trace.CompletedAt}
 	for _, attempt := range trace.Attempts {
 		out.Attempts = append(out.Attempts, upstream.ExecutionAttempt{
-			Number: attempt.Number, StartedAt: attempt.StartedAt, CompletedAt: attempt.CompletedAt,
+			Kind: attempt.Kind, Number: attempt.Number, StartedAt: attempt.StartedAt, CompletedAt: attempt.CompletedAt,
 			HeadersAt: attempt.HeadersAt, RequestWrittenAt: attempt.RequestWrittenAt,
-			FirstResponseAt: firstNonZeroTime(attempt.FirstResponseAt, attempt.FirstChunkAt),
+			FirstResponseAt: attempt.FirstResponseAt,
 			GetConnAt:       attempt.GetConnAt, GotConnAt: attempt.GotConnAt,
 			DNSStartedAt: attempt.DNSStartedAt, DNSCompletedAt: attempt.DNSCompletedAt,
 			ConnectStartedAt: attempt.ConnectStartedAt, ConnectCompletedAt: attempt.ConnectCompletedAt,

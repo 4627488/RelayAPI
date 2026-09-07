@@ -185,7 +185,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err := json.Unmarshal(rawSummary, &usageSummary); err != nil {
 		t.Fatal(err)
 	}
-	if usageSummary.Requests != 2 || usageSummary.Tokens != 15 || usageSummary.PromptTokens != 12 ||
+	if usageSummary.Requests != 3 || usageSummary.Tokens != 15 || usageSummary.PromptTokens != 12 ||
 		usageSummary.CompletionTokens != 3 || usageSummary.CachedTokens != 4 || usageSummary.ReasoningTokens != 1 {
 		t.Fatalf("usage summary = %+v", usageSummary)
 	}
@@ -343,7 +343,7 @@ func TestRetentionDeletesSuccessfulUnpricedDetails(t *testing.T) {
 	}
 }
 
-func TestQueryLogsCountsWebSocketSessionAsOneUnit(t *testing.T) {
+func TestQueryLogsCountsEveryBillingStep(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is not configured")
@@ -425,17 +425,12 @@ func TestQueryLogsCountsWebSocketSessionAsOneUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 2 || len(page.Items) != 2 || page.Summary.Tokens != 42 || page.Summary.CostNanoUSD != 35 {
+	if page.Total != 3 || len(page.Items) != 3 || page.Summary.Tokens != 42 || page.Summary.CostNanoUSD != 35 {
 		t.Fatalf("unit list = total=%d items=%d tokens=%d cost=%d", page.Total, len(page.Items), page.Summary.Tokens, page.Summary.CostNanoUSD)
-	}
-	for _, item := range page.Items {
-		if item.ID == childID {
-			t.Fatalf("historical websocket turn row leaked into the unit list: %+v", item)
-		}
 	}
 
 	websocketPage, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Status: "websocket"})
-	if err != nil || websocketPage.Total != 1 || websocketPage.Summary.Tokens != 37 || len(websocketPage.Items) != 1 || websocketPage.Items[0].ID != sessionID {
+	if err != nil || websocketPage.Total != 2 || websocketPage.Summary.Tokens != 37 || len(websocketPage.Items) != 2 {
 		t.Fatalf("websocket filter = %+v, err=%v", websocketPage, err)
 	}
 	streamPage, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, Status: "stream"})
@@ -452,7 +447,7 @@ func TestQueryLogsCountsWebSocketSessionAsOneUnit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dashboardInt64(overview["requests_30d"]) != 2 || dashboardInt64(overview["tokens_30d"]) != 42 {
+	if dashboardInt64(overview["requests_30d"]) != 3 || dashboardInt64(overview["tokens_30d"]) != 42 {
 		t.Fatalf("dashboard unit = %#v", overview)
 	}
 	report, err := dataStore.UsageReport(ctx, tenantID, 30)
@@ -471,7 +466,7 @@ func TestQueryLogsCountsWebSocketSessionAsOneUnit(t *testing.T) {
 	if err := json.Unmarshal(rawSummary, &usageSummary); err != nil {
 		t.Fatal(err)
 	}
-	if usageSummary.Requests != 2 || usageSummary.Tokens != 42 || usageSummary.Cost != 35 {
+	if usageSummary.Requests != 3 || usageSummary.Tokens != 42 || usageSummary.Cost != 35 {
 		t.Fatalf("usage summary = %+v", usageSummary)
 	}
 }

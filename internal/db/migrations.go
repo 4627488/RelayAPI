@@ -199,6 +199,13 @@ var migrations = []migration{
 			 ON CONFLICT (alias) DO NOTHING`,
 		},
 	},
+	{
+		version: 11,
+		name:    "identify historical session logs",
+		statements: []string{
+			`UPDATE request_logs SET log_unit = 'legacy_session' WHERE request_type LIKE '%websocket%' AND (reservation_request_id IS NULL OR reservation_request_id = id)`,
+		},
+	},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this

@@ -631,3 +631,108 @@ func mustJSON(t *testing.T, value any) []byte {
 	}
 	return payload
 }
+
+func TestNativeResponsesWebSocketPipelinedStepsKeepIndependentBoundaries(t *testing.T) {
+	releaseFirst := make(chan struct{})
+	var connections atomic.Int32
+	requests := make(chan map[string]any, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connections.Add(1)
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for i := 1; i <= 2; i++ {
+			_, payload, readErr := conn.ReadMessage()
+			if readErr != nil {
+				return
+			}
+			var body map[string]any
+			_ = json.Unmarshal(payload, &body)
+			requests <- body
+			if i == 1 {
+				<-releaseFirst
+			}
+			_ = conn.WriteJSON(map[string]any{
+				"type": "response.completed", "response": map[string]any{
+					"id": "resp_" + string(rune('0'+i)), "status": "completed", "output": []any{},
+					"usage": map[string]any{"input_tokens": i, "output_tokens": 1, "total_tokens": i + 1},
+				},
+			})
+		}
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer upstream.Close()
+
+	app := newNativeRuntimeTestApp(t, upstreamruntime.Credential{
+		ID: "codex", Provider: "codex", Enabled: true, Models: []string{"gpt-test"},
+		Document: mustJSON(t, map[string]any{
+			"type": "codex", "access_token": "token", "base_url": upstream.URL, "websockets": true,
+			"model_routes": []map[string]any{{"public": "gpt-test", "upstream": "gpt-upstream"}},
+		}),
+	})
+	entries := make(chan nativeWebSocketBillingEntry, 2)
+	accountingCh := make(chan billing.Result, 1)
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accounting := &nativeWebSocketAccounting{billable: true, admission: store.Admission{UpstreamCredentialID: "codex"}}
+		accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
+			entries <- entry
+			accounting.turnsSeen++
+			return true, nil
+		}
+		_, _, _ = app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{}, "session-test", nil, accounting)
+		accountingCh <- accounting.result
+	}))
+	defer downstream.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+downstream.URL[len("http"):]+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err = client.WriteJSON(map[string]any{"type": "response.create", "model": "gpt-test", "input": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = client.WriteJSON(map[string]any{
+		"type": "response.create", "previous_response_id": "resp_1", "input": []any{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(releaseFirst)
+	if _, _, err = client.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = client.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
+	one, two := <-entries, <-entries
+	if one.Result.RequestID != "resp_1" || two.Result.RequestID != "resp_2" || one.Result.Usage.Total != 2 || two.Result.Usage.Total != 3 {
+		t.Fatalf("step entries = %+v / %+v", one, two)
+	}
+	for _, entry := range []nativeWebSocketBillingEntry{one, two} {
+		if entry.StartedAt.IsZero() || entry.ReadyAt.Before(entry.StartedAt) || entry.CompletedAt.Before(entry.ReadyAt) || entry.FirstAt.IsZero() || entry.CompletedAt.Before(entry.FirstAt) {
+			t.Fatalf("invalid step clock boundaries: %+v", entry)
+		}
+		if int64(len(entry.RequestBody)) != entry.RequestBytes {
+			t.Fatal("request body belongs to a different step")
+		}
+	}
+	_ = client.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+
+	first, second := <-requests, <-requests
+	if first["type"] != "response.create" || first["model"] != "gpt-upstream" || second["type"] != "response.create" || second["previous_response_id"] != "resp_1" {
+		t.Fatalf("upstream requests = %#v, %#v", first, second)
+	}
+	if connections.Load() != 1 {
+		t.Fatalf("upstream websocket connections = %d, want 1", connections.Load())
+	}
+	select {
+	case got := <-accountingCh:
+		if got.Usage.Prompt != 3 || got.Usage.Completion != 2 || got.Usage.Total != 5 {
+			t.Fatalf("multi-turn accounting = %#v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for multi-turn accounting")
+	}
+}

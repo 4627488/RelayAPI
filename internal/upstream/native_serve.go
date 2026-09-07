@@ -132,16 +132,14 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	} else {
 		credential.releaseProbe()
 	}
-	clock := newTransferClock()
-	defer clock.apply(trace)
-	source := clock.reader(response.Body)
+	source := response.Body
 	if collectStream && response.StatusCode < 400 {
 		payload, collectErr := collectResponsesSSE(source)
 		if collectErr != nil {
 			if len(payload) > 0 {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadGateway)
-				_, _ = clock.writer(w).Write(payload)
+				_, _ = w.Write(payload)
 				return
 			}
 			writeRuntimeError(w, http.StatusBadGateway, "upstream_response_invalid", collectErr.Error())
@@ -158,20 +156,20 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(response.StatusCode)
-		_, _ = clock.writer(w).Write(payload)
+		_, _ = w.Write(payload)
 		return
 	}
 	copyResponseHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	stream := clientStream
-	streamWriter := clock.writer(w)
+	var streamWriter io.Writer = w
 	if stream && response.StatusCode < http.StatusBadRequest {
 		// net/http buffers small writes. Provider SSE events are often only a few
 		// hundred bytes, so a plain io.Copy can otherwise hold several events
 		// before the outer relay (and therefore the client) sees anything.
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
-			streamWriter = clock.writer(immediateFlushWriter{Writer: w, Flusher: flusher})
+			streamWriter = immediateFlushWriter{Writer: w, Flusher: flusher}
 		}
 	}
 	if response.StatusCode >= 400 || (responseMode == "passthrough" && toolRestorer == nil) {

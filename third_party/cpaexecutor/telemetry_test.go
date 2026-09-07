@@ -1,6 +1,8 @@
 package relaybridge
 
 import (
+	"errors"
+	"net/http/httptrace"
 	"testing"
 	"time"
 )
@@ -34,5 +36,24 @@ func TestRequestTraceRegistryCapturesAttemptsAndConsumesTrace(t *testing.T) {
 	}
 	if _, exists := registry.take("request"); exists {
 		t.Fatal("trace was not consumed")
+	}
+}
+
+func TestNetworkTraceDoesNotCombineTransportReplays(t *testing.T) {
+	state := &attemptHTTPTrace{}
+	trace := state.clientTrace()
+	trace.GetConn("first")
+	trace.GotConn(httptrace.GotConnInfo{})
+	trace.WroteRequest(httptrace.WroteRequestInfo{Err: errors.New("write failed")})
+	if !state.snapshot().wroteRequest.IsZero() {
+		t.Fatal("failed write reported complete")
+	}
+	trace.GetConn("retry")
+	trace.GotConn(httptrace.GotConnInfo{})
+	trace.WroteRequest(httptrace.WroteRequestInfo{})
+	trace.GotFirstResponseByte()
+	got := state.snapshot()
+	if !got.getConn.IsZero() || !got.wroteRequest.IsZero() || !got.firstResponseByte.IsZero() {
+		t.Fatal("mixed timing pairs across transport replays")
 	}
 }

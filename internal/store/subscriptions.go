@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"math"
 	"math/big"
 	"path"
@@ -1128,8 +1129,32 @@ func (s Store) SettleRequestReservation(ctx context.Context, requestID string, a
 	return s.finishReservation(ctx, requestID, actual, pricingComplete, db.ReservationSettled)
 }
 
+// WebSocketStepID is stable across terminal replays and scoped to the reservation.
+func WebSocketStepID(requestID, turnID string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(requestID+"\x00"+turnID)).String()
+}
+
+func webSocketStepLog(input WebSocketTurnAccrual, startedAt, completedAt time.Time) LogInput {
+	stepLog := input.Log
+	stepLog.ID = WebSocketStepID(input.RequestID, strings.TrimSpace(input.TurnID))
+	stepLog.ReservationRequestID = input.RequestID
+	stepLog.UpstreamRequestID = strings.TrimSpace(input.TurnID)
+	stepLog.Model, stepLog.ActualModel = input.Model, input.Model
+	stepLog.Usage = input.Usage
+	stepLog.CostNanoUSD = nil
+	if input.PricingComplete {
+		stepLog.CostNanoUSD = &input.CostNanoUSD
+	}
+	stepLog.PricingComplete = input.PricingComplete
+	stepLog.StartedAt, stepLog.CompletedAt = startedAt, completedAt
+	stepLog.LatencyMS = completedAt.Sub(startedAt).Milliseconds()
+	stepLog.RequestBodyBytes, stepLog.ResponseBodyBytes = input.RequestBodyBytes, input.ResponseBodyBytes
+	stepLog.ReservedNanoUSD = 0 // The shared reservation is not a per-step charge.
+	return stepLog
+}
+
 // AccrueWebSocketTurn durably charges one terminal WebSocket response and
-// upserts the session request log in the same transaction. Replayed terminal
+// writes one billing-step log in the same transaction. Replayed terminal
 // frames are ignored by the request_id + turn_id primary key.
 func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccrual) (bool, error) {
 	inserted := false
@@ -1228,7 +1253,8 @@ func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccru
 		}).Error; err != nil {
 			return err
 		}
-		return writeLogTx(tx, input.Log, true)
+		stepLog := webSocketStepLog(input, startedAt, completedAt)
+		return writeLogTx(tx, stepLog, false)
 	})
 	if err != nil {
 		return false, err

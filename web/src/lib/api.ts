@@ -56,6 +56,9 @@ export interface Invitation {
 }
 
 export interface RequestLog {
+  first_token_ms?: number
+  reservation_request_id?: string
+  log_unit?: string
   id: string
   api_key_id?: string
   tenant_id: string

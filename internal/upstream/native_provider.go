@@ -28,7 +28,7 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 	response, err := credential.client.Do(request)
 	snapshot := clientTraceState.snapshot()
 	recorded := ExecutionAttempt{
-		Number: 1, StartedAt: attemptStarted, CompletedAt: time.Now(),
+		Kind: "headers", Number: 1, StartedAt: attemptStarted, CompletedAt: time.Now(),
 		RequestWrittenAt: snapshot.wroteRequest, FirstResponseAt: snapshot.firstResponseByte,
 		GetConnAt: snapshot.getConn, GotConnAt: snapshot.gotConn,
 		DNSStartedAt: snapshot.dnsStart, DNSCompletedAt: snapshot.dnsDone,

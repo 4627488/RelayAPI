@@ -705,13 +705,13 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 		t.Fatalf("active reservation = %+v", reservation)
 	}
 	var requestLogs []db.RequestLog
-	if err := database.Where("id = ?", requestID).Find(&requestLogs).Error; err != nil {
+	if err := database.Where("reservation_request_id = ?", requestID).Order("total_tokens DESC").Find(&requestLogs).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(requestLogs) != 1 || requestLogs[0].TotalTokens != 37 ||
-		requestLogs[0].CostNanoUSD == nil || *requestLogs[0].CostNanoUSD != 32 ||
+	if len(requestLogs) != 2 || requestLogs[0].TotalTokens != 30 || requestLogs[1].TotalTokens != 7 ||
+		requestLogs[0].CostNanoUSD == nil || *requestLogs[0].CostNanoUSD != 25 || requestLogs[1].CostNanoUSD == nil || *requestLogs[1].CostNanoUSD != 7 ||
 		requestLogs[0].ReservationRequestID == nil || *requestLogs[0].ReservationRequestID != requestID {
-		t.Fatalf("session websocket log = %+v", requestLogs)
+		t.Fatalf("billing step logs = %+v", requestLogs)
 	}
 
 	reclaimed, err := store.ReclaimExpiredReservations(ctx, time.Now().Add(2*time.Minute))

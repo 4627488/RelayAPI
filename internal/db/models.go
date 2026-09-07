@@ -159,6 +159,8 @@ type UsageDailyRollup struct {
 }
 
 type RequestLog struct {
+	FirstTokenMS                 *int64    `gorm:"column:first_token_ms" json:"first_token_ms,omitempty"`
+	LogUnit                      string    `gorm:"not null;default:step" json:"log_unit"`
 	ID                           string    `gorm:"type:uuid;primaryKey" json:"id"`
 	TenantID                     string    `gorm:"type:uuid;not null;index:request_logs_tenant_started_idx,priority:1" json:"tenant_id"`
 	APIKeyID                     string    `gorm:"type:uuid;not null;index" json:"api_key_id"`
