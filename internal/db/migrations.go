@@ -199,6 +199,30 @@ var migrations = []migration{
 			 ON CONFLICT (alias) DO NOTHING`,
 		},
 	},
+	{
+		version: 11,
+		name:    "cap grok-4.5 and grok-4.6 Codex context at 200k",
+		statements: []string{
+			`INSERT INTO model_settings (
+				model, display_name, context_window, max_output_tokens,
+				reasoning_efforts, default_reasoning_level, input_modalities,
+				prefer_web_sockets, provider, updated_at
+			) VALUES
+				('grok-4.5', 'Grok 4.5', 200000, 32768,
+				 '{none,low,medium,high}', 'medium', '{text,image}',
+				 TRUE, 'xai', NOW()),
+				('grok-4.6', 'Grok 4.6', 200000, 32768,
+				 '{none,low,medium,high}', 'medium', '{text,image}',
+				 TRUE, 'xai', NOW())
+			 ON CONFLICT (model) DO UPDATE SET
+				context_window = EXCLUDED.context_window,
+				max_output_tokens = CASE
+					WHEN model_settings.max_output_tokens > 0 THEN model_settings.max_output_tokens
+					ELSE EXCLUDED.max_output_tokens
+				END,
+				updated_at = NOW()`,
+		},
+	},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this

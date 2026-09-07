@@ -16,6 +16,29 @@ func TestCapabilityIndexPrefersFirstPartyAndLooksUpBareSlug(t *testing.T) {
 	}
 }
 
+func TestCapabilityIndexMergesSparseAdminContextOverCatalog(t *testing.T) {
+	index := NewCapabilityIndex("v1", []Capability{
+		{
+			ID: "xai/grok-4.6", Name: "Grok 4.6", Provider: "xai", Source: "models.dev",
+			Context: 500000, MaxOutput: 500000, Reasoning: true,
+			ReasoningOptions: []ReasoningOption{{Type: "effort", Values: []string{"low", "medium", "high", "xhigh"}}},
+			DefaultLevel:     "high",
+			InputModalities:  []string{"text", "image"},
+		},
+		{ID: "grok-4.6", Provider: "xai", Source: SourceAdmin, Context: 200000},
+	})
+	got, ok := index.Lookup("grok-4.6")
+	if !ok || got.Source != SourceAdmin || got.Context != 200000 {
+		t.Fatalf("admin context = %#v ok=%v", got, ok)
+	}
+	if got.MaxOutput != 500000 || got.DefaultLevel != "high" || len(got.ReasoningOptions) != 1 {
+		t.Fatalf("sparse admin wiped catalog facts: %#v", got)
+	}
+	if got.Name != "Grok 4.6" || len(got.InputModalities) != 2 {
+		t.Fatalf("catalog identity/modalities lost: %#v", got)
+	}
+}
+
 func TestCapabilityIndexPrefersAdminOverride(t *testing.T) {
 	index := NewCapabilityIndex("v1", []Capability{
 		{ID: "moonshotai/kimi-k3-256k", Provider: "moonshotai", Source: "models.dev", Context: 1048576},
