@@ -58,7 +58,7 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			if input.Provider == "aliyun-bailian" {
 				document["vendor"] = "aliyun-bailian"
 				document["session_affinity"] = true
-				document["cache_mode"] = "auto"
+				document["cache_mode"] = "auto" // session cache only with previous_response_id
 			}
 			baseURL := strings.TrimSpace(input.BaseURL)
 			if baseURL == "" {
