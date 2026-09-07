@@ -151,6 +151,7 @@ function ThemeChoices({
         }
       }}
     >
+      <DropdownMenuLabel>外观</DropdownMenuLabel>
       {themes.map((item) => (
         <DropdownMenuRadioItem key={item.value} value={item.value}>
           <HugeiconsIcon icon={item.icon} strokeWidth={2} />
@@ -300,12 +301,14 @@ export function AppShell({
                   <HugeiconsIcon strokeWidth={2} icon={UnfoldMoreIcon} />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="end" className="w-56">
-                  <DropdownMenuLabel>{name}</DropdownMenuLabel>
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    {name}
+                  </div>
                   <DropdownMenuSeparator />
                   {session.is_admin ? (
                     <>
-                      <DropdownMenuLabel>工作区</DropdownMenuLabel>
                       <DropdownMenuGroup>
+                        <DropdownMenuLabel>工作区</DropdownMenuLabel>
                         <DropdownMenuItem
                           onClick={() =>
                             onWorkspaceChange(admin ? "user" : "admin")
@@ -328,7 +331,6 @@ export function AppShell({
                       <DropdownMenuSeparator />
                     </>
                   ) : null}
-                  <DropdownMenuLabel>外观</DropdownMenuLabel>
                   <ThemeChoices value={theme} onValueChange={setTheme} />
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
@@ -338,15 +340,15 @@ export function AppShell({
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
                   <DropdownMenuSeparator />
-                  <DropdownMenuLabel
-                    className="flex items-center justify-between gap-4"
+                  <div
+                    className="flex items-center justify-between gap-4 px-2 py-1.5 text-xs text-muted-foreground"
                     title={buildCommit}
                   >
                     <span>版本</span>
                     <code className="font-mono font-normal text-muted-foreground">
                       {buildVersion}
                     </code>
-                  </DropdownMenuLabel>
+                  </div>
                 </DropdownMenuContent>
               </DropdownMenu>
             </SidebarMenuItem>

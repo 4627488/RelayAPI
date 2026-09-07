@@ -9,7 +9,6 @@ import {
   TriangleAlertIcon,
 } from "@hugeicons/core-free-icons"
 
-import { Badge } from "@/components/ui/badge"
 import {
   Card,
   CardContent,
@@ -41,16 +40,9 @@ import {
 import { StatStrip } from "@/components/workspace-ui"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { RequestLog, UsageReport } from "@/lib/api"
-import { routeHref, type Workspace } from "@/lib/routes"
-import {
-  compact,
-  compactTokens,
-  dateTime,
-  money,
-  requestLogStatus,
-  requestLogSucceeded,
-} from "@/lib/format"
-import { CacheHitRateBadge } from "@/components/token-cache-rate"
+import { type Workspace } from "@/lib/routes"
+import { compact, compactTokens, money } from "@/lib/format"
+import { RequestLogList } from "@/components/request-log-list"
 
 interface Metric {
   label: string
@@ -297,85 +289,13 @@ export function LogsTable({
       <CardHeader className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
         <div>
           <CardTitle>最近请求</CardTitle>
-          <CardDescription>状态、模型、Token 和响应耗时。</CardDescription>
+          <CardDescription>按 Key 查看请求、用量、耗时和费用。</CardDescription>
         </div>
         {action}
       </CardHeader>
       <CardContent>
         {logs.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>时间</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>模型</TableHead>
-                <TableHead>客户端</TableHead>
-                <TableHead className="text-right">Tokens</TableHead>
-                <TableHead className="text-right">耗时</TableHead>
-                <TableHead className="text-right">费用</TableHead>
-                <TableHead className="text-right">详情</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {logs.map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell className="text-muted-foreground">
-                    {dateTime(log.started_at)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        requestLogSucceeded(log.status_code, log.error_code)
-                          ? "secondary"
-                          : "destructive"
-                      }
-                    >
-                      {requestLogStatus(log.status_code)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="max-w-52 truncate font-mono text-xs">
-                    {log.model || log.path}
-                  </TableCell>
-                  <TableCell
-                    className="max-w-44 truncate text-xs"
-                    title={log.user_agent || undefined}
-                  >
-                    {[log.client_name, log.client_version]
-                      .filter(Boolean)
-                      .join(" ") || "未知客户端"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
-                      <span>{compactTokens(log.total_tokens)}</span>
-                      <CacheHitRateBadge
-                        cachedTokens={log.cached_tokens}
-                        promptTokens={log.prompt_tokens}
-                      />
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {log.latency_ms} ms
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {money(log.cost_nano_usd)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <a
-                      className="text-sm text-primary underline-offset-4 hover:underline focus-visible:underline"
-                      aria-label={`查看日志 ${log.model || log.path} ${dateTime(log.started_at)}`}
-                      href={routeHref({
-                        workspace,
-                        page: "logs",
-                        logId: log.id,
-                      })}
-                    >
-                      查看
-                    </a>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <RequestLogList logs={logs} workspace={workspace} />
         ) : (
           <Empty>
             <EmptyHeader>

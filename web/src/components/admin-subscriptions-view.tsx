@@ -21,7 +21,7 @@ import { toast } from "@/components/ui/toast"
 
 import { ModelSelector } from "@/components/model-selector"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
-import { PageHeader, StatStrip } from "@/components/workspace-ui"
+import { PageHeader, SearchField } from "@/components/workspace-ui"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -36,7 +36,6 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Card } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -415,7 +414,7 @@ export function AdminSubscriptionsView() {
   )
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-w-0 flex-col gap-3">
       <PageHeader title="订阅分配" />
 
       {loading ? (
@@ -431,9 +430,9 @@ export function AdminSubscriptionsView() {
           </EmptyHeader>
         </Empty>
       ) : (
-        <Card className="lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
-          <aside>
-            <div className="flex flex-col gap-3 p-4">
+        <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-5">
+          <aside aria-label="模型账户" className="min-w-0 lg:sticky lg:top-4">
+            <div className="flex min-w-0 flex-col gap-2">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="font-heading font-medium">模型账户</h2>
@@ -454,7 +453,7 @@ export function AdminSubscriptionsView() {
                   aria-label="搜索模型账户"
                 />
               </InputGroup>
-              <div className="flex flex-col gap-1">
+              <div className="flex max-h-48 min-w-0 flex-col gap-1 overflow-y-auto lg:max-h-[calc(100dvh-13rem)]">
                 {filteredCurrentParents.map((view) => (
                   <ParentListButton
                     key={view.item.id}
@@ -493,6 +492,7 @@ export function AdminSubscriptionsView() {
 
           {selected ? (
             <AccountAllocationPanel
+              key={selected.item.id}
               view={selected}
               children={selectedChildren}
               tenants={tenants}
@@ -504,7 +504,7 @@ export function AdminSubscriptionsView() {
               onDelete={setDeletingChild}
             />
           ) : null}
-        </Card>
+        </div>
       )}
 
       <Dialog
@@ -812,20 +812,21 @@ function ParentListButton({
   return (
     <Button
       variant={active ? "secondary" : "ghost"}
-      size="lg"
-      className="w-full justify-start text-left whitespace-normal"
+      aria-pressed={active}
+      size="sm"
+      className="h-auto min-h-12 w-full shrink-0 justify-start px-2 py-2 text-left whitespace-normal"
       onClick={onSelect}
     >
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium">{view.item.name}</p>
-        <p className="truncate text-xs text-muted-foreground">
+        <p className="truncate text-xs">
           {view.item.provider || "未知提供商"}
           {displayPlan(view.item.plan_type)
             ? ` · ${displayPlan(view.item.plan_type)}`
             : ""}
         </p>
       </div>
-      <Badge variant="outline">{childCount}</Badge>
+      <span className="shrink-0 text-xs">{childCount} 条授权</span>
     </Button>
   )
 }
@@ -851,7 +852,19 @@ function AccountAllocationPanel({
   onToggle: (child: ChildSubscription) => void
   onDelete: (child: ChildSubscription) => void
 }) {
+  const [grantQuery, setGrantQuery] = useState("")
   const tenantByID = new Map(tenants.map((tenant) => [tenant.id, tenant]))
+  const filteredChildren = children.filter((child) => {
+    const tenant = tenantByID.get(child.tenant_id)
+    return [
+      child.name,
+      tenant?.name,
+      tenant?.owner_email,
+      child.tenant_id,
+    ].some((value) =>
+      value?.toLowerCase().includes(grantQuery.trim().toLowerCase())
+    )
+  })
   const allocationPercent = Math.min(
     100,
     (view.allocated_ppm / nominalAllocationPPM) * 100
@@ -859,11 +872,11 @@ function AccountAllocationPanel({
   const oversubscribed = view.allocated_ppm > nominalAllocationPPM
 
   return (
-    <div className="flex min-w-0 flex-col">
-      <div className="flex flex-col gap-4 px-4 py-4 sm:px-6 sm:py-5 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0">
+    <div className="@container flex min-w-0 flex-col gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-heading text-xl leading-tight font-semibold">
+            <h2 className="max-w-full font-heading text-base leading-tight font-semibold break-all">
               {view.item.name}
             </h2>
             <AccountStatusBadge view={view} />
@@ -890,46 +903,48 @@ function AccountAllocationPanel({
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-6 px-4 py-5 sm:px-6">
-        <StatStrip
-          items={[
-            {
-              label:
-                view.item.capacity_mode === "unmetered"
-                  ? "授权用户"
-                  : "租户授权",
-              value: `${children.length} ${view.item.capacity_mode === "unmetered" ? "人" : "条"}`,
-            },
-            {
-              label: "可用模型",
-              value: `${parentModelOptions(view).length} 个`,
-            },
-            { label: "结算方式", value: billingLabel(view) },
-          ]}
-        />
+      <div className="flex min-w-0 flex-col gap-3">
+        <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
+          <div className="flex gap-2">
+            <dt className="text-muted-foreground">授权</dt>
+            <dd>
+              {children.length} 条 ·{" "}
+              {children.filter((child) => child.enabled).length} 启用
+            </dd>
+          </div>
+          <div className="flex gap-2">
+            <dt className="text-muted-foreground">模型</dt>
+            <dd>{parentModelOptions(view).length} 个</dd>
+          </div>
+          {view.item.capacity_mode === "observed" && (
+            <div className="flex gap-2">
+              <dt className="text-muted-foreground">已分配</dt>
+              <dd>{percent(view.allocated_ppm)}</dd>
+            </div>
+          )}
+        </dl>
 
         {view.item.capacity_mode === "observed" ? (
-          <section className="flex flex-col gap-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-medium">账户额度</h3>
-                <p className="text-xs text-muted-foreground">
-                  上游额度和租户分配使用同一份账户数据。
-                </p>
-              </div>
-              <Badge variant="outline">
-                已分配 {percent(view.allocated_ppm)}
-              </Badge>
+          <section
+            aria-label="账户额度"
+            className="grid min-w-0 gap-3 border-y py-3 @2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+          >
+            <div className="flex min-w-0 flex-col gap-2">
+              <Progress value={allocationPercent}>
+                <ProgressLabel>额度分配</ProgressLabel>
+                <span className="ml-auto text-xs tabular-nums">
+                  {percent(view.allocated_ppm)}
+                </span>
+              </Progress>
+              <p className="text-xs text-muted-foreground">
+                {view.allocated_ppm > nominalAllocationPPM
+                  ? "已超额分配"
+                  : `可分配 ${percent(nominalAllocationPPM - view.allocated_ppm)}`}
+              </p>
+              {oversubscribed && (
+                <OversubscriptionWarning allocatedPPM={view.allocated_ppm} />
+              )}
             </div>
-            <Progress value={allocationPercent}>
-              <ProgressLabel>已分配比例</ProgressLabel>
-              <span className="ml-auto text-sm text-muted-foreground tabular-nums">
-                {Math.round(allocationPercent)}%
-              </span>
-            </Progress>
-            {oversubscribed ? (
-              <OversubscriptionWarning allocatedPPM={view.allocated_ppm} />
-            ) : null}
             <QuotaSnapshot
               snapshot={view.item.quota_snapshot}
               status={view.item.quota_probe_status}
@@ -949,17 +964,15 @@ function AccountAllocationPanel({
           </Alert>
         ) : null}
 
-        <Separator />
-
         <section className="flex flex-col gap-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h3 className="font-medium">租户授权</h3>
-              <p className="text-xs text-muted-foreground">
-                {view.item.capacity_mode === "unmetered"
-                  ? "授权用户继承账户全部模型，调用费用从各自余额扣除。"
-                  : "每条授权决定租户可以使用的模型、份额与路由优先级。"}
-              </p>
+              <h3 className="font-medium">
+                租户授权{" "}
+                <span className="text-xs text-muted-foreground">
+                  {filteredChildren.length} / {children.length}
+                </span>
+              </h3>
             </div>
             <Button
               size="sm"
@@ -978,10 +991,18 @@ function AccountAllocationPanel({
             </Button>
           </div>
 
-          {children.length ? (
+          <SearchField
+            aria-label="搜索租户授权"
+            value={grantQuery}
+            onChange={(event) => setGrantQuery(event.target.value)}
+            onClear={() => setGrantQuery("")}
+            placeholder="搜索用户、邮箱或授权名称"
+            className="w-full sm:max-w-sm"
+          />
+          {filteredChildren.length ? (
             <>
-              <div className="flex flex-col gap-2 md:hidden">
-                {children.map((child) => (
+              <div className="flex min-w-0 flex-col divide-y @3xl:hidden">
+                {filteredChildren.map((child) => (
                   <MobileChildGrant
                     key={child.id}
                     child={child}
@@ -994,11 +1015,11 @@ function AccountAllocationPanel({
                   />
                 ))}
               </div>
-              <div className="hidden md:block">
-                <Table>
+              <div className="hidden min-w-0 @3xl:block">
+                <Table className="table-fixed">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>租户</TableHead>
+                      <TableHead className="w-[24%]">租户</TableHead>
                       <TableHead>
                         {view.item.capacity_mode === "unmetered"
                           ? "可用模型"
@@ -1017,15 +1038,18 @@ function AccountAllocationPanel({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {children.map((child) => {
+                    {filteredChildren.map((child) => {
                       const tenant = tenantByID.get(child.tenant_id)
                       return (
                         <TableRow key={child.id}>
                           <TableCell>
-                            <p className="font-medium">
+                            <p className="truncate font-medium">
                               {tenant?.name || child.tenant_id}
                             </p>
-                            <p className="text-xs text-muted-foreground">
+                            <p
+                              className="truncate text-xs text-muted-foreground"
+                              title={tenant?.owner_email}
+                            >
                               {tenant?.owner_email}
                             </p>
                           </TableCell>
@@ -1038,7 +1062,9 @@ function AccountAllocationPanel({
                               </p>
                             ) : (
                               <>
-                                <p>{child.name}</p>
+                                <p className="truncate" title={child.name}>
+                                  {child.name}
+                                </p>
                                 <p className="text-xs text-muted-foreground">
                                   {child.model_allowlist?.length
                                     ? `限定 ${child.model_allowlist.length} 个模型`
@@ -1084,33 +1110,35 @@ function AccountAllocationPanel({
                 <EmptyMedia variant="icon">
                   <HugeiconsIcon strokeWidth={2} icon={UsersIcon} />
                 </EmptyMedia>
-                <EmptyTitle>尚未分配给任何租户</EmptyTitle>
+                <EmptyTitle>
+                  {grantQuery ? "没有匹配的授权" : "尚未分配给任何租户"}
+                </EmptyTitle>
                 <EmptyDescription>
-                  {view.item.capacity_mode === "unmetered"
-                    ? "添加用户后，他们会获得这个账户的全部模型权限。"
-                    : "新增授权后，租户请求会严格路由到这个模型账户。"}
+                  {grantQuery
+                    ? "调整搜索词，或清除搜索查看全部授权。"
+                    : view.item.capacity_mode === "unmetered"
+                      ? "添加用户后，他们会获得这个账户的全部模型权限。"
+                      : "新增授权后，租户请求会严格路由到这个模型账户。"}
                 </EmptyDescription>
               </EmptyHeader>
-              <Button disabled={!isAllocatable(view)} onClick={onAssign}>
+              <Button
+                disabled={!grantQuery && !isAllocatable(view)}
+                onClick={grantQuery ? () => setGrantQuery("") : onAssign}
+              >
                 <HugeiconsIcon
                   strokeWidth={2}
                   icon={UserPlusIcon}
                   data-icon="inline-start"
                 />
-                {view.item.capacity_mode === "unmetered"
-                  ? "添加用户"
-                  : "分配给租户"}
+                {grantQuery
+                  ? "清除搜索"
+                  : view.item.capacity_mode === "unmetered"
+                    ? "添加用户"
+                    : "分配给租户"}
               </Button>
             </Empty>
           )}
         </section>
-      </div>
-
-      <div className="mt-auto flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
-        <p className="text-xs text-muted-foreground">
-          账户与授权数据保存后立即生效。
-        </p>
-        <Badge variant="outline">无需同步</Badge>
       </div>
     </div>
   )
@@ -1136,7 +1164,7 @@ function MobileChildGrant({
   const balanceMode = view.item.capacity_mode === "unmetered"
   const modelCount = parentModelOptions(view).length
   return (
-    <div className="p-3">
+    <div className="min-w-0 py-3">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">
@@ -1157,7 +1185,7 @@ function MobileChildGrant({
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-3 bg-muted/50 p-3">
+      <div className="mt-2 grid grid-cols-2 gap-3">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">
             {balanceMode ? "可用模型" : "授权范围"}
@@ -1941,7 +1969,7 @@ function localDateTime(value?: string) {
 
 function AllocationSkeleton() {
   return (
-    <Card className="lg:grid lg:grid-cols-[18rem_minmax(0,1fr)]">
+    <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-5">
       <div className="flex flex-col gap-3 p-4">
         <Skeleton className="h-5 w-24" />
         <Skeleton className="h-8 w-full" />
@@ -1959,6 +1987,6 @@ function AllocationSkeleton() {
           <Skeleton className="h-56 w-full" />
         </div>
       </div>
-    </Card>
+    </div>
   )
 }

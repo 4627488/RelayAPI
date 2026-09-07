@@ -962,6 +962,7 @@ func requestLogUnitErrorSQLOn(table string) string {
 
 type LogQuery struct {
 	TenantID     string
+	APIKey       string
 	Public       bool
 	Page         int
 	PageSize     int
@@ -1010,17 +1011,21 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if input.TenantID != "" {
 		query = query.Where("tenant_id = ?", input.TenantID)
 	}
+	if key := strings.TrimSpace(input.APIKey); key != "" {
+		like := "%" + key + "%"
+		query = query.Where("(api_key_name ILIKE ? OR api_key_prefix ILIKE ? OR api_key_id::text = ?)", like, like, key)
+	}
 	if text := strings.TrimSpace(input.Query); text != "" {
 		like := "%" + text + "%"
 		if input.Public {
 			query = query.Where(
-				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_code ILIKE ?",
-				like, like, like, like, like, like, like, like,
+				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_code ILIKE ? OR api_key_name ILIKE ? OR api_key_prefix ILIKE ? OR id::text ILIKE ?",
+				like, like, like, like, like, like, like, like, like, like, like,
 			)
 		} else {
 			query = query.Where(
-				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR upstream_trace_id ILIKE ?",
-				like, like, like, like, like, like, like, like, like, like, like, like, like, like,
+				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR upstream_trace_id ILIKE ? OR api_key_prefix ILIKE ? OR id::text ILIKE ?",
+				like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, like,
 			)
 		}
 	}

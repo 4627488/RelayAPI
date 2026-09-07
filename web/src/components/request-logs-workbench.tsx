@@ -9,7 +9,6 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   Alert02Icon,
-  ArrowRight01Icon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -85,9 +84,9 @@ import {
   requestLogTransport,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import { navigateTo, routeHref, useAppRoute } from "@/lib/routes"
+import { navigateTo, useAppRoute } from "@/lib/routes"
 import { RequestLatencyTimeline } from "@/components/request-latency-timeline"
-import { CacheHitRateBadge } from "@/components/token-cache-rate"
+import { RequestLogList } from "@/components/request-log-list"
 
 const emptyPage: RequestLogPage = {
   items: [],
@@ -122,6 +121,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   const route = useAppRoute()
   const [data, setData] = useState<RequestLogPage>(emptyPage)
   const [query, setQuery] = useState("")
+  const [apiKey, setApiKey] = useState("")
   const [status, setStatus] = useState("all")
   const [method, setMethod] = useState("all")
   const [model, setModel] = useState("")
@@ -135,14 +135,17 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   const [detailLoading, setDetailLoading] = useState(false)
   const [selected, setSelected] = useState<SelectedLog | null>(null)
   const detailRequest = useRef(0)
+  const listRequest = useRef(0)
 
   const load = useCallback(async () => {
+    const token = ++listRequest.current
     setLoading(true)
     try {
       const params = new URLSearchParams({
         page: String(page),
         page_size: String(pageSize),
       })
+      if (apiKey.trim()) params.set("api_key", apiKey.trim())
       if (query.trim()) params.set("query", query.trim())
       if (status !== "all") params.set("status", status)
       if (method !== "all") params.set("method", method)
@@ -151,16 +154,19 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       if (from) params.set("from", new Date(from).toISOString())
       if (to) params.set("to", new Date(to).toISOString())
       const prefix = admin ? "/api/admin/logs" : "/api/logs"
-      setData(await api<RequestLogPage>(`${prefix}?${params}`))
+      const next = await api<RequestLogPage>(`${prefix}?${params}`)
+      if (token === listRequest.current) setData(next)
     } catch (cause) {
+      if (token !== listRequest.current) return
       toast.add({
         title: cause instanceof Error ? cause.message : "读取请求日志失败",
         type: "error",
       })
     } finally {
-      setLoading(false)
+      if (token === listRequest.current) setLoading(false)
     }
   }, [
+    apiKey,
     admin,
     from,
     method,
@@ -175,7 +181,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 200)
-    return () => window.clearTimeout(timer)
+    return () => {
+      window.clearTimeout(timer)
+      listRequest.current += 1
+    }
   }, [load])
 
   const fetchDetail = useCallback(
@@ -259,6 +268,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   function resetFilters() {
     setQuery("")
+    setApiKey("")
     setStatus("all")
     setMethod("all")
     setModel("")
@@ -280,7 +290,9 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     from,
     to,
   ].filter(Boolean).length
-  const hasFilters = Boolean(query || status !== "all" || advancedFilterCount)
+  const hasFilters = Boolean(
+    query || apiKey || status !== "all" || advancedFilterCount
+  )
 
   if (selected) {
     return (
@@ -335,8 +347,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       <Card>
         <CardHeader>
           <CardTitle>请求明细</CardTitle>
-          <FieldGroup className="grid min-w-0 gap-2 pt-1 md:grid-cols-[minmax(0,1fr)_9rem_auto_auto]">
-            <Field className="min-w-0">
+          <FieldGroup className="grid min-w-0 grid-cols-2 gap-2 pt-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_9rem_auto_auto] [&_button]:min-h-10 sm:[&_button]:min-h-7 [&_input]:h-10 sm:[&_input]:h-7">
+            <Field className="col-span-2 min-w-0 lg:col-span-1">
               <FieldLabel htmlFor="log-search" className="sr-only">
                 搜索日志
               </FieldLabel>
@@ -348,7 +360,25 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                   setPage(1)
                 }}
                 onClear={() => setQuery("")}
-                placeholder="搜索模型、路径、用户、Key、Trace ID 或错误"
+                placeholder={
+                  admin
+                    ? "搜索模型、用户、请求 ID 或错误"
+                    : "搜索模型、路径、请求 ID 或错误"
+                }
+              />
+            </Field>
+            <Field className="col-span-2 min-w-0 lg:col-span-1">
+              <FieldLabel htmlFor="log-api-key" className="sr-only">
+                筛选 Key
+              </FieldLabel>
+              <Input
+                id="log-api-key"
+                value={apiKey}
+                onChange={(event) => {
+                  setApiKey(event.target.value)
+                  setPage(1)
+                }}
+                placeholder="Key 名称或前缀"
               />
             </Field>
             <Field>
@@ -369,7 +399,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                   }
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger aria-label="状态" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -406,6 +436,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                 />
               </CollapsibleTrigger>
               <Button
+                className="col-span-2 lg:col-span-1"
                 variant="outline"
                 onClick={() => void load()}
                 disabled={loading}
@@ -440,7 +471,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                         }
                       }}
                     >
-                      <SelectTrigger className="w-full">
+                      <SelectTrigger aria-label="方法" className="w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -510,179 +541,35 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                     />
                   </Field>
                 </FieldGroup>
-                {hasFilters ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="mt-3"
-                    onClick={resetFilters}
-                  >
-                    <HugeiconsIcon
-                      strokeWidth={2}
-                      icon={XIcon}
-                      data-icon="inline-start"
-                    />
-                    清除全部筛选
-                  </Button>
-                ) : null}
               </CollapsibleContent>
             </Collapsible>
           </FieldGroup>
+          {hasFilters ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-3"
+              onClick={resetFilters}
+            >
+              <HugeiconsIcon
+                strokeWidth={2}
+                icon={XIcon}
+                data-icon="inline-start"
+              />
+              清除全部筛选
+            </Button>
+          ) : null}
         </CardHeader>
 
         <CardContent className="px-0">
           {data.items.length ? (
-            <Table className={cn(loading && "opacity-60")}>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="pl-4">时间</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>请求</TableHead>
-                  <TableHead>客户端</TableHead>
-                  {admin ? <TableHead>用户</TableHead> : null}
-                  <TableHead className="text-right">Token</TableHead>
-                  <TableHead className="text-right">负载</TableHead>
-                  <TableHead className="text-right">耗时</TableHead>
-                  <TableHead className="pr-4 text-right">费用</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.items.map((log) => (
-                  <TableRow
-                    key={log.id}
-                    className="cursor-pointer"
-                    onClick={(event) => {
-                      if (
-                        event.target instanceof HTMLElement &&
-                        event.target.closest(
-                          "a, button, input, select, textarea, [role='button']"
-                        )
-                      ) {
-                        return
-                      }
-                      void openDetail(log)
-                    }}
-                  >
-                    <TableCell className="pl-4 whitespace-nowrap">
-                      <Button
-                        render={
-                          <a
-                            href={routeHref({
-                              workspace: admin ? "admin" : "user",
-                              page: "logs",
-                              logId: log.id,
-                            })}
-                          />
-                        }
-                        variant="link"
-                        size="sm"
-                        nativeButton={false}
-                        className="p-0 font-normal"
-                        aria-label={`查看 ${dateTime(log.started_at)} 的请求日志`}
-                        onClick={(event) => {
-                          if (
-                            event.button !== 0 ||
-                            event.metaKey ||
-                            event.ctrlKey ||
-                            event.shiftKey ||
-                            event.altKey
-                          ) {
-                            return
-                          }
-                          event.preventDefault()
-                          void openDetail(log)
-                        }}
-                      >
-                        {dateTime(log.started_at)}
-                      </Button>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5">
-                        <Badge
-                          variant={
-                            requestLogSucceeded(log.status_code, log.error_code)
-                              ? "secondary"
-                              : "destructive"
-                          }
-                        >
-                          {requestLogStatus(log.status_code)}
-                        </Badge>
-                        {requestLogTransport(log.request_type, log.stream) !==
-                        "HTTP" ? (
-                          <span className="text-xs text-muted-foreground">
-                            {requestLogTransport(log.request_type, log.stream)}
-                          </span>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <p className="max-w-72 truncate font-mono text-xs">
-                        {log.actual_model ||
-                          log.requested_model ||
-                          log.model ||
-                          log.path}
-                      </p>
-                      <p className="max-w-72 truncate text-xs text-muted-foreground">
-                        {requestLogTransport(log.request_type, log.stream)}
-                        {log.request_type
-                          ? ` · ${log.request_type}`
-                          : ` · ${log.method} ${log.path}`}
-                        {log.provider
-                          ? ` · ${log.provider}${log.auth_index ? ` / ${log.auth_index}` : ""}`
-                          : ""}
-                      </p>
-                    </TableCell>
-                    <TableCell title={log.user_agent || undefined}>
-                      <p className="max-w-44 truncate text-sm">
-                        {log.client_name || "未知客户端"}
-                      </p>
-                      <p className="max-w-44 truncate font-mono text-xs text-muted-foreground">
-                        {log.client_version || "—"}
-                      </p>
-                    </TableCell>
-                    {admin ? (
-                      <TableCell>
-                        <p className="max-w-40 truncate text-sm">
-                          {log.tenant_name || log.tenant_id}
-                        </p>
-                        <p className="max-w-40 truncate text-xs text-muted-foreground">
-                          {log.api_key_name || log.api_key_prefix || "—"}
-                        </p>
-                      </TableCell>
-                    ) : null}
-                    <TableCell className="text-right tabular-nums">
-                      <span className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
-                        <span>{compactTokens(log.total_tokens)}</span>
-                        <CacheHitRateBadge
-                          cachedTokens={log.cached_tokens}
-                          promptTokens={log.prompt_tokens}
-                        />
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right text-xs whitespace-nowrap tabular-nums">
-                      <span>{bytes(log.request_body_bytes)}</span>
-                      <HugeiconsIcon
-                        strokeWidth={2}
-                        icon={ArrowRight01Icon}
-                        className="mx-1 inline size-3 text-muted-foreground"
-                      />
-                      <span>{bytes(log.response_body_bytes)}</span>
-                    </TableCell>
-                    <TableCell className="text-right whitespace-nowrap tabular-nums">
-                      <p>{log.latency_ms} ms</p>
-                      {log.ttft_ms != null ? (
-                        <p className="text-xs text-muted-foreground">
-                          首字节 {log.ttft_ms} ms
-                        </p>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="pr-4 text-right tabular-nums">
-                      {money(log.cost_nano_usd)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div aria-busy={loading} className={cn(loading && "opacity-60")}>
+              <RequestLogList
+                logs={data.items}
+                workspace={admin ? "admin" : "user"}
+                onOpen={openDetail}
+              />
+            </div>
           ) : (
             <Empty className="min-h-72">
               <EmptyHeader>
@@ -707,7 +594,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
           )}
         </CardContent>
 
-        <CardFooter className="flex-wrap justify-between gap-3">
+        <CardFooter className="flex-wrap justify-between gap-3 [&_button]:min-h-10 sm:[&_button]:min-h-6">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
               {data.total} 条 · 第 {data.page}/{totalPages} 页
@@ -725,7 +612,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                 }
               }}
             >
-              <SelectTrigger size="sm">
+              <SelectTrigger aria-label="每页条数" size="sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -821,12 +708,12 @@ function LogDetailPage({
             >
               {requestLogStatus(log.status_code)}
             </Badge>
-            <h1 className="font-heading text-3xl font-semibold tracking-tight">
+            <h1 className="min-w-0 font-heading text-xl font-semibold tracking-tight break-all sm:text-2xl">
               {modelRoute(log) || "请求详情"}
             </h1>
           </div>
-          <p className="mt-1 flex min-w-0 items-center gap-1 font-mono text-xs text-muted-foreground">
-            <span className="truncate">{log.id}</span>
+          <p className="mt-1 flex min-w-0 flex-wrap items-center gap-1 font-mono text-xs text-muted-foreground">
+            <span className="max-w-full truncate">{log.id}</span>
             <CopyButton value={log.id} label="复制请求 ID" />
             <span>
               {requestLogTransport(log.request_type, log.stream)}
@@ -999,6 +886,13 @@ function LogOverview({
       <DetailGroup title="请求">
         <Facts
           items={[
+            ["Key 名称", log.api_key_name || "未记录名称"],
+            [
+              "Key 前缀",
+              log.api_key_prefix ? `${log.api_key_prefix}…` : "未记录前缀",
+            ],
+            ["Key ID", log.api_key_id],
+            ["用户", log.tenant_name || log.tenant_id],
             ["入口", `${log.method} ${log.path}`],
             ["传输", requestLogTransport(log.request_type, log.stream)],
             ["类型", log.request_type],
@@ -1013,28 +907,40 @@ function LogOverview({
         />
       </DetailGroup>
 
-      <DetailGroup title="链路">
-        <Facts
-          items={[
-            ["提供商", log.provider],
-            [
-              "凭据",
-              log.credential_email || log.credential_name || log.auth_index,
-            ],
-            [
-              "订阅",
+      {Boolean(
+        log.provider ||
+        log.credential_email ||
+        log.credential_name ||
+        log.auth_index ||
+        log.parent_subscription_name ||
+        log.channel_name ||
+        log.child_subscription_name ||
+        log.upstream_trace_id ||
+        log.upstream_execution_id
+      ) && (
+        <DetailGroup title="链路">
+          <Facts
+            items={[
+              ["提供商", log.provider],
               [
-                log.parent_subscription_name || log.channel_name,
-                log.child_subscription_name,
-              ]
-                .filter(Boolean)
-                .join(" / "),
-            ],
-            ["Upstream Trace", log.upstream_trace_id],
-            ["Upstream Execution", log.upstream_execution_id],
-          ]}
-        />
-      </DetailGroup>
+                "凭据",
+                log.credential_email || log.credential_name || log.auth_index,
+              ],
+              [
+                "订阅",
+                [
+                  log.parent_subscription_name || log.channel_name,
+                  log.child_subscription_name,
+                ]
+                  .filter(Boolean)
+                  .join(" / "),
+              ],
+              ["Upstream Trace", log.upstream_trace_id],
+              ["Upstream Execution", log.upstream_execution_id],
+            ]}
+          />
+        </DetailGroup>
+      )}
 
       <DetailGroup title="用量与性能">
         <Facts

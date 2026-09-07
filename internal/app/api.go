@@ -333,6 +333,7 @@ func requestLogQuery(r *http.Request) store.LogQuery {
 	minLatency, _ := strconv.ParseInt(values.Get("min_latency_ms"), 10, 64)
 	return store.LogQuery{
 		Page: page, PageSize: pageSize, Query: strings.TrimSpace(values.Get("query")),
+		APIKey: strings.TrimSpace(values.Get("api_key")),
 		Status: strings.TrimSpace(values.Get("status")), Method: strings.TrimSpace(values.Get("method")),
 		Model: strings.TrimSpace(values.Get("model")), From: parseQueryTime(values.Get("from")),
 		To: parseQueryTime(values.Get("to")), MinLatencyMS: minLatency,
@@ -384,7 +385,6 @@ func publicLogDetail(item store.LogWithDetail) store.LogWithDetail {
 
 func redactPublicLog(log *db.RequestLog) {
 	log.TenantID = ""
-	log.APIKeyID = ""
 	log.ReservationRequestID = nil
 	log.UpstreamRequestID = ""
 	log.UpstreamTraceID = ""
@@ -405,8 +405,7 @@ func redactPublicLog(log *db.RequestLog) {
 	log.CredentialName = ""
 	log.CredentialEmail = ""
 	log.TenantName = ""
-	log.APIKeyName = ""
-	log.APIKeyPrefix = ""
+	// Preserve the tenant's own key ID, name and masked prefix, not key secrets.
 	log.PriceSource = ""
 	log.PriceVersion = ""
 	log.PriceModel = ""

@@ -109,6 +109,21 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}
 
 	pendingID := identity.NewID()
+	for _, filter := range []LogQuery{
+		{APIKey: "Integration"}, {APIKey: "relay_int"}, {APIKey: keyID},
+		{Query: "Integration"}, {Query: "relay_int"}, {Query: requestID},
+	} {
+		filter.TenantID, filter.Public = tenantID, true
+		result, queryErr := dataStore.QueryLogs(ctx, filter)
+		if queryErr != nil || result.Total != 1 || result.Summary.Requests != 1 || len(result.Items) != 1 || result.Items[0].APIKeyID != keyID {
+			t.Fatalf("public key filter %+v: result=%+v, err=%v", filter, result, queryErr)
+		}
+		filter.TenantID = identity.NewID()
+		result, queryErr = dataStore.QueryLogs(ctx, filter)
+		if queryErr != nil || result.Total != 0 || result.Summary.Requests != 0 || len(result.Items) != 0 {
+			t.Fatalf("key filter crossed tenant boundary: result=%+v, err=%v", result, queryErr)
+		}
+	}
 	if err := dataStore.WriteLog(ctx, LogInput{
 		ID: pendingID, TenantID: tenantID, APIKeyID: keyID, Model: "pending-model",
 		RequestedModel: "pending-model", Method: "POST", Path: "/v1/responses",

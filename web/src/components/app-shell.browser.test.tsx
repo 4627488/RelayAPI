@@ -26,6 +26,76 @@ const session: Session = {
 }
 
 describe("application shell", () => {
+  it.each([
+    { workspace: "user", isAdmin: true },
+    { workspace: "admin", isAdmin: true },
+    { workspace: "user", isAdmin: false },
+  ] as const)(
+    "opens the account menu in $workspace (admin=$isAdmin)",
+    async ({ workspace, isAdmin }) => {
+      const onLogout = vi.fn()
+      const onWorkspaceChange = vi.fn()
+      const screen = await render(
+        <ThemeProvider
+          defaultTheme="light"
+          storageKey={`account-menu-${workspace}-${isAdmin}`}
+          disableTransitionOnChange={false}
+        >
+          <AppShell
+            session={{
+              ...session,
+              is_admin: isAdmin,
+              tenant: { ...session.tenant, is_admin: isAdmin },
+            }}
+            workspace={workspace}
+            page="overview"
+            onPageChange={() => undefined}
+            onWorkspaceChange={onWorkspaceChange}
+            onLogout={onLogout}
+          >
+            <h1>总览</h1>
+          </AppShell>
+        </ThemeProvider>
+      )
+      const accountButton = screen.getByRole("button", {
+        name: /测试用户.*owner@example.com/,
+      })
+      await accountButton.click()
+      const menu = screen.getByRole("menu")
+      await expect.element(menu).toBeVisible()
+      await expect
+        .element(menu.getByText("版本", { exact: true }))
+        .toBeVisible()
+      await expect
+        .element(menu.getByRole("group", { name: "外观" }))
+        .toBeVisible()
+      await Promise.allSettled(
+        document.getAnimations().map((animation) => animation.finished)
+      )
+      await expectNoA11yViolations(menu.element())
+      const darkTheme = menu.getByRole("menuitemradio", { name: "深色" })
+      await darkTheme.click()
+      await expect.element(darkTheme).toHaveAttribute("aria-checked", "true")
+      if (isAdmin) {
+        await menu
+          .getByRole("menuitem", {
+            name: workspace === "admin" ? "返回个人面板" : "进入管理员面板",
+          })
+          .click()
+        expect(onWorkspaceChange).toHaveBeenCalledWith(
+          workspace === "admin" ? "user" : "admin"
+        )
+        await accountButton.click()
+      } else {
+        await expect
+          .element(menu.getByRole("menuitem", { name: "进入管理员面板" }))
+          .not.toBeInTheDocument()
+      }
+      await menu.getByRole("menuitem", { name: "退出登录" }).click()
+      expect(onLogout).toHaveBeenCalledOnce()
+    }
+  )
+
   it("uses real links while keeping client-side navigation accessible", async () => {
     const onPageChange = vi.fn()
     const onWorkspaceChange = vi.fn()

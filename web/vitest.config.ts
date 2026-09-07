@@ -12,6 +12,7 @@ export default mergeConfig(
         "@base-ui/react",
         "@base-ui/react/alert-dialog",
         "@base-ui/react/avatar",
+        "@base-ui/react/collapsible",
         "@base-ui/react/dialog",
         "@base-ui/react/menu",
         "@base-ui/react/merge-props",

@@ -57,6 +57,7 @@ export interface Invitation {
 
 export interface RequestLog {
   id: string
+  api_key_id?: string
   tenant_id: string
   model: string
   requested_model: string
