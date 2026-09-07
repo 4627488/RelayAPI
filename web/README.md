@@ -4,6 +4,8 @@ RelayAPI 的管理控制台，基于 React、TypeScript、Vite、Tailwind CSS v4
 
 ## 本地开发
 
+推荐使用 Node.js 24（与 CI、Docker 一致），最低要求为 22.18。开发、测试和构建使用 `--configLoader native`，直接加载 ESM TypeScript 配置；配置文件的相对导入需带 `.ts` 扩展名。
+
 ```bash
 pnpm install
 pnpm dev
@@ -16,6 +18,10 @@ pnpm check
 ```
 
 它会依次检查格式、类型、代码规范、真实 Chromium 中的组件与无障碍测试，以及生产构建。
+
+Vite 8 已默认使用 Rolldown / Oxc。`resolve.tsconfigPaths` 直接读取 `tsconfig.app.json` 的 `@/*` 路径映射，无需在 Vite 中重复配置别名。
+
+如需评估 Vite 8.1 的实验性打包开发模式，可运行 `pnpm dev --experimental-bundle`；目前不作为默认模式。实验性 chunk import map、Devtools 和 React Compiler 也未启用，应按实际需求单独验证。
 
 ## 界面规范
 
