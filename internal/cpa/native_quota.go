@@ -169,14 +169,19 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 	if token == "" {
 		return QuotaReport{}, errors.New("xAI quota credential is missing access_token")
 	}
+	// Match the CLI chat-proxy identity used by CPA's xAI executor and
+	// sub2api's current Grok CLI headers. Billing used to send the older
+	// grok-pager / interactive fingerprint; xAI now keys off workspace + identifier.
 	headers := http.Header{
-		"Accept":                {"application/json"},
-		"Authorization":         {"Bearer " + token},
-		"Content-Type":          {"application/json"},
-		"X-XAI-Token-Auth":      {"xai-grok-cli"},
-		"X-Grok-Client-Version": {xaiQuotaClientVersion},
-		"X-Grok-Client-Mode":    {"interactive"},
-		"User-Agent":            {"grok-pager/" + xaiQuotaClientVersion + " grok-shell/" + xaiQuotaClientVersion},
+		"Accept":                   {"application/json"},
+		"Authorization":            {"Bearer " + token},
+		"Content-Type":             {"application/json"},
+		"X-XAI-Token-Auth":         {"xai-grok-cli"},
+		"X-Grok-Client-Version":    {xaiQuotaClientVersion},
+		"X-Grok-Client-Identifier": {"grok-shell"},
+		"X-Grok-Client-Mode":       {"cli"},
+		"X-AuthenticateResponse":   {"authenticate-response"},
+		"User-Agent":               {"xai-grok-workspace/" + xaiQuotaClientVersion},
 	}
 	if userID := xaiQuotaUserID(document); userID != "" {
 		headers.Set("x-userid", userID)

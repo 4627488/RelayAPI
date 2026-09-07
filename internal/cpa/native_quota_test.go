@@ -47,7 +47,11 @@ func TestProbeXAIQuotaFromNativeCredential(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer xai-token" || r.Header.Get("X-XAI-Token-Auth") != "xai-grok-cli" {
 			t.Fatalf("unexpected headers: %v", r.Header)
 		}
-		if r.Header.Get("X-Grok-Client-Version") != xaiQuotaClientVersion || r.Header.Get("X-Grok-Client-Mode") != "interactive" {
+		if r.Header.Get("X-Grok-Client-Version") != xaiQuotaClientVersion ||
+			r.Header.Get("X-Grok-Client-Mode") != "cli" ||
+			r.Header.Get("X-Grok-Client-Identifier") != "grok-shell" ||
+			r.Header.Get("X-AuthenticateResponse") != "authenticate-response" ||
+			r.Header.Get("User-Agent") != "xai-grok-workspace/"+xaiQuotaClientVersion {
 			t.Fatalf("stale Grok client headers: %v", r.Header)
 		}
 		switch r.URL.Path {
