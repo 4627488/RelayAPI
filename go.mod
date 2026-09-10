@@ -6,7 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.10.9
-	github.com/router-for-me/CLIProxyAPI/v7 v7.2.151
+	github.com/router-for-me/CLIProxyAPI/v7 v7.2.157
 	github.com/router-for-me/CLIProxyAPI/v7/relaybridge v0.0.0-00010101000000-000000000000
 	github.com/tidwall/gjson v1.18.0
 	github.com/zalando/go-keyring v0.2.6
@@ -19,9 +19,6 @@ require (
 )
 
 replace github.com/router-for-me/CLIProxyAPI/v7/relaybridge => ./third_party/cpaexecutor
-
-// v7.2.151 plus CPA's shared RefreshCredential entry point; see docs/credential-refresh.md.
-replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260906154934-d285d1152ce8
 
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
