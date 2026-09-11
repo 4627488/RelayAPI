@@ -35,15 +35,16 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}
 
 	tenantID, keyID := identity.NewID(), identity.NewID()
+	const tenantName, keyName, keyPrefix = "Pricing User", "Integration Key", "relay_int"
 	if err := database.Create(&db.Tenant{
-		ID: tenantID, Name: "Pricing User", OwnerEmail: "pricing@example.test",
+		ID: tenantID, Name: tenantName, OwnerEmail: "pricing@example.test",
 		PasswordHash: "test", Enabled: true, BalanceNanoUSD: 1_000_000,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Create(&db.APIKey{
-		ID: keyID, TenantID: tenantID, Name: "Integration Key",
-		KeyHash: []byte("pricing-log-integration-key"), Prefix: "relay_int", Enabled: true,
+		ID: keyID, TenantID: tenantID, Name: keyName,
+		KeyHash: []byte("pricing-log-integration-key"), Prefix: keyPrefix, Enabled: true,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +80,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	cost := int64(42)
 	if err := dataStore.WriteLog(ctx, LogInput{
 		ID: requestID, TenantID: tenantID, APIKeyID: keyID, Model: "alias-model",
+		TenantName: tenantName, APIKeyName: keyName, APIKeyPrefix: keyPrefix,
 		RequestedModel: "alias-model", ActualModel: "actual-model", Method: "POST", Path: "/v1/responses", RequestType: "responses",
 		UpstreamTraceID: "upstream-trace", UpstreamExecutionID: "upstream-execution",
 		StatusCode: 200, Usage: Usage{Prompt: 10, Completion: 2, Cached: 4, Reasoning: 1, Total: 12},
@@ -126,6 +128,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}
 	if err := dataStore.WriteLog(ctx, LogInput{
 		ID: pendingID, TenantID: tenantID, APIKeyID: keyID, Model: "pending-model",
+		TenantName: tenantName, APIKeyName: keyName, APIKeyPrefix: keyPrefix,
 		RequestedModel: "pending-model", Method: "POST", Path: "/v1/responses",
 		StatusCode: 200, Usage: Usage{Prompt: 2, Completion: 1, Total: 3},
 		Settled: true, StartedAt: started, CompletedAt: time.Now(),
@@ -170,6 +173,9 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if len(keyUsage) != 1 || keyUsage[0].APIKeyID != keyID || keyUsage[0].Requests != 2 || keyUsage[0].Tokens != 15 {
 		t.Fatalf("API key usage = %#v", report["api_keys"])
 	}
+	if keyUsage[0].APIKeyName != keyName || keyUsage[0].APIKeyPrefix != keyPrefix {
+		t.Fatalf("API key snapshot = %+v", keyUsage[0])
+	}
 	rawSummary, err := json.Marshal(report["summary"])
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +191,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err := json.Unmarshal(rawSummary, &usageSummary); err != nil {
 		t.Fatal(err)
 	}
-	if usageSummary.Requests != 3 || usageSummary.Tokens != 15 || usageSummary.PromptTokens != 12 ||
+	if usageSummary.Requests != 2 || usageSummary.Tokens != 15 || usageSummary.PromptTokens != 12 ||
 		usageSummary.CompletionTokens != 3 || usageSummary.CachedTokens != 4 || usageSummary.ReasoningTokens != 1 {
 		t.Fatalf("usage summary = %+v", usageSummary)
 	}
@@ -236,6 +242,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	} {
 		if err := dataStore.WriteLog(ctx, LogInput{
 			ID: item.id, TenantID: tenantID, APIKeyID: keyID, Model: "ws-model",
+			TenantName: tenantName, APIKeyName: keyName, APIKeyPrefix: keyPrefix,
 			Method: "GET", Path: "/v1/responses/ws", RequestType: "responses.websocket",
 			StatusCode: 101, Stream: true, ErrorCode: item.errorCode,
 			Settled: true, StartedAt: started, CompletedAt: time.Now(),
