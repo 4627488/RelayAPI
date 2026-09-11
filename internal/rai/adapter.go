@@ -48,13 +48,13 @@ func AdapterByName(name string) (Adapter, error) {
 	return nil, fmt.Errorf("unsupported agent %q", name)
 }
 
-func resolveLaunchModel(profile Profile, requested string, models []string) (string, error) {
+func resolveLaunchModel(profile Profile, requested string, models []string, siteDefault string) (string, error) {
 	model := strings.TrimSpace(requested)
 	if model == "" {
 		model = strings.TrimSpace(profile.DefaultModel)
 	}
-	if model == "" && len(models) > 0 {
-		model = models[0]
+	if model == "" {
+		model = strings.TrimSpace(siteDefault)
 	}
 	if model == "" {
 		return "", fmt.Errorf("select a model with --model or rai use")

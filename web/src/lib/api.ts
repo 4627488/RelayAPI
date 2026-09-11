@@ -413,6 +413,22 @@ export interface UpstreamQuotaReport {
   windows: UpstreamQuotaWindow[]
 }
 
+export interface CodexResetCredits {
+  available_count: number
+  observed_at: string
+  credits:
+    | {
+        id: string
+        reset_type: string
+        status: string
+        granted_at: string | null
+        expires_at: string | null
+        title?: string
+        description?: string
+      }[]
+    | null
+}
+
 export interface ParentQuotaWindow {
   parent_subscription_id: string
   kind: string

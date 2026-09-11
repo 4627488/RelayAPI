@@ -145,10 +145,7 @@ func (g Gateway) Session(ctx context.Context, apiBase, apiKey string) (Session, 
 		}
 		return Session{}, err
 	}
-	defaultModel := ""
-	if len(models) > 0 {
-		defaultModel = models[0]
-	}
+	defaultModel := SelectDefaultModel(models, DefaultModelCandidates())
 	return Session{
 		ContractVersion: contractVersion,
 		Name:            "RelayAPI",

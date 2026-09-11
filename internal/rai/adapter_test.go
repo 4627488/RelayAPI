@@ -134,11 +134,11 @@ func TestGrokPrepareUsesOpenAIAndXAIEnv(t *testing.T) {
 }
 
 func TestResolveLaunchModelValidatesAllowlist(t *testing.T) {
-	got, err := resolveLaunchModel(Profile{DefaultModel: "keep"}, "", []string{"keep", "other"})
+	got, err := resolveLaunchModel(Profile{DefaultModel: "keep"}, "", []string{"keep", "other"}, "other")
 	if err != nil || got != "keep" {
 		t.Fatalf("got %q err=%v", got, err)
 	}
-	if _, err := resolveLaunchModel(Profile{}, "missing", []string{"keep"}); err == nil {
+	if _, err := resolveLaunchModel(Profile{}, "missing", []string{"keep"}, "keep"); err == nil {
 		t.Fatal("expected missing model error")
 	}
 }

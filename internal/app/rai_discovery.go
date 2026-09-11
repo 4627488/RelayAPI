@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/4627488/RelayAPI/internal/rai"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -37,10 +38,7 @@ func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models := a.raiSessionModels(r, key)
-	defaultModel := ""
-	if len(models) > 0 {
-		defaultModel = models[0]
-	}
+	defaultModel := rai.SelectDefaultModel(models, a.currentNativeSettings().RAIDefaultModels)
 	setSensitiveNoStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"contract_version": "1",

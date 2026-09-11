@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/gateway"
+	"github.com/4627488/RelayAPI/internal/rai"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
@@ -30,28 +32,29 @@ const (
 )
 
 type nativeRuntimeSettings struct {
-	RoutingStrategy            string `json:"routing_strategy"`
-	CredentialFailureThreshold int    `json:"credential_failure_threshold"`
-	CredentialCooldownSeconds  int    `json:"credential_cooldown_seconds"`
-	SystemProxyID              string `json:"system_proxy_id"`
-	RequestTimeoutSeconds      int    `json:"request_timeout_seconds"`
-	MaxRequestMiB              int    `json:"max_request_mib"`
-	RequestBytesInFlightMiB    int    `json:"request_bytes_in_flight_mib"`
-	MemoryReclaimThresholdMiB  int    `json:"memory_reclaim_threshold_mib"`
-	UnpricedModelPolicy        string `json:"unpriced_model_policy"`
-	UpstreamWebSockets         bool   `json:"upstream_websockets"`
-	RequestRetry               int    `json:"request_retry"`
-	MaxRetryCredentials        int    `json:"max_retry_credentials"`
-	MaxRetryInterval           int    `json:"max_retry_interval"`
-	PassthroughHeaders         bool   `json:"passthrough_headers"`
-	ImageGenerationMode        string `json:"image_generation_mode"`
-	GPTImageBaseModel          string `json:"gpt_image_base_model"`
-	VideoResultAuthCacheTTL    string `json:"video_result_auth_cache_ttl"`
-	ForceModelPrefix           bool   `json:"force_model_prefix"`
-	StreamKeepAliveSeconds     int    `json:"stream_keepalive_seconds"`
-	StreamBootstrapRetries     int    `json:"stream_bootstrap_retries"`
-	NonStreamKeepAliveInterval int    `json:"nonstream_keepalive_interval"`
-	DisableCredentialCooling   bool   `json:"disable_credential_cooling"`
+	RAIDefaultModels           []string `json:"rai_default_models"`
+	RoutingStrategy            string   `json:"routing_strategy"`
+	CredentialFailureThreshold int      `json:"credential_failure_threshold"`
+	CredentialCooldownSeconds  int      `json:"credential_cooldown_seconds"`
+	SystemProxyID              string   `json:"system_proxy_id"`
+	RequestTimeoutSeconds      int      `json:"request_timeout_seconds"`
+	MaxRequestMiB              int      `json:"max_request_mib"`
+	RequestBytesInFlightMiB    int      `json:"request_bytes_in_flight_mib"`
+	MemoryReclaimThresholdMiB  int      `json:"memory_reclaim_threshold_mib"`
+	UnpricedModelPolicy        string   `json:"unpriced_model_policy"`
+	UpstreamWebSockets         bool     `json:"upstream_websockets"`
+	RequestRetry               int      `json:"request_retry"`
+	MaxRetryCredentials        int      `json:"max_retry_credentials"`
+	MaxRetryInterval           int      `json:"max_retry_interval"`
+	PassthroughHeaders         bool     `json:"passthrough_headers"`
+	ImageGenerationMode        string   `json:"image_generation_mode"`
+	GPTImageBaseModel          string   `json:"gpt_image_base_model"`
+	VideoResultAuthCacheTTL    string   `json:"video_result_auth_cache_ttl"`
+	ForceModelPrefix           bool     `json:"force_model_prefix"`
+	StreamKeepAliveSeconds     int      `json:"stream_keepalive_seconds"`
+	StreamBootstrapRetries     int      `json:"stream_bootstrap_retries"`
+	NonStreamKeepAliveInterval int      `json:"nonstream_keepalive_interval"`
+	DisableCredentialCooling   bool     `json:"disable_credential_cooling"`
 }
 
 type settingsState struct {
@@ -61,6 +64,7 @@ type settingsState struct {
 
 func defaultNativeRuntimeSettings() nativeRuntimeSettings {
 	return nativeRuntimeSettings{
+		RAIDefaultModels:           rai.DefaultModelCandidates(),
 		RoutingStrategy:            "round-robin",
 		CredentialFailureThreshold: 3, CredentialCooldownSeconds: 0,
 		RequestTimeoutSeconds:     defaultRequestTimeoutSeconds,
@@ -109,6 +113,10 @@ func normalizeNativeRuntimeSettings(value *nativeRuntimeSettings, raw []byte, en
 	}
 	defaults := defaultNativeRuntimeSettings()
 	changed := false
+	if value.RAIDefaultModels == nil {
+		value.RAIDefaultModels = defaults.RAIDefaultModels
+		changed = true
+	}
 	if value.RequestTimeoutSeconds <= 0 {
 		value.RequestTimeoutSeconds = defaults.RequestTimeoutSeconds
 		changed = true
@@ -194,6 +202,19 @@ func jsonObjectHasKey(raw []byte, key string) bool {
 }
 
 func validateNativeRuntimeSettings(value nativeRuntimeSettings) string {
+	if value.RAIDefaultModels == nil {
+		return "RAI 默认候选模型必须是列表；留空请使用空列表"
+	}
+	seenModels := make(map[string]bool)
+	for _, model := range value.RAIDefaultModels {
+		if model == "" || strings.ContainsAny(model, " \t\r\n") {
+			return "RAI 默认候选模型必须是非空且不含空白的模型 ID"
+		}
+		if seenModels[model] {
+			return "RAI 默认候选模型不能重复"
+		}
+		seenModels[model] = true
+	}
 	if value.RoutingStrategy != "round-robin" && value.RoutingStrategy != "fill-first" {
 		return "凭据调度策略无效"
 	}
@@ -344,7 +365,8 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"mode": "embedded_cpa", "settings": a.currentNativeSettings(), "runtime": a.nativeRuntimeInfo()})
 		return
 	}
-	var input nativeRuntimeSettings
+	input := a.currentNativeSettings()
+	input.RAIDefaultModels = slices.Clone(input.RAIDefaultModels)
 	if !decodeJSON(w, r, &input) {
 		return
 	}

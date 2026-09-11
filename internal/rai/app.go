@@ -147,7 +147,7 @@ Usage:
   rai logout [--profile name]
   rai status
   rai models
-  rai use <model>
+  rai use <model> | --auto
   rai credential print
   rai doctor
   rai update
@@ -291,9 +291,6 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 	if model == "" {
 		model = session.DefaultModel
 	}
-	if model == "" && len(session.Models) > 0 {
-		model = session.Models[0]
-	}
 	if len(session.Models) > 0 && model != "" && !contains(session.Models, model) {
 		return fmt.Errorf("model %q is not available on this API key", model)
 	}
@@ -316,7 +313,7 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 		Name:              profileName,
 		ServerURL:         apiBase,
 		DisplayName:       display,
-		DefaultModel:      model,
+		DefaultModel:      strings.TrimSpace(flags.Model),
 		ReasoningEffort:   flags.ReasoningEffort,
 		OpenCodeProtocol:  flags.OpenCodeProtocol,
 		CredentialBackend: backend,
@@ -335,7 +332,11 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 		return err
 	}
 	fmt.Fprintf(a.Stdout, "Signed in to %s as profile %s\n", apiBase, profileName)
-	fmt.Fprintf(a.Stdout, "Default model: %s\n", model)
+	if model == "" {
+		fmt.Fprintln(a.Stdout, "No site default is available; select a model with --model or rai use")
+	} else {
+		fmt.Fprintf(a.Stdout, "Default model: %s\n", model)
+	}
 	fmt.Fprintf(a.Stdout, "Credential store: %s\n", backend)
 	return nil
 }
@@ -471,7 +472,11 @@ func (a *App) status(ctx context.Context, profileName string) error {
 	fmt.Fprintf(a.Stdout, "Profile: %s\n", profile.Name)
 	fmt.Fprintf(a.Stdout, "Server: %s\n", profile.ServerURL)
 	fmt.Fprintf(a.Stdout, "Display name: %s\n", profile.DisplayName)
-	fmt.Fprintf(a.Stdout, "Default model: %s\n", profile.DefaultModel)
+	if profile.DefaultModel != "" {
+		fmt.Fprintf(a.Stdout, "Default model: %s\n", profile.DefaultModel)
+	} else {
+		fmt.Fprintln(a.Stdout, "Default model: automatic (site preference)")
+	}
 	fmt.Fprintf(a.Stdout, "Credential: %s (%s)\n", keyPrefix(secret), profile.CredentialBackend)
 	if !profile.LastRefresh.IsZero() {
 		fmt.Fprintf(a.Stdout, "Last refresh: %s\n", profile.LastRefresh.Format(time.RFC3339))
@@ -482,6 +487,9 @@ func (a *App) status(ctx context.Context, profileName string) error {
 		return nil
 	}
 	fmt.Fprintf(a.Stdout, "Available models: %d\n", len(session.Models))
+	if profile.DefaultModel == "" {
+		fmt.Fprintf(a.Stdout, "Site default: %s\n", session.DefaultModel)
+	}
 	return nil
 }
 
@@ -502,9 +510,10 @@ func (a *App) models(ctx context.Context, profileName string) error {
 	if err != nil {
 		return err
 	}
+	defaultModel, _ := resolveLaunchModel(profile, "", session.Models, session.DefaultModel)
 	for _, model := range session.Models {
 		mark := " "
-		if model == profile.DefaultModel {
+		if model == defaultModel {
 			mark = "*"
 		}
 		fmt.Fprintf(a.Stdout, "%s %s\n", mark, model)
@@ -514,7 +523,7 @@ func (a *App) models(ctx context.Context, profileName string) error {
 
 func (a *App) use(profileName string, args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: rai use <model>")
+		return errors.New("usage: rai use <model> | --auto")
 	}
 	store, err := a.store()
 	if err != nil {
@@ -525,10 +534,17 @@ func (a *App) use(profileName string, args []string) error {
 		return err
 	}
 	profile.DefaultModel = strings.TrimSpace(args[0])
+	if args[0] == "--auto" {
+		profile.DefaultModel = ""
+	}
 	if err := store.PutProfile(profile); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "Default model is now %s\n", profile.DefaultModel)
+	if profile.DefaultModel == "" {
+		fmt.Fprintln(a.Stdout, "Default model now follows the site preference")
+	} else {
+		fmt.Fprintf(a.Stdout, "Default model is now %s\n", profile.DefaultModel)
+	}
 	return nil
 }
 
@@ -631,7 +647,7 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 	if err != nil {
 		return err
 	}
-	model, err = resolveLaunchModel(profile, model, session.Models)
+	model, err = resolveLaunchModel(profile, model, session.Models, session.DefaultModel)
 	if err != nil {
 		return err
 	}

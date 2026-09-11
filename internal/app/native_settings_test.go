@@ -1,9 +1,56 @@
 package app
 
 import (
+	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 )
+
+func TestRAIDefaultModelSettings(t *testing.T) {
+	defaults := []string{"gpt-5.6-sol", "grok-4.6"}
+	for _, test := range []struct {
+		name, raw string
+		want      []string
+	}{
+		{"legacy", `{}`, defaults},
+		{"custom order", `{"rai_default_models":["grok-4.6","custom"]}`, []string{"grok-4.6", "custom"}},
+		{"disabled", `{"rai_default_models":[]}`, []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := defaultNativeRuntimeSettings()
+			if err := json.Unmarshal([]byte(test.raw), &value); err != nil {
+				t.Fatal(err)
+			}
+			normalizeNativeRuntimeSettings(&value, []byte(test.raw), true, "allow")
+			if !slices.Equal(value.RAIDefaultModels, test.want) {
+				t.Fatalf("models = %v", value.RAIDefaultModels)
+			}
+			if message := validateNativeRuntimeSettings(value); message != "" {
+				t.Fatal(message)
+			}
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reloaded := defaultNativeRuntimeSettings()
+			if err := json.Unmarshal(raw, &reloaded); err != nil {
+				t.Fatal(err)
+			}
+			normalizeNativeRuntimeSettings(&reloaded, raw, true, "allow")
+			if !slices.Equal(reloaded.RAIDefaultModels, test.want) {
+				t.Fatalf("reloaded models = %v", reloaded.RAIDefaultModels)
+			}
+		})
+	}
+	for _, models := range [][]string{nil, {""}, {" bad"}, {"a\nb"}, {"duplicate", "duplicate"}} {
+		value := defaultNativeRuntimeSettings()
+		value.RAIDefaultModels = models
+		if validateNativeRuntimeSettings(value) == "" {
+			t.Fatalf("accepted invalid candidates %v", models)
+		}
+	}
+}
 
 func TestDefaultNativeRuntimeSettingsExposeOnlyEffectiveControls(t *testing.T) {
 	settings := defaultNativeRuntimeSettings()

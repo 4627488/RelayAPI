@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { StatStrip } from "@/components/workspace-ui"
 import { api, type OutboundProxy } from "@/lib/api"
@@ -37,6 +38,7 @@ type UnpricedPolicy = "allow" | "deny"
 type ImageGenerationMode = "enabled" | "disabled" | "chat" | "passthrough"
 
 type RuntimeSettings = {
+  rai_default_models: string[]
   routing_strategy: RoutingStrategy
   credential_failure_threshold: number
   credential_cooldown_seconds: number
@@ -349,7 +351,12 @@ export function RuntimeSettingsView() {
         "/api/admin/runtime/settings",
         {
           method: "PATCH",
-          body: JSON.stringify(value),
+          body: JSON.stringify({
+            ...value,
+            rai_default_models: value.rai_default_models
+              .map((model) => model.trim())
+              .filter(Boolean),
+          }),
         }
       )
       setValue(result.settings)
@@ -415,6 +422,37 @@ export function RuntimeSettingsView() {
       />
 
       <div className="grid items-start gap-5 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>RAI 默认模型</CardTitle>
+            <CardDescription>
+              按优先顺序，从用户当前可用的模型中选择默认模型。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="rai-default-models">候选模型</FieldLabel>
+                <Textarea
+                  id="rai-default-models"
+                  aria-describedby="rai-default-models-help"
+                  value={value.rai_default_models.join("\n")}
+                  onChange={(event) =>
+                    patch("rai_default_models", event.target.value.split("\n"))
+                  }
+                  rows={4}
+                  placeholder={"gpt-5.6-sol\ngrok-4.6"}
+                />
+                <FieldDescription id="rai-default-models-help">
+                  每行一个模型
+                  ID，越靠前越优先。全部不可用或留空时，提示用户手动选择。
+                  用户指定的模型优先；自动模式在下次启动时使用最新配置。
+                </FieldDescription>
+              </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>凭据调度</CardTitle>

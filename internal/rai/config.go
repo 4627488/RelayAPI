@@ -26,7 +26,7 @@ type Profile struct {
 	Name              string    `json:"name"`
 	ServerURL         string    `json:"server_url"`
 	DisplayName       string    `json:"display_name,omitempty"`
-	DefaultModel      string    `json:"default_model,omitempty"`
+	DefaultModel      string    `json:"default_model,omitempty"` // Empty follows the site's current default.
 	ReasoningEffort   string    `json:"reasoning_effort,omitempty"`
 	OpenCodeProtocol  string    `json:"opencode_protocol,omitempty"`
 	CredentialBackend string    `json:"credential_backend,omitempty"`

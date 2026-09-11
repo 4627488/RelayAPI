@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Activity01Icon } from "@hugeicons/core-free-icons"
 
@@ -7,8 +7,15 @@ import { Button } from "@/components/ui/button"
 import { FieldDescription, FieldLegend, FieldSet } from "@/components/ui/field"
 import { Separator } from "@/components/ui/separator"
 import { QuotaSnapshot } from "@/components/quota-snapshot"
+import { CodexResetCreditsPanel } from "./codex-reset-credits-panel"
 import { dateTime } from "@/lib/format"
-import { accountStatus, isOAuthAccount } from "./provider-helpers"
+import {
+  accountKey,
+  accountStatus,
+  displayName,
+  isOAuthAccount,
+} from "./provider-helpers"
+import { api } from "@/lib/api"
 import type {
   OutboundProxy,
   ProviderAccount,
@@ -48,6 +55,25 @@ export function AccountStatusPanel({
   onEditCredentials: () => void
 }) {
   const oauth = isOAuthAccount(account)
+  const [refreshedQuota, setRefreshedQuota] = useState<ProviderAccount | null>(
+    null
+  )
+  const quotaAccount = refreshedQuota ?? account
+  async function refreshQuotaAfterReset() {
+    if (account.parent_subscription_id) {
+      await api(
+        `/api/admin/subscriptions/parents/${encodeURIComponent(account.parent_subscription_id)}/quota/sync`,
+        { method: "POST", body: "{}" }
+      )
+      const result = await api<{ files: ProviderAccount[] }>(
+        "/api/admin/providers/accounts"
+      )
+      setRefreshedQuota(
+        result.files.find((item) => accountKey(item) === accountKey(account)) ??
+          null
+      )
+    }
+  }
   const supportsWebsocket = ["codex", "xai", "grok"].includes(
     account.provider.toLowerCase()
   )
@@ -106,15 +132,27 @@ export function AccountStatusPanel({
       <FieldSet>
         <FieldLegend>上游额度</FieldLegend>
         <QuotaSnapshot
-          snapshot={account.quota_snapshot}
-          status={account.quota_probe_status}
-          error={account.quota_probe_error}
-          observedAt={account.quota_observed_at}
+          snapshot={quotaAccount.quota_snapshot}
+          status={quotaAccount.quota_probe_status}
+          error={quotaAccount.quota_probe_error}
+          observedAt={quotaAccount.quota_observed_at}
         />
         <FieldDescription>
           上游未提供额度不代表无限额度。这里只展示上游返回的观测结果。
         </FieldDescription>
       </FieldSet>
+      {account.provider.toLowerCase() === "codex" && oauth ? (
+        <>
+          <Separator />
+          <CodexResetCreditsPanel
+            key={accountKey(account)}
+            accountID={accountKey(account)}
+            accountName={displayName(account)}
+            disabled={busy || dirty}
+            onConsumed={refreshQuotaAfterReset}
+          />
+        </>
+      ) : null}
       <Separator />
       <FieldSet>
         <FieldLegend>连接诊断</FieldLegend>

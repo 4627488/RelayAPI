@@ -103,6 +103,8 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 `rai login` 打开浏览器，用 PKCE 设备授权批准后写入系统钥匙串（无钥匙串时回退到 `~/.config/rai/credentials.json`，权限 0600）。无图形界面时加 `--no-browser`，把打印的 URL 贴到浏览器。CI 或已有密钥用 `--api-key-stdin`。`rai credential print` 供 Codex 的 command-based auth 刷新模型目录。发布镜像在构建时交叉编译各平台 `rai`，由本站 `GET /rai/download/{os}-{arch}` 下发；`rai update` 向当前登录站点拉取同一路径。
 
+管理员可在「系统设置 → 运行策略 → RAI 默认模型」配置候选模型及优先顺序，初始为 `gpt-5.6-sol`、`grok-4.6`。RAI 自动模式每次启动从用户当前可用模型中选择首个匹配项，全部不可用时要求手动选择，不会回退到模型目录第一项。`--model` 和 `rai use <model>` 可覆盖站点默认；`rai use --auto` 恢复跟随站点配置。旧版已保存的默认模型继续保留，更新 RAI 后执行 `rai use --auto` 即可清除旧值。新登录未指定 `--model` 时默认使用自动模式。
+
 Codex CLI 的 `~/.codex/config.toml`（`base_url` 必须包含 `/v1`）：
 
 ```toml
@@ -194,6 +196,11 @@ Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段�
 直接使用加密凭据观测 Codex 和 xAI 额度，不依赖外置 Relay 原生运行时 或插件。自动观测模式不要求
 填写窗口名称、百分比或重置时间，管理员只填写每个已观测窗口对应的 USD 容量。
 父/子订阅的模型范围从 Relay 原生运行时 已同步的实际可用模型中多选，空选择表示继承全部模型。
+
+管理员在「模型账户 → Codex 账户详情 → 状态」可查询 Banked resets（积攒的重置次数）及每条记录的到期时间，并手动使用一次。此处的到期时间属于重置记录，区别于授权令牌或订阅到期。查询与使用复用 CPA 管理的凭据刷新和账户代理，分别请求 Codex 的 `/backend-api/wham/rate-limit-reset-credits` 和 `/consume`；实现依据 [Codex 官方客户端](https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs) 和 [官方说明](https://learn.chatgpt.com/zh-Hans/docs/app-server)。未提供数据或查询失败不会显示为零次。使用需在界面确认，同一浏览器会话内的失败重试保留请求标识，避免重复消耗；完成后刷新次数及关联父订阅的额度快照。
+
+- `GET /api/admin/providers/accounts/{name}/codex-reset-credits`：实时查询可用次数和到期明细
+- `POST /api/admin/providers/accounts/{name}/codex-reset-credits/consume`：手动使用，提交 `redeem_request_id`（UUID）及可选 `credit_id`，失败重试须复用同一 UUID
 
 用户后端：
 
