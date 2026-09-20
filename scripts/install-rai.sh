@@ -27,6 +27,13 @@ install_dir() {
 
 dir="$(install_dir)"
 mkdir -p "$dir"
+case ":$PATH:" in
+  *":$dir:"*) ;;
+  *)
+    echo "rai is not on PATH. Add this line to ~/.bashrc or ~/.zshrc, then reload your shell:"
+    printf 'export PATH=%q:$PATH\n' "$dir"
+    ;;
+esac
 if [ -n "$SERVER" ]; then
   SERVER="${SERVER%/}"
   tmp="$(mktemp)"

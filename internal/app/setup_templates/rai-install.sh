@@ -36,6 +36,14 @@ chmod 755 "$tmp"
 mv "$tmp" "$dir/rai"
 trap - EXIT
 echo "installed $dir/rai"
+case ":$PATH:" in
+  *":$dir:"*) ;;
+  *)
+    echo "rai is not on PATH in your terminal. Add this line to ~/.bashrc or ~/.zshrc:"
+    printf 'export PATH=%q:$PATH\n' "$dir"
+    echo "Then reload your shell configuration or open a new terminal."
+    ;;
+esac
 export PATH="$dir:$PATH"
 if [ "${RAI_SKIP_LOGIN:-}" = "1" ]; then
   echo "next: rai login --server $SERVER"

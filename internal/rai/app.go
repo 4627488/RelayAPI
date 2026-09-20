@@ -76,6 +76,11 @@ func (a *App) Execute(ctx context.Context) error {
 		return a.models(ctx, profileName)
 	case "use":
 		return a.use(profileName, args[1:])
+	case "sync":
+		if len(args) != 2 || args[1] != "codex" {
+			return errors.New("usage: rai sync codex")
+		}
+		return a.syncCodex(ctx, profileName)
 	case "credential":
 		return a.credential(profileName, args[1:])
 	case "doctor":
@@ -147,7 +152,8 @@ Usage:
   rai logout [--profile name]
   rai status
   rai models
-  rai use <model> | --auto
+  rai use <model|default|--auto>    Save a model, follow the agent, or follow the site
+  rai sync codex            Import saved Codex model and reasoning settings
   rai credential print
   rai doctor
   rai update
@@ -288,17 +294,13 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 		return err
 	}
 	model := strings.TrimSpace(flags.Model)
-	if model == "" {
-		model = session.DefaultModel
+	if model == "default" {
+		model = ""
 	}
 	if len(session.Models) > 0 && model != "" && !contains(session.Models, model) {
 		return fmt.Errorf("model %q is not available on this API key", model)
 	}
 	store, err := a.store()
-	if err != nil {
-		return err
-	}
-	backend, err := store.PutCredential(profileName, key)
 	if err != nil {
 		return err
 	}
@@ -310,21 +312,38 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 		display = "RelayAPI"
 	}
 	profile := Profile{
-		Name:              profileName,
-		ServerURL:         apiBase,
-		DisplayName:       display,
-		DefaultModel:      strings.TrimSpace(flags.Model),
-		ReasoningEffort:   flags.ReasoningEffort,
-		OpenCodeProtocol:  flags.OpenCodeProtocol,
-		CredentialBackend: backend,
-		LastRefresh:       a.Now().UTC(),
+		Name:             profileName,
+		ServerURL:        apiBase,
+		DisplayName:      display,
+		DefaultModel:     model,
+		ReasoningEffort:  flags.ReasoningEffort,
+		OpenCodeProtocol: flags.OpenCodeProtocol,
+		LastRefresh:      a.Now().UTC(),
 	}
-	if profile.ReasoningEffort == "" {
-		profile.ReasoningEffort = "high"
+	// Renewing authorization must not discard the user's last selections.
+	if previous, resolveErr := store.ResolveProfile(profileName); resolveErr == nil && previous.ServerURL == apiBase {
+		if flags.Model == "" {
+			profile.DefaultModel = previous.DefaultModel
+			profile.FollowSiteDefault = previous.FollowSiteDefault
+		}
+		if flags.ReasoningEffort == "" {
+			profile.ReasoningEffort = previous.ReasoningEffort
+		}
+		if flags.OpenCodeProtocol == "" {
+			profile.OpenCodeProtocol = previous.OpenCodeProtocol
+		}
 	}
 	if profile.OpenCodeProtocol == "" {
 		profile.OpenCodeProtocol = "responses"
 	}
+	if err := validateProfile(profile); err != nil {
+		return err
+	}
+	backend, err := store.PutCredential(profileName, key)
+	if err != nil {
+		return err
+	}
+	profile.CredentialBackend = backend
 	if err := store.PutProfile(profile); err != nil {
 		return err
 	}
@@ -332,12 +351,10 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 		return err
 	}
 	fmt.Fprintf(a.Stdout, "Signed in to %s as profile %s\n", apiBase, profileName)
-	if model == "" {
-		fmt.Fprintln(a.Stdout, "No site default is available; select a model with --model or rai use")
-	} else {
-		fmt.Fprintf(a.Stdout, "Default model: %s\n", model)
-	}
+	fmt.Fprintf(a.Stdout, "Default model: %s\n", modelLabel(profile.DefaultModel))
 	fmt.Fprintf(a.Stdout, "Credential store: %s\n", backend)
+	fmt.Fprintln(a.Stdout, "Next: rai codex | rai models | rai doctor")
+	a.checkPath(a.Stderr)
 	return nil
 }
 
@@ -472,10 +489,13 @@ func (a *App) status(ctx context.Context, profileName string) error {
 	fmt.Fprintf(a.Stdout, "Profile: %s\n", profile.Name)
 	fmt.Fprintf(a.Stdout, "Server: %s\n", profile.ServerURL)
 	fmt.Fprintf(a.Stdout, "Display name: %s\n", profile.DisplayName)
-	if profile.DefaultModel != "" {
-		fmt.Fprintf(a.Stdout, "Default model: %s\n", profile.DefaultModel)
-	} else {
+	if profile.FollowSiteDefault {
 		fmt.Fprintln(a.Stdout, "Default model: automatic (site preference)")
+	} else {
+		fmt.Fprintf(a.Stdout, "Default model: %s\n", modelLabel(profile.DefaultModel))
+	}
+	if profile.ReasoningEffort != "" {
+		fmt.Fprintf(a.Stdout, "Reasoning effort: %s\n", profile.ReasoningEffort)
 	}
 	fmt.Fprintf(a.Stdout, "Credential: %s (%s)\n", keyPrefix(secret), profile.CredentialBackend)
 	if !profile.LastRefresh.IsZero() {
@@ -523,7 +543,7 @@ func (a *App) models(ctx context.Context, profileName string) error {
 
 func (a *App) use(profileName string, args []string) error {
 	if len(args) != 1 {
-		return errors.New("usage: rai use <model> | --auto")
+		return errors.New("usage: rai use <model|default|--auto>")
 	}
 	store, err := a.store()
 	if err != nil {
@@ -534,16 +554,21 @@ func (a *App) use(profileName string, args []string) error {
 		return err
 	}
 	profile.DefaultModel = strings.TrimSpace(args[0])
-	if args[0] == "--auto" {
+	profile.FollowSiteDefault = profile.DefaultModel == "--auto"
+	if profile.DefaultModel == "" {
+		return errors.New("model must not be empty; use rai use default to reset")
+	}
+	if profile.DefaultModel == "default" || profile.FollowSiteDefault {
 		profile.DefaultModel = ""
+		profile.ReasoningEffort = ""
 	}
 	if err := store.PutProfile(profile); err != nil {
 		return err
 	}
-	if profile.DefaultModel == "" {
+	if profile.FollowSiteDefault {
 		fmt.Fprintln(a.Stdout, "Default model now follows the site preference")
 	} else {
-		fmt.Fprintf(a.Stdout, "Default model is now %s\n", profile.DefaultModel)
+		fmt.Fprintf(a.Stdout, "Default model is now %s\n", modelLabel(profile.DefaultModel))
 	}
 	return nil
 }
@@ -575,6 +600,7 @@ func (a *App) doctor(ctx context.Context, profileName string) error {
 	}
 	fmt.Fprintf(a.Stdout, "rai %s\n", Version)
 	fmt.Fprintf(a.Stdout, "home: %s\n", store.Home)
+	a.checkPath(a.Stdout)
 	profile, err := store.ResolveProfile(profileName)
 	if err != nil {
 		fmt.Fprintf(a.Stdout, "profile: %s\n", err.Error())
@@ -632,7 +658,7 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 	profile, err := store.ResolveProfile(profileName)
 	if err != nil {
 		if loginErr := a.ensureLogin(ctx, profileName); loginErr != nil {
-			return err
+			return loginErr
 		}
 		profile, err = store.ResolveProfile(profileName)
 		if err != nil {
@@ -647,7 +673,15 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 	if err != nil {
 		return err
 	}
-	model, err = resolveLaunchModel(profile, model, session.Models, session.DefaultModel)
+	if model == "default" {
+		model = ""
+		profile.DefaultModel = ""
+		profile.ReasoningEffort = ""
+		profile.FollowSiteDefault = false
+	}
+	if agent != "codex" || model != "" || profile.DefaultModel != "" || profile.FollowSiteDefault {
+		model, err = resolveLaunchModel(profile, model, session.Models, session.DefaultModel)
+	}
 	if err != nil {
 		return err
 	}
@@ -673,7 +707,34 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 	if err != nil {
 		return err
 	}
-	return a.Run(ctx, command, a.Stdin, a.Stdout, a.Stderr)
+	var before codexPreferences
+	var settingsErr error
+	if agent == "codex" {
+		before, settingsErr = readCodexPreferences(a.Environ)
+	}
+	runErr := a.Run(ctx, command, a.Stdin, a.Stdout, a.Stderr)
+	if agent == "codex" && settingsErr == nil {
+		a.saveChangedCodexPreferences(store, profile.Name, before, session.Models)
+	}
+	return runErr
+}
+
+func modelLabel(model string) string {
+	if model == "" {
+		return "agent default (Codex settings / built-in default)"
+	}
+	return model
+}
+
+func (a *App) checkPath(w io.Writer) {
+	if a.Look == nil || w == nil {
+		return
+	}
+	if path, err := a.Look("rai"); err == nil {
+		fmt.Fprintf(w, "PATH: %s\n", path)
+	} else {
+		fmt.Fprintf(w, "rai is not on PATH. Add %s to your user PATH, then open a new terminal.\n", filepath.Dir(a.Self))
+	}
 }
 
 func splitLaunchArgs(args []string) (model string, rest []string, err error) {
@@ -685,7 +746,7 @@ func splitLaunchArgs(args []string) (model string, rest []string, err error) {
 			return model, rest, nil
 		}
 		name, value, hasValue := strings.Cut(arg, "=")
-		if name == "--model" {
+		if name == "--model" || name == "-m" {
 			if !hasValue {
 				if i+1 >= len(args) {
 					return "", nil, errors.New("--model requires a value")

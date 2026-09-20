@@ -14,7 +14,7 @@ import (
 
 var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-var supportedReasoningEfforts = []string{"minimal", "low", "medium", "high", "xhigh"}
+var supportedReasoningEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
 type Config struct {
 	Kind          string             `json:"kind"`
@@ -26,7 +26,8 @@ type Profile struct {
 	Name              string    `json:"name"`
 	ServerURL         string    `json:"server_url"`
 	DisplayName       string    `json:"display_name,omitempty"`
-	DefaultModel      string    `json:"default_model,omitempty"` // Empty follows the site's current default.
+	DefaultModel      string    `json:"default_model,omitempty"`
+	FollowSiteDefault bool      `json:"follow_site_default,omitempty"`
 	ReasoningEffort   string    `json:"reasoning_effort,omitempty"`
 	OpenCodeProtocol  string    `json:"opencode_protocol,omitempty"`
 	CredentialBackend string    `json:"credential_backend,omitempty"`

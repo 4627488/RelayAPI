@@ -18,6 +18,10 @@ Adapters: Claude Code (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`, model-awar
 
 ## Alternatives considered
 
+As of 2026-09-19, the session contract selects only configured site candidates rather than treating catalog ordering as a recommendation. Explicit `rai use --auto` follows that site recommendation (persisted as `follow_site_default`); otherwise Codex keeps native defaults and other clients can use the site recommendation. Codex launches omit model and effort overrides when rai has no saved preference. On exit, changes in the native user `config.toml` model/effort are imported into the active rai profile after catalog and config validation; `CODEX_HOME` is honored. `rai use default` resets overrides, and `rai sync codex` explicitly imports existing preferences. Other native Codex configuration remains native. Reauthorization preserves saved preferences for the same server. Windows installers persist user PATH; Unix installers print a shell configuration command when necessary.
+
+The alternative of maintaining a separate Codex home was avoided because it would split sessions, plugins, and other user settings. Automatic synchronization reads only native user model/effort preferences; named Codex profile files and project configuration remain Codex-owned. Concurrent Codex sessions sharing a user config can affect the observed preferences; this launcher does not implement a separate settings service. Tests simulate native config writes across two complete launcher invocations, verify the second launch and exit code, and cover unavailable models and reasoning-only edits.
+
 **Continue growing the generated connection scripts.** The scripts remain for durable Codex and OpenCode configuration. `rai` adds browser login, per-launch model choice, and more agents.
 
 **Publish `rai` from a dedicated repository.** The RelayAPI repository keeps server discovery, the authorize page, adapters, and tests in one change.

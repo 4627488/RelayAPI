@@ -9,6 +9,8 @@ describe("RAI connection guide", () => {
     const screen = await render(<ConnectionGuide />)
     const command = screen.getByRole("textbox", { name: "安装命令" })
 
+    await screen.getByRole("button", { name: "macOS / Linux / WSL" }).click()
+
     await expect
       .element(command)
       .toHaveValue(expect.stringContaining("curl -fsSL"))

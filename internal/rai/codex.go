@@ -43,8 +43,6 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 	}
 	overrides := []string{
 		"model_provider=" + providerID,
-		"model=" + quoteTOMLString(ctx.Model),
-		"model_reasoning_effort=" + reasoningEffort(ctx.Profile),
 		"model_providers." + providerID + ".name=RelayAPI",
 		"model_providers." + providerID + ".base_url=" + quoteTOMLString(base),
 		"model_providers." + providerID + ".wire_api=responses",
@@ -52,7 +50,12 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 		"model_providers." + providerID + ".supports_standalone_web_search=true",
 		"model_providers." + providerID + ".auth.command=" + quoteTOMLString(rai),
 		"model_providers." + providerID + ".auth.args=" + string(authArgs),
-		"features.apps=true",
+	}
+	if ctx.Model != "" {
+		overrides = append(overrides, "model="+quoteTOMLString(ctx.Model))
+	}
+	if ctx.Profile.ReasoningEffort != "" {
+		overrides = append(overrides, "model_reasoning_effort="+ctx.Profile.ReasoningEffort)
 	}
 	args := make([]string, 0, len(overrides)*2+len(ctx.Args))
 	for _, override := range overrides {

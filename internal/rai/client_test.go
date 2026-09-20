@@ -70,7 +70,7 @@ func TestGatewayFallsBackToModelsCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.DefaultModel != "" {
+	if session.DefaultModel != "" || !contains(session.Models, "only-model") {
 		t.Fatalf("session = %#v", session)
 	}
 }

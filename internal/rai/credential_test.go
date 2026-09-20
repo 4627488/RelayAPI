@@ -2,6 +2,7 @@ package rai
 
 import (
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -28,7 +29,7 @@ func TestFileCredentialRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("credentials mode = %o", info.Mode().Perm())
 	}
 	if err := store.DeleteCredential("default"); err != nil {
