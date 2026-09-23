@@ -19,10 +19,10 @@ encrypted credential store.
 ## Dependency maintenance
 
 The root module and `third_party/cpaexecutor/go.mod` pin the same replacement:
-[4627488/CLIProxyAPI commit 870e63a23f8e](https://github.com/4627488/CLIProxyAPI/commit/870e63a23f8e4341c703b24facc5eb7c904bedf8),
+[4627488/CLIProxyAPI commit f8005918caca](https://github.com/4627488/CLIProxyAPI/commit/f8005918caca7a87824edbd10fa845d598fd74e9),
 on branch `relay/credential-refresh-v7.3.15`. This is upstream **v7.3.15** plus
-one commit exposing the shared refresh lifecycle, with regression tests. The
-replacement version `v7.0.0-20260923014631-870e63a23f8e` reflects the fork's
+the shared refresh lifecycle patch and a credential snapshot race fix, with
+regression tests. The replacement version `v7.0.0-20260923020424-f8005918caca` reflects the fork's
 tags, not a downgrade to CPA v7.0.0.
 
 This upgrade supplies CPA's model definitions and protocol handling for
@@ -37,7 +37,12 @@ unchanged. The CPA tests cover refresh lead times, rotated-token persistence,
 static/disabled credentials, failure backoff, concurrent forced requests and
 reuse of an in-flight inference refresh.
 
-When updating CPA, rebase this single commit onto the chosen upstream release
+Credential registration and updates also clone their callback/scheduler
+snapshots under the manager lock. This prevents concurrent request results
+from racing with post-lock reads of live credentials. The regression test
+exercises registration, updates and refreshes concurrently with request results.
+
+When updating CPA, rebase these patches onto the chosen upstream release
 and update both replacements and checksums. If upstream provides this API (or
 an equivalent shared lifecycle), switch the bridge to it and remove both
 replacements. No provider-specific OAuth code should need changes in Relay.

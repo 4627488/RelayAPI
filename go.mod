@@ -22,7 +22,7 @@ require (
 replace github.com/router-for-me/CLIProxyAPI/v7/relaybridge => ./third_party/cpaexecutor
 
 // v7.3.15 plus CPA's shared RefreshCredential entry point; see docs/credential-refresh.md.
-replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260923014631-870e63a23f8e
+replace github.com/router-for-me/CLIProxyAPI/v7 => github.com/4627488/CLIProxyAPI/v7 v7.0.0-20260923020424-f8005918caca
 
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
