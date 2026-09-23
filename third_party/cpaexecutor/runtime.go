@@ -869,8 +869,8 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	staticModels := modelIDs(cpaStaticModelsForAuth(provider, auth))
 	if len(publicModels) == 0 {
 		publicModels = staticModels
-	} else if provider == "codex" && len(staticModels) > 0 {
-		// Stored Codex allowlists are discovery snapshots. Union CPA's current
+	} else if (provider == "codex" || provider == "xai") && len(staticModels) > 0 {
+		// Stored Codex and xAI allowlists are discovery snapshots. Union CPA's current
 		// static catalog so newly shipped official slugs stay routable without
 		// an admin rediscover. excluded_models still subtracts.
 		publicModels = unionModelIDs(publicModels, staticModels)

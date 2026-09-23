@@ -19,11 +19,16 @@ encrypted credential store.
 ## Dependency maintenance
 
 The root module and `third_party/cpaexecutor/go.mod` pin the same replacement:
-[4627488/CLIProxyAPI commit d285d1152ce8](https://github.com/4627488/CLIProxyAPI/commit/d285d1152ce837fdbac8b9bfcc720cdb9dbf7c6a),
-on branch `relay/credential-refresh-v7.2.151`. This is upstream **v7.2.151** plus
+[4627488/CLIProxyAPI commit 870e63a23f8e](https://github.com/4627488/CLIProxyAPI/commit/870e63a23f8e4341c703b24facc5eb7c904bedf8),
+on branch `relay/credential-refresh-v7.3.15`. This is upstream **v7.3.15** plus
 one commit exposing the shared refresh lifecycle, with regression tests. The
-replacement's `v7.0.0-...` pseudo-version reflects the fork's tags, not a
-downgrade to CPA v7.0.0.
+replacement version `v7.0.0-20260923014631-870e63a23f8e` reflects the fork's
+tags, not a downgrade to CPA v7.0.0.
+
+This upgrade supplies CPA's model definitions and protocol handling for
+`gpt-6-sol`, `gpt-6-luna`, `grok-4.7`, and `grok-4.7-build-fast`. The bridge
+unions both Codex and xAI discovery snapshots with CPA's current catalog,
+honors credential model exclusions, and persists expanded lists on startup.
 
 The patch adds `Manager.RefreshCredential(ctx, id, force)` and extracts the
 existing per-credential lock and locked refresh body for reuse. Provider OAuth

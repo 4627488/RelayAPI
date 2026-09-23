@@ -61,6 +61,45 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
+func TestRuntimeUpgradedCPAModels(t *testing.T) {
+	for _, test := range []struct {
+		provider string
+		stored   []string
+		want     []string
+		excluded string
+	}{
+		{"codex", []string{"gpt-5.6-sol"}, []string{"gpt-6-sol", "gpt-6-luna"}, "gpt-6-astra"},
+		{"xai", []string{"grok-4.6"}, []string{"grok-4.7", "grok-4.7-build-fast"}, "grok-code-fast-1"},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			document, err := json.Marshal(map[string]any{
+				"type": test.provider, "access_token": "test-token",
+				"excluded_models": []string{test.excluded},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+				ID: test.provider, Provider: test.provider, Enabled: true,
+				Models: test.stored, Document: document,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+			models := runtime.CredentialModels(test.provider)
+			for _, model := range append(test.want, test.stored...) {
+				if !containsString(models, model) || !containsString(runtime.Models(), model) {
+					t.Errorf("model %s missing from upgraded credential or public catalog: %v", model, models)
+				}
+			}
+			if containsString(models, test.excluded) || containsString(runtime.Models(), test.excluded) {
+				t.Errorf("excluded model %s reintroduced by upgrade", test.excluded)
+			}
+		})
+	}
+}
+
 func TestRuntimeUsesCPAStaticModelsWhenCredentialModelsAreEmpty(t *testing.T) {
 	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
 		ID: "codex-static", Provider: "codex", Enabled: true,
