@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -211,6 +212,9 @@ func (g Gateway) StartAuthorization(ctx context.Context, apiBase, deviceName, ch
 	}
 	payload, err := json.Marshal(map[string]string{
 		"device_name":           deviceName,
+		"device_os":             runtime.GOOS,
+		"device_arch":           runtime.GOARCH,
+		"rai_version":           Version,
 		"code_challenge":        challenge,
 		"code_challenge_method": "S256",
 	})

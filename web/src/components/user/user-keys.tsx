@@ -368,7 +368,7 @@ function KeysView({
     <div className="flex min-w-0 flex-col gap-3">
       <PageHeader
         title="API 密钥"
-        description="创建、查看和管理用于调用模型的 API Key。"
+        description="管理手动创建的 API Key。rai 自动授权的凭据请到「rai 已登录设备」查看。"
         actions={
           <Button onClick={openCreateDialog}>
             <HugeiconsIcon

@@ -26,6 +26,7 @@ export interface AuthStatus {
 }
 
 export interface ApiKey {
+  source?: "manual" | "rai"
   id: string
   name: string
   prefix: string
@@ -35,6 +36,18 @@ export interface ApiKey {
   token_limit_daily: number | null
   model_allowlist: string[]
   model_aliases: ApiKeyModelAlias[]
+  last_used_at: string | null
+  created_at: string
+}
+
+export interface RAIDevice {
+  id: string
+  device_name: string
+  device_os: string
+  device_arch: string
+  rai_version: string
+  enabled: boolean
+  expires_at: string | null
   last_used_at: string | null
   created_at: string
 }

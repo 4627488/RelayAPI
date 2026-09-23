@@ -27,7 +27,7 @@ interface AuthPageProps {
   onAuthenticated: (session: Session) => void
 }
 
-function AuthFrame({
+export function AuthFrame({
   title,
   description,
   children,

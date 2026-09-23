@@ -26,6 +26,12 @@ export const userNavigation: NavigationItem[] = [
   { id: "overview", label: "总览", icon: GaugeIcon, section: "开始使用" },
   { id: "guide", label: "接入指南", icon: BookOpen01Icon, section: "开始使用" },
   { id: "keys", label: "API 密钥", icon: KeyRoundIcon, section: "开始使用" },
+  {
+    id: "rai-devices",
+    label: "rai 已登录设备",
+    icon: PlugIcon,
+    section: "开始使用",
+  },
   { id: "usage", label: "用量", icon: ChartBarBigIcon, section: "运行与观测" },
   { id: "logs", label: "请求日志", icon: ListIcon, section: "运行与观测" },
   {
@@ -71,6 +77,7 @@ export const pageLabels: Partial<Record<Page, string>> = {
   overview: "总览",
   usage: "用量",
   keys: "API Keys",
+  "rai-devices": "rai 已登录设备",
   logs: "请求日志",
   guide: "接入指南",
   users: "用户",

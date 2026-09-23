@@ -28,6 +28,11 @@ type Tenant struct {
 }
 
 type APIKey struct {
+	Source             string             `gorm:"not null;default:'manual';index" json:"source"`
+	DeviceName         string             `gorm:"not null;default:''" json:"device_name,omitempty"`
+	DeviceOS           string             `gorm:"not null;default:''" json:"device_os,omitempty"`
+	DeviceArch         string             `gorm:"not null;default:''" json:"device_arch,omitempty"`
+	RAIVersion         string             `gorm:"not null;default:''" json:"rai_version,omitempty"`
 	ID                 string             `gorm:"type:uuid;primaryKey" json:"id"`
 	TenantID           string             `gorm:"type:uuid;not null;index:api_keys_tenant_idx,priority:1" json:"tenant_id"`
 	Name               string             `gorm:"not null" json:"name"`
@@ -317,6 +322,9 @@ type AgentSetup struct {
 // RAIAuthorization is a PKCE device grant for the rai launcher.
 // The API key ciphertext is present only between approval and the one-time token exchange.
 type RAIAuthorization struct {
+	DeviceOS            string     `gorm:"not null;default:''" json:"device_os"`
+	DeviceArch          string     `gorm:"not null;default:''" json:"device_arch"`
+	RAIVersion          string     `gorm:"not null;default:''" json:"rai_version"`
 	ID                  string     `gorm:"type:uuid;primaryKey" json:"id"`
 	TenantID            *string    `gorm:"type:uuid;index" json:"-"`
 	DeviceName          string     `gorm:"not null;default:''" json:"device_name"`

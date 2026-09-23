@@ -14,6 +14,11 @@ const UserKeys = lazy(() =>
     default: module.UserKeys,
   }))
 )
+const RAIDevices = lazy(() =>
+  import("@/components/user/rai-devices").then((module) => ({
+    default: module.RAIDevices,
+  }))
+)
 const UserGuide = lazy(() =>
   import("@/components/user/user-guide").then((module) => ({
     default: module.UserGuide,
@@ -52,6 +57,8 @@ export function UserWorkspace({
     <Suspense fallback={<LoadingView />}>
       {page === "keys" ? (
         <UserKeys tenantModels={tenantModels} />
+      ) : page === "rai-devices" ? (
+        <RAIDevices />
       ) : page === "logs" ? (
         <RequestLogsWorkbench />
       ) : page === "guide" ? (

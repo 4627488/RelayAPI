@@ -301,7 +301,7 @@ func (s Store) CreateKey(ctx context.Context, tenantID, name string, rate *int, 
 func (s Store) RevealKey(ctx context.Context, tenantID, id string) (string, error) {
 	var item APIKey
 	err := scoped(ctx, s.DB).Select("id", "tenant_id", "key_ciphertext").
-		Where("id = ? AND tenant_id = ?", id, tenantID).First(&item).Error
+		Where("id = ? AND tenant_id = ? AND source = ?", id, tenantID, "manual").First(&item).Error
 	if err != nil {
 		return "", notFound(err)
 	}
@@ -366,7 +366,7 @@ func (s Store) DeleteExpiredAgentSetups(ctx context.Context, now time.Time) (int
 func (s Store) UpdateKey(ctx context.Context, tenantID, id, name string, enabled bool, rate *int, tokens *int64, models []string, aliases []db.APIKeyModelAlias) (APIKey, error) {
 	database := scoped(ctx, s.DB)
 	err := database.Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&APIKey{}).Where("id = ? AND tenant_id = ?", id, tenantID).Updates(map[string]any{
+		result := tx.Model(&APIKey{}).Where("id = ? AND tenant_id = ? AND source = ?", id, tenantID, "manual").Updates(map[string]any{
 			"name": strings.TrimSpace(name), "enabled": enabled, "rate_limit_per_minute": rate,
 			"token_limit_daily": tokens, "model_allowlist": postgresStringArray(models),
 		})

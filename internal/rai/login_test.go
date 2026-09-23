@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,9 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 		if input["code_challenge_method"] != "S256" || input["code_challenge"] == "" {
 			http.Error(w, "bad challenge", http.StatusBadRequest)
 			return
+		}
+		if input["device_os"] != runtime.GOOS || input["device_arch"] != runtime.GOARCH || input["rai_version"] != Version {
+			t.Fatalf("missing device metadata: %#v", input)
 		}
 		w.WriteHeader(http.StatusCreated)
 		io.WriteString(w, `{"authorization_id":"auth-1","verification_uri":"http://relay.example/rai/authorize/auth-1","expires_in":600,"interval":1}`)

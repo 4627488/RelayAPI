@@ -6,6 +6,7 @@ export type Page =
   | "overview"
   | "usage"
   | "keys"
+  | "rai-devices"
   | "logs"
   | "guide"
   | "users"
@@ -29,6 +30,7 @@ const userPages = new Set<Page>([
   "overview",
   "usage",
   "keys",
+  "rai-devices",
   "logs",
   "guide",
   "subscriptions",

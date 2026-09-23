@@ -109,6 +109,8 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 Windows 安装器会将安装目录写入用户 PATH；macOS/Linux 若目录不在 PATH，会打印可加入 shell 配置的命令。安装后打开新终端，用 `rai doctor` 检查 PATH、登录和客户端安装情况。
 
+浏览器授权生成的 rai 凭据在个人工作台「rai 已登录设备」中单独管理，不再混入手动创建的 API Key。页面显示设备名称、系统、架构、登录时的 rai 版本、授权时间和最近调用时间，并可撤销该设备的登录。系统信息由客户端上报，旧版未上报的字段显示为未知；`--api-key-stdin` 使用的已有 Key 仍在「API 密钥」管理。最近调用时间不代表在线状态，本地 `rai logout` 只移除本地凭据；需要停用服务端凭据时在设备页面撤销。
+
 Codex CLI 的 `~/.codex/config.toml`（`base_url` 必须包含 `/v1`）：
 
 ```toml

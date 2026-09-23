@@ -39,3 +39,16 @@ func TestNormalizeRAIDeviceName(t *testing.T) {
 		t.Fatal("expected newline error")
 	}
 }
+
+func TestNormalizeRAIDeviceMetadata(t *testing.T) {
+	for _, value := range []string{"bad\nversion", strings.Repeat("a", 65), "bad\x00"} {
+		metadata := RAIDeviceMetadata{RAIVersion: value}
+		if err := normalizeRAIDeviceMetadata(&metadata); err == nil {
+			t.Fatalf("accepted %q", value)
+		}
+	}
+	metadata := RAIDeviceMetadata{DeviceOS: " windows ", DeviceArch: "amd64", RAIVersion: "dev"}
+	if err := normalizeRAIDeviceMetadata(&metadata); err != nil || metadata.DeviceOS != "windows" {
+		t.Fatalf("metadata=%+v err=%v", metadata, err)
+	}
+}

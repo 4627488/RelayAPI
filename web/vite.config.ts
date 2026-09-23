@@ -10,7 +10,8 @@ export default defineConfig({
       "/api": "http://localhost:3000",
       "/healthz": "http://localhost:3000",
       "/v1": "http://localhost:3000",
-      "/rai": "http://localhost:3000",
+      "/rai/install": "http://localhost:3000",
+      "/rai/download": "http://localhost:3000",
     },
   },
   resolve: {

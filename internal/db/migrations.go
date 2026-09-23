@@ -206,6 +206,20 @@ var migrations = []migration{
 			`UPDATE request_logs SET log_unit = 'legacy_session' WHERE request_type LIKE '%websocket%' AND (reservation_request_id IS NULL OR reservation_request_id = id)`,
 		},
 	},
+	{
+		version: 12,
+		name:    "separate rai device credentials from manual keys",
+		statements: []string{
+			`UPDATE api_keys k SET source = 'rai', device_name = a.device_name, name = a.device_name,
+			 device_os = a.device_os, device_arch = a.device_arch, rai_version = a.rai_version
+			 FROM rai_authorizations a WHERE a.api_key_id = k.id AND a.tenant_id = k.tenant_id`,
+			// Older authorization records were purged after ten minutes. Their
+			// reserved generated name is the only surviving origin information.
+			`UPDATE api_keys SET source = 'rai', device_name = substring(name from 7),
+			 name = substring(name from 7)
+			 WHERE source = 'manual' AND name LIKE 'rai · %'`,
+		},
+	},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this

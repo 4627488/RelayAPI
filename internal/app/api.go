@@ -223,7 +223,7 @@ func (a *App) adminUsage(w http.ResponseWriter, r *http.Request) {
 func (a *App) keys(w http.ResponseWriter, r *http.Request) {
 	tenantID := currentSession(r).TenantID
 	if r.Method == http.MethodGet {
-		items, err := a.store.ListKeys(r.Context(), tenantID)
+		items, err := a.store.ListManualKeys(r.Context(), tenantID)
 		if err != nil {
 			writeError(w, 500, "database_error", err.Error())
 			return
@@ -554,7 +554,7 @@ func (a *App) changePassword(w http.ResponseWriter, r *http.Request) {
 func (a *App) adminTenantKeys(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("id")
 	if r.Method == http.MethodGet {
-		items, err := a.store.ListKeys(r.Context(), tenantID)
+		items, err := a.store.ListManualKeys(r.Context(), tenantID)
 		if err != nil {
 			writeError(w, 500, "database_error", err.Error())
 			return

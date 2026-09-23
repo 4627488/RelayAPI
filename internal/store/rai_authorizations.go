@@ -34,6 +34,9 @@ var (
 type RAIAuthorization struct {
 	ID         string
 	DeviceName string
+	DeviceOS   string
+	DeviceArch string
+	RAIVersion string
 	Status     string
 	ExpiresAt  time.Time
 	CreatedAt  time.Time
@@ -43,7 +46,13 @@ func raiAuthorizationAssociatedData(id string) string {
 	return "rai-authorization/" + id
 }
 
-func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge, method string, now time.Time) (RAIAuthorization, int, error) {
+type RAIDeviceMetadata struct {
+	DeviceOS   string `json:"device_os"`
+	DeviceArch string `json:"device_arch"`
+	RAIVersion string `json:"rai_version"`
+}
+
+func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge, method string, now time.Time, metadata ...RAIDeviceMetadata) (RAIAuthorization, int, error) {
 	deviceName, err := normalizeRAIDeviceName(deviceName)
 	if err != nil {
 		return RAIAuthorization{}, 0, err
@@ -61,7 +70,15 @@ func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge
 	if now.IsZero() {
 		now = time.Now()
 	}
+	var device RAIDeviceMetadata
+	if len(metadata) > 0 {
+		device = metadata[0]
+	}
+	if err := normalizeRAIDeviceMetadata(&device); err != nil {
+		return RAIAuthorization{}, 0, err
+	}
 	item := db.RAIAuthorization{
+		DeviceOS: device.DeviceOS, DeviceArch: device.DeviceArch, RAIVersion: device.RAIVersion,
 		ID:                  identity.NewID(),
 		DeviceName:          deviceName,
 		CodeChallenge:       challenge,
@@ -74,6 +91,7 @@ func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge
 		return RAIAuthorization{}, 0, err
 	}
 	return RAIAuthorization{
+		DeviceOS: item.DeviceOS, DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
 		ID:         item.ID,
 		DeviceName: item.DeviceName,
 		Status:     item.Status,
@@ -88,10 +106,11 @@ func (s Store) RAIAuthorization(ctx context.Context, id string) (RAIAuthorizatio
 		return RAIAuthorization{}, err
 	}
 	status := item.Status
-	if item.Status == RAIAuthorizationPending && !item.ExpiresAt.After(time.Now()) {
+	if (item.Status == RAIAuthorizationPending || item.Status == RAIAuthorizationApproved) && !item.ExpiresAt.After(time.Now()) {
 		status = "expired"
 	}
 	return RAIAuthorization{
+		DeviceOS: item.DeviceOS, DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
 		ID:         item.ID,
 		DeviceName: item.DeviceName,
 		Status:     status,
@@ -119,15 +138,11 @@ func (s Store) ApproveRAIAuthorization(ctx context.Context, id, tenantID string)
 		}
 		plain, prefix, hash := identity.NewAPIKey()
 		key := APIKey{
-			ID: identity.NewID(), TenantID: tenantID, Name: raiKeyName(item.DeviceName),
+			ID: identity.NewID(), TenantID: tenantID, Name: item.DeviceName,
+			Source: "rai", DeviceName: item.DeviceName, DeviceOS: item.DeviceOS,
+			DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
 			KeyHash: hash, Prefix: prefix, Enabled: true,
 		}
-		ciphertext, err := s.secretBox.Seal([]byte(plain), keySecretAssociatedData(tenantID, key.ID))
-		if err != nil {
-			return err
-		}
-		key.KeyCiphertext = ciphertext
-		key.Recoverable = true
 		if err := tx.Create(&key).Error; err != nil {
 			return err
 		}
@@ -229,12 +244,19 @@ func (s Store) loadRAIAuthorization(ctx context.Context, id string) (db.RAIAutho
 	return item, notFound(err)
 }
 
-func raiKeyName(device string) string {
-	device = strings.TrimSpace(device)
-	if device == "" {
-		return "rai"
+func normalizeRAIDeviceMetadata(device *RAIDeviceMetadata) error {
+	for _, field := range []*string{&device.DeviceOS, &device.DeviceArch, &device.RAIVersion} {
+		*field = strings.TrimSpace(*field)
+		if len(*field) > 64 {
+			return errors.New("device metadata is too long")
+		}
+		for _, char := range *field {
+			if !unicode.IsPrint(char) {
+				return errors.New("device metadata is invalid")
+			}
+		}
 	}
-	return "rai · " + device
+	return nil
 }
 
 func normalizeRAIDeviceName(name string) (string, error) {

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,16 +30,29 @@ func TestWriteRAITokenErrorCodes(t *testing.T) {
 	}
 }
 
-func TestWriteRAIAuthorizeHTMLEscapes(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	writeRAIAuthorizeHTML(recorder, http.StatusOK, raiAuthorizeView{
-		Title: "授权 rai", DeviceName: `<script>alert(1)</script>`, Body: "批准后会创建一把专用 API Key。", CanDecide: true, ID: "abc",
-	})
-	body := recorder.Body.String()
-	if strings.Contains(body, "<script>alert(1)</script>") {
-		t.Fatal("device name was not escaped")
+func TestRAIAuthorizationRoutes(t *testing.T) {
+	app := &App{mux: http.NewServeMux()}
+	app.cfg.WebDistDir = t.TempDir()
+	const shell = "<!doctype html><html><body><div id=\"root\"></div></body></html>"
+	if err := os.WriteFile(filepath.Join(app.cfg.WebDistDir, "index.html"), []byte(shell), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(body, "批准") || !strings.Contains(body, "/rai/authorize/abc/approve") {
-		t.Fatalf("html = %s", body)
+	app.routes()
+	page := httptest.NewRecorder()
+	app.mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/rai/authorize/request", nil))
+	if page.Code != http.StatusOK || page.Body.String() != shell {
+		t.Fatalf("authorization page did not serve frontend: status=%d body=%q", page.Code, page.Body.String())
+	}
+	for _, path := range []string{"/api/rai/authorizations/id/approve", "/api/rai/authorizations/id/deny"} {
+		recorder := httptest.NewRecorder()
+		app.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}")))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("%s status=%d", path, recorder.Code)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	app.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/rai/authorizations/not-a-uuid", nil))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("invalid id status=%d", recorder.Code)
 	}
 }

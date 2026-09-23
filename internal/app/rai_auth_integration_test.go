@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -50,7 +49,8 @@ func TestRAIAuthorizationHTTPFlow(t *testing.T) {
 	verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 	create := httptest.NewRecorder()
 	body, _ := json.Marshal(map[string]string{
-		"device_name":           "laptop",
+		"device_name": "laptop",
+		"device_os":   "windows", "device_arch": "amd64", "rai_version": "integration-test",
 		"code_challenge":        store.PKCEChallengeS256(verifier),
 		"code_challenge_method": "S256",
 	})
@@ -68,17 +68,17 @@ func TestRAIAuthorizationHTTPFlow(t *testing.T) {
 	}
 
 	page := httptest.NewRecorder()
-	app.mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/rai/authorize/"+id, nil))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "登录") {
+	app.mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/api/rai/authorizations/"+id, nil))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "windows") {
 		t.Fatalf("page = %d %s", page.Code, page.Body)
 	}
 
-	form := url.Values{"email": {email}, "password": {"password123"}}
+	form, _ := json.Marshal(map[string]string{"email": email, "password": "password123"})
 	login := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/rai/authorize/"+id+"/session", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", bytes.NewReader(form))
+	req.Header.Set("Content-Type", "application/json")
 	app.mux.ServeHTTP(login, req)
-	if login.Code != http.StatusSeeOther {
+	if login.Code != http.StatusOK {
 		t.Fatalf("login = %d %s", login.Code, login.Body)
 	}
 	cookie := login.Result().Header.Get("Set-Cookie")
@@ -87,10 +87,10 @@ func TestRAIAuthorizationHTTPFlow(t *testing.T) {
 	}
 
 	approve := httptest.NewRecorder()
-	approveReq := httptest.NewRequest(http.MethodPost, "/rai/authorize/"+id+"/approve", nil)
+	approveReq := httptest.NewRequest(http.MethodPost, "/api/rai/authorizations/"+id+"/approve", nil)
 	approveReq.Header.Set("Cookie", cookie)
 	app.mux.ServeHTTP(approve, approveReq)
-	if approve.Code != http.StatusOK || !strings.Contains(approve.Body.String(), "已批准") {
+	if approve.Code != http.StatusOK || !strings.Contains(approve.Body.String(), "approved") {
 		t.Fatalf("approve = %d %s", approve.Code, approve.Body)
 	}
 
@@ -107,5 +107,45 @@ func TestRAIAuthorizationHTTPFlow(t *testing.T) {
 	key, _ := issued["api_key"].(string)
 	if !strings.HasPrefix(key, "relay_") {
 		t.Fatalf("issued = %#v", issued)
+	}
+	list := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/rai/devices", nil)
+	listReq.Header.Set("Cookie", cookie)
+	app.mux.ServeHTTP(list, listReq)
+	var devices struct {
+		Items []store.RAIDevice `json:"items"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &devices); err != nil || list.Code != http.StatusOK || len(devices.Items) != 1 {
+		t.Fatalf("devices = %d %s, %v", list.Code, list.Body, err)
+	}
+	if devices.Items[0].DeviceOS != "windows" {
+		t.Fatalf("missing OS: %+v", devices.Items[0])
+	}
+	if strings.Contains(list.Body.String(), key) || strings.Contains(list.Body.String(), "key_ciphertext") || strings.Contains(list.Body.String(), "prefix") {
+		t.Fatal("device response exposed credential data")
+	}
+	manual := httptest.NewRecorder()
+	manualReq := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
+	manualReq.Header.Set("Cookie", cookie)
+	app.mux.ServeHTTP(manual, manualReq)
+	var keys struct {
+		Items []store.APIKey `json:"items"`
+	}
+	if err := json.Unmarshal(manual.Body.Bytes(), &keys); err != nil || len(keys.Items) != 0 {
+		t.Fatalf("rai leaked into manual keys: %s", manual.Body)
+	}
+	revoke := httptest.NewRecorder()
+	revokeReq := httptest.NewRequest(http.MethodDelete, "/api/rai/devices/"+devices.Items[0].ID, nil)
+	revokeReq.Header.Set("Cookie", cookie)
+	app.mux.ServeHTTP(revoke, revokeReq)
+	if revoke.Code != http.StatusNoContent {
+		t.Fatalf("revoke = %d %s", revoke.Code, revoke.Body)
+	}
+	session := httptest.NewRecorder()
+	sessionReq := httptest.NewRequest(http.MethodGet, "/api/rai/session", nil)
+	sessionReq.Header.Set("Authorization", "Bearer "+key)
+	app.mux.ServeHTTP(session, sessionReq)
+	if session.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked key accepted: %d", session.Code)
 	}
 }
