@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -114,10 +115,8 @@ type githubTestTransport func(*http.Request) (*http.Response, error)
 func (f githubTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func TestGitHubIdentityExchange(t *testing.T) {
 	a := githubTestApp(t)
-	original := http.DefaultTransport
-	t.Cleanup(func() { http.DefaultTransport = original })
 	calls := 0
-	http.DefaultTransport = githubTestTransport(func(r *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: githubTestTransport(func(r *http.Request) (*http.Response, error) {
 		calls++
 		body := `{"id":42,"login":"octocat"}`
 		switch r.URL.String() {
@@ -138,9 +137,99 @@ func TestGitHubIdentityExchange(t *testing.T) {
 			t.Fatal("unexpected endpoint")
 		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
-	})
-	id, login, err := a.githubIdentity(context.Background(), "code", "verifier")
+	})}
+	id, login, err := a.githubIdentityWithClient(context.Background(), client, "code", "verifier")
 	if err != nil || id != 42 || login != "octocat" || calls != 2 {
 		t.Fatalf("identity = %d %s %v", id, login, err)
+	}
+}
+
+func TestGitHubHTTPProxyCarriesBothOAuthRequests(t *testing.T) {
+	requests := make(chan string, 2)
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/login/oauth/access_token" {
+			_, _ = io.WriteString(w, `{"access_token":"test-token"}`)
+		} else if r.URL.Path == "/user" && r.Header.Get("Authorization") == "Bearer test-token" {
+			_, _ = io.WriteString(w, `{"id":42,"login":"octocat"}`)
+		} else {
+			http.Error(w, "unexpected request", 400)
+		}
+	}))
+	defer upstream.Close()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "CONNECT" {
+			http.Error(w, "CONNECT required", 400)
+			return
+		}
+		requests <- r.Host
+		server, err := net.Dial("tcp", upstream.Listener.Addr().String())
+		if err != nil {
+			http.Error(w, "unreachable", 502)
+			return
+		}
+		defer server.Close()
+		client, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer client.Close()
+		_, _ = io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		go func() { _, _ = io.Copy(server, client) }()
+		_, _ = io.Copy(client, server)
+	}))
+	defer proxy.Close()
+	client, err := githubHTTPClient(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	// Trust only this test fixture's TLS configuration; production uses default verification.
+	client.Transport.(*http.Transport).TLSClientConfig = upstream.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	client.Transport.(*http.Transport).TLSClientConfig.ServerName = upstream.Certificate().DNSNames[0]
+	a := githubTestApp(t)
+	id, _, err := a.githubIdentityWithClient(context.Background(), client, "code", "verifier")
+	if err != nil || id != 42 {
+		t.Fatalf("proxied OAuth failed: %v", err)
+	}
+	for _, host := range []string{"github.com:443", "api.github.com:443"} {
+		select {
+		case got := <-requests:
+			if got != host {
+				t.Fatalf("CONNECT target=%s", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("request bypassed proxy")
+		}
+	}
+}
+
+func TestGitHubProxySelectionAndDeletionProtection(t *testing.T) {
+	for _, test := range []struct{ chosen, system, want string }{{"", "proxy-a", ""}, {"system", "proxy-a", "proxy-a"}, {"system", "", ""}, {"proxy-b", "proxy-a", "proxy-b"}} {
+		settings := defaultNativeRuntimeSettings()
+		settings.GitHubProxyID = test.chosen
+		settings.SystemProxyID = test.system
+		if got := githubSelectedProxyID(settings); got != test.want {
+			t.Fatalf("proxy=%q, want %q", got, test.want)
+		}
+	}
+	a := githubTestApp(t)
+	a.nativeSettings.value = defaultNativeRuntimeSettings()
+	a.nativeSettings.value.GitHubProxyID = "proxy-b"
+	r := httptest.NewRequest("DELETE", "/api/admin/proxies/proxy-b", nil)
+	r.SetPathValue("id", "proxy-b")
+	w := httptest.NewRecorder()
+	a.adminProxy(w, r)
+	if w.Code != 409 {
+		t.Fatal("in-use GitHub proxy can be deleted")
+	}
+	t.Setenv("HTTPS_PROXY", "http://invalid.example:8888")
+	client, err := githubHTTPClient("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	if client.Transport.(*http.Transport).Proxy != nil {
+		t.Fatal("direct mode inherited environment proxy")
 	}
 }

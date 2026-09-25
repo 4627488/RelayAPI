@@ -18,4 +18,6 @@ Automatic email linking could take over existing accounts and would change invit
 
 ## Consequences
 
+GitHub OAuth has an independently selectable outbound proxy in runtime settings: empty means explicit direct access, `system` follows the current system proxy, and a proxy ID selects that stored proxy. Both the token and identity requests use the same short-lived transport with normal TLS verification and no HTTP redirects; idle connections close after the callback. Missing proxy records fail closed and proxy deletion checks include OAuth references. Stage-specific public errors never include provider bodies, tokens, secrets, or proxy credentials. A real local HTTPS CONNECT proxy test verifies that both GitHub hosts traverse the chosen transport.
+
 Users must retain their local password for binding and unlinking. GitHub authorization alone does not grant administrator status, extend expiry, or enable disabled tenants. Startup AutoMigrate adds the nullable unique ID and display-login columns. Deployments must configure both GitHub credentials and an exact public callback origin; source changes alone do not enable production login. Store integration tests require TEST_DATABASE_URL. No live tenant is automatically bound during development.

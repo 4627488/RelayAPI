@@ -67,8 +67,9 @@ func (a *App) adminProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		a.nativeSettings.RLock()
 		systemProxyID := a.nativeSettings.value.SystemProxyID
+		githubProxyID := githubSelectedProxyID(a.nativeSettings.value)
 		a.nativeSettings.RUnlock()
-		if systemProxyID == id {
+		if systemProxyID == id || githubProxyID == id {
 			writeError(w, http.StatusConflict, "proxy_in_use", "该代理仍被系统设置使用，请先取消选择")
 			return
 		}
@@ -206,7 +207,7 @@ func (a *App) proxyView(ctx context.Context, item store.OutboundProxy) proxyView
 	parsed, _ := url.Parse(item.URL)
 	accountUse, _ := a.store.CountOutboundProxyReferences(ctx, item.ID)
 	a.nativeSettings.RLock()
-	systemUse := a.nativeSettings.value.SystemProxyID == item.ID
+	systemUse := a.nativeSettings.value.SystemProxyID == item.ID || githubSelectedProxyID(a.nativeSettings.value) == item.ID
 	a.nativeSettings.RUnlock()
 	return proxyView{ID: item.ID, Name: item.Name, Endpoint: egress.RedactProxyURL(item.URL), Scheme: parsed.Scheme, Host: parsed.Host, AccountUse: accountUse, SystemUse: systemUse, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }

@@ -8,6 +8,12 @@ export function githubResultMessage(result: string | null) {
     disabled: "GitHub 登录尚未配置。",
     conflict: "绑定未完成：该 GitHub 或当前账户可能已绑定，请刷新检查。",
     failed: "GitHub 授权失败，请重试。",
+    proxy_failed:
+      "GitHub 登录代理不可用，请联系管理员检查运行策略中的 GitHub 登录代理。",
+    exchange_failed:
+      "GitHub 授权码交换失败，请重新授权；若持续失败，请联系管理员检查 GitHub 登录代理和应用凭据。",
+    identity_failed:
+      "无法从 GitHub 获取用户身份，请重新授权或联系管理员检查 GitHub 登录代理。",
   }
   return result ? (messages[result] ?? "") : ""
 }

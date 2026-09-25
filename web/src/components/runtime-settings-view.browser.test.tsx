@@ -15,6 +15,7 @@ it("saves RAI candidate order and allows disabling automatic selection", async (
     credential_failure_threshold: 3,
     credential_cooldown_seconds: 0,
     system_proxy_id: "",
+    github_proxy_id: "",
     request_timeout_seconds: 86400,
     max_request_mib: 1024,
     request_bytes_in_flight_mib: 8192,
@@ -35,7 +36,16 @@ it("saves RAI candidate order and allows disabling automatic selection", async (
     nonstream_keepalive_interval: 0,
   }
   vi.mocked(api).mockImplementation(async (path, init) => {
-    if (path === "/api/admin/proxies") return { items: [] }
+    if (path === "/api/admin/proxies")
+      return {
+        items: [
+          {
+            id: "proxy-a",
+            name: "GitHub 出口",
+            endpoint: "http://proxy.example:8080",
+          },
+        ],
+      }
     if (init?.method === "PATCH") settings = JSON.parse(String(init.body))
     return {
       mode: "embedded_cpa",
@@ -52,14 +62,28 @@ it("saves RAI candidate order and allows disabling automatic selection", async (
   const screen = await render(<RuntimeSettingsView />)
   const input = screen.getByRole("textbox", { name: "候选模型" })
   await expect.element(input).toHaveValue("gpt-5.6-sol\ngrok-4.6")
+  const githubProxy = screen.getByRole("combobox", { name: "GitHub 登录代理" })
+  await githubProxy.click()
+  await screen
+    .getByRole("option", { name: "跟随系统代理", exact: true })
+    .click()
   await input.fill("grok-4.6\n custom-model \n")
   await screen.getByRole("button", { name: "保存", exact: true }).click()
   await expect.element(input).toHaveValue("grok-4.6\ncustom-model")
   expect(settings.rai_default_models).toEqual(["grok-4.6", "custom-model"])
+  expect(settings.github_proxy_id).toBe("system")
+  await githubProxy.click()
+  await screen
+    .getByRole("option", {
+      name: "GitHub 出口 · http://proxy.example:8080",
+      exact: true,
+    })
+    .click()
   await input.fill("")
   await screen.getByRole("button", { name: "保存", exact: true }).click()
   await expect
     .element(screen.getByRole("button", { name: "保存", exact: true }))
     .not.toBeInTheDocument()
   expect(settings.rai_default_models).toEqual([])
+  expect(settings.github_proxy_id).toBe("proxy-a")
 })

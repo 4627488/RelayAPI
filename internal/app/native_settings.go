@@ -37,6 +37,7 @@ type nativeRuntimeSettings struct {
 	CredentialFailureThreshold int      `json:"credential_failure_threshold"`
 	CredentialCooldownSeconds  int      `json:"credential_cooldown_seconds"`
 	SystemProxyID              string   `json:"system_proxy_id"`
+	GitHubProxyID              string   `json:"github_proxy_id"`
 	RequestTimeoutSeconds      int      `json:"request_timeout_seconds"`
 	MaxRequestMiB              int      `json:"max_request_mib"`
 	RequestBytesInFlightMiB    int      `json:"request_bytes_in_flight_mib"`
@@ -370,6 +371,7 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	input.GitHubProxyID = strings.TrimSpace(input.GitHubProxyID)
 	if message := validateNativeRuntimeSettings(input); message != "" {
 		writeError(w, http.StatusBadRequest, "validation_error", message)
 		return
@@ -384,6 +386,12 @@ func (a *App) adminNativeSettings(w http.ResponseWriter, r *http.Request) {
 			} else {
 				writeError(w, http.StatusInternalServerError, "proxy_unavailable", "无法读取系统代理")
 			}
+			return
+		}
+	}
+	if input.GitHubProxyID != "" && input.GitHubProxyID != "system" {
+		if _, err := a.proxyURL(r.Context(), input.GitHubProxyID); err != nil {
+			writeError(w, http.StatusBadRequest, "proxy_not_found", "选择的 GitHub 登录代理不可用")
 			return
 		}
 	}

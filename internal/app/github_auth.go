@@ -15,12 +15,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/egress"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
 const githubCookie = "relay_github_oauth"
 const githubCallbackPath = "/api/auth/github/callback"
+
+var (
+	errGitHubProxy    = errors.New("GitHub proxy unavailable")
+	errGitHubExchange = errors.New("GitHub token exchange failed")
+	errGitHubIdentity = errors.New("GitHub identity lookup failed")
+)
 
 type githubFlow struct {
 	State           string `json:"state"`
@@ -187,7 +194,16 @@ func (a *App) githubCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	id, login, err := a.githubIdentity(r.Context(), code, flow.Verifier)
 	if err != nil {
-		fail("failed")
+		switch {
+		case errors.Is(err, errGitHubProxy):
+			fail("proxy_failed")
+		case errors.Is(err, errGitHubExchange):
+			fail("exchange_failed")
+		case errors.Is(err, errGitHubIdentity):
+			fail("identity_failed")
+		default:
+			fail("failed")
+		}
 		return
 	}
 	if flow.TenantID != "" {
@@ -207,7 +223,36 @@ func (a *App) githubCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/app", http.StatusSeeOther)
 }
 func (a *App) githubIdentity(ctx context.Context, code, verifier string) (int64, string, error) {
-	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	proxyURL, err := a.proxyURL(ctx, githubSelectedProxyID(a.currentNativeSettings()))
+	if err != nil {
+		return 0, "", errGitHubProxy
+	}
+	client, err := githubHTTPClient(proxyURL)
+	if err != nil {
+		return 0, "", errGitHubProxy
+	}
+	defer client.CloseIdleConnections()
+	return a.githubIdentityWithClient(ctx, client, code, verifier)
+}
+
+func githubSelectedProxyID(settings nativeRuntimeSettings) string {
+	if settings.GitHubProxyID == "system" {
+		return settings.SystemProxyID
+	}
+	return settings.GitHubProxyID
+}
+
+func githubHTTPClient(proxyURL string) (*http.Client, error) {
+	client, err := egress.OutboundHTTPClient(proxyURL, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	client.Timeout = 30 * time.Second
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return client, nil
+}
+
+func (a *App) githubIdentityWithClient(ctx context.Context, client *http.Client, code, verifier string) (int64, string, error) {
 	form := url.Values{"client_id": {a.cfg.GitHubClientID}, "client_secret": {a.cfg.GitHubClientSecret}, "code": {code}, "code_verifier": {verifier}, "redirect_uri": {a.cfg.PublicURL + githubCallbackPath}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", strings.NewReader(form.Encode()))
 	if err != nil {
@@ -220,10 +265,10 @@ func (a *App) githubIdentity(ctx context.Context, code, verifier string) (int64,
 		Error       string `json:"error"`
 	}
 	if err = githubJSON(client, req, &token); err != nil {
-		return 0, "", err
+		return 0, "", errGitHubExchange
 	}
 	if token.Error != "" || token.AccessToken == "" {
-		return 0, "", errors.New("token exchange failed")
+		return 0, "", errGitHubExchange
 	}
 	req, err = http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
 	if err != nil {
@@ -237,10 +282,10 @@ func (a *App) githubIdentity(ctx context.Context, code, verifier string) (int64,
 		Login string `json:"login"`
 	}
 	if err = githubJSON(client, req, &user); err != nil {
-		return 0, "", err
+		return 0, "", errGitHubIdentity
 	}
 	if user.ID <= 0 || user.Login == "" {
-		return 0, "", errors.New("invalid identity")
+		return 0, "", errGitHubIdentity
 	}
 	return user.ID, user.Login, nil
 }

@@ -42,6 +42,7 @@ type RuntimeSettings = {
   credential_failure_threshold: number
   credential_cooldown_seconds: number
   system_proxy_id: string
+  github_proxy_id?: string
   request_timeout_seconds: number
   max_request_mib: number
   request_bytes_in_flight_mib: number
@@ -390,6 +391,10 @@ export function RuntimeSettingsView() {
     value.gpt_image_base_model,
     (model) => model
   )
+  const githubProxyItems = [
+    { value: "system", label: "跟随系统代理" },
+    ...proxyItems,
+  ]
   const imageModes = withCurrent(
     imageModeChoices,
     value.image_generation_mode,
@@ -676,6 +681,38 @@ export function RuntimeSettingsView() {
                 </Select>
                 <FieldDescription>
                   账户代理在「出站代理」中维护，并在模型账户上绑定。
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="github-login-proxy">
+                  GitHub 登录代理
+                </FieldLabel>
+                <Select
+                  items={githubProxyItems}
+                  value={value.github_proxy_id || "direct"}
+                  onValueChange={(next) =>
+                    patch(
+                      "github_proxy_id",
+                      next === "direct" || !next ? "" : next
+                    )
+                  }
+                >
+                  <SelectTrigger id="github-login-proxy" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {githubProxyItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  用于 GitHub
+                  登录和绑定回调中的授权码交换、身份查询。默认直连，保存后生效；代理在「出站代理」中维护。
                 </FieldDescription>
               </Field>
               <SwitchField
