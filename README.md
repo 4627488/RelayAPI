@@ -93,6 +93,8 @@ Responses；百炼请求会在 Responses 与 Chat Completions 之间按上游能
 
 用户面板的接入指南提供一条本站下发的 `rai` 安装命令。脚本装好启动器后会对当前站点执行 `rai login`，浏览器批准即可；之后用 `rai claude` / `rai codex` / `rai opencode` 启动原来的客户端。
 
+用户总览提供最近一年的 [Token 消耗热力图](docs/token-heatmap.md)：按 UTC 日历统计所有模型，用颜色区分每日最常用模型，用深浅表示消耗。支持下载 SVG 或主动开启可撤销的公开图片链接，分享地址使用独立随机标识，不含 API Key 或用户身份。
+
 ```bash
 curl -fsSL 'http://localhost:8080/rai/install.sh' | bash
 ```

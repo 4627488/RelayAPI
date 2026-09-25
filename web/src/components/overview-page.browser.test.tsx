@@ -6,6 +6,7 @@ import { UsageView } from "./usage-view"
 import { analyticsFixture } from "@/test/analytics-fixture"
 import { expectNoA11yViolations } from "@/test/a11y"
 import { api, type Session } from "@/lib/api"
+import { heatmapFixture } from "@/test/heatmap-fixture"
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
   api: vi.fn(),
@@ -15,6 +16,7 @@ const session = {
 } as Session
 function setup() {
   vi.mocked(api).mockImplementation(async (path) => {
+    if (path === "/api/usage/heatmap") return heatmapFixture()
     if (path.startsWith("/api/usage"))
       return {
         ...analyticsFixture,

@@ -44,6 +44,7 @@ import {
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { dateTime, money } from "@/lib/format"
 import { routeHref, type Page } from "@/lib/routes"
+import { TokenHeatmap } from "@/components/user/token-heatmap"
 
 export function OverviewPage({
   admin = false,
@@ -176,6 +177,7 @@ export function OverviewPage({
         </Alert>
       )}
       <AnalyticsSummary report={data.usage} />
+      {!admin && <TokenHeatmap key={data.usage.generated_at} />}
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <UsageTrend report={data.usage} />
         <Card className="min-w-0">
