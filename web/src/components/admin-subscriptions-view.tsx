@@ -150,6 +150,8 @@ export function AdminSubscriptionsView() {
   const [assignModels, setAssignModels] = useState<string[]>([])
   const [parentEditor, setParentEditor] =
     useState<ParentSubscriptionView | null>(null)
+  const [deletingAccount, setDeletingAccount] =
+    useState<ParentSubscription | null>(null)
   const [childEditor, setChildEditor] = useState<ChildSubscription | null>(null)
   const [deletingChild, setDeletingChild] = useState<ChildSubscription | null>(
     null
@@ -376,6 +378,28 @@ export function AdminSubscriptionsView() {
     }
   }
 
+  async function removeAccount() {
+    if (!deletingAccount || pending) return
+    const accountID = deletingAccount.upstream_credential_id
+    if (!accountID) return
+    setPending(true)
+    try {
+      await deleteRequest(
+        `/api/admin/providers/accounts/${encodeURIComponent(accountID)}`
+      )
+      setDeletingAccount(null)
+      toast.add({ title: "账户已删除", type: "success" })
+      await load()
+    } catch (cause) {
+      toast.add({
+        title: cause instanceof Error ? cause.message : "删除失败",
+        type: "error",
+      })
+    } finally {
+      setPending(false)
+    }
+  }
+
   async function removeChild() {
     if (!deletingChild) return
     setPending(true)
@@ -501,6 +525,7 @@ export function AdminSubscriptionsView() {
               onEdit={setChildEditor}
               onToggle={(child) => void toggleChild(child)}
               onDelete={setDeletingChild}
+              onDeleteAccount={() => setDeletingAccount(selected.item)}
             />
           ) : null}
         </div>
@@ -733,6 +758,33 @@ export function AdminSubscriptionsView() {
         </DialogContent>
       </Dialog>
 
+      <AlertDialog
+        open={Boolean(deletingAccount)}
+        onOpenChange={(open) => {
+          if (!open && !pending) setDeletingAccount(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除“{deletingAccount?.name}”？</AlertDialogTitle>
+            <AlertDialogDescription>
+              该模型账户会从加密数据库和模型路由中立即移除，此操作无法撤销。关联租户授权将无法使用该账户，历史授权保留，可迁移到其他账户或单独删除。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>取消</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={() => void removeAccount()}
+            >
+              {pending ? <Spinner /> : <Trash2Icon data-icon="inline-start" />}
+              确认删除账户
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <ParentSettingsDialog
         value={parentEditor}
         pending={pending}
@@ -821,6 +873,7 @@ function AccountAllocationPanel({
   pending,
   onAssign,
   onConfigure,
+  onDeleteAccount,
   onEdit,
   onToggle,
   onDelete,
@@ -831,6 +884,7 @@ function AccountAllocationPanel({
   pending: boolean
   onAssign: () => void
   onConfigure: () => void
+  onDeleteAccount: () => void
   onEdit: (child: ChildSubscription) => void
   onToggle: (child: ChildSubscription) => void
   onDelete: (child: ChildSubscription) => void
@@ -939,7 +993,21 @@ function AccountAllocationPanel({
           <Alert variant="destructive">
             <AlertCircleIcon />
             <AlertTitle>当前账户不能继续分配</AlertTitle>
-            <AlertDescription>{accountBlockReason(view)}</AlertDescription>
+            <AlertDescription>
+              <p>{accountBlockReason(view)}</p>
+              {view.item.status !== "missing" &&
+              view.item.upstream_credential_id ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={pending}
+                  onClick={onDeleteAccount}
+                >
+                  <Trash2Icon data-icon="inline-start" />
+                  删除账户
+                </Button>
+              ) : null}
+            </AlertDescription>
           </Alert>
         ) : null}
 

@@ -1,4 +1,5 @@
 .env
+/.env.github.local
 /relayapi
 cliproxyapi/config.yaml
 cliproxyapi/auths/

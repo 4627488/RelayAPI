@@ -8,18 +8,37 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function stubAuthStatus(setupRequired: boolean) {
+function stubAuthStatus(setupRequired: boolean, githubEnabled = false) {
   const fetchMock = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify({ setup_required: setupRequired }), {
-      headers: { "Content-Type": "application/json" },
-      status: 200,
-    })
+    new Response(
+      JSON.stringify({
+        setup_required: setupRequired,
+        github_enabled: githubEnabled,
+      }),
+      {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      }
+    )
   )
   vi.stubGlobal("fetch", fetchMock)
   return fetchMock
 }
 
 describe("authentication page", () => {
+  it("offers GitHub login only when configured and preserves password login", async () => {
+    stubAuthStatus(false, true)
+    const screen = await render(<AuthPage onAuthenticated={() => undefined} />)
+    await expect
+      .element(screen.getByRole("button", { name: "使用 GitHub 登录" }))
+      .toBeVisible()
+    await expect.element(screen.getByLabelText("密码")).toBeVisible()
+    await screen.getByRole("button", { name: "已有邀请？创建账户" }).click()
+    await expect
+      .element(screen.getByRole("button", { name: "使用 GitHub 登录" }))
+      .not.toBeInTheDocument()
+  })
+
   it("shows a focused login panel and preserves invitation mode", async () => {
     const fetchMock = stubAuthStatus(false)
     const screen = await render(<AuthPage onAuthenticated={() => undefined} />)

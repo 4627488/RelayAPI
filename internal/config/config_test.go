@@ -20,6 +20,23 @@ func TestLoadDoesNotRequireExternalUpstreamKey(t *testing.T) {
 	}
 }
 
+func TestGitHubCredentialsMustBeConfiguredTogether(t *testing.T) {
+	validEnvironment(t)
+	t.Setenv("RELAY_GITHUB_CLIENT_ID", "client")
+	t.Setenv("RELAY_GITHUB_CLIENT_SECRET", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("accepted missing GitHub secret")
+	}
+	t.Setenv("RELAY_GITHUB_CLIENT_SECRET", "secret")
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RELAY_GITHUB_CLIENT_ID", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("accepted missing GitHub client ID")
+	}
+}
+
 func TestLoadUsesMemoryBoundedRequestDefaults(t *testing.T) {
 	validEnvironment(t)
 	t.Setenv("RELAY_MAX_REQUEST_MIB", "")

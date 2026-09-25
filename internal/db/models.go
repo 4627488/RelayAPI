@@ -7,6 +7,8 @@ import (
 )
 
 type Tenant struct {
+	GitHubID           *int64         `gorm:"column:github_id;uniqueIndex" json:"-"`
+	GitHubLogin        string         `gorm:"column:github_login;not null;default:''" json:"-"`
 	ID                 string         `gorm:"type:uuid;primaryKey" json:"id"`
 	Name               string         `gorm:"not null" json:"name"`
 	OwnerEmail         string         `gorm:"uniqueIndex;not null" json:"owner_email"`

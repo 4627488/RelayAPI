@@ -653,6 +653,7 @@ func TestNativeResponsesWebSocketPipelinedStepsKeepIndependentBoundaries(t *test
 			requests <- body
 			if i == 1 {
 				<-releaseFirst
+				_ = conn.WriteJSON(map[string]any{"type": "response.output_text.delta", "delta": "hello", "response_id": "resp_1"})
 			}
 			_ = conn.WriteJSON(map[string]any{
 				"type": "response.completed", "response": map[string]any{
@@ -700,6 +701,10 @@ func TestNativeResponsesWebSocketPipelinedStepsKeepIndependentBoundaries(t *test
 		t.Fatal(err)
 	}
 	close(releaseFirst)
+	// Read the generated delta before the two terminal events.
+	if _, _, err = client.ReadMessage(); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err = client.ReadMessage(); err != nil {
 		t.Fatal(err)
 	}
@@ -707,6 +712,12 @@ func TestNativeResponsesWebSocketPipelinedStepsKeepIndependentBoundaries(t *test
 		t.Fatal(err)
 	}
 	one, two := <-entries, <-entries
+	if one.FirstTokenAt.IsZero() || one.FirstTokenAt.Before(one.StartedAt) || one.FirstTokenAt.After(one.CompletedAt) {
+		t.Fatalf("first step lost its generated delta timestamp: %+v", one)
+	}
+	if !two.FirstTokenAt.IsZero() {
+		t.Fatalf("second step without a delta inherited a first token: %+v", two)
+	}
 	if one.Result.RequestID != "resp_1" || two.Result.RequestID != "resp_2" || one.Result.Usage.Total != 2 || two.Result.Usage.Total != 3 {
 		t.Fatalf("step entries = %+v / %+v", one, two)
 	}

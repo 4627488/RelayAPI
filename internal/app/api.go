@@ -48,7 +48,7 @@ func (a *App) authStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"setup_required": setupRequired})
+	writeJSON(w, http.StatusOK, map[string]bool{"setup_required": setupRequired, "github_enabled": a.githubEnabled()})
 }
 
 func (a *App) adminOverview(w http.ResponseWriter, r *http.Request) {

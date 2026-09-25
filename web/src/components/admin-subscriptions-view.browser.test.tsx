@@ -4,6 +4,7 @@ import { render } from "vitest-browser-react"
 import { AdminSubscriptionsView } from "@/components/admin-subscriptions-view"
 import {
   api,
+  deleteRequest,
   type ParentSubscriptionView,
   type ChildSubscription,
 } from "@/lib/api"
@@ -12,6 +13,7 @@ import { expectNoA11yViolations } from "@/test/a11y"
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
   api: vi.fn(),
+  deleteRequest: vi.fn(),
 }))
 
 const parents = ["observed", "unmetered"].map((mode, index) => ({
@@ -57,6 +59,48 @@ afterEach(async () => {
 })
 
 describe("subscription allocation", () => {
+  it("confirms account deletion, keeps failed deletion retryable, and refreshes after success", async () => {
+    const unavailable = {
+      ...parents[0],
+      item: {
+        ...parents[0].item,
+        upstream_unavailable: true,
+        upstream_credential_id: "account/one",
+      },
+    }
+    let deleted = false
+    vi.mocked(api).mockImplementation(async (path) => ({
+      items: path.endsWith("parents") ? (deleted ? [] : [unavailable]) : [],
+    }))
+    vi.mocked(deleteRequest).mockReset()
+    vi.mocked(deleteRequest).mockRejectedValueOnce(new Error("删除失败"))
+    vi.mocked(deleteRequest).mockImplementationOnce(async () => {
+      deleted = true
+    })
+    const screen = await render(<AdminSubscriptionsView />)
+    await screen.getByRole("button", { name: "删除账户", exact: true }).click()
+    expect(deleteRequest).not.toHaveBeenCalled()
+    await screen.getByRole("button", { name: "取消", exact: true }).click()
+    expect(deleteRequest).not.toHaveBeenCalled()
+    await screen.getByRole("button", { name: "删除账户", exact: true }).click()
+    await screen.getByRole("button", { name: "确认删除账户" }).click()
+    await expect
+      .element(screen.getByRole("button", { name: "确认删除账户" }))
+      .toBeEnabled()
+    await expect.element(screen.getByRole("alertdialog")).toBeVisible()
+    await screen.getByRole("button", { name: "确认删除账户" }).click()
+    await expect.poll(() => deleted).toBe(true)
+    expect(deleteRequest).toHaveBeenLastCalledWith(
+      "/api/admin/providers/accounts/account%2Fone"
+    )
+    await expect
+      .element(screen.getByRole("alertdialog"))
+      .not.toBeInTheDocument()
+    await expect
+      .element(screen.getByRole("heading", { name: "研发共享账户" }))
+      .not.toBeInTheDocument()
+  })
+
   it.each([390, 1280])(
     "keeps allocation controls compact and usable at %s",
     async (width) => {

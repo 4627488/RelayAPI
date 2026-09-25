@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 export type Workspace = "user" | "admin"
 
 export type Page =
+  | "account"
   | "overview"
   | "usage"
   | "keys"
@@ -27,6 +28,7 @@ export interface AppRoute {
 type RouteLocation = Pick<Location, "pathname" | "hash">
 
 const userPages = new Set<Page>([
+  "account",
   "overview",
   "usage",
   "keys",

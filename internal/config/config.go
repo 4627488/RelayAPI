@@ -16,6 +16,8 @@ type Config struct {
 	SessionSecret                  string
 	APIKeyEncryptionKey            string
 	PublicURL                      string
+	GitHubClientID                 string
+	GitHubClientSecret             string
 	SecureCookies                  bool
 	ReservationNanoUSD             int64
 	ImageReservationNanoUSD        int64
@@ -56,6 +58,8 @@ func Load() (Config, error) {
 		SessionSecret:                  strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),
 		APIKeyEncryptionKey:            strings.TrimSpace(os.Getenv("RELAY_API_KEY_ENCRYPTION_KEY")),
 		PublicURL:                      strings.TrimRight(env("RELAY_PUBLIC_URL", "http://localhost:3000"), "/"),
+		GitHubClientID:                 strings.TrimSpace(os.Getenv("RELAY_GITHUB_CLIENT_ID")),
+		GitHubClientSecret:             strings.TrimSpace(os.Getenv("RELAY_GITHUB_CLIENT_SECRET")),
 		SecureCookies:                  envBool("RELAY_SECURE_COOKIES", false),
 		ReservationNanoUSD:             envInt64("BILLING_RESERVE_NANO_USD", 10_000_000),
 		ImageReservationNanoUSD:        envInt64("BILLING_IMAGE_RESERVE_NANO_USD", 500_000_000),
@@ -90,6 +94,9 @@ func Load() (Config, error) {
 	}
 	if cfg.APIKeyEncryptionKey == "" {
 		cfg.APIKeyEncryptionKey = cfg.SessionSecret
+	}
+	if (cfg.GitHubClientID == "") != (cfg.GitHubClientSecret == "") {
+		return Config{}, errors.New("RELAY_GITHUB_CLIENT_ID and RELAY_GITHUB_CLIENT_SECRET must be configured together")
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")

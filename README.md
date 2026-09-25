@@ -38,6 +38,8 @@ WebSocket 入口。
 
 镜像、版本标签和推荐部署方式见 [docs/distribution.md](docs/distribution.md)。
 
+可选 [GitHub 登录](docs/github-login.md)：已有用户在「账户设置」验证当前密码后主动绑定，之后可使用 GitHub 登录。新用户仍使用现有邀请注册流程。
+
 ## 必需配置
 
 | 变量 | 用途 |

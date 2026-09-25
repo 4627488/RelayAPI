@@ -39,6 +39,7 @@ export const userNavigation: NavigationItem[] = [
     icon: PackageOpenIcon,
     section: "账户",
   },
+  { id: "account", label: "账户设置", icon: SettingsIcon, section: "账户" },
 ]
 
 export const adminNavigation: NavigationItem[] = [
@@ -73,6 +74,7 @@ export const workspaceLabels: Record<Workspace, string> = {
 }
 
 export const pageLabels: Partial<Record<Page, string>> = {
+  account: "账户设置",
   overview: "总览",
   usage: "用量",
   keys: "API Keys",

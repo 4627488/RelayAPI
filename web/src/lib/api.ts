@@ -22,6 +22,7 @@ export interface Session {
 }
 
 export interface AuthStatus {
+  github_enabled?: boolean
   setup_required: boolean
 }
 

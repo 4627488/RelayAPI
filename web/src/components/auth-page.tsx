@@ -21,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { api, postJSON, type AuthStatus, type Session } from "@/lib/api"
+import { githubResultMessage } from "@/lib/github-auth"
 
 interface AuthPageProps {
   onAuthenticated: (session: Session) => void
@@ -65,7 +66,10 @@ export function AuthFrame({
 export function AuthPage({ onAuthenticated }: AuthPageProps) {
   const token = new URLSearchParams(window.location.search).get("token")
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState("")
+  const [error, setError] = useState(() =>
+    githubResultMessage(new URLSearchParams(location.search).get("github"))
+  )
+  const [githubEnabled, setGithubEnabled] = useState(false)
   const [mode, setMode] = useState(token ? "register" : "login")
   const [setupRequired, setSetupRequired] = useState(false)
 
@@ -73,10 +77,26 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
     api<AuthStatus>("/api/auth/status")
       .then((status) => {
         setSetupRequired(status.setup_required)
+        setGithubEnabled(Boolean(status.github_enabled))
         if (status.setup_required) setMode("register")
       })
       .catch(() => undefined)
   }, [])
+
+  async function githubLogin() {
+    setPending(true)
+    setError("")
+    try {
+      const result = await postJSON<{ url: string }>(
+        "/api/auth/github/login",
+        {}
+      )
+      window.location.assign(result.url)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "GitHub 登录失败")
+      setPending(false)
+    }
+  }
 
   async function submit(path: string, payload: Record<string, string>) {
     setPending(true)
@@ -153,6 +173,17 @@ export function AuthPage({ onAuthenticated }: AuthPageProps) {
         </Alert>
       ) : null}
 
+      {mode === "login" && githubEnabled && (
+        <Button
+          type="button"
+          variant="outline"
+          className="mb-4 w-full"
+          disabled={pending}
+          onClick={() => void githubLogin()}
+        >
+          使用 GitHub 登录
+        </Button>
+      )}
       {mode === "register" ? (
         <form key="register" onSubmit={register}>
           <FieldGroup>

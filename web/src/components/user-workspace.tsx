@@ -9,6 +9,11 @@ const UserOverview = lazy(() =>
     default: module.UserOverview,
   }))
 )
+const AccountSettings = lazy(() =>
+  import("@/components/user/account-settings").then((module) => ({
+    default: module.AccountSettings,
+  }))
+)
 const UserKeys = lazy(() =>
   import("@/components/user/user-keys").then((module) => ({
     default: module.UserKeys,
@@ -55,7 +60,9 @@ export function UserWorkspace({
 
   return (
     <Suspense fallback={<LoadingView />}>
-      {page === "keys" ? (
+      {page === "account" ? (
+        <AccountSettings />
+      ) : page === "keys" ? (
         <UserKeys tenantModels={tenantModels} />
       ) : page === "rai-devices" ? (
         <RAIDevices />
