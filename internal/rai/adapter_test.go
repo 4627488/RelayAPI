@@ -10,13 +10,14 @@ import (
 )
 
 func TestCodexPrepareUsesConfigOverridesAndAuthCommand(t *testing.T) {
+	codexHome := t.TempDir()
 	command, err := CodexAdapter{}.Prepare(LaunchContext{
 		Profile:    Profile{Name: "work", ReasoningEffort: "xhigh"},
 		APIBase:    "https://relay.example",
 		APIKey:     "relay_secret",
 		Model:      "gpt-test",
 		Args:       []string{"exec", "hello"},
-		Environ:    []string{"PATH=/bin"},
+		Environ:    []string{"PATH=/bin", "CODEX_HOME=" + codexHome},
 		RAI:        "/opt/rai",
 		Executable: "/usr/bin/codex",
 	})
@@ -28,12 +29,12 @@ func TestCodexPrepareUsesConfigOverridesAndAuthCommand(t *testing.T) {
 	}
 	joined := strings.Join(command.Args, " ")
 	for _, want := range []string{
-		"-c model_provider=relayapi",
+		"-c model_provider=relayapi_rai",
 		`-c model="gpt-test"`,
 		"-c model_reasoning_effort=xhigh",
-		`-c model_providers.relayapi.base_url="https://relay.example/v1"`,
-		"-c model_providers.relayapi.wire_api=responses",
-		`-c model_providers.relayapi.auth.command="/opt/rai"`,
+		`-c model_providers.relayapi_rai.base_url="https://relay.example/v1"`,
+		"-c model_providers.relayapi_rai.wire_api=responses",
+		`-c model_providers.relayapi_rai.auth.command="/opt/rai"`,
 		"exec hello",
 	} {
 		if !strings.Contains(joined, want) {

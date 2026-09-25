@@ -29,9 +29,12 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 			return Command{}, err
 		}
 	}
-	// Codex 0.149+ rejects combining [model_providers.*.auth] with env_key or
-	// requires_openai_auth. The site setup script only sets auth.command; keep
-	// that exclusive so `rai credential print` can refresh the catalog.
+	// Codex recursively merges even whole-table CLI overrides. Use an unused
+	// provider so persisted credentials cannot mix with our auth command.
+	providerID, err := codexRuntimeProvider(ctx.Environ)
+	if err != nil {
+		return Command{}, err
+	}
 	base := strings.TrimRight(ctx.APIBase, "/") + "/v1"
 	rai := ctx.RAI
 	if rai == "" {
@@ -73,19 +76,9 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 }
 
 func quoteTOMLString(value string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '\\', '"':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
+	// JSON string escapes are also valid TOML basic-string escapes.
+	raw, _ := json.Marshal(value)
+	return string(raw)
 }
 
 func probeVersion(path string) string {

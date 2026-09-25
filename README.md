@@ -109,6 +109,10 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 `rai codex` 未指定模型时沿用 Codex 自身配置和默认值，不再自动选择目录中的第一个模型。在 Codex 内切换并保存模型、推理强度后，退出时 rai 自动记住变化，下次 `rai codex` 沿用该选择。配置读取遵循 `CODEX_HOME`（默认 `~/.codex`）；同步范围是用户 `config.toml` 中的模型和推理强度，其他设置仍由 Codex 原生保存。可用模型见 `rai models`，固定模型用 `rai use <模型名>`，恢复客户端默认用 `rai use default`，仅本次覆盖用 `rai codex --model <模型名>`。旧版本自动选中了 code-review 时，运行一次 `rai use default` 即可。需要主动导入已有 Codex 偏好时可运行 `rai sync codex`。其他客户端会使用站点默认候选，候选均不可用时需用 `rai use` 或 `--model` 指定模型。
 
+需要直接运行 `codex` 时，执行 `rai configure codex`，确认后将当前 rai profile 的 API Key 明文写入用户全局 `~/.codex/config.toml`（设置了 `CODEX_HOME` 时使用该目录）。`rai configure codex -y` 或 `--yes` 跳过确认，`--profile <名称>` 选择指定站点。命令合并已有配置，设置 RelayAPI 为默认 provider，保留其他 provider、MCP、项目及权限设置；目标 provider 的旧认证命令、环境变量认证及 Authorization 请求头会被移除。已保存的 rai 模型和推理强度会一并写入，未设置时保留 Codex 原值。原文件备份为 `config.toml.rai.bak`，每次成功写入前更新备份；TOML 会重新序列化，原注释和排版可在备份中查看。配置和备份以 0600 权限创建（Windows 使用文件系统 ACL）。损坏的 TOML 不会被覆盖。静态 key 不随后续 `rai login` / `logout` 自动更新，需要重新配置或手动移除。
+
+`rai codex` 使用独立的运行时 provider（`relayapi_rai`，名称占用时自动加后缀），忽略已保存 provider 的 key，继续使用当前 rai profile 的凭据；启动不会改写本地 provider 配置。
+
 Windows 安装器会将安装目录写入用户 PATH；macOS/Linux 若目录不在 PATH，会打印可加入 shell 配置的命令。安装后打开新终端，用 `rai doctor` 检查 PATH、登录和客户端安装情况。
 
 浏览器授权生成的 rai 凭据在个人工作台「rai 已登录设备」中单独管理，不再混入手动创建的 API Key。页面显示设备名称、系统、架构、登录时的 rai 版本、授权时间和最近调用时间，并可撤销该设备的登录。系统信息由客户端上报，旧版未上报的字段显示为未知；`--api-key-stdin` 使用的已有 Key 仍在「API 密钥」管理。最近调用时间不代表在线状态，本地 `rai logout` 只移除本地凭据；需要停用服务端凭据时在设备页面撤销。

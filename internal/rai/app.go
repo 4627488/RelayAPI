@@ -81,6 +81,8 @@ func (a *App) Execute(ctx context.Context) error {
 			return errors.New("usage: rai sync codex")
 		}
 		return a.syncCodex(ctx, profileName)
+	case "configure":
+		return a.configureCodex(profileName, args[1:])
 	case "credential":
 		return a.credential(profileName, args[1:])
 	case "doctor":
@@ -154,6 +156,7 @@ Usage:
   rai models
   rai use <model|default|--auto>    Save a model, follow the agent, or follow the site
   rai sync codex            Import saved Codex model and reasoning settings
+  rai configure codex [-y]  Merge the current API key into global Codex config
   rai credential print
   rai doctor
   rai update

@@ -21,7 +21,7 @@ type codexPreferences struct {
 	modified  time.Time
 }
 
-func readCodexPreferences(environ []string) (codexPreferences, error) {
+func codexConfigPath(environ []string) (string, error) {
 	home := ""
 	for _, entry := range environ {
 		key, value, ok := strings.Cut(entry, "=")
@@ -32,11 +32,18 @@ func readCodexPreferences(environ []string) (codexPreferences, error) {
 	if home == "" {
 		userHome, err := os.UserHomeDir()
 		if err != nil {
-			return codexPreferences{}, err
+			return "", err
 		}
 		home = filepath.Join(userHome, ".codex")
 	}
-	path := filepath.Join(home, "config.toml")
+	return filepath.Join(home, "config.toml"), nil
+}
+
+func readCodexPreferences(environ []string) (codexPreferences, error) {
+	path, err := codexConfigPath(environ)
+	if err != nil {
+		return codexPreferences{}, err
+	}
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return codexPreferences{}, nil
