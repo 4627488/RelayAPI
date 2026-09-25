@@ -1,3 +1,4 @@
+import { RequestLogInsight } from "@/components/request-log-insight"
 import type { MouseEvent } from "react"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -154,14 +155,18 @@ export function RequestLogList({
                   )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  <p>{compactTokens(log.total_tokens)}</p>
+                  <RequestLogInsight log={log} section="usage">
+                    {compactTokens(log.total_tokens)}
+                  </RequestLogInsight>
                   <p className="text-xs text-muted-foreground">
                     缓存率{" "}
                     {cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}
                   </p>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  <p>{duration(log.latency_ms)}</p>
+                  <RequestLogInsight log={log} section="latency">
+                    {duration(log.latency_ms)}
+                  </RequestLogInsight>
                   <p
                     className="text-xs text-muted-foreground"
                     title="请求开始至 Relay 观测到首个非空生成内容（含推理或工具参数）；未观测时显示 —"
@@ -173,7 +178,9 @@ export function RequestLogList({
                   </p>
                 </TableCell>
                 <TableCell className="pr-4 text-right tabular-nums">
-                  {money(log.cost_nano_usd)}
+                  <RequestLogInsight log={log} section="billing">
+                    {money(log.cost_nano_usd)}
+                  </RequestLogInsight>
                 </TableCell>
               </TableRow>
             ))}
@@ -183,10 +190,7 @@ export function RequestLogList({
       <ul className="divide-y @3xl:hidden" aria-label="请求记录">
         {logs.map((log) => (
           <li key={log.id}>
-            <a
-              {...link(log)}
-              className="block min-w-0 space-y-3 p-4 hover:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-            >
+            <div className="flex min-w-0 flex-col gap-3 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <time className="text-xs text-muted-foreground">
                   {dateTime(log.started_at)}
@@ -195,12 +199,15 @@ export function RequestLogList({
                 <Result log={log} />
               </div>
               <div className="min-w-0">
-                <p className="truncate font-medium">
+                <a
+                  {...link(log)}
+                  className="block truncate font-medium underline-offset-4 hover:underline focus-visible:underline"
+                >
                   {log.actual_model ||
                     log.requested_model ||
                     log.model ||
                     log.path}
-                </p>
+                </a>
                 <p className="truncate text-xs text-muted-foreground">
                   {log.client_name || "未知客户端"} · {log.path}
                 </p>
@@ -224,15 +231,27 @@ export function RequestLogList({
               <dl className="grid grid-cols-3 gap-2 text-sm tabular-nums">
                 <div>
                   <dt className="text-xs text-muted-foreground">Tokens</dt>
-                  <dd>{compactTokens(log.total_tokens)}</dd>
+                  <dd>
+                    <RequestLogInsight log={log} section="usage">
+                      {compactTokens(log.total_tokens)}
+                    </RequestLogInsight>
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">耗时</dt>
-                  <dd>{duration(log.latency_ms)}</dd>
+                  <dd>
+                    <RequestLogInsight log={log} section="latency">
+                      {duration(log.latency_ms)}
+                    </RequestLogInsight>
+                  </dd>
                 </div>
                 <div className="text-right">
                   <dt className="text-xs text-muted-foreground">费用</dt>
-                  <dd>{money(log.cost_nano_usd)}</dd>
+                  <dd>
+                    <RequestLogInsight log={log} section="billing">
+                      {money(log.cost_nano_usd)}
+                    </RequestLogInsight>
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">缓存率</dt>
@@ -249,7 +268,7 @@ export function RequestLogList({
                   </dd>
                 </div>
               </dl>
-            </a>
+            </div>
           </li>
         ))}
       </ul>

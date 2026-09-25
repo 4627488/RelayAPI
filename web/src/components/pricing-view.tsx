@@ -5,15 +5,14 @@ import {
   useState,
   type FormEvent,
 } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  Alert02Icon,
+  AlertCircleIcon,
   CircleDollarSignIcon,
   CloudDownloadIcon,
   PencilIcon,
-  Search01Icon,
-  Delete02Icon,
-} from "@hugeicons/core-free-icons"
+  SearchIcon,
+  Trash2Icon,
+} from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
 import { Badge } from "@/components/ui/badge"
@@ -299,7 +298,7 @@ export function PricingView() {
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-6">
       <PageHeader
         title="目录与计费"
         actions={
@@ -309,11 +308,7 @@ export function PricingView() {
               disabled={pending}
               onClick={() => void syncCatalog(false)}
             >
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={CloudDownloadIcon}
-                data-icon="inline-start"
-              />
+              <CloudDownloadIcon data-icon="inline-start" />
               预览同步
             </Button>
             <Button
@@ -321,11 +316,7 @@ export function PricingView() {
               disabled={pending}
               onClick={() => void syncCatalog(true)}
             >
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={CloudDownloadIcon}
-                data-icon="inline-start"
-              />
+              <CloudDownloadIcon data-icon="inline-start" />
               应用 Models.dev
             </Button>
           </>
@@ -354,21 +345,21 @@ export function PricingView() {
       />
       {loadError ? (
         <Alert variant="destructive">
-          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
+          <AlertCircleIcon />
           <AlertTitle>定价数据加载失败</AlertTitle>
           <AlertDescription>{loadError}</AlertDescription>
         </Alert>
       ) : null}
       {prices.catalog_sync_error ? (
         <Alert>
-          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
+          <AlertCircleIcon />
           <AlertTitle>Models.dev 暂时不可用，当前使用内置目录</AlertTitle>
           <AlertDescription>{prices.catalog_sync_error}</AlertDescription>
         </Alert>
       ) : null}
       {prices.available_models_error ? (
         <Alert variant="destructive">
-          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
+          <AlertCircleIcon />
           <AlertTitle>无法读取本站模型</AlertTitle>
           <AlertDescription>{prices.available_models_error}</AlertDescription>
         </Alert>
@@ -419,7 +410,7 @@ export function PricingView() {
                     <TableCell className="font-mono text-xs">
                       {price.model}
                       {price.priced && price.priced_model !== price.model ? (
-                        <p className="text-[10px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           按 {price.priced_model} 计价
                         </p>
                       ) : null}
@@ -464,7 +455,7 @@ export function PricingView() {
                           aria-label={`配置 ${price.model}`}
                           onClick={() => setEditingPrice(price)}
                         >
-                          <HugeiconsIcon strokeWidth={2} icon={PencilIcon} />
+                          <PencilIcon />
                         </Button>
                         {price.source === "admin" ? (
                           <Button
@@ -473,10 +464,7 @@ export function PricingView() {
                             aria-label={`删除 ${price.model} 的管理员价格`}
                             onClick={() => void remove(price.model)}
                           >
-                            <HugeiconsIcon
-                              strokeWidth={2}
-                              icon={Delete02Icon}
-                            />
+                            <Trash2Icon />
                           </Button>
                         ) : null}
                       </span>
@@ -489,7 +477,7 @@ export function PricingView() {
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <HugeiconsIcon strokeWidth={2} icon={Search01Icon} />
+                  <SearchIcon />
                 </EmptyMedia>
                 <EmptyTitle>
                   {prices.available_models.length
@@ -790,11 +778,7 @@ export function PricingView() {
               {pending ? (
                 <Spinner />
               ) : (
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={CircleDollarSignIcon}
-                  data-icon="inline-start"
-                />
+                <CircleDollarSignIcon data-icon="inline-start" />
               )}
               保存
             </Button>

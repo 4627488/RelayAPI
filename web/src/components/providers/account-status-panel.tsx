@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { Activity01Icon } from "@hugeicons/core-free-icons"
+import { ActivityIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -179,7 +178,7 @@ export function AccountStatusPanel({
             }
             onClick={() => onTest(account)}
           >
-            <HugeiconsIcon strokeWidth={2} icon={Activity01Icon} />
+            <ActivityIcon />
             测试已发布模型
           </Button>
           {oauth ? (

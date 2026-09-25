@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
 import {
   BanIcon,
   CircleCheckIcon,
@@ -7,9 +6,9 @@ import {
   CopyIcon,
   KeyRoundIcon,
   MoreHorizontalIcon,
-  Delete02Icon,
+  Trash2Icon,
   UsersIcon,
-} from "@hugeicons/core-free-icons"
+} from "lucide-react"
 import { toast } from "@/components/ui/toast"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -208,7 +207,7 @@ export function UsersView({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
           <CardTitle>全部用户</CardTitle>
@@ -261,11 +260,7 @@ export function UsersView({
                           variant="outline"
                           onClick={() => setCreditUser(user)}
                         >
-                          <HugeiconsIcon
-                            strokeWidth={2}
-                            icon={CircleDollarSignIcon}
-                            data-icon="inline-start"
-                          />
+                          <CircleDollarSignIcon data-icon="inline-start" />
                           充值
                         </Button>
                         <DropdownMenu>
@@ -278,10 +273,7 @@ export function UsersView({
                               />
                             }
                           >
-                            <HugeiconsIcon
-                              strokeWidth={2}
-                              icon={MoreHorizontalIcon}
-                            />
+                            <MoreHorizontalIcon />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuGroup>
@@ -291,10 +283,7 @@ export function UsersView({
                                   setTemporaryPassword("")
                                 }}
                               >
-                                <HugeiconsIcon
-                                  strokeWidth={2}
-                                  icon={KeyRoundIcon}
-                                />
+                                <KeyRoundIcon />
                                 重置密码
                               </DropdownMenuItem>
                               <DropdownMenuItem
@@ -302,15 +291,9 @@ export function UsersView({
                                 onClick={() => void toggleUser(user)}
                               >
                                 {user.enabled ? (
-                                  <HugeiconsIcon
-                                    strokeWidth={2}
-                                    icon={BanIcon}
-                                  />
+                                  <BanIcon />
                                 ) : (
-                                  <HugeiconsIcon
-                                    strokeWidth={2}
-                                    icon={CircleCheckIcon}
-                                  />
+                                  <CircleCheckIcon />
                                 )}
                                 {user.enabled ? "停用" : "启用"}
                               </DropdownMenuItem>
@@ -322,10 +305,7 @@ export function UsersView({
                                 disabled={pending || user.id === currentUserId}
                                 onClick={() => setDeleteUser(user)}
                               >
-                                <HugeiconsIcon
-                                  strokeWidth={2}
-                                  icon={Delete02Icon}
-                                />
+                                <Trash2Icon />
                                 删除
                               </DropdownMenuItem>
                             </DropdownMenuGroup>
@@ -341,7 +321,7 @@ export function UsersView({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <HugeiconsIcon strokeWidth={2} icon={UsersIcon} />
+                  <UsersIcon />
                 </EmptyMedia>
                 <EmptyTitle>还没有用户</EmptyTitle>
                 <EmptyDescription>
@@ -409,11 +389,7 @@ export function UsersView({
               {pending ? (
                 <Spinner />
               ) : (
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={CircleDollarSignIcon}
-                  data-icon="inline-start"
-                />
+                <CircleDollarSignIcon data-icon="inline-start" />
               )}
               确认充值
             </Button>
@@ -429,7 +405,7 @@ export function UsersView({
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
             <AlertDialogMedia>
-              <HugeiconsIcon strokeWidth={2} icon={Delete02Icon} />
+              <Trash2Icon />
             </AlertDialogMedia>
             <AlertDialogTitle>永久删除用户？</AlertDialogTitle>
             <AlertDialogDescription>
@@ -444,15 +420,7 @@ export function UsersView({
               disabled={pending}
               onClick={() => void removeUser()}
             >
-              {pending ? (
-                <Spinner />
-              ) : (
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={Delete02Icon}
-                  data-icon="inline-start"
-                />
-              )}
+              {pending ? <Spinner /> : <Trash2Icon data-icon="inline-start" />}
               确认删除
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -501,7 +469,7 @@ export function UsersView({
                         )
                       }
                     >
-                      <HugeiconsIcon strokeWidth={2} icon={CopyIcon} />
+                      <CopyIcon />
                     </Button>
                   </InputGroupAddon>
                 </InputGroup>
@@ -531,11 +499,7 @@ export function UsersView({
                   {pending ? (
                     <Spinner />
                   ) : (
-                    <HugeiconsIcon
-                      strokeWidth={2}
-                      icon={KeyRoundIcon}
-                      data-icon="inline-start"
-                    />
+                    <KeyRoundIcon data-icon="inline-start" />
                   )}
                   生成临时密码
                 </Button>

@@ -240,7 +240,40 @@ export interface ModelPriceRule {
   multiplier: number
 }
 
+export interface UsageObservability {
+  retained_requests: number
+  step_samples: number
+  first_token_samples: number
+  ttft_samples: number
+  latency_p50_ms: number | null
+  latency_p95_ms: number | null
+  first_token_p50_ms: number | null
+  first_token_p95_ms: number | null
+  ttft_p50_ms: number | null
+  ttft_p95_ms: number | null
+  first_observed_at: string | null
+  last_observed_at: string | null
+  unpriced_requests: number
+  unsettled_requests: number
+  failures: {
+    model: string
+    status_code: number
+    error_code: string
+    requests: number
+  }[]
+  providers: {
+    provider: string
+    requests: number
+    errors: number
+    tokens: number
+    cost_nano_usd: number
+  }[]
+}
+
 export interface UsageReport {
+  period_start?: string
+  generated_at?: string
+  observability?: UsageObservability
   days: number
   user_id: string
   summary: {

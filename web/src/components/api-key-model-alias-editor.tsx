@@ -1,9 +1,4 @@
-import { HugeiconsIcon } from "@hugeicons/react"
-import {
-  PlusIcon,
-  Delete02Icon,
-  WandSparklesIcon,
-} from "@hugeicons/core-free-icons"
+import { PlusIcon, Trash2Icon, WandSparklesIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -103,11 +98,7 @@ export function ApiKeyModelAliasEditor({
                 })
               }
             >
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={WandSparklesIcon}
-                data-icon="inline-start"
-              />
+              <WandSparklesIcon data-icon="inline-start" />
               <span className="flex flex-col gap-1">
                 <span>{preset.label}</span>
                 <span className="text-xs font-normal text-muted-foreground">
@@ -179,7 +170,7 @@ export function ApiKeyModelAliasEditor({
                   )
                 }
               >
-                <HugeiconsIcon strokeWidth={2} icon={Delete02Icon} />
+                <Trash2Icon />
               </Button>
             </Field>
           )
@@ -196,11 +187,7 @@ export function ApiKeyModelAliasEditor({
             ])
           }
         >
-          <HugeiconsIcon
-            strokeWidth={2}
-            icon={PlusIcon}
-            data-icon="inline-start"
-          />
+          <PlusIcon data-icon="inline-start" />
           添加别名
         </Button>
       </FieldGroup>

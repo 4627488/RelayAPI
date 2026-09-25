@@ -15,6 +15,7 @@ export default mergeConfig(
         "@base-ui/react/collapsible",
         "@base-ui/react/dialog",
         "@base-ui/react/menu",
+        "@base-ui/react/popover",
         "@base-ui/react/merge-props",
         "@base-ui/react/separator",
         "@base-ui/react/tooltip",

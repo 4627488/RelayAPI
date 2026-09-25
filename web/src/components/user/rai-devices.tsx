@@ -86,7 +86,7 @@ export function RAIDevices() {
     return <LoadErrorView message={error} onRetry={() => void reload(true)} />
 
   return (
-    <div className="flex min-w-0 flex-col gap-3">
+    <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
         title="rai 已登录设备"
         description="管理通过浏览器授权的 rai 设备。撤销登录后，该凭据将无法发起新的请求，设备需要重新登录。"

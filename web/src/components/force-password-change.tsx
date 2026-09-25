@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { KeyRoundIcon } from "@hugeicons/core-free-icons"
+import { KeyRoundIcon } from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
 import { Button } from "@/components/ui/button"
@@ -107,15 +106,7 @@ export function ForcePasswordChange({
             退出登录
           </Button>
           <Button type="submit" form="force-password-change" disabled={pending}>
-            {pending ? (
-              <Spinner />
-            ) : (
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={KeyRoundIcon}
-                data-icon="inline-start"
-              />
-            )}
+            {pending ? <Spinner /> : <KeyRoundIcon data-icon="inline-start" />}
             保存新密码
           </Button>
         </CardFooter>

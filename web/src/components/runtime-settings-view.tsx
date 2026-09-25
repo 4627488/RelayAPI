@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { Tick02Icon, RotateCcwIcon, SaveIcon } from "@hugeicons/core-free-icons"
+import { CheckIcon, RotateCcwIcon, SaveIcon } from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
 import { Button } from "@/components/ui/button"
@@ -258,9 +257,7 @@ function ChoiceField<T extends string | number>({
             value={String(option.value)}
             className="min-w-24 flex-1"
           >
-            {String(value) === String(option.value) ? (
-              <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
-            ) : null}
+            {String(value) === String(option.value) ? <CheckIcon /> : null}
             {option.label}
           </ToggleGroupItem>
         ))}
@@ -402,7 +399,7 @@ export function RuntimeSettingsView() {
     imageModeHelp[value.image_generation_mode] ?? "当前值不在预设选项中。"
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-6">
       <StatStrip
         className="lg:grid-cols-4"
         items={[
@@ -799,22 +796,13 @@ export function RuntimeSettingsView() {
               disabled={saving}
               onClick={() => saved && setValue(saved)}
             >
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={RotateCcwIcon}
-                data-icon="inline-start"
-              />{" "}
-              撤销
+              <RotateCcwIcon data-icon="inline-start" /> 撤销
             </Button>
             <Button disabled={saving} onClick={() => void save()}>
               {saving ? (
                 <Spinner data-icon="inline-start" />
               ) : (
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={SaveIcon}
-                  data-icon="inline-start"
-                />
+                <SaveIcon data-icon="inline-start" />
               )}
               保存
             </Button>

@@ -6,18 +6,17 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  Alert02Icon,
+  AlertCircleIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
   RefreshCwIcon,
-  Search01Icon,
+  SearchIcon,
   SlidersHorizontalIcon,
   XIcon,
-} from "@hugeicons/core-free-icons"
+} from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -306,7 +305,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   if (detailLoading && route.logId) {
     return (
-      <div className="flex w-full min-w-0 flex-col gap-3">
+      <div className="flex w-full min-w-0 flex-col gap-6">
         <Skeleton className="h-9 w-28" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-72 w-full" />
@@ -315,7 +314,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   }
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-3">
+    <div className="flex w-full min-w-0 flex-col gap-6">
       <PageHeader title="请求日志" />
       <StatStrip
         items={[
@@ -419,15 +418,9 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               className="contents"
             >
               <CollapsibleTrigger render={<Button variant="outline" />}>
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={SlidersHorizontalIcon}
-                  data-icon="inline-start"
-                />
+                <SlidersHorizontalIcon data-icon="inline-start" />
                 筛选{advancedFilterCount ? ` ${advancedFilterCount}` : ""}
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={ChevronDownIcon}
+                <ChevronDownIcon
                   data-icon="inline-end"
                   className={cn(
                     "transition-transform",
@@ -444,11 +437,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                 {loading ? (
                   <Spinner data-icon="inline-start" />
                 ) : (
-                  <HugeiconsIcon
-                    strokeWidth={2}
-                    icon={RefreshCwIcon}
-                    data-icon="inline-start"
-                  />
+                  <RefreshCwIcon data-icon="inline-start" />
                 )}
                 刷新
               </Button>
@@ -551,11 +540,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               className="mt-3"
               onClick={resetFilters}
             >
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={XIcon}
-                data-icon="inline-start"
-              />
+              <XIcon data-icon="inline-start" />
               清除全部筛选
             </Button>
           ) : null}
@@ -574,7 +559,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
             <Empty className="min-h-72">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <HugeiconsIcon strokeWidth={2} icon={Search01Icon} />
+                  <SearchIcon />
                 </EmptyMedia>
                 <EmptyTitle>
                   {hasFilters ? "没有匹配的请求" : "暂无请求记录"}
@@ -594,7 +579,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
           )}
         </CardContent>
 
-        <CardFooter className="flex-wrap justify-between gap-3 [&_button]:min-h-10 sm:[&_button]:min-h-6">
+        <CardFooter className="flex-wrap justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
               {data.total} 条 · 第 {data.page}/{totalPages} 页
@@ -634,7 +619,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               onClick={() => setPage((value) => value - 1)}
               aria-label="上一页"
             >
-              <HugeiconsIcon strokeWidth={2} icon={ChevronLeftIcon} />
+              <ChevronLeftIcon />
             </Button>
             <Button
               variant="outline"
@@ -643,7 +628,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
               onClick={() => setPage((value) => value + 1)}
               aria-label="下一页"
             >
-              <HugeiconsIcon strokeWidth={2} icon={ChevronRightIcon} />
+              <ChevronRightIcon />
             </Button>
           </div>
         </CardFooter>
@@ -687,14 +672,10 @@ function LogDetailPage({
     Number(requestVisible) + Number(forwardedVisible) + Number(responseVisible)
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-3">
+    <div className="flex w-full min-w-0 flex-col gap-6">
       <div className="flex flex-wrap items-start gap-3">
         <Button variant="outline" onClick={onBack}>
-          <HugeiconsIcon
-            strokeWidth={2}
-            icon={ChevronLeftIcon}
-            data-icon="inline-start"
-          />
+          <ChevronLeftIcon data-icon="inline-start" />
           返回列表
         </Button>
         <div className="min-w-0 flex-1">
@@ -873,7 +854,7 @@ function LogOverview({
     <div className="flex flex-col gap-5 p-4 sm:p-5">
       {errorTitle || errorMessage ? (
         <Alert variant="destructive">
-          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
+          <AlertCircleIcon />
           <AlertTitle>{errorTitle || "请求失败"}</AlertTitle>
           {errorMessage ? (
             <AlertDescription className="break-words">
@@ -1262,7 +1243,7 @@ function CopyButton({
       onClick={() => void copy()}
       aria-label={label}
     >
-      <HugeiconsIcon strokeWidth={2} icon={CopyIcon} />
+      <CopyIcon />
     </Button>
   )
 }

@@ -1,3 +1,4 @@
+import { AccountHealthPanel } from "@/components/account-health-panel"
 import {
   lazy,
   Suspense,
@@ -6,14 +7,13 @@ import {
   useMemo,
   useState,
 } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  Activity01Icon,
-  Alert02Icon,
+  ActivityIcon,
+  AlertCircleIcon,
   KeyRoundIcon,
   PlusIcon,
   RefreshCwIcon,
-} from "@hugeicons/core-free-icons"
+} from "lucide-react"
 import { dateTime } from "@/lib/format"
 import { toast } from "@/components/ui/toast"
 
@@ -317,7 +317,7 @@ export function ProvidersView() {
     )
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-6">
       <PageHeader
         title="模型账户"
         actions={
@@ -330,11 +330,7 @@ export function ProvidersView() {
               {syncingQuota ? (
                 <Spinner />
               ) : (
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={RefreshCwIcon}
-                  data-icon="inline-start"
-                />
+                <RefreshCwIcon data-icon="inline-start" />
               )}
               刷新额度
             </Button>
@@ -344,11 +340,7 @@ export function ProvidersView() {
                 setConnectOpen(true)
               }}
             >
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={PlusIcon}
-                data-icon="inline-start"
-              />
+              <PlusIcon data-icon="inline-start" />
               连接账户
             </Button>
           </>
@@ -357,7 +349,7 @@ export function ProvidersView() {
 
       {loadError ? (
         <Alert variant="destructive">
-          <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
+          <AlertCircleIcon />
           <AlertTitle>账户数据读取失败</AlertTitle>
           <AlertDescription className="flex items-center justify-between gap-3">
             <span>
@@ -365,17 +357,16 @@ export function ProvidersView() {
               {accounts.length ? "。页面保留了上次成功读取的数据。" : ""}
             </span>
             <Button size="sm" variant="outline" onClick={() => void load()}>
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={RefreshCwIcon}
-                data-icon="inline-start"
-              />
+              <RefreshCwIcon data-icon="inline-start" />
               重试
             </Button>
           </AlertDescription>
         </Alert>
       ) : null}
 
+      {(!loadError || accounts.length > 0) && (
+        <AccountHealthPanel accounts={accounts} showAccounts={false} />
+      )}
       <ToggleGroup
         value={[statusFilter]}
         onValueChange={(value) => value[0] && setStatusFilter(value[0])}
@@ -582,11 +573,7 @@ export function ProvidersView() {
                             }
                             onClick={() => setTesting(account)}
                           >
-                            <HugeiconsIcon
-                              strokeWidth={2}
-                              icon={Activity01Icon}
-                              data-icon="inline-start"
-                            />
+                            <ActivityIcon data-icon="inline-start" />
                             测试
                           </Button>
                           <Button
@@ -612,7 +599,7 @@ export function ProvidersView() {
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
+                  <KeyRoundIcon />
                 </EmptyMedia>
                 <EmptyTitle>
                   {accounts.length ? "没有匹配的账户" : "还没有模型账户"}
@@ -642,7 +629,7 @@ export function ProvidersView() {
                     setConnectOpen(true)
                   }}
                 >
-                  <HugeiconsIcon strokeWidth={2} icon={PlusIcon} />
+                  <PlusIcon />
                   连接账户
                 </Button>
               )}

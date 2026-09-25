@@ -1,12 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import {
-  CopyIcon,
-  PlusIcon,
-  SendIcon,
-  Delete02Icon,
-  XIcon,
-} from "@hugeicons/core-free-icons"
+import { CopyIcon, PlusIcon, SendIcon, Trash2Icon, XIcon } from "lucide-react"
 import { toast } from "@/components/ui/toast"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -155,7 +148,7 @@ export function InvitationsView({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-6">
       <PageHeader
         title="邀请"
         actions={
@@ -165,11 +158,7 @@ export function InvitationsView({
               setOpen(true)
             }}
           >
-            <HugeiconsIcon
-              strokeWidth={2}
-              icon={PlusIcon}
-              data-icon="inline-start"
-            />
+            <PlusIcon data-icon="inline-start" />
             生成邀请
           </Button>
         }
@@ -187,7 +176,7 @@ export function InvitationsView({
               aria-label="清除邀请链接"
               onClick={() => setResult(null)}
             >
-              <HugeiconsIcon strokeWidth={2} icon={XIcon} />
+              <XIcon />
             </Button>
           </CardHeader>
           <CardContent>
@@ -245,7 +234,7 @@ export function InvitationsView({
                           disabled={!active}
                           onClick={() => void revoke(item.id)}
                         >
-                          <HugeiconsIcon strokeWidth={2} icon={Delete02Icon} />
+                          <Trash2Icon />
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -257,7 +246,7 @@ export function InvitationsView({
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <HugeiconsIcon strokeWidth={2} icon={SendIcon} />
+                  <SendIcon />
                 </EmptyMedia>
                 <EmptyTitle>还没有邀请</EmptyTitle>
                 <EmptyDescription>
@@ -322,11 +311,7 @@ export function InvitationsView({
                 {pending ? (
                   <Spinner data-icon="inline-start" />
                 ) : (
-                  <HugeiconsIcon
-                    strokeWidth={2}
-                    icon={SendIcon}
-                    data-icon="inline-start"
-                  />
+                  <SendIcon data-icon="inline-start" />
                 )}
                 生成
               </Button>
@@ -363,7 +348,7 @@ function InviteLinkField({ id, value }: { id: string; value: string }) {
                   )
               }}
             >
-              <HugeiconsIcon strokeWidth={2} icon={CopyIcon} />
+              <CopyIcon />
             </Button>
           </InputGroupAddon>
         </InputGroup>

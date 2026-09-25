@@ -112,7 +112,7 @@ function CompactWindow({ item }: { item: DisplayWindow }) {
         />
       )}
       {window.resets_at || configured?.resets_at ? (
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-xs text-muted-foreground">
           {dateTime(window.resets_at || configured?.resets_at)} 重置
         </span>
       ) : null}

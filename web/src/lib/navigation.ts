@@ -1,30 +1,29 @@
-import type { ComponentProps } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
+import type { LucideIcon } from "lucide-react"
 import {
   ChartBarBigIcon,
-  BookOpen01Icon,
+  BookOpenIcon,
   GaugeIcon,
   KeyRoundIcon,
   ListIcon,
   PackageOpenIcon,
   PlugIcon,
-  Settings01Icon,
+  SettingsIcon,
   SlidersHorizontalIcon,
   UsersIcon,
-} from "@hugeicons/core-free-icons"
+} from "lucide-react"
 
 import type { Page, Workspace } from "@/lib/routes"
 
 export interface NavigationItem {
   id: Page
   label: string
-  icon: ComponentProps<typeof HugeiconsIcon>["icon"]
+  icon: LucideIcon
   section: string
 }
 
 export const userNavigation: NavigationItem[] = [
   { id: "overview", label: "总览", icon: GaugeIcon, section: "开始使用" },
-  { id: "guide", label: "接入指南", icon: BookOpen01Icon, section: "开始使用" },
+  { id: "guide", label: "接入指南", icon: BookOpenIcon, section: "开始使用" },
   { id: "keys", label: "API 密钥", icon: KeyRoundIcon, section: "开始使用" },
   {
     id: "rai-devices",
@@ -55,7 +54,7 @@ export const adminNavigation: NavigationItem[] = [
   {
     id: "pricing",
     label: "目录与计费",
-    icon: Settings01Icon,
+    icon: SettingsIcon,
     section: "模型与计费",
   },
   {

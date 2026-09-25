@@ -25,9 +25,9 @@ Vite 8 已默认使用 Rolldown / Oxc。`resolve.tsconfigPaths` 直接读取 `ts
 
 ## 界面规范
 
-采用官方预设 [`b1D0eCSe`](https://ui.shadcn.com/create?preset=b1D0eCSe)：Mira、Neutral 基色/主题/图表、Hugeicons、Noto Sans、小圆角，以及 Subtle 菜单强调色和 Default 菜单色。以官方生成的组件和主题变量为准。
+采用 shadcn 官方默认 `nova` 预设：Base UI、Neutral 配色、Lucide 图标、Geist 字体和默认圆角。浅色、深色均使用 CLI 生成的主题变量，不添加自定义主题。
 
-现有项目应用预设使用 `pnpm dlx shadcn@latest apply b1D0eCSe`；`init --preset b1D0eCSe --template vite` 用于新项目初始化。
+现有项目应用预设使用 `pnpm dlx shadcn@latest apply nova`；`init --preset base-nova --template vite` 用于新项目初始化。
 
 - 组件优先使用 `src/components/ui` 中的 shadcn 原语，业务页面不要手写按钮、选择器、对话框、提示框、空状态、进度条或开关。
 - 页面必须通过 `PageHeader` 提供唯一的一级标题和简短说明；区块标题从二级开始，不用大小相同的文字模拟层级。
@@ -46,7 +46,7 @@ Vite 8 已默认使用 Rolldown / Oxc。`resolve.tsconfigPaths` 直接读取 `ts
 - `components/app-shell.tsx` 负责工作区外壳，`lib/navigation.ts` 集中维护导航分组和显示名称。
 - `components/user-workspace.tsx` 与 `components/admin-workspace.tsx` 只负责路由分发；具体页面放在 `components/user/`、`components/admin/`，按需加载。
 - 模型账户的连接、管理、测试弹窗放在 `components/providers/`；共用类型和纯函数放在同目录的 `provider-helpers.ts`，弹窗不要反向引用列表页面。
-- `workspace-ui.tsx` 维护页面标题、统计栏和搜索框；页面说明使用 `PageHeader.description`，优先在这里调整共用布局。
+- `workspace-ui.tsx` 维护页面标题、统计卡片和搜索框；页面说明使用 `PageHeader.description`，优先在这里调整共用布局。
 - 列表筛选要区分“尚无数据”和“筛选无结果”，后者提供清除筛选入口。手机端隐藏列时，仍需保留名称、状态和主要操作。
 
 ### 上游配置交互
@@ -78,6 +78,4 @@ Vite 8 已默认使用 Rolldown / Oxc。`resolve.tsconfigPaths` 直接读取 `ts
 pnpm dlx shadcn@latest add <component>
 ```
 
-保持 `components.json` 中的 `base-mira`、Base UI 和 Hugeicons 配置。官方组件更新通过 CLI 比较后应用，功能组合放在业务模块，避免修改基础组件。
-
-当前 CLI 生成的 Spinner 使用原生 SVG 属性类型，与 Hugeicons 的 `strokeWidth` 类型不兼容；本地仅将其属性类型改为 `Omit<React.ComponentProps<typeof HugeiconsIcon>, "icon">`，保留官方渲染与样式。重新应用预设后需运行类型检查，确认上游是否已修复。
+保持 `components.json` 中的 `base-nova`、Base UI 和 Lucide 配置。官方组件更新通过 CLI 比较后应用，功能组合放在业务模块，避免修改基础组件。

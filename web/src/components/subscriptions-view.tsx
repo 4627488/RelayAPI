@@ -1,10 +1,5 @@
 import { useCallback } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import {
-  Alert02Icon,
-  GaugeIcon,
-  PackageOpenIcon,
-} from "@hugeicons/core-free-icons"
+import { AlertCircleIcon, GaugeIcon, PackageOpenIcon } from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -25,7 +20,7 @@ import {
 import { Progress, ProgressLabel } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
 import { Separator } from "@/components/ui/separator"
-import { PageHeader } from "@/components/workspace-ui"
+import { PageHeader, StatStrip } from "@/components/workspace-ui"
 import { LoadErrorView } from "@/components/load-error-view"
 import { useAsyncResource } from "@/hooks/use-async-resource"
 import {
@@ -40,23 +35,66 @@ export function TenantSubscriptionsView() {
     const value = await api<{ items: ChildSubscription[] }>(
       "/api/subscriptions"
     )
-    return value.items ?? []
+    return { items: value.items ?? [], observedAt: Date.now() }
   }, [])
   const {
-    data: items,
+    data: snapshot,
     loading,
     error,
     reload,
   } = useAsyncResource(loadSubscriptions, {
-    initialData: [],
+    initialData: { items: [] as ChildSubscription[], observedAt: 0 },
     errorMessage: "无法读取订阅",
     onBackgroundError: (message) =>
       toast.add({ title: message, type: "error" }),
   })
+  const { items, observedAt } = snapshot
 
   return (
-    <div className="flex flex-col gap-3">
-      <PageHeader title="我的订阅" />
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="我的订阅"
+        description="查看可用授权、独立额度窗口及到期时间。"
+      />
+      {!loading && !error && (
+        <StatStrip
+          items={[
+            {
+              label: "可用订阅",
+              value: items.filter((s) => s.available ?? s.enabled).length,
+              detail: `共 ${items.length} 个授权`,
+            },
+            {
+              label: "余额结算",
+              value: items.filter(
+                (s) =>
+                  s.billing_mode === "balance" ||
+                  s.capacity_mode === "unmetered"
+              ).length,
+              detail: "按调用从账户余额扣费",
+            },
+            {
+              label: "额度已用尽",
+              value: items.filter((s) =>
+                s.entitlement_windows?.some(
+                  (w) => w.limit_nano_usd > 0 && w.remaining_nano_usd <= 0
+                )
+              ).length,
+              detail: "至少一个额度窗口无剩余",
+            },
+            {
+              label: "7 天内到期",
+              value: items.filter(
+                (s) =>
+                  s.expires_at &&
+                  Date.parse(s.expires_at) > observedAt &&
+                  Date.parse(s.expires_at) <= observedAt + 7 * 86400000
+              ).length,
+              detail: "到期后需重新分配授权",
+            },
+          ]}
+        />
+      )}
       {loading ? (
         <div className="flex justify-center py-12">
           <Spinner />
@@ -73,7 +111,7 @@ export function TenantSubscriptionsView() {
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon">
-              <HugeiconsIcon strokeWidth={2} icon={PackageOpenIcon} />
+              <PackageOpenIcon />
             </EmptyMedia>
             <EmptyTitle>尚未获得订阅授权</EmptyTitle>
           </EmptyHeader>
@@ -128,12 +166,12 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
           </section>
         ) : item.capacity_mode === "unmetered" ? (
           <Alert>
-            <HugeiconsIcon strokeWidth={2} icon={GaugeIcon} />
+            <GaugeIcon />
             <AlertTitle>按账户余额结算</AlertTitle>
           </Alert>
         ) : item.parent_quota_probe_status === "unsupported" ? (
           <Alert variant="destructive">
-            <HugeiconsIcon strokeWidth={2} icon={Alert02Icon} />
+            <AlertCircleIcon />
             <AlertTitle>额度不可用</AlertTitle>
             <AlertDescription>
               {item.availability_message ||
@@ -142,7 +180,7 @@ function TenantSubscriptionCard({ item }: { item: ChildSubscription }) {
           </Alert>
         ) : (
           <Alert>
-            <HugeiconsIcon strokeWidth={2} icon={GaugeIcon} />
+            <GaugeIcon />
             <AlertTitle>当前按账户余额结算</AlertTitle>
           </Alert>
         )}

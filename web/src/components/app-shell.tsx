@@ -1,23 +1,16 @@
-import {
-  useEffect,
-  useState,
-  type ComponentProps,
-  type CSSProperties,
-  type MouseEvent,
-  type ReactNode,
-} from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
+import type { LucideIcon } from "lucide-react"
+import { useEffect, useState, type MouseEvent, type ReactNode } from "react"
 import {
   ChevronRightIcon,
-  UnfoldMoreIcon,
+  ChevronsUpDownIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
   SendIcon,
   ShieldCheckIcon,
-  Sun01Icon,
+  SunIcon,
   UserRoundIcon,
-} from "@hugeicons/core-free-icons"
+} from "lucide-react"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -111,11 +104,7 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
     <Avatar className="size-6">
       {source ? <AvatarImage src={source} alt={`${name} 的头像`} /> : null}
       <AvatarFallback>
-        <HugeiconsIcon
-          strokeWidth={2}
-          icon={UserRoundIcon}
-          aria-hidden="true"
-        />
+        <UserRoundIcon aria-hidden="true" />
       </AvatarFallback>
     </Avatar>
   )
@@ -124,9 +113,9 @@ function EmailAvatar({ email, name }: { email: string; name: string }) {
 const themes: Array<{
   value: Theme
   label: string
-  icon: ComponentProps<typeof HugeiconsIcon>["icon"]
+  icon: LucideIcon
 }> = [
-  { value: "light", label: "浅色", icon: Sun01Icon },
+  { value: "light", label: "浅色", icon: SunIcon },
   { value: "dark", label: "深色", icon: MoonIcon },
   { value: "system", label: "跟随系统", icon: MonitorIcon },
 ]
@@ -154,7 +143,7 @@ function ThemeChoices({
       <DropdownMenuLabel>外观</DropdownMenuLabel>
       {themes.map((item) => (
         <DropdownMenuRadioItem key={item.value} value={item.value}>
-          <HugeiconsIcon icon={item.icon} strokeWidth={2} />
+          <item.icon />
           {item.label}
         </DropdownMenuRadioItem>
       ))}
@@ -189,15 +178,12 @@ function SidebarNav({
     <>
       {groups.map((group) => (
         <SidebarGroup key={group.title}>
-          <SidebarGroupLabel className="h-6 group-data-[collapsible=icon]:-mt-6">
-            {group.title}
-          </SidebarGroupLabel>
+          <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {group.items.map((item) => (
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
-                    size="sm"
                     render={
                       <a href={routeHref({ workspace, page: item.id })} />
                     }
@@ -211,7 +197,7 @@ function SidebarNav({
                       if (isMobile) setOpenMobile(false)
                     }}
                   >
-                    <HugeiconsIcon icon={item.icon} strokeWidth={2} />
+                    <item.icon />
                     <span>{item.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -253,12 +239,12 @@ export function AppShell({
     (admin ? adminPageLabels : pageLabels)[navPage(page)] || "总览"
 
   return (
-    <SidebarProvider style={{ "--sidebar-width": "13rem" } as CSSProperties}>
+    <SidebarProvider>
       <a className="sr-only focus:not-sr-only" href="#main-content">
         跳到主内容
       </a>
       <Sidebar variant="sidebar" collapsible="icon">
-        <SidebarHeader className="h-10 justify-center py-1">
+        <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -269,7 +255,7 @@ export function AppShell({
                   onPageChange("overview")
                 }}
               >
-                <HugeiconsIcon strokeWidth={2} icon={SendIcon} />
+                <SendIcon />
                 <span className="truncate font-semibold">RelayAPI</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -288,17 +274,15 @@ export function AppShell({
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={<SidebarMenuButton className="h-10" />}
-                >
+                <DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
                   <EmailAvatar email={subtitle} name={name} />
-                  <div className="grid min-w-0 flex-1 text-left text-xs leading-tight">
+                  <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-medium">{name}</span>
                     <span className="truncate text-xs text-muted-foreground">
                       {subtitle}
                     </span>
                   </div>
-                  <HugeiconsIcon strokeWidth={2} icon={UnfoldMoreIcon} />
+                  <ChevronsUpDownIcon />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="end" className="w-56">
                   <div className="px-2 py-1.5 text-xs text-muted-foreground">
@@ -314,17 +298,7 @@ export function AppShell({
                             onWorkspaceChange(admin ? "user" : "admin")
                           }
                         >
-                          {admin ? (
-                            <HugeiconsIcon
-                              strokeWidth={2}
-                              icon={UserRoundIcon}
-                            />
-                          ) : (
-                            <HugeiconsIcon
-                              strokeWidth={2}
-                              icon={ShieldCheckIcon}
-                            />
-                          )}
+                          {admin ? <UserRoundIcon /> : <ShieldCheckIcon />}
                           {admin ? "返回个人面板" : "进入管理员面板"}
                         </DropdownMenuItem>
                       </DropdownMenuGroup>
@@ -335,7 +309,7 @@ export function AppShell({
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuItem variant="destructive" onClick={onLogout}>
-                      <HugeiconsIcon strokeWidth={2} icon={LogOutIcon} />
+                      <LogOutIcon />
                       退出登录
                     </DropdownMenuItem>
                   </DropdownMenuGroup>
@@ -359,7 +333,7 @@ export function AppShell({
       <SidebarInset id="main-content" tabIndex={-1} className="min-w-0">
         <header
           aria-label="当前位置"
-          className="sticky top-0 z-10 flex min-h-10 shrink-0 items-center justify-between gap-3 border-b bg-background px-3"
+          className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between gap-4 border-b bg-background px-4 md:px-6"
         >
           <div className="flex min-w-0 items-center gap-1">
             <SidebarTrigger />
@@ -367,11 +341,7 @@ export function AppShell({
               <span className="hidden text-xs text-muted-foreground sm:inline">
                 {workspaceLabels[workspace]}
               </span>
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={ChevronRightIcon}
-                className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline"
-              />
+              <ChevronRightIcon className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
               <span className="truncate font-medium">{currentPageLabel}</span>
             </div>
           </div>
@@ -383,23 +353,15 @@ export function AppShell({
               aria-label={workspaceActionLabel}
             >
               {admin ? (
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={UserRoundIcon}
-                  data-icon="inline-start"
-                />
+                <UserRoundIcon data-icon="inline-start" />
               ) : (
-                <HugeiconsIcon
-                  strokeWidth={2}
-                  icon={ShieldCheckIcon}
-                  data-icon="inline-start"
-                />
+                <ShieldCheckIcon data-icon="inline-start" />
               )}
               <span className="hidden sm:inline">{workspaceActionLabel}</span>
             </Button>
           ) : null}
         </header>
-        <div className="flex w-full min-w-0 flex-1 flex-col p-3">
+        <div className="flex w-full min-w-0 flex-1 flex-col p-4 md:p-6">
           {children}
         </div>
       </SidebarInset>

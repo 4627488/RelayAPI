@@ -1,5 +1,4 @@
-import { HugeiconsIcon } from "@hugeicons/react"
-import { RefreshCwIcon, TriangleAlertIcon } from "@hugeicons/core-free-icons"
+import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 
 import {
   Alert,
@@ -18,16 +17,12 @@ export function LoadErrorView({
 }) {
   return (
     <Alert className="mx-auto w-full max-w-xl" variant="destructive">
-      <HugeiconsIcon strokeWidth={2} icon={TriangleAlertIcon} />
+      <TriangleAlertIcon />
       <AlertTitle>页面数据加载失败</AlertTitle>
       <AlertDescription>{message}</AlertDescription>
       <AlertAction>
         <Button onClick={onRetry} size="sm" variant="outline">
-          <HugeiconsIcon
-            strokeWidth={2}
-            icon={RefreshCwIcon}
-            data-icon="inline-start"
-          />
+          <RefreshCwIcon data-icon="inline-start" />
           重试
         </Button>
       </AlertAction>

@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  Tick02Icon,
+  CheckIcon,
   ExternalLinkIcon,
   FileIcon,
   KeyRoundIcon,
-  Link02Icon,
+  LinkIcon,
   PlusIcon,
   RefreshCwIcon,
-} from "@hugeicons/core-free-icons"
+} from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -368,7 +367,7 @@ export function ConnectAccountDialog({
           <form id="finalize-oauth" onSubmit={finalizeOAuth}>
             <FieldGroup>
               <Alert>
-                <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
+                <CheckIcon />
                 <AlertTitle>授权完成</AlertTitle>
                 <AlertDescription>
                   {oauthStatus.email
@@ -453,7 +452,7 @@ export function ConnectAccountDialog({
                   window.open(oauth.url, "_blank", "noopener,noreferrer")
                 }
               >
-                <HugeiconsIcon strokeWidth={2} icon={ExternalLinkIcon} />
+                <ExternalLinkIcon />
                 打开授权页面
               </Button>
             </div>
@@ -502,7 +501,7 @@ export function ConnectAccountDialog({
           </div>
         ) : reauthAccount ? (
           <Alert>
-            <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
+            <RefreshCwIcon />
             <AlertTitle>原位更新授权</AlertTitle>
             <AlertDescription>
               完成登录后会替换过期令牌，并保留账户设置、模型范围和所有子订阅。
@@ -528,15 +527,15 @@ export function ConnectAccountDialog({
           >
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="oauth">
-                <HugeiconsIcon strokeWidth={2} icon={Link02Icon} />
+                <LinkIcon />
                 OAuth
               </TabsTrigger>
               <TabsTrigger value="api_key">
-                <HugeiconsIcon strokeWidth={2} icon={KeyRoundIcon} />
+                <KeyRoundIcon />
                 API Key
               </TabsTrigger>
               <TabsTrigger value="import">
-                <HugeiconsIcon strokeWidth={2} icon={FileIcon} />
+                <FileIcon />
                 导入
               </TabsTrigger>
             </TabsList>
@@ -566,7 +565,7 @@ export function ConnectAccountDialog({
                 <FieldDescription>{selectedOAuth?.detail}</FieldDescription>
               </Field>
               <Alert>
-                <HugeiconsIcon strokeWidth={2} icon={Link02Icon} />
+                <LinkIcon />
                 <AlertTitle>推荐连接方式</AlertTitle>
                 <AlertDescription>
                   Relay
@@ -610,31 +609,19 @@ export function ConnectAccountDialog({
           </Button>
           {oauthStatus?.status === "authorized" ? (
             <Button type="submit" form="finalize-oauth" disabled={pending}>
-              {pending ? (
-                <Spinner />
-              ) : (
-                <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
-              )}
+              {pending ? <Spinner /> : <CheckIcon />}
               保存账户
             </Button>
           ) : oauth ? (
             oauthExpired || oauthStatus?.status === "error" ? (
               <Button disabled={pending} onClick={() => void restartOAuth()}>
-                {pending ? (
-                  <Spinner />
-                ) : (
-                  <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
-                )}
+                {pending ? <Spinner /> : <RefreshCwIcon />}
                 重新生成授权链接
               </Button>
             ) : null
           ) : mode === "oauth" ? (
             <Button disabled={pending} onClick={() => void startOAuth()}>
-              {pending ? (
-                <Spinner />
-              ) : (
-                <HugeiconsIcon strokeWidth={2} icon={Link02Icon} />
-              )}
+              {pending ? <Spinner /> : <LinkIcon />}
               {reauthAccount ? "开始重新认证" : "生成授权链接"}
             </Button>
           ) : (
@@ -645,11 +632,7 @@ export function ConnectAccountDialog({
               }
               disabled={pending}
             >
-              {pending ? (
-                <Spinner />
-              ) : (
-                <HugeiconsIcon strokeWidth={2} icon={PlusIcon} />
-              )}
+              {pending ? <Spinner /> : <PlusIcon />}
               {mode === "api_key" ? "添加账户" : "验证并导入"}
             </Button>
           )}
@@ -721,7 +704,7 @@ function CredentialFields({
         </Field>
       </div>
       <Alert>
-        <HugeiconsIcon strokeWidth={2} icon={RefreshCwIcon} />
+        <RefreshCwIcon />
         <AlertTitle>自动发现并发布模型</AlertTitle>
         <AlertDescription>
           凭据验证成功后自动读取上游模型目录并发布；之后可在“配置”中调整对外发布的模型范围。

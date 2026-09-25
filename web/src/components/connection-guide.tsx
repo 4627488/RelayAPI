@@ -1,11 +1,10 @@
 import { useState } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
 import {
-  Tick02Icon,
+  CheckIcon,
   ClipboardIcon,
   TerminalIcon,
   TriangleAlertIcon,
-} from "@hugeicons/core-free-icons"
+} from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -52,7 +51,7 @@ export function ConnectionGuide() {
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-3">
       <Alert>
-        <HugeiconsIcon strokeWidth={2} icon={TriangleAlertIcon} />
+        <TriangleAlertIcon />
         <AlertDescription>
           请先安装要使用的客户端，例如 Codex CLI。rai
           安装后会打开浏览器完成本站授权，无需复制 API Key。
@@ -81,15 +80,11 @@ export function ConnectionGuide() {
                 aria-labelledby="rai-platform-label"
               >
                 <ToggleGroupItem value="bash" className="min-w-24 flex-1">
-                  {platform === "bash" ? (
-                    <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
-                  ) : null}
+                  {platform === "bash" ? <CheckIcon /> : null}
                   macOS / Linux / WSL
                 </ToggleGroupItem>
                 <ToggleGroupItem value="powershell" className="min-w-24 flex-1">
-                  {platform === "powershell" ? (
-                    <HugeiconsIcon strokeWidth={2} icon={Tick02Icon} />
-                  ) : null}
+                  {platform === "powershell" ? <CheckIcon /> : null}
                   Windows
                 </ToggleGroupItem>
               </ToggleGroup>
@@ -98,7 +93,7 @@ export function ConnectionGuide() {
               <FieldLabel htmlFor="rai-install-command">安装命令</FieldLabel>
               <InputGroup>
                 <InputGroupAddon>
-                  <HugeiconsIcon strokeWidth={2} icon={TerminalIcon} />
+                  <TerminalIcon />
                 </InputGroupAddon>
                 <InputGroupInput
                   id="rai-install-command"
@@ -114,11 +109,7 @@ export function ConnectionGuide() {
                     aria-label="复制安装命令"
                     onClick={() => void copy(command)}
                   >
-                    <HugeiconsIcon
-                      strokeWidth={2}
-                      icon={ClipboardIcon}
-                      data-icon="inline-start"
-                    />
+                    <ClipboardIcon data-icon="inline-start" />
                     复制
                   </InputGroupButton>
                 </InputGroupAddon>

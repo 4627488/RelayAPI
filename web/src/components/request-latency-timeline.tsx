@@ -14,49 +14,84 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
-type Segment = {
-  id: string
-  label: string
-  start_ms: number
-  duration_ms: number
-  description?: string
-  status?: string
-}
-type Trace = {
-  version: number
-  total_ms: number
-  boundary?: string
-  segments: Segment[]
-  marks?: { id: string; label: string; offset_ms: number }[]
-}
+import {
+  parseLatencyTrace,
+  measuredMS as ms,
+  type LatencyTrace,
+} from "@/lib/latency-trace"
 
-function parseTrace(value?: string): Trace | null {
-  try {
-    const trace = JSON.parse(value || "{}")
-    if (
-      trace.version !== 5 ||
-      !Array.isArray(trace.segments) ||
-      !Number.isFinite(trace.total_ms)
-    )
-      return null
-    return {
-      ...trace,
-      segments: trace.segments.filter(
-        (s: Segment) =>
-          typeof s.label === "string" &&
-          Number.isFinite(s.start_ms) &&
-          s.start_ms >= 0 &&
-          Number.isFinite(s.duration_ms) &&
-          s.duration_ms >= 0
-      ),
-    }
-  } catch {
-    return null
-  }
+export function LatencyObservations({ trace }: { trace: LatencyTrace }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>观测点</TableHead>
+          <TableHead className="text-right">开始偏移</TableHead>
+          <TableHead className="text-right">耗时</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {trace.segments.map((segment, index) => (
+          <TableRow key={`${segment.id}-${index}`}>
+            <TableCell className="max-w-72 break-words whitespace-normal">
+              <div>
+                {segment.label}
+                {segment.status ? ` · ${segment.status}` : ""}
+              </div>
+              {segment.description && (
+                <p className="text-xs text-muted-foreground">
+                  {segment.description}
+                </p>
+              )}
+              <dl className="text-xs text-muted-foreground">
+                {(
+                  [
+                    ["尝试", segment.attempt],
+                    ["提供商", segment.provider],
+                    ["模型", segment.model],
+                    ["凭据", segment.credential],
+                    ["远端", segment.remote_addr],
+                    [
+                      "连接",
+                      segment.reused === undefined
+                        ? undefined
+                        : segment.reused
+                          ? "复用"
+                          : "新建",
+                    ],
+                    ["错误", segment.error],
+                  ] as const
+                )
+                  .filter(([, value]) => value !== undefined && value !== "")
+                  .map(([label, value]) => (
+                    <div key={label} className="flex flex-wrap gap-x-1">
+                      <dt>{label}：</dt>
+                      <dd className="min-w-0 break-all">{value}</dd>
+                    </div>
+                  ))}
+              </dl>
+            </TableCell>
+            <TableCell className="text-right align-top tabular-nums">
+              {ms(segment.start_ms)}
+            </TableCell>
+            <TableCell className="text-right align-top tabular-nums">
+              {ms(segment.duration_ms)}
+            </TableCell>
+          </TableRow>
+        ))}
+        {trace.marks.map((mark, index) => (
+          <TableRow key={`mark-${index}`}>
+            <TableCell className="whitespace-normal">{mark.label}</TableCell>
+            <TableCell className="text-right tabular-nums">
+              {ms(mark.offset_ms)}
+            </TableCell>
+            <TableCell className="text-right">—</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
 }
-
-const ms = (value: number) =>
-  `${value.toLocaleString(undefined, { maximumFractionDigits: 3 })} ms`
 
 export function RequestLatencyTimeline({
   value,
@@ -67,7 +102,7 @@ export function RequestLatencyTimeline({
   ttftMS?: number
   stream: boolean
 }) {
-  const trace = parseTrace(value)
+  const trace = parseLatencyTrace(value)
   return (
     <Card>
       <CardHeader>
@@ -79,47 +114,7 @@ export function RequestLatencyTimeline({
       </CardHeader>
       {trace && (
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>观测点</TableHead>
-                <TableHead className="text-right">开始偏移</TableHead>
-                <TableHead className="text-right">耗时</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {trace.segments.map((segment, index) => (
-                <TableRow key={`${segment.id}-${index}`}>
-                  <TableCell className="whitespace-normal">
-                    <div>
-                      {segment.label}
-                      {segment.status ? ` · ${segment.status}` : ""}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {segment.description}
-                    </p>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {ms(segment.start_ms)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {ms(segment.duration_ms)}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {trace.marks
-                ?.filter((mark) => Number.isFinite(mark.offset_ms))
-                .map((mark, index) => (
-                  <TableRow key={`mark-${index}`}>
-                    <TableCell>{mark.label}</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {ms(mark.offset_ms)}
-                    </TableCell>
-                    <TableCell className="text-right">—</TableCell>
-                  </TableRow>
-                ))}
-            </TableBody>
-          </Table>
+          <LatencyObservations trace={trace} />
         </CardContent>
       )}
     </Card>

@@ -1,10 +1,16 @@
-import type { ComponentProps, InputHTMLAttributes, ReactNode } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { Search01Icon, XIcon } from "@hugeicons/core-free-icons"
+import type { LucideIcon } from "lucide-react"
+import type { InputHTMLAttributes, ReactNode } from "react"
+import { SearchIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import {
   InputGroup,
   InputGroupAddon,
@@ -29,7 +35,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "flex min-h-8 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between",
         className
       )}
     >
@@ -37,14 +43,12 @@ export function PageHeader({
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {title ? (
-              <h1 className="text-base font-semibold tracking-tight">
-                {title}
-              </h1>
+              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
             ) : null}
             {accessory}
           </div>
           {description ? (
-            <p className="max-w-2xl text-xs leading-4 text-muted-foreground">
+            <p className="max-w-2xl text-sm text-muted-foreground">
               {description}
             </p>
           ) : null}
@@ -63,7 +67,7 @@ export interface StatItem {
   label: ReactNode
   value: ReactNode
   detail?: ReactNode
-  icon?: ComponentProps<typeof HugeiconsIcon>["icon"]
+  icon?: LucideIcon
   tone?: "default" | "positive" | "warning" | "negative"
 }
 
@@ -75,46 +79,38 @@ export function StatStrip({
   className?: string
 }) {
   return (
-    <Card size="sm" className={className}>
-      <CardContent
-        className={cn(
-          "grid grid-cols-2 gap-x-4 gap-y-2",
-          items.length > 2 && "lg:grid-cols-4"
-        )}
-        role="list"
-        aria-label="统计"
-      >
-        {items.map((item, index) => (
-          <div
-            key={index}
-            role="listitem"
-            className="flex min-w-0 flex-col gap-1"
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <CardDescription>{item.label}</CardDescription>
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-4 sm:grid-cols-2",
+        items.length > 2 && "xl:grid-cols-4",
+        className
+      )}
+      role="list"
+      aria-label="统计"
+    >
+      {items.map((item, index) => (
+        <Card key={index} role="listitem">
+          <CardHeader>
+            <CardDescription>{item.label}</CardDescription>
+            <CardTitle>
               <span
                 className={cn(
-                  "text-lg font-semibold tabular-nums",
+                  "text-2xl font-semibold tabular-nums",
                   item.tone === "negative" && "text-destructive"
                 )}
               >
                 {item.value}
               </span>
-            </div>
-            {item.detail ? (
-              <p
-                className="truncate text-xs text-muted-foreground"
-                title={
-                  typeof item.detail === "string" ? item.detail : undefined
-                }
-              >
-                {item.detail}
-              </p>
-            ) : null}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+            </CardTitle>
+          </CardHeader>
+          {item.detail ? (
+            <CardContent>
+              <p className="text-sm text-muted-foreground">{item.detail}</p>
+            </CardContent>
+          ) : null}
+        </Card>
+      ))}
+    </div>
   )
 }
 
@@ -130,7 +126,7 @@ export function SearchField({
   return (
     <InputGroup className={className}>
       <InputGroupAddon>
-        <HugeiconsIcon strokeWidth={2} icon={Search01Icon} />
+        <SearchIcon />
       </InputGroupAddon>
       <InputGroupInput
         value={value}
@@ -146,7 +142,7 @@ export function SearchField({
             onClick={onClear}
             aria-label="清除搜索"
           >
-            <HugeiconsIcon strokeWidth={2} icon={XIcon} />
+            <XIcon />
           </Button>
         </InputGroupAddon>
       ) : null}
@@ -159,13 +155,13 @@ export function InfoBar({
   children,
   className,
 }: {
-  icon?: ComponentProps<typeof HugeiconsIcon>["icon"]
+  icon?: LucideIcon
   children: ReactNode
   className?: string
 }) {
   return (
     <Alert className={className}>
-      {Icon ? <HugeiconsIcon icon={Icon} strokeWidth={2} /> : null}
+      {Icon ? <Icon /> : null}
       <AlertDescription>{children}</AlertDescription>
     </Alert>
   )

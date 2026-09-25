@@ -1,6 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { RefreshCwIcon } from "@hugeicons/core-free-icons"
+import { RefreshCwIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -48,11 +47,7 @@ export class ErrorBoundary extends Component<
               {this.state.error.message || "未知错误"}
             </pre>
             <Button onClick={() => window.location.reload()}>
-              <HugeiconsIcon
-                strokeWidth={2}
-                icon={RefreshCwIcon}
-                data-icon="inline-start"
-              />
+              <RefreshCwIcon data-icon="inline-start" />
               刷新页面
             </Button>
           </CardContent>

@@ -1496,7 +1496,12 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		}
 		sort.Slice(users, func(i, j int) bool { return users[i].Tokens > users[j].Tokens })
 	}
+	observability, err := s.usageObservability(ctx, tenantID, since)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
+		"observability": observability, "period_start": since, "generated_at": time.Now(),
 		"days": days, "user_id": tenantID, "summary": total,
 		"daily": dailyItems, "models": models, "api_keys": apiKeys, "users": users,
 	}, nil
