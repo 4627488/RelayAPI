@@ -370,6 +370,54 @@ func TestReservationDoesNotSettleIntoNewQuotaGeneration(t *testing.T) {
 	_ = secondSQL.Close()
 }
 
+func TestParentQuotaResetHistoryFollowsUpstreamGeneration(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	database, err := db.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	store := Store{DB: database}
+	parent, err := store.SyncNativeParentSubscription(ctx, ParentSubscription{
+		UpstreamCredentialID: identity.NewID(), Name: "reset history",
+		CapacityMode: db.ParentCapacityObserved, AllocationLimitPPM: 1_000_000,
+		Enabled: true, Metadata: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().UTC().Truncate(time.Microsecond)
+	firstReset := base.Add(-time.Minute)
+	if _, err := store.RecordParentQuotaObservation(ctx, parent.ID, "5h", 80, firstReset, base.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if records, err := store.ListParentQuotaResets(ctx, parent.ID, 20); err != nil || len(records) != 0 {
+		t.Fatalf("initial observation recorded a reset: records=%+v err=%v", records, err)
+	}
+	nextReset := base.Add(5 * time.Hour)
+	if _, err := store.RecordParentQuotaObservation(ctx, parent.ID, "5h", 0, nextReset, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordParentQuotaObservation(ctx, parent.ID, "5h", 0, nextReset.Add(20*time.Second), base.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.ListParentQuotaResets(ctx, parent.ID, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Kind != "5h" || !records[0].ResetAt.Equal(firstReset) || !records[0].NextResetsAt.Equal(nextReset) {
+		t.Fatalf("reset history = %+v", records)
+	}
+}
+
 func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

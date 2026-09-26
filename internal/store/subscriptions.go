@@ -46,6 +46,7 @@ type ParentQuotaWindow = db.ParentQuotaWindow
 type ParentQuotaObservation = db.ParentQuotaObservation
 type ChildSubscription = db.ChildSubscription
 type ChildQuotaWindow = db.ChildQuotaWindow
+type ParentQuotaReset = db.ParentQuotaReset
 type RequestReservation = db.RequestReservation
 type WebSocketTurn = db.WebSocketTurn
 
@@ -485,6 +486,15 @@ func (s Store) RecordParentQuotaObservation(ctx context.Context, parentID, kind 
 			if err := tx.Create(&observation).Error; err != nil {
 				return err
 			}
+			if observation.Reason == "window_reset" && !previous.ResetsAt.After(observedAt.Add(quotaResetJitterTolerance)) {
+				reset := ParentQuotaReset{
+					ParentSubscriptionID: parentID, Kind: observation.Kind,
+					ResetAt: previous.ResetsAt, ObservedAt: observedAt, NextResetsAt: resetsAt,
+				}
+				if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&reset).Error; err != nil {
+					return err
+				}
+			}
 		}
 		existing, windowErr := currentWindow, currentWindowErr
 		limit := int64(0)
@@ -611,6 +621,16 @@ func (s Store) ListParentQuotaObservations(ctx context.Context, parentID string,
 	var items []ParentQuotaObservation
 	err := scoped(ctx, s.DB).Where("parent_subscription_id = ?", parentID).
 		Order("observed_at DESC").Limit(limit).Find(&items).Error
+	return items, err
+}
+
+func (s Store) ListParentQuotaResets(ctx context.Context, parentID string, limit int) ([]ParentQuotaReset, error) {
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	var items []ParentQuotaReset
+	err := scoped(ctx, s.DB).Where("parent_subscription_id = ?", parentID).
+		Order("reset_at DESC").Order("kind").Limit(limit).Find(&items).Error
 	return items, err
 }
 

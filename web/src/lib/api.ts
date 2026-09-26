@@ -559,11 +559,17 @@ export interface ChildSubscription {
   parent_quota_probe_status?: "unknown" | "supported" | "unsupported" | "error"
   parent_quota_observed_at?: string | null
   entitlement_windows?: SubscriptionEntitlementWindow[]
+  reset_history?: SubscriptionQuotaReset[]
   starts_at: string
   expires_at?: string | null
   created_at?: string
   updated_at?: string
   windows?: ChildQuotaWindow[]
+}
+
+export interface SubscriptionQuotaReset {
+  kind: string
+  reset_at: string
 }
 
 export class ApiError extends Error {

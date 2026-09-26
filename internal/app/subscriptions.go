@@ -405,6 +405,7 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 		}
 		windows := []store.ChildQuotaWindow(nil)
 		parentWindows := []store.ParentQuotaWindow(nil)
+		resets := []tenantQuotaReset{}
 		if parent.CapacityMode != db.ParentCapacityUnmetered {
 			windows, err = a.store.ProjectedChildQuotaState(r.Context(), item)
 			if err != nil {
@@ -415,6 +416,14 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				writeError(w, 500, "database_error", err.Error())
 				return
+			}
+			parentResets, resetErr := a.store.ListParentQuotaResets(r.Context(), parent.ID, 20)
+			if resetErr != nil {
+				writeError(w, 500, "database_error", resetErr.Error())
+				return
+			}
+			for _, reset := range parentResets {
+				resets = append(resets, tenantQuotaReset{Kind: reset.Kind, ResetAt: reset.ResetAt})
 			}
 		}
 		models, modelSource := effectiveSubscriptionModels(parent, item)
@@ -437,9 +446,15 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 			"parent_quota_observed_at":  parent.QuotaObservedAt,
 			"effective_model_allowlist": models, "model_source": modelSource,
 			"entitlement_windows": projectTenantEntitlements(parentWindows, item, windows),
+			"reset_history":       resets,
 		})
 	}
 	writeJSON(w, 200, map[string]any{"items": result})
+}
+
+type tenantQuotaReset struct {
+	Kind    string    `json:"kind"`
+	ResetAt time.Time `json:"reset_at"`
 }
 
 func tenantSubscriptionAvailability(parent store.ParentSubscription, child store.ChildSubscription, now time.Time) (bool, string) {

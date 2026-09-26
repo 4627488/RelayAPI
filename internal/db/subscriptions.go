@@ -74,6 +74,16 @@ type ParentQuotaObservation struct {
 	CreatedAt            time.Time `json:"created_at"`
 }
 
+// ParentQuotaReset records a reset confirmed by a later upstream observation.
+// Children sharing a parent read the same event rather than keeping copies.
+type ParentQuotaReset struct {
+	ParentSubscriptionID string    `gorm:"type:uuid;primaryKey;index:parent_quota_resets_lookup_idx,priority:1" json:"parent_subscription_id"`
+	Kind                 string    `gorm:"primaryKey" json:"kind"`
+	ResetAt              time.Time `gorm:"primaryKey;index:parent_quota_resets_lookup_idx,priority:2,sort:desc" json:"reset_at"`
+	ObservedAt           time.Time `gorm:"not null" json:"observed_at"`
+	NextResetsAt         time.Time `gorm:"not null" json:"next_resets_at"`
+}
+
 type ChildSubscription struct {
 	ID                   string         `gorm:"type:uuid;primaryKey" json:"id"`
 	TenantID             string         `gorm:"type:uuid;not null;index:child_subscriptions_tenant_idx,priority:1" json:"tenant_id"`

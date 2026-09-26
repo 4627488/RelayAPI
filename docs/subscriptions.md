@@ -51,6 +51,13 @@ the native runtime owns protocol translation, retries, and routing.
 by quota probes or native runtime metadata; administrators may only override each
 window's USD conversion. The core does not hard-code a provider list.
 
+`parent_quota_resets` stores confirmed upstream generation changes. Each row
+keeps the previous upstream reset time and the observation that confirmed the
+next generation. Nearby countdown jitter and edits to an administrator's USD
+conversion do not create reset records. Children of the same parent read the
+same history; the tenant API exposes only window kind and reset time, with the
+20 most recent records shown in My Subscriptions.
+
 ### Child subscriptions
 
 `child_subscriptions` binds a tenant to one parent with an integer allocation,

@@ -220,6 +220,13 @@ var migrations = []migration{
 			 WHERE source = 'manual' AND name LIKE 'rai · %'`,
 		},
 	},
+	{
+		version: 13,
+		name:    "parent quota reset history",
+		statements: []string{
+			`ALTER TABLE parent_quota_resets ADD CONSTRAINT parent_quota_reset_parent_fk FOREIGN KEY (parent_subscription_id) REFERENCES parent_subscriptions(id) ON DELETE CASCADE`,
+		},
+	},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this
