@@ -109,6 +109,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	trace.setSelection(credential, model, responseMode)
 	if credential.Provider == "xai" && !isImagesPath(requestPath) {
 		body, toolRestorer = lowerCodexTools(body)
+		body = sanitizeXAIResponses(body)
 	}
 	target := credential.upstreamURL(requestPath)
 	response, err := r.doProviderRequest(request, credential, target, requestPath, body, trace)
