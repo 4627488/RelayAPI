@@ -52,6 +52,7 @@ type quotaEndpoints struct {
 	kimiUsageFallback string
 	xaiCredits        string
 	xaiBilling        string
+	xaiSettings       string
 }
 
 var productionQuotaEndpoints = quotaEndpoints{
@@ -60,6 +61,7 @@ var productionQuotaEndpoints = quotaEndpoints{
 	kimiUsageFallback: "https://api.moonshot.ai/v1/usages",
 	xaiCredits:        "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
 	xaiBilling:        "https://cli-chat-proxy.grok.com/v1/billing",
+	xaiSettings:       "https://cli-chat-proxy.grok.com/v1/settings",
 }
 
 func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaReport, error) {

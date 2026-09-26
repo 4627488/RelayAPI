@@ -152,7 +152,9 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		item := nativeProviderAccount(row)
+		quotaPlanAuthoritative := false
 		if parent, ok := parentsByCredential[row.ID]; ok {
+			quotaPlanAuthoritative = parent.QuotaProbeStatus == "supported" && len(parent.QuotaSnapshot) > 0
 			item["parent_subscription_id"] = parent.ID
 			item["capacity_mode"] = parent.CapacityMode
 			item["quota_supported"] = parent.QuotaSupported
@@ -182,7 +184,7 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				if !status.QuotaRecoverAt.IsZero() {
 					item["quota_recover_at"] = status.QuotaRecoverAt
 				}
-				if _, exists := item["plan_type"]; !exists && status.PlanType != "" {
+				if _, exists := item["plan_type"]; !exists && !quotaPlanAuthoritative && status.PlanType != "" {
 					item["plan_type"] = status.PlanType
 				}
 			}

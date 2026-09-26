@@ -40,19 +40,22 @@ func probeCodexQuota(ctx context.Context, client *http.Client, endpoint, authInd
 	}
 
 	windows := make([]QuotaWindow, 0, 4)
-	rateLimit := quotaMap(payload["rate_limit"])
-	windows = appendCodexWindow(windows, quotaMap(rateLimit["primary_window"]), quotaKind5h, true, now)
-	windows = appendCodexWindow(windows, quotaMap(rateLimit["secondary_window"]), quotaKind7d, true, now)
+	rateLimit := quotaMap(firstQuotaValue(payload["rate_limit"], payload["rate_limits"]))
+	windows = appendCodexWindow(windows, quotaMap(firstQuotaValue(rateLimit["five_hour"], rateLimit["primary_window"], rateLimit["primary"])), quotaKind5h, true, now)
+	windows = appendCodexWindow(windows, quotaMap(firstQuotaValue(rateLimit["weekly"], rateLimit["secondary_window"], rateLimit["secondary"])), quotaKind7d, true, now)
 	if rows, _ := payload["additional_rate_limits"].([]any); rows != nil {
 		for _, raw := range rows {
 			row := quotaMap(raw)
 			if !strings.EqualFold(scalarQuotaText(row["metered_feature"]), codexSparkFeature) {
 				continue
 			}
-			extra := quotaMap(row["rate_limit"])
-			windows = appendCodexWindow(windows, quotaMap(extra["primary_window"]), quotaKindSpark5h, false, now)
-			windows = appendCodexWindow(windows, quotaMap(extra["secondary_window"]), quotaKindSpark7d, false, now)
+			extra := quotaMap(firstQuotaValue(row["rate_limit"], row["rate_limits"]))
+			windows = appendCodexWindow(windows, quotaMap(firstQuotaValue(extra["five_hour"], extra["primary_window"], extra["primary"])), quotaKindSpark5h, false, now)
+			windows = appendCodexWindow(windows, quotaMap(firstQuotaValue(extra["weekly"], extra["secondary_window"], extra["secondary"])), quotaKindSpark7d, false, now)
 		}
+	}
+	if len(windows) == 0 {
+		return QuotaReport{}, errors.New("codex quota response contains no usable windows")
 	}
 
 	return QuotaReport{
@@ -88,6 +91,12 @@ func appendCodexWindow(windows []QuotaWindow, value map[string]any, fallbackKind
 	}
 	used := percentQuota(value["used_percent"])
 	if used == nil {
+		if left := percentQuota(value["percent_left"]); left != nil {
+			remaining := 100 - *left
+			used = &remaining
+		}
+	}
+	if used == nil {
 		return windows
 	}
 	kind := fallbackKind
@@ -98,6 +107,24 @@ func appendCodexWindow(windows []QuotaWindow, value map[string]any, fallbackKind
 			} else {
 				kind = mapped
 			}
+		} else {
+			switch fallbackKind {
+			case quotaKind5h:
+				kind = "codex-primary"
+			case quotaKind7d:
+				kind = "codex-secondary"
+			case quotaKindSpark5h:
+				kind = "spark-primary"
+			case quotaKindSpark7d:
+				kind = "spark-secondary"
+			}
+		}
+	}
+	resetsAt := quotaResetTime(value, nil, now)
+	if resetsAt == nil {
+		if resetMillis := numericQuota(value["reset_time_ms"]); resetMillis != nil && *resetMillis > 0 {
+			reset := time.UnixMilli(int64(*resetMillis)).UTC()
+			resetsAt = &reset
 		}
 	}
 	return append(windows, QuotaWindow{
@@ -105,7 +132,7 @@ func appendCodexWindow(windows []QuotaWindow, value map[string]any, fallbackKind
 		Label:            quotaKindLabel(kind),
 		UsedPercent:      used,
 		RemainingPercent: quotaComplement(used),
-		ResetsAt:         quotaResetTime(value, nil, now),
+		ResetsAt:         resetsAt,
 		Enforceable:      enforceable && isStandardQuotaKind(kind),
 	})
 }

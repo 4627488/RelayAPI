@@ -12,7 +12,9 @@ Keep the existing `QuotaReport` / `QuotaWindow` types and injectable endpoints. 
 
 - Codex WHAM `primary_window` → `5h`, `secondary_window` → `7d`, seconds 86400 → `1d`; require `chatgpt-account-id`; send `OpenAI-Beta: codex-1` and the Cloudflare-facing header set. Spark is display-only.
 - Kimi official `usage` → `7d`, 300-minute `limits[]` → `5h`; `KimiCLI/1.3` fingerprint headers; plan from `user.membership.level`.
-- xAI weekly from `creditUsagePercent` (0% when the period exists without a percent); monthly/prepaid display-only; plan from `subscriptionTier`; 412 / no personal team → `Supported: false`.
+- xAI included usage from `creditUsagePercent` and `currentPeriod.type`, with only explicitly weekly periods mapped to enforceable `7d`; monthly/prepaid display-only; plan from `/v1/settings` `subscription_tier_display`, falling back to an explicit billing `subscriptionTier`; 412 / no personal team → `Supported: false`.
+
+Codex window duration takes precedence over `primary_window` / `secondary_window` position, since a lone weekly window may occupy `primary_window`. The probe also accepts the observed `rate_limits` root and legacy `percent_left` / `reset_time_ms` fields.
 
 Do not invent kinds from Chinese labels, monthly-limit cents, or product-usage rows. Do not send a Grok `/responses` probe that burns quota.
 

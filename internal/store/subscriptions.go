@@ -241,7 +241,11 @@ func (s Store) UpdateParentQuotaProbe(ctx context.Context, parentID string, supp
 	if observedAt != nil && !observedAt.IsZero() {
 		updates["quota_observed_at"] = observedAt
 	}
-	if strings.TrimSpace(planType) != "" {
+	if status == "supported" && len(snapshot) > 0 && json.Valid(snapshot) {
+		// A successful probe replaces the previous plan, including an old guessed
+		// value when the upstream no longer reports a subscription tier.
+		updates["plan_type"] = strings.TrimSpace(planType)
+	} else if strings.TrimSpace(planType) != "" {
 		updates["plan_type"] = strings.TrimSpace(planType)
 	}
 	if len(snapshot) > 0 && json.Valid(snapshot) {

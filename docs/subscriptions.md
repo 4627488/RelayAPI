@@ -156,12 +156,14 @@ billing (as implemented by CPA / sub2api):
 - Kimi: `GET /coding/v1/usages` (Moonshot fallback) with official `KimiCLI/1.3`
   fingerprint headers. Top-level `usage` is the weekly `7d` window;
   `limits[]` with 300 minutes is `5h`. Kinds are never invented from labels.
-- xAI: parallel `GET /v1/billing?format=credits` and `GET /v1/billing`. Weekly
-  `7d` comes from `config.creditUsagePercent` (missing percent with a parseable
-  period is 0%). Monthly and prepaid are display-only. Plan comes from
-  `subscriptionTier` only. HTTP 412 / "no personal team" is unsupported, not a
-  probe error. Billing probes never send a `/responses` "hi" that consumes
-  quota.
+- xAI: `GET /v1/billing?format=credits` and `GET /v1/billing` provide included
+  usage. `config.currentPeriod.type` determines whether the percentage is a
+  weekly `7d` window or a display-only monthly window; an unknown period is
+  displayed without enforcement. `GET /v1/settings` supplies the display plan
+  from `subscription_tier_display`, with an explicit billing
+  `subscriptionTier` as fallback. Monthly billing and prepaid balances remain
+  display-only. HTTP 412 / "no personal team" is unsupported, not a probe
+  error. Billing probes never send a `/responses` "hi" that consumes quota.
 
 Only standard `5h` / `7d` / `1d` windows with a future reset are enforceable.
 A credential may instead expose normalized `relay_quota` metadata directly.

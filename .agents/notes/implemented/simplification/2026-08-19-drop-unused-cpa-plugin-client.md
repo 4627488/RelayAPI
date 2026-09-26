@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-After RelayAPI embedded CPA, `startEmbeddedCPA` constructs `cpa.Client` with an empty management key. Production quota uses `cpa.ProbeQuota` against provider endpoints. Health and model lists use `nativeCPARuntime` and `ControlHTTP` directly.
+After RelayAPI embedded CPA, `startEmbeddedCPA` constructs `cpa.Client` with an empty management key. Health and model lists use `nativeCPARuntime` and `ControlHTTP` directly. The current production quota path is `gateway.ProbeQuota`; the former `cpa.ProbeQuota` copy had no production callers and was removed in September 2026.
 
 `rg` found no production callers for `Client.Management`, `ManagementRaw`, `Ready`, `Models`, `Quota`, `BridgeReady`, or `QuotaReady`. The only consumers were `internal/cpa/client_test.go` and `internal/cpa/quota_test.go`. Those methods still talked to `/v0/management/plugins` and `/v1/models` as if an external control plane existed.
 
@@ -24,4 +24,4 @@ Delete tests that only pinned the removed plugin/management API. Keep admission,
 
 ## Consequences
 
-The embedded client is only an inference and catalog HTTP client. A new CPA event/management bus must not assume `Client.Quota` or `QuotaReady` exist. Native `ProbeQuota` remains the quota path.
+The embedded client is only an inference and catalog HTTP client. A new CPA event/management bus must not assume `Client.Quota` or `QuotaReady` exist. The active provider quota probes live under `internal/gateway`.

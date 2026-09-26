@@ -39,13 +39,22 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 	if billingErr != nil && !billingUnavailable && credits == nil {
 		return QuotaReport{}, fmt.Errorf("xAI quota request: %w", billingErr)
 	}
+	settingsPlan := ""
+	if endpoints.xaiSettings != "" {
+		settingsCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		settings, settingsErr := requestQuotaJSON(settingsCtx, client, endpoints.xaiSettings, headers)
+		cancel()
+		if settingsErr == nil {
+			settingsPlan = xaiSettingsPlan(quotaPayloadRoot(settings))
+		}
+	}
 
 	windows := make([]QuotaWindow, 0, 3)
 	plan := ""
 	if credits != nil {
 		credits = quotaPayloadRoot(credits)
 		plan = xaiSubscriptionPlan(credits)
-		if window, ok := xaiWeeklyWindow(credits, now); ok {
+		if window, ok := xaiIncludedWindow(credits, now); ok {
 			windows = append(windows, window)
 		}
 		if window, ok := xaiPrepaidWindow(credits); ok {
@@ -65,6 +74,9 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 				windows = append(windows, window)
 			}
 		}
+	}
+	if settingsPlan != "" {
+		plan = settingsPlan
 	}
 
 	return QuotaReport{
@@ -121,12 +133,20 @@ func xaiBillingUnavailable(status int, err error) bool {
 		(strings.Contains(message, "personal team") && strings.Contains(message, "not found"))
 }
 
-func xaiWeeklyWindow(credits map[string]any, now time.Time) (QuotaWindow, bool) {
+func xaiIncludedWindow(credits map[string]any, now time.Time) (QuotaWindow, bool) {
 	config := quotaMap(credits["config"])
 	if config == nil {
 		return QuotaWindow{}, false
 	}
 	period := quotaMap(firstQuotaValue(config["currentPeriod"], config["current_period"]))
+	periodType := strings.ToUpper(firstQuotaText(scalarQuotaText(period["type"]), scalarQuotaText(period["periodType"]), scalarQuotaText(period["period_type"])))
+	kind := "included"
+	switch {
+	case strings.Contains(periodType, "WEEKLY"):
+		kind = quotaKind7d
+	case strings.Contains(periodType, "MONTHLY"):
+		kind = quotaKindMonthly
+	}
 	resetsAt := parseQuotaTime(firstQuotaValue(period["end"], period["ends_at"], config["billingPeriodEnd"], config["billing_period_end"]), now)
 	used := percentQuota(firstQuotaValue(config["creditUsagePercent"], config["credit_usage_percent"]))
 	if used == nil && resetsAt == nil {
@@ -136,13 +156,17 @@ func xaiWeeklyWindow(credits map[string]any, now time.Time) (QuotaWindow, bool) 
 		zero := 0.0
 		used = &zero
 	}
+	label := quotaKindLabel(kind)
+	if kind == "included" {
+		label = "订阅额度（周期未知）"
+	}
 	return QuotaWindow{
-		Kind:             quotaKind7d,
-		Label:            quotaKindLabel(quotaKind7d),
+		Kind:             kind,
+		Label:            label,
 		UsedPercent:      used,
 		RemainingPercent: quotaComplement(used),
 		ResetsAt:         resetsAt,
-		Enforceable:      true,
+		Enforceable:      kind == quotaKind7d,
 	}, true
 }
 
@@ -188,6 +212,15 @@ func xaiSubscriptionPlan(payload map[string]any) string {
 		scalarQuotaText(payload["subscription_tier"]),
 		scalarQuotaText(config["subscriptionTier"]),
 		scalarQuotaText(config["subscription_tier"]),
+	)
+}
+
+func xaiSettingsPlan(payload map[string]any) string {
+	return firstQuotaText(
+		scalarQuotaText(payload["subscription_tier_display"]),
+		scalarQuotaText(payload["subscriptionTierDisplay"]),
+		scalarQuotaText(payload["subscription_tier"]),
+		scalarQuotaText(payload["subscriptionTier"]),
 	)
 }
 
