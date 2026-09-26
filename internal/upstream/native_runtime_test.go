@@ -490,6 +490,67 @@ func TestRuntimeTraceCapturesProviderAttempts(t *testing.T) {
 	}
 }
 
+func TestKimiRewritesCodingPlanModelIDs(t *testing.T) {
+	observed := make(chan string, 2)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		if model, _ := payload["model"].(string); model != "k3" {
+			t.Errorf("upstream model = %q, want k3; body=%s", model, body)
+		}
+		observed <- r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "chat_1", "choices": []any{map[string]any{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	t.Cleanup(provider.Close)
+	runtime := newTestRuntime(t, Credential{
+		ID: "kimi", Provider: "kimi", Enabled: true, Models: []string{"kimi-k3-256k", "kimi-k3"},
+		Document: testJSON(t, map[string]any{"type": "kimi", "access_token": "token", "base_url": provider.URL}),
+	})
+	chat := runtimeRequest(t, runtime, http.MethodPost, "/v1/chat/completions", `{"model":"kimi-k3-256k","messages":[{"role":"user","content":"hi"}],"max_tokens":8}`)
+	if chat.Code != http.StatusOK {
+		t.Fatalf("chat status = %d %s", chat.Code, chat.Body.String())
+	}
+	responses := runtimeRequest(t, runtime, http.MethodPost, "/v1/responses", `{"model":"kimi-k3","input":"hi"}`)
+	if responses.Code != http.StatusOK {
+		t.Fatalf("responses status = %d %s", responses.Code, responses.Body.String())
+	}
+	if first, second := <-observed, <-observed; first != "/chat/completions" || second != "/chat/completions" {
+		t.Fatalf("paths = %q %q", first, second)
+	}
+}
+
+func TestKimiDocumentModelRouteWinsOverDefault(t *testing.T) {
+	observed := make(chan string, 1)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		_ = json.Unmarshal(body, &payload)
+		model, _ := payload["model"].(string)
+		observed <- model
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": "chat_1", "choices": []any{map[string]any{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	t.Cleanup(provider.Close)
+	runtime := newTestRuntime(t, Credential{
+		ID: "kimi", Provider: "kimi", Enabled: true, Models: []string{"kimi-k3-256k"},
+		Document: testJSON(t, map[string]any{
+			"type": "kimi", "access_token": "token", "base_url": provider.URL,
+			"model_routes": []any{map[string]any{"public": "kimi-k3-256k", "upstream": "k3-256k"}},
+		}),
+	})
+	response := runtimeRequest(t, runtime, http.MethodPost, "/v1/chat/completions", `{"model":"kimi-k3-256k","messages":[{"role":"user","content":"hi"}]}`)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", response.Code, response.Body.String())
+	}
+	if got := <-observed; got != "k3-256k" {
+		t.Fatalf("upstream model = %q, want explicit k3-256k", got)
+	}
+}
+
 func newTestRuntime(t *testing.T, credential Credential) Runtime {
 	t.Helper()
 	runtime, err := NewRuntime(Options{}, []Credential{credential})

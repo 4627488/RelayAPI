@@ -44,7 +44,7 @@ func TestProviderOAuthSessionsRejectProviderMismatch(t *testing.T) {
 
 func TestMergeOAuthCredentialSettingsPreservesNonNetworkOptions(t *testing.T) {
 	merged, err := mergeOAuthCredentialSettings(
-		json.RawMessage(`{"type":"codex","access_token":"old","proxy_url":"socks5://proxy","websockets":true,"headers":{"X-Team":"one"}}`),
+		json.RawMessage(`{"type":"codex","access_token":"old","proxy_url":"socks5://proxy","websockets":true,"headers":{"X-Team":"one"},"model_routes":[{"public":"kimi-k3-256k","upstream":"k3"}]}`),
 		json.RawMessage(`{"type":"codex","access_token":"new","email":"new@example.com"}`),
 	)
 	if err != nil {
@@ -56,6 +56,10 @@ func TestMergeOAuthCredentialSettingsPreservesNonNetworkOptions(t *testing.T) {
 	}
 	if document["access_token"] != "new" || document["websockets"] != true {
 		t.Fatalf("unexpected merged OAuth document: %#v", document)
+	}
+	routes, _ := document["model_routes"].([]any)
+	if len(routes) != 1 {
+		t.Fatalf("model_routes were dropped: %#v", document["model_routes"])
 	}
 	if _, exists := document["proxy_url"]; exists {
 		t.Fatalf("legacy inline proxy survived OAuth merge: %#v", document)
