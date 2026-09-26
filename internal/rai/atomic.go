@@ -7,6 +7,10 @@ import (
 )
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	return writeFileAtomicWithReplace(path, data, perm, os.Rename)
+}
+
+func writeFileAtomicWithReplace(path string, data []byte, perm os.FileMode, replace func(string, string) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -37,7 +41,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := replace(tmp, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	cleanup = false

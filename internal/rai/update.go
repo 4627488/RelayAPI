@@ -106,5 +106,5 @@ func replaceExecutable(ctx context.Context, client *http.Client, rawURL, target 
 	if len(data) == 0 {
 		return fmt.Errorf("downloaded empty binary")
 	}
-	return writeFileAtomic(target, data, 0o755)
+	return writeFileAtomicWithReplace(target, data, 0o755, replaceExecutableFile)
 }
