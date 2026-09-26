@@ -624,6 +624,7 @@ func (s *Store) ReplacePriceRules(ctx context.Context, rules []db.ModelPriceRule
 			rules[index].Value = strings.TrimSpace(rules[index].Value)
 			rules[index].CreatedAt, rules[index].UpdatedAt = now, now
 			if rules[index].Model == "" || rules[index].Value == "" || !pricing.ValidRuleField(rules[index].Field) ||
+				!pricing.ValidRuleValue(rules[index].Field, rules[index].Value) ||
 				rules[index].Multiplier < 0 || math.IsNaN(rules[index].Multiplier) || math.IsInf(rules[index].Multiplier, 0) {
 				return errors.New("invalid pricing rule")
 			}

@@ -151,7 +151,7 @@ func (s *Store) backfillPendingPricing(ctx context.Context) (int, error) {
 				APIGroupKey: item.APIKeyID, Model: item.Model, ModelAlias: item.ModelAlias,
 				AuthIndex: item.AuthIndex, ServiceTier: item.ServiceTier,
 				ResponseServiceTier: item.ResponseServiceTier, ReasoningEffort: item.ReasoningEffort,
-				Endpoint: item.Path, ExecutorType: item.ExecutorType,
+				Endpoint: item.Path, ExecutorType: item.ExecutorType, PromptTokens: item.PromptTokens,
 			})
 			if !ok {
 				continue

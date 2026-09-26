@@ -10,6 +10,7 @@ import (
 	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -54,6 +55,7 @@ type Dimensions struct {
 	ReasoningEffort     string `json:"reasoning_effort,omitempty"`
 	Endpoint            string `json:"endpoint,omitempty"`
 	ExecutorType        string `json:"executor_type,omitempty"`
+	PromptTokens        int64  `json:"prompt_tokens,omitempty"`
 }
 
 type SnapshotPrice struct {
@@ -86,7 +88,7 @@ func Compile(admin, catalog, bundled []Price, aliases map[string]string, rules [
 		rule.Model = clean(rule.Model)
 		rule.Field = strings.ToLower(clean(rule.Field))
 		rule.Value = clean(rule.Value)
-		if rule.Model == "" || rule.Value == "" || !ValidRuleField(rule.Field) {
+		if rule.Model == "" || rule.Value == "" || !ValidRuleField(rule.Field) || !ValidRuleValue(rule.Field, rule.Value) {
 			return nil, fmt.Errorf("invalid price rule for model %q", rule.Model)
 		}
 		if !finiteNonNegative(rule.Multiplier) {
@@ -178,6 +180,9 @@ func (s *Snapshot) Resolve(dimensions Dimensions) (SnapshotPrice, bool) {
 				}
 			}
 			ruleMultiplier := matchingRuleMultiplier(model.rules, dimensions)
+			if defaultLongContext(model.price.Model, dimensions.PromptTokens) && !hasPromptThresholdRule(model.rules) {
+				ruleMultiplier *= 2
+			}
 			price := scaled(model.price, ruleMultiplier)
 			return SnapshotPrice{
 				Price: price, RequestedModel: requested, PricedModel: model.price.Model,
@@ -272,11 +277,49 @@ func scaleInt(value int64, multiplier float64) int64 {
 func matchingRuleMultiplier(rules []Rule, dimensions Dimensions) float64 {
 	multiplier := 1.0
 	for _, rule := range rules {
-		if dimensionValue(dimensions, rule.Field) == rule.Value {
+		matched := dimensionValue(dimensions, rule.Field) == rule.Value
+		if rule.Field == "prompt_tokens_gte" {
+			threshold, _ := strconv.ParseInt(rule.Value, 10, 64)
+			matched = dimensions.PromptTokens >= threshold
+		}
+		if matched {
 			multiplier *= rule.Multiplier
 		}
 	}
 	return multiplier
+}
+
+func hasPromptThresholdRule(rules []Rule) bool {
+	for _, rule := range rules {
+		if rule.Field == "prompt_tokens_gte" {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultLongContext(model string, promptTokens int64) bool {
+	if promptTokens < 200_000 {
+		return false
+	}
+	model = strings.ToLower(model)
+	if strings.Contains(model, "/") {
+		if !strings.HasPrefix(model, "xai/") {
+			return false
+		}
+		model = strings.TrimPrefix(model, "xai/")
+	}
+	return strings.HasPrefix(model, "grok-build-0.1") || strings.HasPrefix(model, "grok-4.7") || strings.HasPrefix(model, "grok-4.6") ||
+		strings.HasPrefix(model, "grok-4.5") || strings.HasPrefix(model, "grok-4.3") ||
+		strings.HasPrefix(model, "grok-4.20")
+}
+
+func ValidRuleValue(field, value string) bool {
+	if strings.EqualFold(clean(field), "prompt_tokens_gte") {
+		threshold, err := strconv.ParseInt(clean(value), 10, 64)
+		return err == nil && threshold > 0
+	}
+	return true
 }
 
 func dimensionValue(d Dimensions, field string) string {
@@ -307,7 +350,7 @@ func dimensionValue(d Dimensions, field string) string {
 func ValidRuleField(field string) bool {
 	switch strings.ToLower(clean(field)) {
 	case "api_group_key", "model", "model_alias", "auth_index", "service_tier",
-		"response_service_tier", "reasoning_effort", "endpoint", "executor_type":
+		"response_service_tier", "reasoning_effort", "endpoint", "executor_type", "prompt_tokens_gte":
 		return true
 	default:
 		return false
@@ -357,7 +400,7 @@ func unique(values []string) []string {
 
 func SortedRuleFields() []string {
 	fields := []string{"api_group_key", "model", "model_alias", "auth_index", "service_tier",
-		"response_service_tier", "reasoning_effort", "endpoint", "executor_type"}
+		"response_service_tier", "reasoning_effort", "endpoint", "executor_type", "prompt_tokens_gte"}
 	sort.Strings(fields)
 	return fields
 }

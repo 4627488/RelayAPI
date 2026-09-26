@@ -255,6 +255,7 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 		APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(accounting.admission),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
 		ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+		PromptTokens: turn.Usage.Prompt,
 	}); err == nil {
 		turnPrice = &resolved
 	}

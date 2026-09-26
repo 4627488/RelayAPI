@@ -516,7 +516,12 @@ export function PricingView() {
         <Card>
           <CardHeader>
             <CardTitle>多维倍率规则</CardTitle>
-            <CardDescription>可用字段：{fields.join("、")}</CardDescription>
+            <CardDescription>
+              可用字段：{fields.join("、")}。prompt_tokens_gte 的 value 填输入
+              token 阈值，达到阈值时整次请求按倍率计价；例如 200000、倍率
+              2。Grok 4.3/4.5/4.6/4.7/4.20 和 grok-build-0.1
+              默认采用此规则，显式规则可覆盖默认值。
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <Textarea

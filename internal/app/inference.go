@@ -239,8 +239,10 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			}
 		}
 		parsed := billing.ParseResponse(capture.Bytes())
-		if call.priceConfigured && parsed.ResponseServiceTier != "" {
-			if resolved, resolveErr := a.store.ResolvePrice(finalizeCtx, requestPriceDimensions(call.key, call.meta, r.URL.Path, admissionAuthIndex(call.admission), parsed.ResponseServiceTier)); resolveErr == nil {
+		if call.priceConfigured && parsed.Found {
+			dimensions := requestPriceDimensions(call.key, call.meta, r.URL.Path, admissionAuthIndex(call.admission), parsed.ResponseServiceTier)
+			dimensions.PromptTokens = parsed.Usage.Prompt
+			if resolved, resolveErr := a.store.ResolvePrice(finalizeCtx, dimensions); resolveErr == nil {
 				price = resolved
 				logContext.price = &price
 				_ = a.store.UpdateReservationPriceSnapshot(finalizeCtx, call.requestID, store.EncodePriceSnapshot(price))

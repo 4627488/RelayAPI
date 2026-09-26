@@ -80,6 +80,62 @@ func TestResolveGrok46BundledPrice(t *testing.T) {
 	}
 }
 
+func TestLongContextPricingThreshold(t *testing.T) {
+	snapshot, err := Compile(nil, nil, BundledPrices, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		prompt int64
+		input  int64
+	}{
+		{199999, 2000}, {200000, 4000}, {250000, 4000},
+	} {
+		got, ok := snapshot.Resolve(Dimensions{Model: "grok-4.6", PromptTokens: test.prompt})
+		if !ok || got.InputNanoUSDPerToken != test.input || got.CachedInputNanoUSDPerToken != test.input/4 || got.OutputNanoUSDPerToken != test.input*3 {
+			t.Fatalf("prompt=%d: %+v, ok=%v", test.prompt, got, ok)
+		}
+	}
+}
+
+func TestConfigurablePromptThresholdOverridesDefault(t *testing.T) {
+	prices := []Price{{Model: "xai/grok-4.6", InputNanoUSDPerToken: 10, OutputNanoUSDPerToken: 30, PriceMultiplier: 1}}
+	rules := []Rule{{Model: "xai/grok-4.6", Field: "prompt_tokens_gte", Value: "100000", Multiplier: 3}}
+	snapshot, err := Compile(nil, prices, nil, nil, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := snapshot.Resolve(Dimensions{Model: "grok-4.6", PromptTokens: 150000})
+	if got.InputNanoUSDPerToken != 30 || got.OutputNanoUSDPerToken != 90 || got.RuleMultiplier != 3 {
+		t.Fatalf("configured threshold: %+v", got)
+	}
+	for _, value := range []string{"0", "-1", "abc", "9223372036854775808"} {
+		if _, err := Compile(nil, prices, nil, nil, []Rule{{Model: "xai/grok-4.6", Field: "prompt_tokens_gte", Value: value, Multiplier: 2}}); err == nil {
+			t.Fatalf("accepted invalid threshold %q", value)
+		}
+	}
+}
+
+func TestKimiPromptThresholdIsOptIn(t *testing.T) {
+	prices := []Price{{Model: "moonshotai/kimi-k2.5", InputNanoUSDPerToken: 600, OutputNanoUSDPerToken: 3000, PriceMultiplier: 1}}
+	snapshot, err := Compile(nil, prices, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := snapshot.Resolve(Dimensions{Model: "kimi-k2.5", PromptTokens: 200000})
+	if got.InputNanoUSDPerToken != 600 {
+		t.Fatalf("unconfigured Kimi threshold: %+v", got)
+	}
+	snapshot, err = Compile(nil, prices, nil, nil, []Rule{{Model: "moonshotai/kimi-k2.5", Field: "prompt_tokens_gte", Value: "131072", Multiplier: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = snapshot.Resolve(Dimensions{Model: "kimi-k2.5", PromptTokens: 131072})
+	if got.InputNanoUSDPerToken != 1200 || got.OutputNanoUSDPerToken != 6000 {
+		t.Fatalf("configured Kimi threshold: %+v", got)
+	}
+}
+
 func TestResolveKimiProviderCandidate(t *testing.T) {
 	catalog := []Price{
 		{Model: "moonshotai/kimi-k2.5", InputNanoUSDPerToken: 600, OutputNanoUSDPerToken: 3000, Source: SourceCatalog, PriceMultiplier: 1},
