@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { LatencyObservations } from "@/components/request-latency-timeline"
 import { parseLatencyTrace, measuredMS } from "@/lib/latency-trace"
 import type { RequestLog } from "@/lib/api"
+import type { Workspace } from "@/lib/routes"
 import {
   bytes,
   cacheHitRateLabel,
@@ -51,10 +52,12 @@ function Facts({ rows }: { rows: [string, ReactNode][] }) {
 export function RequestLogInsight({
   log,
   section,
+  workspace = "user",
   children,
 }: {
   log: RequestLog
   section: Section
+  workspace?: Workspace
   children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
@@ -112,7 +115,7 @@ export function RequestLogInsight({
               </>
             ) : (
               <p className="text-sm text-muted-foreground">
-                此记录没有可展示的 v5 阶段观测。
+                此记录没有可展示的阶段观测。
               </p>
             )}
           </TabsContent>
@@ -171,20 +174,28 @@ export function RequestLogInsight({
                     ? undefined
                     : `${log.price_multiplier}×`,
                 ],
-                ...(
-                  [
-                    ["输入单价", log.input_price_nano_usd_per_token],
-                    ["输出单价", log.output_price_nano_usd_per_token],
-                    ["缓存读取单价", log.cached_input_price_nano_usd_per_token],
-                    ["缓存写入单价", log.cache_write_price_nano_usd_per_token],
-                    ["推理单价", log.reasoning_price_nano_usd_per_token],
-                  ] as const
-                )
-                  .filter(([, value]) => value != null)
-                  .map(([label, value]): [string, ReactNode] => [
-                    label,
-                    `${money(value! * 1_000_000)} / 百万 Tokens`,
-                  ]),
+                ...(log.pricing_complete && log.price_model
+                  ? (
+                      [
+                        ["输入单价", log.input_price_nano_usd_per_token],
+                        ["输出单价", log.output_price_nano_usd_per_token],
+                        [
+                          "缓存读取单价",
+                          log.cached_input_price_nano_usd_per_token,
+                        ],
+                        [
+                          "缓存写入单价",
+                          log.cache_write_price_nano_usd_per_token,
+                        ],
+                        ["推理单价", log.reasoning_price_nano_usd_per_token],
+                      ] as const
+                    )
+                      .filter(([, value]) => value != null)
+                      .map(([label, value]): [string, ReactNode] => [
+                        label,
+                        `${money(value! * 1_000_000)} / 百万 Tokens`,
+                      ])
+                  : []),
               ]}
             />
           </TabsContent>
@@ -193,20 +204,26 @@ export function RequestLogInsight({
               rows={[
                 ["请求模型", log.requested_model || log.model],
                 ["实际模型", log.actual_model],
-                ["提供商", log.provider],
-                [
-                  "凭据",
-                  log.credential_email || log.credential_name || log.auth_index,
-                ],
-                [
-                  "订阅",
-                  [
-                    log.parent_subscription_name || log.channel_name,
-                    log.child_subscription_name,
-                  ]
-                    .filter(Boolean)
-                    .join(" / "),
-                ],
+                ...(workspace === "admin"
+                  ? ([
+                      ["提供商", log.provider],
+                      [
+                        "凭据",
+                        log.credential_email ||
+                          log.credential_name ||
+                          log.auth_index,
+                      ],
+                      [
+                        "订阅",
+                        [
+                          log.parent_subscription_name || log.channel_name,
+                          log.child_subscription_name,
+                        ]
+                          .filter(Boolean)
+                          .join(" / "),
+                      ],
+                    ] as [string, ReactNode][])
+                  : []),
                 [
                   "客户端",
                   [log.client_name, log.client_version]
@@ -219,10 +236,14 @@ export function RequestLogInsight({
                 ["错误码", log.error_code],
                 ["错误详情", log.error_message],
                 ["计费块 ID", log.id],
-                ["关联会话", log.reservation_request_id],
-                ["上游请求 ID", log.upstream_request_id],
-                ["上游 Trace", log.upstream_trace_id],
-                ["上游 Execution", log.upstream_execution_id],
+                ...(workspace === "admin"
+                  ? ([
+                      ["关联会话", log.reservation_request_id],
+                      ["上游请求 ID", log.upstream_request_id],
+                      ["上游 Trace", log.upstream_trace_id],
+                      ["上游 Execution", log.upstream_execution_id],
+                    ] as [string, ReactNode][])
+                  : []),
               ]}
             />
           </TabsContent>

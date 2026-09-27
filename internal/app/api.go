@@ -406,22 +406,10 @@ func redactPublicLog(log *db.RequestLog) {
 	log.CredentialEmail = ""
 	log.TenantName = ""
 	// Preserve the tenant's own key ID, name and masked prefix, not key secrets.
-	log.PriceSource = ""
-	log.PriceVersion = ""
-	log.PriceModel = ""
-	log.InputPriceNanoUSD = 0
-	log.OutputPriceNanoUSD = 0
-	log.CachedPriceNanoUSD = 0
-	log.CacheWritePriceNanoUSD = 0
-	log.ReasoningPriceNanoUSD = 0
-	log.ImageInputPriceNanoUSD = 0
-	log.CachedImageInputPriceNanoUSD = 0
-	log.ImageOutputPriceNanoUSD = 0
-	log.PriceMultiplier = 0
-	log.PricingComplete = false
-	log.Settled = false
+	// The tenant's billed rates and settlement state explain the charge shown
+	// in this log. Keep them alongside token usage and the final cost.
 	log.ReservedNanoUSD = 0
-	log.ForwardedBodyBytes = 0
+	// Body sizes describe this request without exposing forwarded content.
 	log.StageTimings = "{}"
 	log.ErrorMessage = ""
 }

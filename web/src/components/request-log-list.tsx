@@ -155,7 +155,11 @@ export function RequestLogList({
                   )}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  <RequestLogInsight log={log} section="usage">
+                  <RequestLogInsight
+                    log={log}
+                    section="usage"
+                    workspace={workspace}
+                  >
                     {compactTokens(log.total_tokens)}
                   </RequestLogInsight>
                   <p className="text-xs text-muted-foreground">
@@ -164,7 +168,11 @@ export function RequestLogList({
                   </p>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  <RequestLogInsight log={log} section="latency">
+                  <RequestLogInsight
+                    log={log}
+                    section="latency"
+                    workspace={workspace}
+                  >
                     {duration(log.latency_ms)}
                   </RequestLogInsight>
                   <p
@@ -178,7 +186,11 @@ export function RequestLogList({
                   </p>
                 </TableCell>
                 <TableCell className="pr-4 text-right tabular-nums">
-                  <RequestLogInsight log={log} section="billing">
+                  <RequestLogInsight
+                    log={log}
+                    section="billing"
+                    workspace={workspace}
+                  >
                     {money(log.cost_nano_usd)}
                   </RequestLogInsight>
                 </TableCell>
@@ -232,7 +244,11 @@ export function RequestLogList({
                 <div>
                   <dt className="text-xs text-muted-foreground">Tokens</dt>
                   <dd>
-                    <RequestLogInsight log={log} section="usage">
+                    <RequestLogInsight
+                      log={log}
+                      section="usage"
+                      workspace={workspace}
+                    >
                       {compactTokens(log.total_tokens)}
                     </RequestLogInsight>
                   </dd>
@@ -240,7 +256,11 @@ export function RequestLogList({
                 <div>
                   <dt className="text-xs text-muted-foreground">耗时</dt>
                   <dd>
-                    <RequestLogInsight log={log} section="latency">
+                    <RequestLogInsight
+                      log={log}
+                      section="latency"
+                      workspace={workspace}
+                    >
                       {duration(log.latency_ms)}
                     </RequestLogInsight>
                   </dd>
@@ -248,7 +268,11 @@ export function RequestLogList({
                 <div className="text-right">
                   <dt className="text-xs text-muted-foreground">费用</dt>
                   <dd>
-                    <RequestLogInsight log={log} section="billing">
+                    <RequestLogInsight
+                      log={log}
+                      section="billing"
+                      workspace={workspace}
+                    >
                       {money(log.cost_nano_usd)}
                     </RequestLogInsight>
                   </dd>

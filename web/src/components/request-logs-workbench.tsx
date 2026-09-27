@@ -298,6 +298,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
       <LogDetailPage
         value={selected}
         loading={detailLoading}
+        admin={admin}
         onBack={closeDetail}
       />
     )
@@ -640,10 +641,12 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 function LogDetailPage({
   value,
   loading,
+  admin,
   onBack,
 }: {
   value: SelectedLog
   loading: boolean
+  admin: boolean
   onBack: () => void
 }) {
   const log = value.log
@@ -730,6 +733,7 @@ function LogDetailPage({
                 detail={detail}
                 turns={turns}
                 loading={loading}
+                admin={admin}
               />
             </TabsContent>
             {requestVisible && detail ? (
@@ -754,6 +758,7 @@ function LogDetailPage({
             detail={detail}
             turns={turns}
             loading={loading}
+            admin={admin}
           />
         )}
       </Card>
@@ -766,13 +771,16 @@ function LogOverview({
   detail,
   turns,
   loading,
+  admin,
 }: {
   log: RequestLog
   detail: RequestLogDetail | null
   turns: WebSocketTurn[]
   loading: boolean
+  admin: boolean
 }) {
   const costRows = useMemo(() => {
+    if (!log.pricing_complete || !log.price_model) return []
     const imageInput = Math.min(
       Math.max(0, log.image_input_tokens ?? 0),
       Math.max(0, log.prompt_tokens)
@@ -873,7 +881,14 @@ function LogOverview({
               log.api_key_prefix ? `${log.api_key_prefix}…` : "未记录前缀",
             ],
             ["Key ID", log.api_key_id],
-            ["用户", log.tenant_name || log.tenant_id],
+            ...(admin
+              ? [
+                  ["用户", log.tenant_name || log.tenant_id] as [
+                    string,
+                    string | undefined,
+                  ],
+                ]
+              : []),
             ["入口", `${log.method} ${log.path}`],
             ["传输", requestLogTransport(log.request_type, log.stream)],
             ["类型", log.request_type],

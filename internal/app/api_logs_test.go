@@ -24,7 +24,7 @@ func TestPublicLogDetailRedactsInternalFields(t *testing.T) {
 			TenantID: "tenant-secret", APIKeyID: "own-key-id", APIKeyName: "工作电脑", APIKeyPrefix: "sk-relay-1234", ReservationRequestID: &reservationID,
 			UpstreamTraceID: "trace-secret", Provider: "provider-secret", AuthIndex: "auth-secret",
 			ParentSubscriptionID: &parentID, CredentialEmail: "credential@example.com",
-			PriceSource: "internal-price", PriceModel: "internal-model", InputPriceNanoUSD: 42, PricingComplete: true, Settled: true, ReservedNanoUSD: 99, ForwardedBodyBytes: 17,
+			PriceSource: "catalog", PriceVersion: "v1", PriceModel: "billed-model", InputPriceNanoUSD: 42, OutputPriceNanoUSD: 84, PriceMultiplier: 1.5, PricingComplete: true, Settled: true, ReservedNanoUSD: 99, ForwardedBodyBytes: 17,
 			StageTimings: `{"internal":1}`, ErrorMessage: "internal failure detail",
 		},
 		Detail: &db.RequestLogDetail{
@@ -46,9 +46,16 @@ func TestPublicLogDetailRedactsInternalFields(t *testing.T) {
 	}
 	if got.Log.TenantID != "" || got.Log.ReservationRequestID != nil || got.Log.UpstreamTraceID != "" ||
 		got.Log.Provider != "" || got.Log.AuthIndex != "" || got.Log.ParentSubscriptionID != nil || got.Log.CredentialEmail != "" ||
-		got.Log.PriceSource != "" || got.Log.PriceModel != "" || got.Log.InputPriceNanoUSD != 0 || got.Log.PricingComplete || got.Log.Settled ||
-		got.Log.ReservedNanoUSD != 0 || got.Log.ForwardedBodyBytes != 0 || got.Log.StageTimings != "{}" || got.Log.ErrorMessage != "" {
+		got.Log.ReservedNanoUSD != 0 || got.Log.StageTimings != "{}" || got.Log.ErrorMessage != "" {
 		t.Fatalf("public log leaked internal fields: %#v", got.Log)
+	}
+	if got.Log.PriceSource != "catalog" || got.Log.PriceVersion != "v1" || got.Log.PriceModel != "billed-model" ||
+		got.Log.InputPriceNanoUSD != 42 || got.Log.OutputPriceNanoUSD != 84 || got.Log.PriceMultiplier != 1.5 ||
+		!got.Log.PricingComplete || !got.Log.Settled || got.Log.ForwardedBodyBytes != 17 {
+		t.Fatalf("public log lost tenant billing or request sizes: %#v", got.Log)
+	}
+	if page.Items[0].PriceModel != "billed-model" || page.Items[0].InputPriceNanoUSD != 42 || !page.Items[0].PricingComplete || page.Items[0].ForwardedBodyBytes != 17 {
+		t.Fatalf("public log list lost tenant billing or request sizes: %#v", page.Items[0])
 	}
 	if got.Detail.ForwardedHeaders != "{}" || got.Detail.ForwardedBody != "" || got.Detail.ForwardedBodyBytes != 0 ||
 		got.Detail.UpstreamHeaders != "{}" || got.Detail.ErrorStack != "" || got.Detail.ErrorCause != "" || got.Detail.ErrorDetail != "" || got.Detail.StageTimings != "{}" {

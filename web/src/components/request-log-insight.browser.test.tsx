@@ -25,8 +25,12 @@ const log = {
   completion_tokens: 500,
   cached_tokens: 800,
   cost_nano_usd: 0,
-  pricing_complete: false,
-  settled: false,
+  pricing_complete: true,
+  settled: true,
+  price_model: "billed-model",
+  price_source: "catalog",
+  price_multiplier: 1.5,
+  input_price_nano_usd_per_token: 42,
   stage_timings: JSON.stringify({
     version: 5,
     total_ms: 1200,
@@ -82,6 +86,10 @@ it("opens v5 observations on hover and keeps rich details reachable", async () =
   await expect
     .element(popup.getByText("定价完成", { exact: true }))
     .toBeVisible()
+  await expect
+    .element(popup.getByText("billed-model", { exact: true }))
+    .toBeVisible()
+  await expect.element(popup.getByText("1.5×", { exact: true })).toBeVisible()
   await expectNoA11yViolations()
   await userEvent.keyboard("{Escape}")
   await expect.element(popup).not.toBeInTheDocument()
@@ -157,10 +165,30 @@ it("handles missing and malformed telemetry without fabricating measurements", a
   )
   await screen.getByRole("button", { name: "查看耗时详情" }).click()
   await expect
-    .element(screen.getByText("此记录没有可展示的 v5 阶段观测。"))
+    .element(screen.getByText("此记录没有可展示的阶段观测。"))
     .toBeVisible()
   await expect.element(screen.getByText("0 ms", { exact: true })).toBeVisible()
   await expect
     .element(screen.getByText("未记录", { exact: true }))
     .toBeVisible()
+})
+
+it("does not show zero-priced rates when pricing is incomplete", async () => {
+  const screen = await render(
+    <RequestLogInsight
+      log={{
+        ...log,
+        pricing_complete: false,
+        price_model: "",
+        input_price_nano_usd_per_token: 0,
+      }}
+      section="billing"
+    >
+      —
+    </RequestLogInsight>
+  )
+  await screen.getByRole("button", { name: "查看计费详情" }).click()
+  const popup = screen.getByRole("dialog", { name: "请求观测详情" })
+  await expect.element(popup.getByText("定价完成", { exact: true })).toBeVisible()
+  await expect.element(popup.getByText("输入单价", { exact: true })).not.toBeInTheDocument()
 })
