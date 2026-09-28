@@ -111,7 +111,13 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 `rai codex` 未指定模型时沿用 Codex 自身配置和默认值，不再自动选择目录中的第一个模型。在 Codex 内切换并保存模型、推理强度后，退出时 rai 自动记住变化，下次 `rai codex` 沿用该选择。配置读取遵循 `CODEX_HOME`（默认 `~/.codex`）；同步范围是用户 `config.toml` 中的模型和推理强度，其他设置仍由 Codex 原生保存。可用模型见 `rai models`，固定模型用 `rai use <模型名>`，恢复客户端默认用 `rai use default`，仅本次覆盖用 `rai codex --model <模型名>`。旧版本自动选中了 code-review 时，运行一次 `rai use default` 即可。需要主动导入已有 Codex 偏好时可运行 `rai sync codex`。其他客户端会使用站点默认候选，候选均不可用时需用 `rai use` 或 `--model` 指定模型。
 
-需要直接运行 `codex` 时，执行 `rai configure codex`，确认后将当前 rai profile 的 API Key 明文写入用户全局 `~/.codex/config.toml`（设置了 `CODEX_HOME` 时使用该目录）。`rai configure codex -y` 或 `--yes` 跳过确认，`--profile <名称>` 选择指定站点。命令合并已有配置，设置 RelayAPI 为默认 provider，保留其他 provider、MCP、项目及权限设置；目标 provider 的旧认证命令、环境变量认证及 Authorization 请求头会被移除。已保存的 rai 模型和推理强度会一并写入，未设置时保留 Codex 原值。原文件备份为 `config.toml.rai.bak`，每次成功写入前更新备份；TOML 会重新序列化，原注释和排版可在备份中查看。配置和备份以 0600 权限创建（Windows 使用文件系统 ACL）。损坏的 TOML 不会被覆盖。静态 key 不随后续 `rai login` / `logout` 自动更新，需要重新配置或手动移除。
+永久接入 Codex Desktop 或直接运行的 `codex`：执行 `rai configure codex`，确认后在用户全局 `~/.codex/config.toml` 中配置与 `rai codex` 相同的 `auth.command` 凭据助手（设置了 `CODEX_HOME` 时使用该目录），不写入新的静态 Key。助手绑定 rai 配置目录、profile 和站点，超时 5 秒，配置刷新间隔 5 分钟；后续登录更新、退出登录在客户端下次调用助手时生效，不表示已运行会话立即失效。profile 改为其他站点时助手拒绝输出凭据，需要重新配置。请保持 rai 安装路径稳定，移动后重新配置。
+
+`rai configure codex -y` 或 `--yes` 跳过确认，`--profile <名称>` 选择指定站点。命令合并已有配置，设置 RelayAPI 为默认 provider，保留其他 provider、MCP、项目及权限设置；移除目标 provider 与助手冲突的旧认证字段和 Authorization 请求头。已保存的 rai 模型和推理强度会一并写入，未设置时保留 Codex 原值。应用后完全退出并重新打开 Desktop，新建聊天；已有聊天可能保留原 provider。
+
+撤销接入用 `rai unconfigure codex`。恢复记录保存在 `config.toml.rai-managed.json`，重复配置仍可恢复接入前的设置，保留用户后续修改；认证或服务器地址被用户改过时整组保留，避免拼接不兼容的认证字段。原文件另备份到 `config.toml.rai.bak`。TOML 会重新序列化，未经编辑时撤销会恢复原始排版。恢复记录和备份可能包含原配置中的旧 Key，请妥善保存；文件以 0600 创建（Windows 使用文件系统 ACL）。损坏的 TOML 或恢复记录不会被用于覆盖当前配置。
+
+临时接入用 `rai codex --desktop`：先完全退出 Desktop，在终端输入 `ready` 应用配置，然后从平时的快捷方式打开 Desktop 并新建聊天。使用完完全退出 Desktop，在保留的终端输入 `restore` 恢复。此命令不自动启动或关闭 Desktop，不更换 `CODEX_HOME`，沿用原历史、插件和设置；切换期间也影响使用同一配置的 CLI。终端意外关闭时，运行 `rai unconfigure codex` 恢复。临时记录保存在 `config.toml.rai-temporary.json`；在永久接入之上临时切换时，第一次撤销恢复永久配置，再次撤销恢复接入前配置。Desktop 的启动参数转发及 GUI 行为尚未实测；已使用真实 Codex app-server 验证生成配置、凭据助手及远程模型目录获取。
 
 `rai codex` 使用独立的运行时 provider（`relayapi_rai`，名称占用时自动加后缀），忽略已保存 provider 的 key，继续使用当前 rai profile 的凭据；启动不会改写本地 provider 配置。
 

@@ -40,7 +40,15 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 	if rai == "" {
 		rai = selfExecutable()
 	}
-	authArgs, err := json.Marshal([]string{"--profile", ctx.Profile.Name, "credential", "print"})
+	profile := ctx.Profile
+	if profile.ServerURL == "" {
+		profile.ServerURL = ctx.APIBase
+	}
+	auth, err := codexAuth(profile, ctx.RAIHome, rai)
+	if err != nil {
+		return Command{}, err
+	}
+	authArgs, err := json.Marshal(auth["args"])
 	if err != nil {
 		return Command{}, err
 	}
@@ -53,6 +61,8 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 		"model_providers." + providerID + ".supports_standalone_web_search=true",
 		"model_providers." + providerID + ".auth.command=" + quoteTOMLString(rai),
 		"model_providers." + providerID + ".auth.args=" + string(authArgs),
+		"model_providers." + providerID + ".auth.timeout_ms=5000",
+		"model_providers." + providerID + ".auth.refresh_interval_ms=300000",
 	}
 	if ctx.Model != "" {
 		overrides = append(overrides, "model="+quoteTOMLString(ctx.Model))

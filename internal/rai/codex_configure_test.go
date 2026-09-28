@@ -93,6 +93,9 @@ Authorization = "Bearer old"
 				}
 				return
 			}
+			if bytes.Contains(raw, []byte(secret)) {
+				t.Fatal("secret persisted in Codex config")
+			}
 			backup, err := os.ReadFile(path + ".rai.bak")
 			if err != nil || !bytes.Equal(backup, original) {
 				t.Fatal("original backup not preserved")
@@ -111,10 +114,10 @@ Authorization = "Bearer old"
 				t.Fatal("changed another provider")
 			}
 			provider := providers[providerID].(map[string]any)
-			if document["model_provider"] != providerID || provider["experimental_bearer_token"] != secret || provider["base_url"] != "https://relay.example/v1" || provider["request_max_retries"] != int64(7) {
+			if document["model_provider"] != providerID || provider["auth"].(map[string]any)["command"] != selfExecutable() || provider["base_url"] != "https://relay.example/v1" || provider["request_max_retries"] != int64(7) {
 				t.Fatal("incorrect merged provider")
 			}
-			for _, name := range []string{"auth", "env_key", "requires_openai_auth"} {
+			for _, name := range []string{"experimental_bearer_token", "env_key", "requires_openai_auth"} {
 				if _, exists := provider[name]; exists {
 					t.Fatalf("conflicting %s retained", name)
 				}
@@ -172,7 +175,7 @@ func TestCodexConfigRejectsInvalidTOMLWithoutLeakingSecret(t *testing.T) {
 
 func TestMergeCodexConfigNewFileAndIdempotence(t *testing.T) {
 	profile := Profile{Name: "work", ServerURL: "https://relay.example/", DefaultModel: "coding", ReasoningEffort: "xhigh"}
-	raw, err := mergeCodexConfig(map[string]any{}, profile, "test-token")
+	raw, err := mergeCodexConfig(map[string]any{}, profile, map[string]any{"command": "helper"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +186,7 @@ func TestMergeCodexConfigNewFileAndIdempotence(t *testing.T) {
 	if document["model"] != "coding" || document["model_reasoning_effort"] != "xhigh" {
 		t.Fatal("missing model preferences")
 	}
-	again, err := mergeCodexConfig(document, profile, "test-token")
+	again, err := mergeCodexConfig(document, profile, map[string]any{"command": "helper"})
 	if err != nil || !bytes.Equal(raw, again) {
 		t.Fatal("merge is not idempotent")
 	}

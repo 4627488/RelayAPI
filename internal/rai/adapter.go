@@ -24,6 +24,7 @@ type LaunchContext struct {
 	Args       []string
 	Environ    []string
 	RAI        string
+	RAIHome    string
 }
 
 func Adapters() []Adapter {

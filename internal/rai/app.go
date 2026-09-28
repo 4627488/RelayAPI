@@ -83,6 +83,8 @@ func (a *App) Execute(ctx context.Context) error {
 		return a.syncCodex(ctx, profileName)
 	case "configure":
 		return a.configureCodex(profileName, args[1:])
+	case "unconfigure":
+		return a.unconfigureCodex(args[1:])
 	case "credential":
 		return a.credential(profileName, args[1:])
 	case "doctor":
@@ -90,6 +92,9 @@ func (a *App) Execute(ctx context.Context) error {
 	case "update":
 		return a.update(ctx)
 	case "claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent":
+		if args[0] == "codex" && len(args) > 1 && args[1] == "--desktop" {
+			return a.temporaryCodex(profileName, args[2:])
+		}
 		return a.launch(ctx, profileName, args[0], args[1:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
@@ -156,7 +161,9 @@ Usage:
   rai models
   rai use <model|default|--auto>    Save a model, follow the agent, or follow the site
   rai sync codex            Import saved Codex model and reasoning settings
-  rai configure codex [-y]  Merge the current API key into global Codex config
+  rai configure codex [-y]  Connect Codex using the rai credential helper
+  rai unconfigure codex    Restore rai-managed Codex settings
+  rai codex --desktop      Temporarily connect Desktop with explicit restoration
   rai credential print
   rai doctor
   rai update
@@ -577,16 +584,43 @@ func (a *App) use(profileName string, args []string) error {
 }
 
 func (a *App) credential(profileName string, args []string) error {
-	if len(args) != 1 || args[0] != "print" {
-		return errors.New("usage: rai credential print")
+	if len(args) == 0 || args[0] != "print" {
+		return errors.New("usage: rai credential print [--home <directory>] [--server <url>]")
 	}
-	store, err := a.store()
+	home, audience := a.Home, ""
+	for i := 1; i < len(args); i += 2 {
+		if i+1 >= len(args) {
+			return errors.New("credential option requires a value")
+		}
+		switch args[i] {
+		case "--home":
+			home = args[i+1]
+		case "--server":
+			audience = args[i+1]
+		default:
+			return errors.New("unknown credential option")
+		}
+	}
+	store, err := OpenStore(home)
 	if err != nil {
 		return err
 	}
 	profile, err := store.ResolveProfile(profileName)
 	if err != nil {
 		return err
+	}
+	if audience != "" {
+		want, err := normalizeServerURL(audience)
+		if err != nil {
+			return err
+		}
+		actual, err := normalizeServerURL(profile.ServerURL)
+		if err != nil {
+			return err
+		}
+		if actual != want {
+			return errors.New("rai profile now belongs to a different server; configure Codex again")
+		}
 	}
 	secret, err := store.Credential(profile.Name)
 	if err != nil {
@@ -706,6 +740,7 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 		Args:       passthrough,
 		Environ:    a.Environ,
 		RAI:        a.Self,
+		RAIHome:    store.Home,
 	})
 	if err != nil {
 		return err

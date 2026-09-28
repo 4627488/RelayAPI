@@ -47,6 +47,10 @@ func codexRuntimeProvider(environ []string) (string, error) {
 }
 
 func (a *App) configureCodex(profileName string, args []string) error {
+	return a.configureCodexMode(profileName, args, false)
+}
+
+func (a *App) configureCodexMode(profileName string, args []string, temporary bool) error {
 	if len(args) == 0 || args[0] != "codex" {
 		return errors.New("usage: rai configure codex [-y|--yes]")
 	}
@@ -67,7 +71,7 @@ func (a *App) configureCodex(profileName string, args []string) error {
 	if err != nil {
 		return err
 	}
-	key, err := store.Credential(profile.Name)
+	_, err = store.Credential(profile.Name)
 	if err != nil {
 		return err
 	}
@@ -75,15 +79,24 @@ func (a *App) configureCodex(profileName string, args []string) error {
 	if err != nil {
 		return err
 	}
+	if _, err := os.Stat(codexJournalPath(path, true)); err == nil {
+		return errors.New("temporary desktop configuration is pending; close Codex and run rai unconfigure codex first")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	original, document, err := loadCodexConfig(path)
 	if err != nil {
 		return err
 	}
-	updated, err := mergeCodexConfig(document, profile, key)
+	auth, err := codexAuth(profile, store.Home, a.Self)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "Write profile %s to %s\nThis stores the API key in plaintext and selects RelayAPI for direct codex launches.\nExisting settings are merged; TOML formatting and comments are rewritten.\n", profile.Name, path)
+	updated, err := mergeCodexConfig(document, profile, auth)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Stdout, "Write profile %s to %s\nThis selects RelayAPI using the rai credential helper; no new API key is written to Codex config.\nExisting settings are merged; TOML formatting and comments are rewritten.\n", profile.Name, path)
 	if original != nil {
 		fmt.Fprintf(a.Stdout, "Original file will be backed up to %s.rai.bak\n", path)
 	}
@@ -115,14 +128,14 @@ func (a *App) configureCodex(profileName string, args []string) error {
 			return fmt.Errorf("back up Codex configuration: %w", err)
 		}
 	}
-	if err := writeFileAtomic(path, updated, 0o600); err != nil {
+	if err := saveCodexManaged(path, original, updated, temporary); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "Saved %s. You can now run codex directly.\n", path)
+	fmt.Fprintf(a.Stdout, "Saved %s. Restart Codex Desktop and create a new chat to use this provider.\nExisting chats may keep their provider; rai unconfigure codex restores managed settings.\n", path)
 	return nil
 }
 
-func mergeCodexConfig(document map[string]any, profile Profile, key string) ([]byte, error) {
+func mergeCodexConfig(document map[string]any, profile Profile, auth map[string]any) ([]byte, error) {
 	providers, err := codexTable(document, "model_providers")
 	if err != nil {
 		return nil, err
@@ -131,8 +144,8 @@ func mergeCodexConfig(document map[string]any, profile Profile, key string) ([]b
 	if err != nil {
 		return nil, err
 	}
-	// A static token must not coexist with command-backed or OpenAI auth.
-	for _, field := range []string{"auth", "env_key", "env_key_instructions", "requires_openai_auth"} {
+	// Command auth must not coexist with static or OpenAI authentication.
+	for _, field := range []string{"experimental_bearer_token", "env_key", "env_key_instructions", "requires_openai_auth"} {
 		delete(provider, field)
 	}
 	// A saved Authorization header would override the selected credential.
@@ -150,7 +163,7 @@ func mergeCodexConfig(document map[string]any, profile Profile, key string) ([]b
 	provider["wire_api"] = "responses"
 	provider["supports_websockets"] = true
 	provider["supports_standalone_web_search"] = true
-	provider["experimental_bearer_token"] = key
+	provider["auth"] = auth
 	document["model_provider"] = providerID
 	if profile.DefaultModel != "" {
 		document["model"] = profile.DefaultModel
