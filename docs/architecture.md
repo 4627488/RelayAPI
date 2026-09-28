@@ -59,6 +59,33 @@ models.dev. `kimi-k3-256k` is seeded that way: it is the Kimi Coding
 Plan 256k window of the same always-on K3 family (`low`/`high`/`max`),
 which models.dev does not publish.
 
+Model settings override individual fields, preserving unspecified catalog facts.
+Explicit capability values survive ModelInfo completion. Provider-specific
+constraints remain separate from a transport preference: disabling WebSockets
+alone does not disable verbosity or multi-agent metadata. Catalog revisions
+include a content hash of facts and overrides, so deleting an override also
+invalidates client caches. Failed database reads retain the published snapshot.
+
+Quota storage supports all active child subscriptions usable by the authenticated
+key. Four batch queries project allocations against current parent generations,
+including unused grants, without creating reservations. Duration-bearing kinds
+retain their real period and reset time; unrelated subscriptions are never summed.
+
+The current Codex adapter selects only the admitted child and emits a single
+fixed `codex` bucket. It selects the two shortest valid periods deterministically;
+additional windows stay available internally. HTTP uses X-Codex header fields;
+WebSocket replaces the whole bucket at startup and after durable terminal usage.
+An absent second window is null, so switching subscriptions clears the previous
+slot. Unmetered, unavailable or failed reads produce an empty snapshot, avoiding
+stale allowances from another subscription. Reads have a 250ms budget; upstream
+quota events are suppressed.
+
+This compatibility policy addresses Codex 0.156.1 inference coalescing multiple
+buckets into one final notification. Native simultaneous multi-subscription
+output remains disabled until the client supports it. Real app-server tests
+cover two windows, a switch to one window, and empty quota over both transports.
+WebSocket discards display names; this does not change OpenAI account allowances.
+
 Provider adapters preserve that client contract. For example, xAI and generic
 Chat Completions backends receive a JSON-schema string-input function when
 Codex sends a freeform custom tool. Relay restores the provider's function call

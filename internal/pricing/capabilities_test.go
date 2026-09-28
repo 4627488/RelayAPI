@@ -2,6 +2,25 @@ package pricing
 
 import "testing"
 
+func TestPartialAdminCapabilityInheritsFactsRegardlessOfInputOrder(t *testing.T) {
+	noWS := false
+	base := Capability{ID: "xai/grok-test", Provider: "xai", Context: 100000, MaxOutput: 4000, Reasoning: true, ReasoningOptions: []ReasoningOption{{Type: "effort", Values: []string{"low", "high"}}}, InputModalities: []string{"text"}}
+	override := Capability{ID: "grok-test", Source: SourceAdmin, Name: "My model", PreferWebSockets: &noWS}
+	for _, inputs := range [][]Capability{{base, override}, {override, base}} {
+		idx := NewCapabilityIndex("same", inputs)
+		got, _ := idx.Lookup("grok-test")
+		if got.Name != "My model" || got.Context != 100000 || got.MaxOutput != 4000 || !got.Reasoning || len(got.EffortValues()) != 2 || got.PreferWebSockets == nil || *got.PreferWebSockets {
+			t.Fatalf("partial override discarded facts: %+v", got)
+		}
+		if idx.Revision() == NewCapabilityIndex("same", []Capability{base}).Revision() {
+			t.Fatal("removal did not change revision")
+		}
+	}
+	if NewCapabilityIndex("same", []Capability{base, override}).Revision() != NewCapabilityIndex("same", []Capability{override, base}).Revision() {
+		t.Fatal("revision depends on input order")
+	}
+}
+
 func TestCapabilityIndexPrefersFirstPartyAndLooksUpBareSlug(t *testing.T) {
 	index := NewCapabilityIndex("v1", []Capability{
 		{ID: "openrouter/kimi-k3", Provider: "openrouter", Context: 1, Reasoning: true},

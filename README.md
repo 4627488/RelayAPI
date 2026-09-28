@@ -115,6 +115,12 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 `rai codex` 使用独立的运行时 provider（`relayapi_rai`，名称占用时自动加后缀），忽略已保存 provider 的 key，继续使用当前 rai profile 的凭据；启动不会改写本地 provider 配置。
 
+RelayAPI 内部按当前 Key 权限独立读取多个子订阅额度；向当前 Codex 输出时，只使用本次请求实际选中的子订阅，不合并 Grok、Codex 或同一服务的不同订阅。窗口周期从订阅数据解析（如 `2h`、`7d`、`14d`），按周期从短到长最多展示两个有效窗口。HTTP 使用 `X-Codex-*` 响应头，WebSocket 使用固定 `codex` 组，在连接及每轮用量持久化后更新。切换订阅时整体替换两个槽位；无订阅、失效或读取失败时发送空状态，不保留另一个订阅的额度。余额和没有明确时长的月度窗口不伪装成周期额度，上游共享账号额度消息仍被过滤。
+
+兼容策略依据：Codex 0.156.1 的推理通路只向界面通知一批更新中的最后一组，因此当前不启用多订阅同时输出。内部多订阅能力保留，原生同时展示等待客户端完整支持。WebSocket 会忽略自定义显示名称；额度归属以实际请求路由为准。
+
+Codex 模型目录按字段合并资料源与「模型设置」：未填写的字段继承已有资料，明确的 `prefer_websockets=false` 会保留，关闭 WebSocket 本身不再连带关闭其他 agent 能力。空推理列表表示继承；只允许无推理时填写 `none`。目录保留明确的能力值、校正推理默认档位，并在模型覆盖内容变更或删除时更新 revision。详见 [额度与 Codex 互操作设计](docs/rai-architecture.md)。
+
 Windows 安装器会将安装目录写入用户 PATH；macOS/Linux 若目录不在 PATH，会打印可加入 shell 配置的命令。安装后打开新终端，用 `rai doctor` 检查 PATH、登录和客户端安装情况。
 
 Windows 的 `rai update` 会先将正在运行的旧程序改名为 `rai.exe.rai-old`，再安装下载完成的新程序；替换失败时恢复旧程序。仍被进程占用的备份会保留到下次更新清理。如果提示旧备份被占用，退出其他旧版 rai 进程后重试。旧版本若报 `rename ... Access is denied`，需在旧进程退出后重新运行本站安装器完成一次升级；可设置 `RAI_SKIP_LOGIN=1` 跳过重新登录，已有配置和凭据保留。

@@ -2,6 +2,19 @@ package upstream
 
 import "testing"
 
+func TestCompleteCodexCatalogPreservesExplicitCapabilities(t *testing.T) {
+	item := map[string]any{
+		"slug": "custom", "prefer_websockets": false, "supports_parallel_tool_calls": false,
+		"support_verbosity": false, "base_instructions": "model-specific instructions",
+		"multi_agent_version": nil, "supported_reasoning_levels": []any{},
+		"input_modalities": []any{"text"},
+	}
+	CompleteCodexCatalogItem(item, 0)
+	if item["prefer_websockets"] != false || item["supports_parallel_tool_calls"] != false || item["support_verbosity"] != false || item["multi_agent_version"] != nil || item["base_instructions"] != "model-specific instructions" || len(item["supported_reasoning_levels"].([]any)) != 0 {
+		t.Fatalf("explicit values replaced: %#v", item)
+	}
+}
+
 func TestNewCodexCatalogItemFillsModelInfoRequiredByClient(t *testing.T) {
 	item := NewCodexCatalogItem("grok-4.5")
 	if item["slug"] != "grok-4.5" || item["display_name"] != "Grok 4.5" {

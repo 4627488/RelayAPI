@@ -37,6 +37,38 @@ func (s Store) UpsertModelSetting(ctx context.Context, item db.ModelSetting) (db
 	item.Provider = strings.ToLower(strings.TrimSpace(item.Provider))
 	item.ReasoningEfforts = cleanStringList(item.ReasoningEfforts)
 	item.InputModalities = cleanStringList(item.InputModalities)
+	for i, effort := range item.ReasoningEfforts {
+		effort = strings.ToLower(effort)
+		switch effort {
+		case "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+			item.ReasoningEfforts[i] = effort
+		default:
+			return db.ModelSetting{}, fmt.Errorf("不支持的推理档位 %q", effort)
+		}
+	}
+	if item.DefaultReasoningLevel != "" {
+		switch item.DefaultReasoningLevel {
+		case "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+		default:
+			return db.ModelSetting{}, fmt.Errorf("不支持的默认推理档位 %q", item.DefaultReasoningLevel)
+		}
+		if len(item.ReasoningEfforts) > 0 {
+			found := false
+			for _, effort := range item.ReasoningEfforts {
+				found = found || effort == item.DefaultReasoningLevel
+			}
+			if !found {
+				return db.ModelSetting{}, fmt.Errorf("默认推理档位必须在支持的档位列表中")
+			}
+		}
+	}
+	for i, modality := range item.InputModalities {
+		modality = strings.ToLower(modality)
+		if modality != "text" && modality != "image" {
+			return db.ModelSetting{}, fmt.Errorf("不支持的 Codex 输入类型 %q", modality)
+		}
+		item.InputModalities[i] = modality
+	}
 	if item.ContextWindow < 0 || item.MaxOutputTokens < 0 {
 		return db.ModelSetting{}, fmt.Errorf("上下文和输出上限不能为负数")
 	}

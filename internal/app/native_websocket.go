@@ -454,6 +454,12 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}
 	accounting.forwardedBytes = int64(len(firstFrame))
 	session.established = true
+	quotaEvents := wantsCodexQuotaEvents(r)
+	if quotaEvents {
+		if err := downstream.WriteJSON(a.requestCodexQuota(r.Context(), key, accounting.admission)); err != nil {
+			return session, meta, err
+		}
+	}
 	heartbeatStop := make(chan struct{})
 	defer close(heartbeatStop)
 	go func() {
@@ -510,6 +516,11 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}()
 	go func() {
 		results <- pumpResult{source: "upstream", err: pumpWebSocketMessages(upstream, downstream, func(payload []byte) ([]byte, error) {
+			// An upstream account's quota is shared capacity, never this user's
+			// allowance. Only the gateway emits the downstream quota projection.
+			if isCodexQuotaEvent(payload) {
+				return nil, nil
+			}
 			observedAt := time.Now()
 			accounting.mu.Lock()
 			defer accounting.mu.Unlock()
@@ -576,6 +587,13 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 				accounting.startStep(next)
 			}
 			accounting.result = cumulative
+			// persistTurn has durably accrued this turn before its completion is
+			// forwarded. This pump is the sole downstream data writer.
+			if quotaEvents {
+				if err := downstream.WriteJSON(a.requestCodexQuota(r.Context(), key, accounting.admission)); err != nil {
+					return nil, err
+				}
+			}
 			return payload, nil
 		})}
 	}()
@@ -773,6 +791,9 @@ func pumpWebSocketMessages(source, destination *websocket.Conn, transform func([
 		if transform != nil {
 			if payload, err = transform(payload); err != nil {
 				return err
+			}
+			if payload == nil {
+				continue
 			}
 		}
 		if err = destination.WriteMessage(messageType, payload); err != nil {

@@ -82,32 +82,26 @@ func CompleteCodexCatalogItem(item map[string]any, priority int) {
 		item["priority"] = 100
 	}
 
-	item["supported_reasoning_levels"] = codexReasoningLevels()
-	item["default_reasoning_level"] = codexDefaultReasoning
-	item["default_reasoning_summary"] = "auto"
-	item["shell_type"] = "shell_command"
-	item["supported_in_api"] = true
-	item["minimal_client_version"] = codexMinimalClientVersion
-	item["base_instructions"] = codexBaseInstructions
-	item["upgrade"] = nil
-	item["availability_nux"] = nil
-	item["default_verbosity"] = "low"
-	item["truncation_policy"] = map[string]any{"mode": "tokens", "limit": 10000}
-	item["experimental_supported_tools"] = []any{}
-
-	item["apply_patch_tool_type"] = "freeform"
-	item["web_search_tool_type"] = "text_and_image"
-	item["multi_agent_version"] = "v2"
-	item["supports_parallel_tool_calls"] = true
-	item["supports_image_detail_original"] = true
-	item["supports_search_tool"] = true
-	item["support_verbosity"] = true
-	item["supports_reasoning_summary_parameter"] = true
-	item["include_skills_usage_instructions"] = true
-	item["include_plugin_usage_instructions"] = true
-	item["include_apps_usage_instructions"] = true
-	item["prefer_websockets"] = true
-	item["input_modalities"] = []any{"text", "image"}
+	defaults := map[string]any{
+		"supported_reasoning_levels": codexReasoningLevels(),
+		"default_reasoning_level":    codexDefaultReasoning,
+		"default_reasoning_summary":  "auto", "shell_type": "shell_command",
+		"supported_in_api": true, "minimal_client_version": codexMinimalClientVersion,
+		"base_instructions": codexBaseInstructions, "upgrade": nil, "availability_nux": nil,
+		"default_verbosity": "low", "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000},
+		"experimental_supported_tools": []any{}, "apply_patch_tool_type": "freeform",
+		"web_search_tool_type": "text_and_image", "multi_agent_version": "v2",
+		"supports_parallel_tool_calls": true, "supports_image_detail_original": true,
+		"supports_search_tool": true, "support_verbosity": true, "supports_reasoning_summary_parameter": true,
+		"include_skills_usage_instructions": true, "include_plugin_usage_instructions": true,
+		"include_apps_usage_instructions": true, "prefer_websockets": true,
+		"input_modalities": []any{"text", "image"},
+	}
+	for key, value := range defaults {
+		if _, supplied := item[key]; !supplied {
+			item[key] = value
+		}
+	}
 }
 
 func codexReasoningLevels() []any {

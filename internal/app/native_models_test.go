@@ -436,6 +436,37 @@ func TestApplyCodexCatalogWebSocketPolicyDisablesTransport(t *testing.T) {
 	}
 }
 
+func TestPartialAdminMetadataPreservesFactsAndIndependentTools(t *testing.T) {
+	noWS := false
+	idx := pricing.NewCapabilityIndex("test", []pricing.Capability{
+		{ID: "xai/custom", Provider: "xai", Context: 100000, MaxOutput: 4000, Reasoning: true, ReasoningOptions: []pricing.ReasoningOption{{Type: "effort", Values: []string{"low", "high"}}}, InputModalities: []string{"text"}},
+		{ID: "custom", Source: pricing.SourceAdmin, Name: "Custom HTTP", PreferWebSockets: &noWS, DefaultLevel: "high"},
+	})
+	payload, err := promoteCodexCatalogCapabilities([]byte(`{"models":[{"slug":"custom"}]}`), idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		t.Fatal(err)
+	}
+	m := doc.Models[0]
+	if m["context_window"] != float64(100000) || m["max_output_tokens"] != float64(4000) || m["display_name"] != "Custom HTTP" || m["prefer_websockets"] != false || m["support_verbosity"] != true || m["multi_agent_version"] != "v2" {
+		t.Fatalf("partial metadata = %#v", m)
+	}
+	assertReasoningEfforts(t, m, []string{"low", "high"}, "high")
+}
+
+func TestCodexReasoningRejectsInvalidEnumsAndRepairsDefault(t *testing.T) {
+	item := map[string]any{"default_reasoning_level": "ultra", "supported_reasoning_levels": []any{
+		map[string]any{"effort": "unknown"}, map[string]any{"effort": " HIGH "}, map[string]any{"effort": "high"},
+	}}
+	normalizeCodexReasoning(item)
+	assertReasoningEfforts(t, item, []string{"high"}, "high")
+}
+
 func TestServeModelCatalogDisablesWebSocketsWhenRuntimePolicyIsOff(t *testing.T) {
 	app := newNativeRuntimeTestApp(t, upstream.Credential{
 		ID: "codex-catalog", Provider: "codex", Enabled: true,

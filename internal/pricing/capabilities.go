@@ -1,7 +1,9 @@
 package pricing
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -27,15 +29,19 @@ type ReasoningOption struct {
 }
 
 type CapabilityIndex struct {
-	version string
-	byKey   map[string]Capability
+	version   string
+	revision  string
+	byKey     map[string]Capability
+	overrides map[string]Capability
 }
 
 func NewCapabilityIndex(version string, capabilities []Capability) *CapabilityIndex {
-	index := &CapabilityIndex{version: strings.TrimSpace(version), byKey: make(map[string]Capability, len(capabilities)*3)}
+	index := &CapabilityIndex{version: strings.TrimSpace(version), byKey: make(map[string]Capability, len(capabilities)*3), overrides: make(map[string]Capability)}
 	for _, capability := range capabilities {
 		index.add(capability)
 	}
+	payload, _ := json.Marshal([]map[string]Capability{index.byKey, index.overrides})
+	index.revision = fmt.Sprintf("%s|sha256:%x", index.version, sha256.Sum256(payload))
 	return index
 }
 
@@ -64,15 +70,72 @@ func (idx *CapabilityIndex) Version() string {
 }
 
 func (idx *CapabilityIndex) Lookup(slug string) (Capability, bool) {
-	if idx == nil || len(idx.byKey) == 0 {
+	base, found := idx.LookupCatalog(slug)
+	if override, ok := idx.LookupOverride(slug); ok {
+		return mergeCapability(base, override), true
+	}
+	return base, found
+}
+
+func (idx *CapabilityIndex) LookupCatalog(slug string) (Capability, bool) {
+	if idx == nil {
 		return Capability{}, false
 	}
+	return lookupCapability(idx.byKey, slug)
+}
+
+func (idx *CapabilityIndex) LookupOverride(slug string) (Capability, bool) {
+	if idx == nil {
+		return Capability{}, false
+	}
+	return lookupCapability(idx.overrides, slug)
+}
+
+func lookupCapability(items map[string]Capability, slug string) (Capability, bool) {
 	for _, candidate := range modelCandidates(slug) {
-		if capability, ok := idx.byKey[strings.ToLower(strings.TrimSpace(candidate))]; ok {
+		if capability, ok := items[strings.ToLower(strings.TrimSpace(candidate))]; ok {
 			return capability, true
 		}
 	}
 	return Capability{}, false
+}
+
+// Revision includes actual content: deleting a non-latest override must also
+// invalidate the model catalog, even if its maximum updated_at is unchanged.
+func (idx *CapabilityIndex) Revision() string {
+	if idx == nil {
+		return ""
+	}
+	return idx.revision
+}
+
+func mergeCapability(base, override Capability) Capability {
+	base.ID, base.Source = override.ID, override.Source
+	if override.Name != "" {
+		base.Name = override.Name
+	}
+	if override.Provider != "" {
+		base.Provider = override.Provider
+	}
+	if override.Context > 0 {
+		base.Context = override.Context
+	}
+	if override.MaxOutput > 0 {
+		base.MaxOutput = override.MaxOutput
+	}
+	if len(override.ReasoningOptions) > 0 {
+		base.Reasoning, base.ReasoningOptions = override.Reasoning, override.ReasoningOptions
+	}
+	if override.DefaultLevel != "" {
+		base.DefaultLevel = override.DefaultLevel
+	}
+	if len(override.InputModalities) > 0 {
+		base.InputModalities = override.InputModalities
+	}
+	if override.PreferWebSockets != nil {
+		base.PreferWebSockets = override.PreferWebSockets
+	}
+	return base
 }
 
 func (c Capability) EffortValues() []string {
@@ -86,6 +149,10 @@ func (c Capability) EffortValues() []string {
 }
 
 func (idx *CapabilityIndex) add(capability Capability) {
+	items := idx.byKey
+	if capability.Source == SourceAdmin {
+		items = idx.overrides
+	}
 	keys := []string{capability.ID, capability.Provider + "/" + bareModelID(capability.ID)}
 	if bare := bareModelID(capability.ID); bare != "" {
 		keys = append(keys, bare)
@@ -95,10 +162,10 @@ func (idx *CapabilityIndex) add(capability Capability) {
 		if key == "" {
 			continue
 		}
-		if current, exists := idx.byKey[key]; exists && !preferCapability(capability, current) {
+		if current, exists := items[key]; exists && !preferCapability(capability, current) {
 			continue
 		}
-		idx.byKey[key] = capability
+		items[key] = capability
 	}
 }
 

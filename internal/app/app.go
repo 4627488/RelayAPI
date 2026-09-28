@@ -119,7 +119,7 @@ func (a *App) codexCatalogRevisionToken() string {
 	if a != nil && !a.upstreamWebSockets() {
 		token += "|http"
 	}
-	if version := a.capabilityIndex().Version(); version != "" {
+	if version := a.capabilityIndex().Revision(); version != "" {
 		return token + "|" + version
 	}
 	return token
@@ -131,7 +131,7 @@ func (a *App) loadCapabilitiesFromStore(ctx context.Context) {
 	}
 	rows, err := a.store.ListCatalogPrices(ctx)
 	if err != nil {
-		rows = nil
+		return // Keep the last complete snapshot on a transient database failure.
 	}
 	capabilities := make([]pricing.Capability, 0, len(rows))
 	version := ""
@@ -149,7 +149,9 @@ func (a *App) loadCapabilitiesFromStore(ctx context.Context) {
 func (a *App) mergeCapabilityIndex(ctx context.Context, version string, fetched []pricing.Capability) *pricing.CapabilityIndex {
 	settings, err := a.store.ListModelSettings(ctx)
 	if err != nil {
-		settings = nil
+		// Dropping the override layer on a failed read would silently change
+		// capabilities. Keep the published snapshot until both layers load.
+		return a.capabilityIndex()
 	}
 	capabilities := append([]pricing.Capability(nil), fetched...)
 	latest := ""

@@ -195,6 +195,9 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 	if call.admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", call.admission.ChildSubscriptionID)
 	}
+	if isCodexResponsesPath(r.URL.Path) {
+		a.requestCodexQuota(r.Context(), call.key, call.admission).setHeaders(w.Header())
+	}
 	call.timeline.Step(time.Now(), "prepare_runtime_request", "准备运行时请求", "relay", "去掉客户端凭据头并钉住上游账户")
 	capture := &rollingCapture{max: 2 << 20}
 	var firstByteAt time.Time

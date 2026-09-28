@@ -20,7 +20,7 @@ const maxModelCatalogBytes int64 = 256 << 20
 
 // Bump this when the Codex ModelInfo shape changes so clients refresh
 // GET /v1/models and honor X-Models-Etag on subsequent Responses calls.
-const codexCatalogRevisionToken = "codex-modelinfo-v3"
+const codexCatalogRevisionToken = "codex-modelinfo-v4"
 
 func isNativeModelCatalogRequest(r *http.Request) bool {
 	if r == nil || r.Method != http.MethodGet {
@@ -123,6 +123,7 @@ func promoteCodexCatalogCapabilities(payload []byte, index *pricing.CapabilityIn
 		}
 		upstream.CompleteCodexCatalogItem(item, 0)
 		applyModelsDevCapability(item, catalogModelID(item), index)
+		normalizeCodexReasoning(item)
 	}
 	visible, hidden := 0, 0
 	for _, raw := range items {
@@ -167,13 +168,15 @@ func applyModelsDevCapability(item map[string]any, slug string, index *pricing.C
 	if item == nil || index == nil {
 		return
 	}
-	capability, ok := index.Lookup(slug)
-	if !ok {
-		return
+	if capability, ok := index.LookupCatalog(slug); ok && !skipModelsDevOverlay(slug, capability) {
+		applyCodexCapability(item, capability)
 	}
-	if capability.Source != pricing.SourceAdmin && skipModelsDevOverlay(slug, capability) {
-		return
+	if capability, ok := index.LookupOverride(slug); ok {
+		applyCodexCapability(item, capability)
 	}
+}
+
+func applyCodexCapability(item map[string]any, capability pricing.Capability) {
 	if capability.Name != "" {
 		item["display_name"] = capability.Name
 	}
@@ -199,23 +202,25 @@ func applyModelsDevCapability(item map[string]any, slug string, index *pricing.C
 			item["web_search_tool_type"] = "text"
 		}
 	}
-	if levels, defaultLevel := modelsDevReasoningLevels(capability); len(levels) > 0 {
-		item["supported_reasoning_levels"] = levels
-		item["default_reasoning_level"] = defaultLevel
+	if capability.Source != pricing.SourceAdmin || len(capability.ReasoningOptions) > 0 {
+		if levels, defaultLevel := modelsDevReasoningLevels(capability); len(levels) > 0 {
+			item["supported_reasoning_levels"] = levels
+			item["default_reasoning_level"] = defaultLevel
+		}
+	}
+	if capability.DefaultLevel != "" {
+		item["default_reasoning_level"] = capability.DefaultLevel
+	}
+	// Provider constraints are independent of the transport preference. A
+	// custom HTTP-only provider does not thereby lose verbosity or agent tools.
+	switch strings.ToLower(capability.Provider) {
+	case "moonshotai", "moonshotai-cn", "deepseek":
+		item["prefer_websockets"] = false
+		item["support_verbosity"] = false
+		delete(item, "multi_agent_version")
 	}
 	if capability.PreferWebSockets != nil {
 		item["prefer_websockets"] = *capability.PreferWebSockets
-		if !*capability.PreferWebSockets {
-			item["support_verbosity"] = false
-			delete(item, "multi_agent_version")
-		}
-	} else {
-		switch strings.ToLower(capability.Provider) {
-		case "moonshotai", "moonshotai-cn", "deepseek":
-			item["prefer_websockets"] = false
-			item["support_verbosity"] = false
-			delete(item, "multi_agent_version")
-		}
 	}
 }
 
@@ -242,7 +247,12 @@ func modelsDevReasoningLevels(capability pricing.Capability) ([]any, string) {
 		case "toggle":
 			toggle = true
 		case "effort":
-			effort = append(effort, option.Values...)
+			for _, value := range option.Values {
+				value = strings.ToLower(strings.TrimSpace(value))
+				if validCodexReasoning(value) {
+					effort = append(effort, value)
+				}
+			}
 		}
 	}
 	if len(effort) > 0 {
@@ -264,6 +274,54 @@ func modelsDevReasoningLevels(capability pricing.Capability) ([]any, string) {
 		return reasoningLevelObjects([]string{"high"}), "high"
 	}
 	return reasoningLevelObjects([]string{"none"}), "none"
+}
+
+func validCodexReasoning(value string) bool {
+	switch value {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+		return true
+	default:
+		return false
+	}
+}
+
+// Keep a source's explicit list, but never send an unknown effort or a default
+// outside that list: one invalid enum can invalidate Codex's entire catalog.
+func normalizeCodexReasoning(item map[string]any) {
+	levels, ok := item["supported_reasoning_levels"].([]any)
+	if !ok {
+		return
+	}
+	efforts := make([]string, 0, len(levels))
+	clean := make([]any, 0, len(levels))
+	seen := map[string]bool{}
+	for _, raw := range levels {
+		level, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		effort, _ := level["effort"].(string)
+		effort = strings.ToLower(strings.TrimSpace(effort))
+		if !validCodexReasoning(effort) || seen[effort] {
+			continue
+		}
+		seen[effort] = true
+		level["effort"] = effort
+		if description, _ := level["description"].(string); strings.TrimSpace(description) == "" {
+			level["description"] = reasoningLevelDescription(effort)
+		}
+		efforts, clean = append(efforts, effort), append(clean, level)
+	}
+	item["supported_reasoning_levels"] = clean
+	wanted, _ := item["default_reasoning_level"].(string)
+	wanted = strings.ToLower(strings.TrimSpace(wanted))
+	if seen[wanted] {
+		item["default_reasoning_level"] = wanted
+	} else if len(efforts) > 0 {
+		item["default_reasoning_level"] = pickDefaultReasoningLevel(efforts, true)
+	} else {
+		item["default_reasoning_level"] = "none"
+	}
 }
 
 func reasoningLevelObjects(efforts []string) []any {
