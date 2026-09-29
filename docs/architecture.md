@@ -66,6 +66,13 @@ alone does not disable verbosity or multi-agent metadata. Catalog revisions
 include a content hash of facts and overrides, so deleting an override also
 invalidates client caches. Failed database reads retain the published snapshot.
 
+The embedded CPA runtime starts CPA's provider-model updater after its routes
+are ready. A successful remote catalog change for Codex or xAI rebuilds the
+credential routes, persists newly added models, and updates parent subscription
+model ranges. CPA's embedded definitions remain available when the remote
+catalog cannot be fetched. Tenant and key restrictions still apply to the
+expanded list.
+
 Quota storage supports all active child subscriptions usable by the authenticated
 key. Four batch queries project allocations against current parent generations,
 including unused grants, without creating reservations. Duration-bearing kinds

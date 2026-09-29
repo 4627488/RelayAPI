@@ -138,7 +138,34 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 			a.nativeCPAServeErr.Store(serveErr)
 		}
 	}()
+	runtime.StartModelCatalogUpdates(a.onEmbeddedModelCatalogUpdate)
 	return nil
+}
+
+func (a *App) onEmbeddedModelCatalogUpdate(providers []string) {
+	changed := false
+	for _, provider := range providers {
+		if provider == "codex" || provider == "xai" {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := a.reloadNativeCredentials(ctx); err != nil {
+		slog.Warn("reload embedded CPA credentials after model update", "error", err)
+		return
+	}
+	if err := a.persistExpandedCredentialModels(ctx); err != nil {
+		slog.Warn("persist expanded credential models after model update", "error", err)
+		return
+	}
+	if _, err := a.syncNativeParentSubscriptionRows(ctx); err != nil {
+		slog.Warn("sync parent subscriptions after model update", "error", err)
+	}
 }
 
 func (a *App) persistExpandedCredentialModels(ctx context.Context) error {

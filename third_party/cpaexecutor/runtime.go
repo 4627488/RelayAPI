@@ -110,6 +110,7 @@ type CredentialStatus struct {
 // calls a password-protected in-process subset through the broker in oauth.go.
 type Runtime struct {
 	mu               sync.RWMutex
+	modelUpdateMu    sync.Mutex
 	cfg              *internalconfig.Config
 	manager          *coreauth.Manager
 	handler          http.Handler
@@ -125,6 +126,7 @@ type Runtime struct {
 	oauthDir         string
 	traces           *requestTraceRegistry
 	routingStrategy  string
+	closed           bool
 }
 
 type credentialRoute struct {
@@ -658,6 +660,9 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.closed {
+		return fmt.Errorf("embedded CPA runtime is closed")
+	}
 	nextIDs := make(map[string]struct{}, len(compiled))
 	for _, item := range compiled {
 		nextIDs[item.auth.ID] = struct{}{}
@@ -1122,6 +1127,7 @@ func (r *Runtime) Close(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	r.stopModelCatalogUpdates()
 	r.manager.StopAutoRefresh()
 	r.mu.Lock()
 	for id := range r.authIDs {
