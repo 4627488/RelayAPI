@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -591,7 +590,7 @@ func TestPrepareNativeWebSocketRequestTracksChangedModel(t *testing.T) {
 		currentMeta: requestMeta{Model: "gpt-first", RequestedModel: "gpt-first", Stream: true},
 	}
 	payload := []byte(`{"type":"response.create","model":"fast","service_tier":"priority"}`)
-	forwarded, meta, startsTurn, err := app.prepareNativeWebSocketRequest(payload, &url.URL{Path: "/v1/responses"}, store.KeyContext{
+	forwarded, meta, startsTurn, err := app.prepareNativeWebSocketRequest(payload, httptest.NewRequest(http.MethodPost, "/v1/responses", nil), store.KeyContext{
 		APIKey: db.APIKey{ModelAliases: []db.APIKeyModelAlias{{Alias: "fast", Model: "gpt-second"}}},
 	}, accounting)
 	if err != nil {

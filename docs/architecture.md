@@ -135,3 +135,16 @@ use controlled defaults and credential-scoped discovery where supported.
 Tenant and key allowlists are applied after runtime discovery. Prices remain
 local accounting metadata rather than a model allowlist. Each request snapshots
 its resolved modality-aware integer price and catalog version.
+
+Codex `codex-auto-review` requests can use the originating session's model.
+Relay first accepts an explicit parent model in `metadata.parent_model`,
+`metadata.session_model`, `metadata.original_model`, `metadata.model`, or
+`session.model`. Otherwise it matches a recent main request from the same API
+key using Codex's `thread-id` and auto-review `x-codex-parent-thread-id`, or
+the shared `session-id`. In a Codex 0.158.0 probe, the reviewer had its own
+`thread-id` and `prompt_cache_key`; neither value alone identified the parent.
+Other clients may use a shared prompt cache key. The association is process-local
+and expires after one hour. Relay only rewrites to a model
+that the key may use and the runtime currently publishes; unknown or ambiguous
+review requests keep the original model. An API-key alias for
+`codex-auto-review` takes precedence over this automatic mapping.

@@ -49,6 +49,7 @@ type App struct {
 	memoryReclaiming  atomic.Bool
 	finalizationSlots chan struct{}
 	capabilities      atomic.Pointer[pricing.CapabilityIndex]
+	reviewSessions    codexReviewSessions
 }
 
 type contextKey string

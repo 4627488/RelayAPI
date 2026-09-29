@@ -380,6 +380,12 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	frameMeta := readRequestMeta(firstFrame, r.URL.Path)
 	if meta.Model == "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
+		if resolved.ModelAlias == "" {
+			resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, r, firstFrame)
+			if !strings.EqualFold(resolved.Model, frameMeta.Model) {
+				resolved.ModelAlias = frameMeta.Model
+			}
+		}
 		resolved.RequestedModel = frameMeta.Model
 		resolved.Stream = true
 		resolved.ServiceTier = frameMeta.ServiceTier
@@ -408,6 +414,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		accounting.admission = admission
 		accounting.price = price
 		accounting.billable = true
+	}
+	if !strings.EqualFold(meta.RequestedModel, codexAutoReviewModel) {
+		a.rememberCodexReviewSession(key, r, firstFrame, meta.Model)
 	}
 	if a.nativeRuntime != nil {
 		upstreamModel := a.nativeRuntime.ResolveCredentialModel(accounting.admission.UpstreamCredentialID, meta.Model)
@@ -485,7 +494,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			accounting.mu.Lock()
 			defer accounting.mu.Unlock()
 			accounting.requestBytes += int64(len(payload))
-			forwarded, nextMeta, startsTurn, prepareErr := a.prepareNativeWebSocketRequest(payload, r.URL, key, accounting)
+			forwarded, nextMeta, startsTurn, prepareErr := a.prepareNativeWebSocketRequest(payload, r, key, accounting)
 			if prepareErr != nil {
 				accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "invalid_request"
 				rejected := nativeWebSocketBillingEntry{Meta: nextMeta, StartedAt: receivedAt,
@@ -735,7 +744,7 @@ func nativeRuntimeWebSocketHeaders(source http.Header, requestID, credentialID s
 	return header
 }
 
-func (a *App) prepareNativeWebSocketRequest(payload []byte, requestURL *url.URL, key store.KeyContext,
+func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Request, key store.KeyContext,
 	accounting *nativeWebSocketAccounting) ([]byte, requestMeta, bool, error) {
 	var event struct {
 		Type string `json:"type"`
@@ -750,8 +759,17 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, requestURL *url.URL,
 	}
 	if frameMeta.Model != "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
+		if resolved.ModelAlias == "" {
+			resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, request, payload)
+			if !strings.EqualFold(resolved.Model, frameMeta.Model) {
+				resolved.ModelAlias = frameMeta.Model
+			}
+		}
 		if !key.AllowsModel(resolved.Model) {
 			return nil, nextMeta, true, fmt.Errorf("API key is not allowed to use model %q", resolved.Model)
+		}
+		if !strings.EqualFold(frameMeta.Model, codexAutoReviewModel) {
+			a.rememberCodexReviewSession(key, request, payload, resolved.Model)
 		}
 		nextMeta.Model = resolved.Model
 		nextMeta.RequestedModel = resolved.RequestedModel
@@ -769,8 +787,8 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, requestURL *url.URL,
 		upstreamModel := a.nativeRuntime.ResolveCredentialModel(accounting.admission.UpstreamCredentialID, nextMeta.Model)
 		if upstreamModel != "" && upstreamModel != frameMeta.Model {
 			requestCopy := url.URL{}
-			if requestURL != nil {
-				requestCopy = *requestURL
+			if request != nil && request.URL != nil {
+				requestCopy = *request.URL
 			}
 			var err error
 			forwarded, err = rewriteRequestModel(payload, &requestCopy, frameMeta.Model, upstreamModel)

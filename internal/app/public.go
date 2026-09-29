@@ -101,6 +101,12 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	logContext := requestLogContext{requestBytes: int64(len(body))}
 	meta := requestMetadata(body, r)
 	resolved := resolveAPIKeyModel(meta.Model, key.ModelAliases)
+	if resolved.ModelAlias == "" {
+		resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, r, body)
+		if !strings.EqualFold(resolved.Model, meta.Model) {
+			resolved.ModelAlias = meta.Model
+		}
+	}
 	resolved.RequestedModel = meta.Model
 	resolved.Stream = meta.Stream
 	resolved.ServiceTier = meta.ServiceTier
@@ -220,6 +226,9 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 			logContext.price = &price
 		}
 		deferredAdmissionPrice = nil
+	}
+	if billable && !strings.EqualFold(meta.RequestedModel, codexAutoReviewModel) {
+		a.rememberCodexReviewSession(key, r, originalBody, meta.Model)
 	}
 	timeline.Step(time.Now(), "billing_admission", "订阅准入与预留", "billing", "解析价格、选择订阅与凭据并预留余额或额度")
 
