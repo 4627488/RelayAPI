@@ -107,6 +107,8 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 `rai login` 打开浏览器，用 PKCE 设备授权批准后写入系统钥匙串（无钥匙串时回退到 `~/.config/rai/credentials.json`，权限 0600）。无图形界面时加 `--no-browser`，把打印的 URL 贴到浏览器。CI 或已有密钥用 `--api-key-stdin`。`rai credential print` 供 Codex 的 command-based auth 刷新模型目录。发布镜像在构建时交叉编译各平台 `rai`，由本站 `GET /rai/download/{os}-{arch}` 下发；`rai update` 向当前登录站点拉取同一路径。
 
+`rai quota` 显示当前配置与 API Key 可访问的订阅额度窗口，包括已用（含预占）、剩余和重置时间；可用 `rai --profile <名称> quota` 切换配置。查询使用只读 `GET /api/rai/quota`，按 Key 的租户和模型权限过滤；按余额结算的模型没有周期额度窗口。Codex CLI 0.154.0 起的 `/status` 自定义 provider 额度显示回归不影响此命令或实际准入与计费。
+
 管理员可在「系统设置 → 运行策略 → RAI 默认模型」配置候选模型及优先顺序，初始为 `gpt-5.6-sol`、`grok-4.6`。通过 `rai use --auto` 启用站点自动模式后，每次启动从用户当前可用模型中选择首个匹配项，全部不可用时要求手动选择，不会回退到模型目录第一项。`--model` 和 `rai use <model>` 可覆盖站点默认；`rai use --auto` 恢复跟随站点配置。旧版已保存的默认模型继续保留，更新 RAI 后执行 `rai use --auto` 即可清除旧值。新登录未指定 `--model` 时，Codex 沿用客户端默认；其他客户端使用站点候选。
 
 `rai codex` 未指定模型时沿用 Codex 自身配置和默认值，不再自动选择目录中的第一个模型。在 Codex 内切换并保存模型、推理强度后，退出时 rai 自动记住变化，下次 `rai codex` 沿用该选择。配置读取遵循 `CODEX_HOME`（默认 `~/.codex`）；同步范围是用户 `config.toml` 中的模型和推理强度，其他设置仍由 Codex 原生保存。可用模型见 `rai models`，固定模型用 `rai use <模型名>`，恢复客户端默认用 `rai use default`，仅本次覆盖用 `rai codex --model <模型名>`。旧版本自动选中了 code-review 时，运行一次 `rai use default` 即可。需要主动导入已有 Codex 偏好时可运行 `rai sync codex`。其他客户端会使用站点默认候选，候选均不可用时需用 `rai use` 或 `--model` 指定模型。
@@ -248,6 +250,7 @@ Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段�
 - `DELETE /api/keys/{id}`：删除个人 API Key
 - `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
+- `GET /api/rai/quota`：使用当前 RAI API Key 读取其可访问的子订阅额度窗口
 - `GET /rai/install.sh|install.ps1`：本站下发的 rai 安装脚本，从 `/rai/download/{os}-{arch}` 取与当前部署同构建的二进制，再对 PublicURL 执行 `rai login`
 - `GET /rai/download/{os}-{arch}`：本站随镜像发布的 rai 二进制（darwin/linux/windows × amd64/arm64）
 - `POST /api/agent-setup`：创建 5 分钟有效的短随机安装令牌与跨平台一键命令；数据库只保存令牌哈希和加密配置

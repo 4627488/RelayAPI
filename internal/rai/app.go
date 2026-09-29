@@ -74,6 +74,11 @@ func (a *App) Execute(ctx context.Context) error {
 		return a.status(ctx, profileName)
 	case "models":
 		return a.models(ctx, profileName)
+	case "quota":
+		if len(args) != 1 {
+			return errors.New("usage: rai quota")
+		}
+		return a.quota(ctx, profileName)
 	case "use":
 		return a.use(profileName, args[1:])
 	case "sync":
@@ -159,6 +164,7 @@ Usage:
   rai logout [--profile name]
   rai status
   rai models
+  rai quota             Show subscription allowances for the current API Key
   rai use <model|default|--auto>    Save a model, follow the agent, or follow the site
   rai sync codex            Import saved Codex model and reasoning settings
   rai configure codex [-y]  Connect Codex using the rai credential helper
