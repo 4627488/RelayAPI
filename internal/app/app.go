@@ -27,7 +27,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
 
 type App struct {

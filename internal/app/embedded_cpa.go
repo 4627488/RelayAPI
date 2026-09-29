@@ -16,7 +16,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
 
 func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error {

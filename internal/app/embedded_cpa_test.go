@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/upstream"
-	"github.com/router-for-me/CLIProxyAPI/v7/relaybridge"
+	"github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
 
 func TestEmbeddedCPARefreshCredentialReturnsLiveDocument(t *testing.T) {

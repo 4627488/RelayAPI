@@ -3,11 +3,11 @@ package relaybridge
 import (
 	"context"
 
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
-	_ "github.com/router-for-me/CLIProxyAPI/v7/internal/translator"
-	codexchat "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/codex/openai/chat-completions"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/translator/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/translator"
+	codexchat "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/openai/chat-completions"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/translator/translator"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )

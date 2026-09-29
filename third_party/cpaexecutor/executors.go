@@ -1,8 +1,8 @@
 package relaybridge
 
 import (
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
-	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/cache"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
 // ClearReasoningCaches drops CPA's process-local replay caches. Relay calls

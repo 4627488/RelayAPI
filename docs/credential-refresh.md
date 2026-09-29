@@ -19,14 +19,15 @@ encrypted credential store.
 ## Dependency maintenance
 
 The root module and `third_party/cpaexecutor/go.mod` pin the same replacement:
-[4627488/CLIProxyAPI commit f8005918caca](https://github.com/4627488/CLIProxyAPI/commit/f8005918caca7a87824edbd10fa845d598fd74e9),
-on branch `relay/credential-refresh-v7.3.15`. This is upstream **v7.3.15** plus
+[4627488/CLIProxyAPI commit dad77ec33c28](https://github.com/4627488/CLIProxyAPI/commit/dad77ec33c28dfc20d90654c798e175f19698944),
+on branch `relay/credential-refresh-v8.0.4`. This is upstream **v8.0.4** plus
 the shared refresh lifecycle patch and a credential snapshot race fix, with
-regression tests. The replacement version `v7.0.0-20260923020424-f8005918caca` reflects the fork's
-tags, not a downgrade to CPA v7.0.0.
+regression tests. The replacement version is
+`v8.0.0-20260929112143-dad77ec33c28`; the module path is `/v8` in both
+Relay modules. The pseudo-version reflects the fork's tags, not a downgrade
+from upstream v8.0.4.
 
-This upgrade supplies CPA's model definitions and protocol handling for
-`gpt-6-sol`, `gpt-6-luna`, `grok-4.7`, and `grok-4.7-build-fast`. The bridge
+The bridge
 unions both Codex and xAI discovery snapshots with CPA's current catalog,
 honors credential model exclusions, and persists expanded lists on startup.
 
@@ -36,6 +37,13 @@ implementations and the existing automatic/inference refresh behavior are
 unchanged. The CPA tests cover refresh lead times, rotated-token persistence,
 static/disabled credentials, failure backoff, concurrent forced requests and
 reuse of an in-flight inference refresh.
+
+CPA v8 also exposes `GetByID` and `ForceRefreshAuth`. The former returns the
+latest runtime snapshot, but does not perform a due refresh. The latter always
+forces a refresh, bypassing the provider refresh policy and failure backoff.
+Using them together for frequent quota probes would lose pre-probe refresh and
+could repeat failed refreshes after each 401. The small shared-lifecycle patch
+keeps quota probes on CPA's existing policy and coalesces concurrent refreshes.
 
 Credential registration and updates also clone their callback/scheduler
 snapshots under the manager lock. This prevents concurrent request results
