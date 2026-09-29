@@ -344,7 +344,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
         ]}
       />
 
-      <Card>
+      <Card className="mx-auto w-full max-w-[1600px]">
         <CardHeader>
           <CardTitle>请求明细</CardTitle>
           <FieldGroup className="grid min-w-0 grid-cols-2 gap-2 pt-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_9rem_auto_auto] [&_button]:min-h-10 sm:[&_button]:min-h-7 [&_input]:h-10 sm:[&_input]:h-7">
@@ -892,7 +892,8 @@ function LogOverview({
             ["入口", `${log.method} ${log.path}`],
             ["传输", requestLogTransport(log.request_type, log.stream)],
             ["类型", log.request_type],
-            ["模型", modelRoute(log)],
+            ["请求 / 路由模型", modelRoute(log)],
+            ["上游返回模型", log.upstream_model || "未返回"],
             [
               "客户端",
               [log.client_name, log.client_version].filter(Boolean).join(" "),

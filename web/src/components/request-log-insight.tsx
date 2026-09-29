@@ -203,7 +203,8 @@ export function RequestLogInsight({
             <Facts
               rows={[
                 ["请求模型", log.requested_model || log.model],
-                ["实际模型", log.actual_model],
+                ["路由模型", log.actual_model || log.model],
+                ["上游返回模型", log.upstream_model || "未返回"],
                 ...(workspace === "admin"
                   ? ([
                       ["提供商", log.provider],

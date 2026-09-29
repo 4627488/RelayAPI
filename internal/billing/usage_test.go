@@ -65,6 +65,25 @@ func TestParseResponseServiceTier(t *testing.T) {
 	}
 }
 
+func TestParseResponseModelFromUpstreamShapes(t *testing.T) {
+	tests := []struct {
+		name, payload, want string
+	}{
+		{"responses JSON", `{"id":"resp_1","model":"gpt-returned","usage":{"input_tokens":1}}`, "gpt-returned"},
+		{"chat JSON", `{"id":"chat_1","model":"grok-returned","usage":{"prompt_tokens":1}}`, "grok-returned"},
+		{"responses SSE", "data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-created\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-completed\",\"usage\":{\"input_tokens\":1}}}\n\n", "gpt-completed"},
+		{"created only", "data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-created\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1}}}\n\n", "gpt-created"},
+		{"missing model", `{"usage":{"input_tokens":1}}`, ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ParseResponse([]byte(test.payload)).Model; got != test.want {
+				t.Fatalf("model = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCostAvoidsChargingCachedInputTwice(t *testing.T) {
 	price := pricing.SnapshotPrice{Price: pricing.Price{
 		InputNanoUSDPerToken: 10, OutputNanoUSDPerToken: 20,

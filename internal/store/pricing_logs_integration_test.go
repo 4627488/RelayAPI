@@ -81,7 +81,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err := dataStore.WriteLog(ctx, LogInput{
 		ID: requestID, TenantID: tenantID, APIKeyID: keyID, Model: "alias-model",
 		TenantName: tenantName, APIKeyName: keyName, APIKeyPrefix: keyPrefix,
-		RequestedModel: "alias-model", ActualModel: "actual-model", Method: "POST", Path: "/v1/responses", RequestType: "responses",
+		RequestedModel: "alias-model", ActualModel: "actual-model", UpstreamModel: "returned-model", Method: "POST", Path: "/v1/responses", RequestType: "responses",
 		UpstreamTraceID: "upstream-trace", UpstreamExecutionID: "upstream-execution",
 		StatusCode: 200, Usage: Usage{Prompt: 10, Completion: 2, Cached: 4, Reasoning: 1, Total: 12},
 		CostNanoUSD: &cost, Price: &resolved, PricingComplete: true, Settled: true,
@@ -96,7 +96,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detailed.Log.UpstreamExecutionID != "upstream-execution" || detailed.Log.ActualModel != "actual-model" || detailed.Detail == nil {
+	if detailed.Log.UpstreamExecutionID != "upstream-execution" || detailed.Log.ActualModel != "actual-model" || detailed.Log.UpstreamModel != "returned-model" || detailed.Detail == nil {
 		t.Fatalf("upstream identity missing: %+v / %+v", detailed.Log, detailed.Detail)
 	}
 	if detailed.Log.RequestBodyBytes != 128 || detailed.Log.ForwardedBodyBytes != 144 || detailed.Log.ResponseBodyBytes != 512 {

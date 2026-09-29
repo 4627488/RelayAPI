@@ -80,7 +80,7 @@ type Usage struct {
 type LogInput struct {
 	FirstTokenMS                                                                                                                                         *int64
 	ID, TenantID, APIKeyID, ReservationRequestID, UpstreamRequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
-	UpstreamTraceID, UpstreamExecutionID, RequestedModel, ActualModel, ModelAlias, ExecutorType, AuthType                                                string
+	UpstreamTraceID, UpstreamExecutionID, RequestedModel, ActualModel, UpstreamModel, ModelAlias, ExecutorType, AuthType                                 string
 	ServiceTier, ResponseServiceTier, ReasoningEffort, TenantName, APIKeyName, APIKeyPrefix, RequestType                                                 string
 	ClientName, ClientVersion, UserAgent                                                                                                                 string
 	StatusCode                                                                                                                                           int
@@ -772,7 +772,7 @@ func requestLogItem(l LogInput) db.RequestLog {
 	item := db.RequestLog{
 		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, ReservationRequestID: nullableIdentifier(l.ReservationRequestID), UpstreamRequestID: l.UpstreamRequestID,
 		UpstreamTraceID: l.UpstreamTraceID, UpstreamExecutionID: l.UpstreamExecutionID,
-		Model: l.Model, RequestedModel: l.RequestedModel, ActualModel: l.ActualModel, ModelAlias: l.ModelAlias,
+		Model: l.Model, RequestedModel: l.RequestedModel, ActualModel: l.ActualModel, UpstreamModel: l.UpstreamModel, ModelAlias: l.ModelAlias,
 		Provider: l.Provider, ExecutorType: l.ExecutorType, AuthType: l.AuthType, AuthIndex: l.AuthIndex,
 		ServiceTier: l.ServiceTier, ResponseServiceTier: l.ResponseServiceTier, ReasoningEffort: l.ReasoningEffort,
 		ParentSubscriptionID: nullableIdentifier(l.ParentSubscriptionID),
@@ -860,7 +860,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 		create = create.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
-				"model", "requested_model", "actual_model", "model_alias",
+				"model", "requested_model", "actual_model", "upstream_model", "model_alias",
 				"service_tier", "reasoning_effort", "upstream_request_id", "response_service_tier",
 				"status_code", "stream", "request_body_bytes",
 				"forwarded_body_bytes", "response_body_bytes", "prompt_tokens", "completion_tokens",
@@ -1004,13 +1004,13 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 		like := "%" + text + "%"
 		if input.Public {
 			query = query.Where(
-				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_code ILIKE ? OR api_key_name ILIKE ? OR api_key_prefix ILIKE ? OR id::text ILIKE ?",
-				like, like, like, like, like, like, like, like, like, like, like,
+				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR upstream_model ILIKE ? OR path ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_code ILIKE ? OR api_key_name ILIKE ? OR api_key_prefix ILIKE ? OR id::text ILIKE ?",
+				like, like, like, like, like, like, like, like, like, like, like, like,
 			)
 		} else {
 			query = query.Where(
-				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR upstream_trace_id ILIKE ? OR api_key_prefix ILIKE ? OR id::text ILIKE ?",
-				like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, like,
+				"model ILIKE ? OR requested_model ILIKE ? OR actual_model ILIKE ? OR upstream_model ILIKE ? OR path ILIKE ? OR tenant_name ILIKE ? OR api_key_name ILIKE ? OR channel_name ILIKE ? OR credential_name ILIKE ? OR credential_email ILIKE ? OR client_name ILIKE ? OR client_version ILIKE ? OR user_agent ILIKE ? OR error_message ILIKE ? OR upstream_trace_id ILIKE ? OR api_key_prefix ILIKE ? OR id::text ILIKE ?",
+				like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, like,
 			)
 		}
 	}
@@ -1028,7 +1028,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 		query = query.Where("method = ?", strings.ToUpper(input.Method))
 	}
 	if input.Model != "" {
-		query = query.Where("(model = ? OR requested_model = ? OR actual_model = ?)", input.Model, input.Model, input.Model)
+		query = query.Where("(model = ? OR requested_model = ? OR actual_model = ? OR upstream_model = ?)", input.Model, input.Model, input.Model, input.Model)
 	}
 	if input.From != nil {
 		query = query.Where("started_at >= ?", *input.From)

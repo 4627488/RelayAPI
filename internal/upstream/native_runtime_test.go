@@ -127,6 +127,58 @@ func TestKimiResponsesTranslationPreservesToolsAndUsage(t *testing.T) {
 	}
 }
 
+func TestRuntimeTraceRecordsProviderModelBeforeTranslation(t *testing.T) {
+	for _, test := range []struct {
+		name, providerModel, want string
+	}{
+		{"returned model", "kimi-returned", "kimi-returned"},
+		{"provider omitted model", "", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				response := map[string]any{
+					"id": "chat_1", "choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "ok"}}},
+					"usage": map[string]any{"prompt_tokens": 1, "completion_tokens": 1},
+				}
+				if test.providerModel != "" {
+					response["model"] = test.providerModel
+				}
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			t.Cleanup(provider.Close)
+			runtime := newTestRuntime(t, Credential{
+				ID: "kimi", Provider: "kimi", Enabled: true, Models: []string{"kimi-code"},
+				Document: testJSON(t, map[string]any{"type": "kimi", "access_token": "token", "base_url": provider.URL}),
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"kimi-code","input":"hi"}`))
+			request.Header.Set("X-Relay-Request-ID", "model-observation")
+			response := httptest.NewRecorder()
+			runtime.Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+			trace, ok := runtime.TakeRequestTrace("model-observation")
+			if !ok || trace.UpstreamModel != test.want {
+				t.Fatalf("provider model trace = %+v, found=%v", trace, ok)
+			}
+		})
+	}
+}
+
+func TestResponseModelObserverHandlesSplitSSEFrames(t *testing.T) {
+	observer := &responseModelObserver{stream: true}
+	for _, chunk := range []string{
+		"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-first\"}}\n",
+		"\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"mod",
+		"el\":\"gpt-final\"}}\n\n",
+	} {
+		_, _ = observer.Write([]byte(chunk))
+	}
+	if got := observer.finish(); got != "gpt-final" {
+		t.Fatalf("observed model = %q", got)
+	}
+}
+
 func TestCodexChatTranslationPreservesBetaAndModelRoute(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" || r.Header.Get("OpenAI-Beta") != "client-beta" || r.Header.Get("ChatGPT-Account-ID") != "account-1" {

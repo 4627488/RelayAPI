@@ -13,6 +13,7 @@ import (
 
 type Result struct {
 	RequestID           string
+	Model               string
 	ResponseServiceTier string
 	Usage               store.Usage
 	Found               bool
@@ -28,9 +29,15 @@ func ParseResponse(payload []byte) Result {
 		if id := stringValue(value["id"]); id != "" {
 			result.RequestID = id
 		}
+		if model := stringValue(value["model"]); model != "" {
+			result.Model = model
+		}
 		if response, ok := value["response"].(map[string]any); ok {
 			if id := stringValue(response["id"]); id != "" {
 				result.RequestID = id
+			}
+			if model := stringValue(response["model"]); model != "" {
+				result.Model = model
 			}
 			readUsage(response["usage"], &result)
 			if tier := stringValue(response["service_tier"]); tier != "" {
@@ -47,11 +54,17 @@ func ParseResponse(payload []byte) Result {
 			if id := stringValue(message["id"]); id != "" {
 				result.RequestID = id
 			}
+			if model := stringValue(message["model"]); model != "" {
+				result.Model = model
+			}
 			readUsage(message["usage"], &result)
 		}
 		if event, ok := value["data"].(map[string]any); ok {
 			if id := stringValue(event["id"]); id != "" {
 				result.RequestID = id
+			}
+			if model := stringValue(event["model"]); model != "" {
+				result.Model = model
 			}
 			readUsage(event["usage"], &result)
 		}

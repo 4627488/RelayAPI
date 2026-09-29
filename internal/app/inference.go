@@ -242,6 +242,12 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			}
 		}
 		parsed := billing.ParseResponse(capture.Bytes())
+		if parsed.Model == "" {
+			// The rolling billing tail may no longer include response.created.
+			// The bounded detail prefix keeps that early model observation.
+			prefix, _, _ := capture.Info()
+			parsed.Model = billing.ParseResponse(prefix).Model
+		}
 		if call.priceConfigured && parsed.Found {
 			dimensions := requestPriceDimensions(call.key, call.meta, r.URL.Path, admissionAuthIndex(call.admission), parsed.ResponseServiceTier)
 			dimensions.PromptTokens = parsed.Usage.Prompt
@@ -307,7 +313,9 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		// Settlement and durable logging now run after the response boundary and
 		// must not inflate the latency reported to users.
 		call.timeline.Mark(responseReadAt, "complete", "响应完成")
-		a.addNativeRuntimeTrace(call.timeline, call.requestID)
+		if upstreamModel, observedAtProvider := a.addNativeRuntimeTrace(call.timeline, call.requestID); observedAtProvider {
+			parsed.Model = upstreamModel
+		}
 		stageTimings := call.timeline.JSON(responseReadAt)
 		if retainDetail {
 			logContext.ensureDetail().StageTimings = stageTimings

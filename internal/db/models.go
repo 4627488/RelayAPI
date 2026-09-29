@@ -179,6 +179,7 @@ type RequestLog struct {
 	Model                        string    `gorm:"not null;default:''" json:"model"`
 	RequestedModel               string    `gorm:"not null;default:''" json:"requested_model"`
 	ActualModel                  string    `gorm:"not null;default:'';index" json:"actual_model"`
+	UpstreamModel                string    `gorm:"not null;default:''" json:"upstream_model"`
 	ModelAlias                   string    `gorm:"not null;default:''" json:"model_alias"`
 	Provider                     string    `json:"provider,omitempty"`
 	ExecutorType                 string    `json:"executor_type,omitempty"`

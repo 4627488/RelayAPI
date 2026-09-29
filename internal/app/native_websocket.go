@@ -51,6 +51,7 @@ type nativeWebSocketAccounting struct {
 	currentRequest    int64
 	currentForwarded  int64
 	currentResponse   int64
+	currentModel      string
 	persistTurn       func(nativeWebSocketBillingEntry, billing.Result) (bool, error)
 }
 
@@ -74,6 +75,7 @@ func (a *nativeWebSocketAccounting) startStep(entry nativeWebSocketBillingEntry)
 	a.currentMeta, a.currentStarted, a.currentReady = entry.Meta, entry.StartedAt, entry.ReadyAt
 	a.currentFirst = time.Time{}
 	a.currentFirstToken = time.Time{}
+	a.currentModel = ""
 	a.currentBody = entry.RequestBody
 	a.currentRequest, a.currentForwarded, a.currentResponse = entry.RequestBytes, entry.ForwardedBytes, 0
 }
@@ -537,10 +539,18 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 				return payload, nil
 			}
 			terminal := isNativeWebSocketUsageTerminalEvent(payload)
+			if bytes.Contains(payload, []byte(`"model"`)) {
+				if model := billing.ParseResponse(payload).Model; model != "" {
+					accounting.currentModel = model
+				}
+			}
 			turn := billing.Result{}
 			turnKey := ""
 			if terminal {
 				turn = parseNativeWebSocketUsage(payload)
+				if turn.Model == "" {
+					turn.Model = accounting.currentModel
+				}
 				turnKey = strings.TrimSpace(turn.RequestID)
 				if turnKey == "" {
 					turnKey = fmt.Sprintf("sha256:%x", sha256.Sum256(payload))
@@ -935,6 +945,9 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 func mergeNativeWebSocketResult(target *billing.Result, turn billing.Result) {
 	if turn.RequestID != "" {
 		target.RequestID = turn.RequestID
+	}
+	if turn.Model != "" {
+		target.Model = turn.Model
 	}
 	if turn.ResponseServiceTier != "" {
 		target.ResponseServiceTier = turn.ResponseServiceTier

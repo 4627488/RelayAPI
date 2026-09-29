@@ -308,9 +308,11 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 	client := identifyClientUserAgent(r.UserAgent())
 	usage := store.Usage{}
 	upstreamID := ""
+	actualModel := ""
 	if parsed != nil {
 		usage = parsed.Usage
 		upstreamID = parsed.RequestID
+		actualModel = parsed.Model
 	}
 	var costPointer *int64
 	if pricingComplete {
@@ -334,7 +336,7 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 	}
 	return store.LogInput{
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, UpstreamRequestID: upstreamID, Model: meta.Model,
-		UpstreamTraceID: logContext.upstreamTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
+		UpstreamTraceID: logContext.upstreamTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, UpstreamModel: actualModel, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
 		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),
 		ServiceTier: meta.ServiceTier, ResponseServiceTier: parsedResponseServiceTier(parsed), ReasoningEffort: meta.ReasoningEffort,
 		ClientName: client.Name, ClientVersion: client.Version, UserAgent: client.UserAgent,

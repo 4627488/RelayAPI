@@ -1,11 +1,13 @@
 package upstream
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/tidwall/gjson"
 )
 
@@ -132,7 +134,14 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	} else {
 		credential.releaseProbe()
 	}
-	source := response.Body
+	var source io.Reader = response.Body
+	modelObserver := &responseModelObserver{stream: clientStream || collectStream || strings.Contains(response.Header.Get("Content-Type"), "text/event-stream")}
+	source = io.TeeReader(source, modelObserver)
+	defer func() {
+		if trace != nil {
+			trace.UpstreamModel = modelObserver.finish()
+		}
+	}()
 	if collectStream && response.StatusCode < 400 {
 		payload, collectErr := collectResponsesSSE(source)
 		if collectErr != nil {
@@ -217,6 +226,64 @@ func (w immediateFlushWriter) Write(payload []byte) (int, error) {
 		w.Flusher.Flush()
 	}
 	return written, err
+}
+
+// responseModelObserver reads the provider body before any protocol translation.
+// It retains only one bounded event (or a bounded JSON body), never response text
+// in the secret-free request trace.
+type responseModelObserver struct {
+	stream  bool
+	pending []byte
+	model   string
+}
+
+func (o *responseModelObserver) Write(payload []byte) (int, error) {
+	const maxEvent = 2 << 20
+	size := len(payload)
+	if !o.stream {
+		if len(o.pending) < maxEvent {
+			o.pending = append(o.pending, payload[:min(len(payload), maxEvent-len(o.pending))]...)
+		}
+		return size, nil
+	}
+	for len(payload) > 0 {
+		newline := bytes.IndexByte(payload, '\n')
+		if newline < 0 {
+			if len(o.pending)+len(payload) <= maxEvent {
+				o.pending = append(o.pending, payload...)
+			}
+			break
+		}
+		if len(o.pending)+newline <= maxEvent {
+			o.pending = append(o.pending, payload[:newline]...)
+			o.observeLine(o.pending)
+		}
+		o.pending = o.pending[:0]
+		payload = payload[newline+1:]
+	}
+	return size, nil
+}
+
+func (o *responseModelObserver) observeLine(line []byte) {
+	line = bytes.TrimSpace(line)
+	if bytes.HasPrefix(line, []byte("data:")) {
+		line = bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+	}
+	if !bytes.Contains(line, []byte(`"model"`)) {
+		return
+	}
+	if model := billing.ParseResponse(line).Model; model != "" {
+		o.model = model
+	}
+}
+
+func (o *responseModelObserver) finish() string {
+	if o.stream {
+		o.observeLine(o.pending)
+	} else {
+		o.model = billing.ParseResponse(o.pending).Model
+	}
+	return o.model
 }
 
 func canonicalInferencePath(path string) string {

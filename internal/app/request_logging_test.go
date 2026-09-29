@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/4627488/RelayAPI/internal/config"
 	"github.com/4627488/RelayAPI/internal/store"
 )
@@ -213,6 +214,26 @@ func TestRequestLogUsesResponseBoundaryInsteadOfFinalizerTime(t *testing.T) {
 		http.StatusOK, started, nil, false, true, 0, "", requestLogContext{completedAt: completed})
 	if input.LatencyMS != 750 || !input.CompletedAt.Equal(completed) {
 		t.Fatalf("logged boundary = %d ms at %s, want 750 ms at %s", input.LatencyMS, input.CompletedAt, completed)
+	}
+}
+
+func TestRequestLogKeepsRoutedAndReturnedModelsSeparate(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	meta := requestMeta{Model: "routed-model", RequestedModel: "client-alias"}
+	parsed := billing.ParseResponse([]byte(`{"model":"upstream-returned","usage":{"input_tokens":2,"output_tokens":1}}`))
+	input := requestLogInput(store.KeyContext{}, "request", store.Admission{}, meta, request,
+		http.StatusOK, time.Now(), &parsed, true, true, 42, "", requestLogContext{})
+	if input.RequestedModel != "client-alias" || input.Model != "routed-model" ||
+		input.ActualModel != "routed-model" || input.UpstreamModel != "upstream-returned" {
+		t.Fatalf("logged models = requested %q, route %q/%q, upstream %q", input.RequestedModel, input.Model, input.ActualModel, input.UpstreamModel)
+	}
+	if input.CostNanoUSD == nil || *input.CostNanoUSD != 42 {
+		t.Fatalf("logged cost = %v", input.CostNanoUSD)
+	}
+	missing := requestLogInput(store.KeyContext{}, "request", store.Admission{}, meta, request,
+		http.StatusBadGateway, time.Now(), nil, false, true, 0, "", requestLogContext{})
+	if missing.UpstreamModel != "" || missing.ActualModel != "routed-model" {
+		t.Fatalf("unobserved model = %+v", missing)
 	}
 }
 

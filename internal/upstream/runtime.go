@@ -33,14 +33,15 @@ type Runtime interface {
 
 // RequestTrace is the secret-free execution trace observed inside the native runtime.
 type RequestTrace struct {
-	RequestID    string
-	StartedAt    time.Time
-	CompletedAt  time.Time
-	Provider     string
-	CredentialID string
-	Model        string
-	Translation  string
-	Attempts     []ExecutionAttempt
+	RequestID     string
+	StartedAt     time.Time
+	CompletedAt   time.Time
+	Provider      string
+	CredentialID  string
+	Model         string
+	UpstreamModel string
+	Translation   string
+	Attempts      []ExecutionAttempt
 }
 
 type ExecutionAttempt struct {

@@ -215,11 +215,13 @@ func attemptDescription(attempt upstream.ExecutionAttempt) string {
 	return strings.Join(parts, " · ")
 }
 
-func (a *App) addNativeRuntimeTrace(timeline *latencyTimeline, requestID string) {
+func (a *App) addNativeRuntimeTrace(timeline *latencyTimeline, requestID string) (string, bool) {
 	if a == nil || a.nativeRuntime == nil || timeline == nil {
-		return
+		return "", false
 	}
 	if trace, ok := a.nativeRuntime.TakeRequestTrace(requestID); ok {
 		timeline.AddUpstreamTrace(trace)
+		return trace.UpstreamModel, trace.Provider != ""
 	}
+	return "", false
 }

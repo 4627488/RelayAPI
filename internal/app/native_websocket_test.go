@@ -289,6 +289,7 @@ func TestNativeResponsesWebSocketUsesNativeRuntimeHandlerAndAccountsUsage(t *tes
 		var body map[string]any
 		_ = json.Unmarshal(payload, &body)
 		observedCh <- observed{Authorization: r.Header.Get("Authorization"), Beta: r.Header.Get("OpenAI-Beta"), Body: body}
+		_ = conn.WriteJSON(map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_test", "model": "gpt-reported"}})
 		_ = conn.WriteJSON(map[string]any{"type": "response.completed", "response": map[string]any{
 			"id": "resp_test", "usage": map[string]any{"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
 		}})
@@ -324,6 +325,10 @@ func TestNativeResponsesWebSocketUsesNativeRuntimeHandlerAndAccountsUsage(t *tes
 	}); err != nil {
 		t.Fatal(err)
 	}
+	_, _, err = client.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, response, err := client.ReadMessage()
 	if err != nil {
 		t.Fatal(err)
@@ -350,7 +355,7 @@ func TestNativeResponsesWebSocketUsesNativeRuntimeHandlerAndAccountsUsage(t *tes
 	}
 	select {
 	case got := <-accountingCh:
-		if !got.Found || got.RequestID != "resp_test" || got.Usage.Prompt != 11 || got.Usage.Completion != 7 || got.Usage.Total != 18 {
+		if !got.Found || got.RequestID != "resp_test" || got.Model != "gpt-reported" || got.Usage.Prompt != 11 || got.Usage.Completion != 7 || got.Usage.Total != 18 {
 			t.Fatalf("accounting result = %#v", got)
 		}
 	case <-time.After(5 * time.Second):

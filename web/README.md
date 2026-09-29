@@ -11,6 +11,9 @@ pnpm install
 pnpm dev
 ```
 
+如需让本地前端读取远端环境的 API，可在启动前设置
+`RELAY_DEMO_API_TARGET=https://example.com`。默认仍代理到本机 3000 端口。
+
 提交前运行完整前端门禁：
 
 ```bash

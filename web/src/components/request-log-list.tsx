@@ -40,6 +40,7 @@ export function RequestLogKey({ log }: { log: RequestLog }) {
 }
 
 function Result({ log }: { log: RequestLog }) {
+  const routedModel = log.actual_model || log.model
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Badge
@@ -54,12 +55,30 @@ function Result({ log }: { log: RequestLog }) {
       <span className="text-xs text-muted-foreground">
         {requestLogTransport(log.request_type, log.stream)}
       </span>
+      {log.upstream_model &&
+      routedModel &&
+      log.upstream_model !== routedModel ? (
+        <Badge
+          variant="outline"
+          title={`${routedModel} → ${log.upstream_model}`}
+        >
+          上游模型不同
+        </Badge>
+      ) : null}
     </div>
   )
 }
 
 function duration(ms: number) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`
+}
+
+function displayedModel(log: RequestLog) {
+  const routed =
+    log.actual_model || log.model || log.requested_model || log.path
+  return log.upstream_model && log.upstream_model !== routed
+    ? `${routed} → ${log.upstream_model}`
+    : routed
 }
 
 export function RequestLogList({
@@ -93,38 +112,40 @@ export function RequestLogList({
   }
   return (
     <div className="@container min-w-0">
-      <div className="hidden @3xl:block">
+      <div className="hidden @4xl:block">
         <Table className="w-full table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[29%] pl-4">计费块 / 时间</TableHead>
-              <TableHead className="w-[23%]">
+              <TableHead className="w-[13%] pl-4">时间</TableHead>
+              <TableHead className="w-[26%]">模型 / 入口</TableHead>
+              <TableHead className="w-[20%]">
                 {admin ? "用户 / Key" : "Key"}
               </TableHead>
-              <TableHead className="w-[12%]">结果</TableHead>
-              <TableHead className="w-[12%] text-right">Tokens</TableHead>
-              <TableHead className="w-[12%] text-right">耗时</TableHead>
-              <TableHead className="w-[12%] pr-4 text-right">费用</TableHead>
+              <TableHead className="w-[10%]">结果</TableHead>
+              <TableHead className="w-[11%] text-right">Tokens</TableHead>
+              <TableHead className="w-[11%] text-right">耗时</TableHead>
+              <TableHead className="w-[9%] pr-4 text-right">费用</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {logs.map((log) => (
               <TableRow key={log.id}>
-                <TableCell className="pl-4">
+                <TableCell className="py-2 pl-4 text-xs text-muted-foreground">
+                  <time dateTime={log.started_at}>
+                    {dateTime(log.started_at)}
+                  </time>
+                  {log.log_unit === "legacy_session" ? (
+                    <span className="block">历史会话</span>
+                  ) : null}
+                </TableCell>
+                <TableCell className="min-w-0 py-2">
                   <a
                     {...link(log)}
                     className="block truncate font-medium underline-offset-4 hover:underline focus-visible:underline"
-                    title={log.actual_model || log.model || log.path}
+                    title={displayedModel(log)}
                   >
-                    {log.actual_model ||
-                      log.requested_model ||
-                      log.model ||
-                      log.path}
+                    {displayedModel(log)}
                   </a>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">
-                    {dateTime(log.started_at)}
-                    {log.log_unit === "legacy_session" ? " · 历史会话" : ""}
-                  </p>
                   <p
                     className="truncate text-xs text-muted-foreground"
                     title={`${log.method} ${log.path} · ${log.client_name || "未知客户端"}`}
@@ -132,18 +153,31 @@ export function RequestLogList({
                     {log.client_name || "未知客户端"} · {log.path}
                   </p>
                 </TableCell>
-                <TableCell>
-                  {admin && (
-                    <p
-                      className="truncate text-xs text-muted-foreground"
-                      title={log.tenant_name || log.tenant_id}
-                    >
-                      {log.tenant_name || log.tenant_id || "未知用户"}
-                    </p>
-                  )}
-                  <RequestLogKey log={log} />
+                <TableCell className="min-w-0 py-2">
+                  <p className="truncate font-medium" title={log.api_key_name}>
+                    {log.api_key_name ||
+                      (log.api_key_id ? "未命名 Key" : "未记录 Key")}
+                  </p>
+                  <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    {admin ? (
+                      <span
+                        className="min-w-0 truncate"
+                        title={log.tenant_name || log.tenant_id}
+                      >
+                        {log.tenant_name || log.tenant_id || "未知用户"}
+                      </span>
+                    ) : null}
+                    {log.api_key_prefix ? (
+                      <span
+                        className="shrink-0 font-mono"
+                        title={`${log.api_key_prefix}…`}
+                      >
+                        {log.api_key_prefix}…
+                      </span>
+                    ) : null}
+                  </div>
                 </TableCell>
-                <TableCell className="whitespace-normal">
+                <TableCell className="py-2 whitespace-normal">
                   <Result log={log} />
                   {log.error_code && (
                     <p
@@ -154,7 +188,7 @@ export function RequestLogList({
                     </p>
                   )}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">
+                <TableCell className="py-2 text-right tabular-nums">
                   <RequestLogInsight
                     log={log}
                     section="usage"
@@ -167,7 +201,7 @@ export function RequestLogList({
                     {cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}
                   </p>
                 </TableCell>
-                <TableCell className="text-right tabular-nums">
+                <TableCell className="py-2 text-right tabular-nums">
                   <RequestLogInsight
                     log={log}
                     section="latency"
@@ -185,7 +219,7 @@ export function RequestLogList({
                       : "—"}
                   </p>
                 </TableCell>
-                <TableCell className="pr-4 text-right tabular-nums">
+                <TableCell className="py-2 pr-4 text-right tabular-nums">
                   <RequestLogInsight
                     log={log}
                     section="billing"
@@ -199,7 +233,7 @@ export function RequestLogList({
           </TableBody>
         </Table>
       </div>
-      <ul className="divide-y @3xl:hidden" aria-label="请求记录">
+      <ul className="divide-y @4xl:hidden" aria-label="请求记录">
         {logs.map((log) => (
           <li key={log.id}>
             <div className="flex min-w-0 flex-col gap-3 p-4">
@@ -215,10 +249,7 @@ export function RequestLogList({
                   {...link(log)}
                   className="block truncate font-medium underline-offset-4 hover:underline focus-visible:underline"
                 >
-                  {log.actual_model ||
-                    log.requested_model ||
-                    log.model ||
-                    log.path}
+                  {displayedModel(log)}
                 </a>
                 <p className="truncate text-xs text-muted-foreground">
                   {log.client_name || "未知客户端"} · {log.path}

@@ -10,7 +10,8 @@ import { expectNoA11yViolations } from "@/test/a11y"
 const log = {
   id: "observation-1",
   model: "test-model",
-  actual_model: "upstream-model",
+  actual_model: "routed-model",
+  upstream_model: "upstream-model",
   requested_model: "requested-model",
   method: "POST",
   path: "/v1/responses",
@@ -120,6 +121,15 @@ it.each([320, 1280])(
         <RequestLogList logs={[log]} onOpen={onOpen} />
       </main>
     )
+    await expect
+      .element(
+        width < 896
+          ? screen
+              .getByRole("list", { name: "请求记录" })
+              .getByText("上游模型不同", { exact: true })
+          : screen.getByRole("table").getByText("上游模型不同", { exact: true })
+      )
+      .toBeVisible()
     await screen.getByRole("button", { name: "查看耗时详情" }).click()
     const popup = screen.getByRole("dialog", { name: "请求观测详情" })
     await expect.element(popup).toBeVisible()
@@ -131,12 +141,31 @@ it.each([320, 1280])(
     await expect
       .element(popup.getByText("requested-model", { exact: true }))
       .toBeVisible()
+    await expect
+      .element(
+        popup
+          .getByRole("tabpanel", { name: "链路" })
+          .getByText("routed-model", { exact: true })
+      )
+      .toBeVisible()
+    await expect
+      .element(popup.getByText("upstream-model", { exact: true }))
+      .toBeVisible()
     await expectNoA11yViolations()
     await userEvent.keyboard("{Escape}")
     await screen.getByRole("link", { name: /查看日志/ }).click()
     expect(onOpen).toHaveBeenCalledWith(log)
   }
 )
+
+it("omits the model badge when the upstream model matches the routed model", async () => {
+  const screen = await render(
+    <RequestLogList logs={[{ ...log, upstream_model: "routed-model" }]} />
+  )
+  await expect
+    .element(screen.getByText("上游模型不同", { exact: true }))
+    .not.toBeInTheDocument()
+})
 
 it("handles missing and malformed telemetry without fabricating measurements", async () => {
   expect(parseLatencyTrace("null")).toBeNull()
@@ -189,6 +218,10 @@ it("does not show zero-priced rates when pricing is incomplete", async () => {
   )
   await screen.getByRole("button", { name: "查看计费详情" }).click()
   const popup = screen.getByRole("dialog", { name: "请求观测详情" })
-  await expect.element(popup.getByText("定价完成", { exact: true })).toBeVisible()
-  await expect.element(popup.getByText("输入单价", { exact: true })).not.toBeInTheDocument()
+  await expect
+    .element(popup.getByText("定价完成", { exact: true }))
+    .toBeVisible()
+  await expect
+    .element(popup.getByText("输入单价", { exact: true }))
+    .not.toBeInTheDocument()
 })

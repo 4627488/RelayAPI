@@ -79,6 +79,7 @@ export interface RequestLog {
   model: string
   requested_model: string
   actual_model: string
+  upstream_model?: string
   model_alias?: string
   provider?: string
   executor_type?: string
