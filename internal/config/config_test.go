@@ -74,3 +74,23 @@ func TestLoadAllowsVeryLargeRequestBudgets(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestQuotaSyncInterval(t *testing.T) {
+	validEnvironment(t)
+	t.Setenv("RELAY_QUOTA_SYNC_INTERVAL_SECONDS", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QuotaSyncInterval != 30*time.Second {
+		t.Fatalf("default quota sync interval = %s, want 30s", cfg.QuotaSyncInterval)
+	}
+	t.Setenv("RELAY_QUOTA_SYNC_INTERVAL_SECONDS", "10")
+	if _, err := Load(); err != nil {
+		t.Fatalf("10-second quota sync interval: %v", err)
+	}
+	t.Setenv("RELAY_QUOTA_SYNC_INTERVAL_SECONDS", "9")
+	if _, err := Load(); err == nil {
+		t.Fatal("accepted quota sync interval below 10 seconds")
+	}
+}

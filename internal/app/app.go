@@ -96,8 +96,9 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	a.routes()
 	a.loadCapabilitiesFromStore(ctx)
-	a.wg.Add(1)
+	a.wg.Add(2)
 	go a.maintenance()
+	go a.quotaMaintenance()
 	return a, nil
 }
 
@@ -190,10 +191,6 @@ func (a *App) maintenance() {
 	defer a.wg.Done()
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	quotaTicker := time.NewTicker(a.cfg.QuotaSyncInterval)
-	defer quotaTicker.Stop()
-	initialQuotaSync := time.NewTimer(15 * time.Second)
-	defer initialQuotaSync.Stop()
 	initialCatalog := time.NewTimer(3 * time.Second)
 	defer initialCatalog.Stop()
 	retentionTicker := time.NewTicker(time.Hour)
@@ -225,12 +222,30 @@ func (a *App) maintenance() {
 			if err := a.refreshPricingCatalog(context.Background(), false); err != nil {
 				slog.Warn("refresh models.dev catalog", "error", err)
 			}
-		case <-initialQuotaSync.C:
-			a.refreshParentQuotas(context.Background())
-		case <-quotaTicker.C:
-			a.refreshParentQuotas(context.Background())
 		case <-retentionTicker.C:
 			a.runRetention(context.Background())
+		case <-a.stop:
+			return
+		}
+	}
+}
+
+func (a *App) quotaMaintenance() {
+	defer a.wg.Done()
+	initialSync := time.NewTimer(15 * time.Second)
+	defer initialSync.Stop()
+	select {
+	case <-initialSync.C:
+		a.refreshParentQuotas(context.Background())
+	case <-a.stop:
+		return
+	}
+	ticker := time.NewTicker(a.cfg.QuotaSyncInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.refreshParentQuotas(context.Background())
 		case <-a.stop:
 			return
 		}

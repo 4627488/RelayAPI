@@ -72,7 +72,7 @@ func Load() (Config, error) {
 		MemoryReclaimThresholdBytes:    uint64(envInt64("RELAY_MEMORY_RECLAIM_THRESHOLD_MIB", 8192)) << 20,
 		GatewayCircuitFailureThreshold: int(envInt64("RELAY_CIRCUIT_FAILURE_THRESHOLD", 0)),
 		GatewayCircuitOpenDuration:     time.Duration(envInt64("RELAY_CIRCUIT_OPEN_SECONDS", 15)) * time.Second,
-		QuotaSyncInterval:              time.Duration(envInt64("RELAY_QUOTA_SYNC_INTERVAL_SECONDS", 300)) * time.Second,
+		QuotaSyncInterval:              time.Duration(envInt64("RELAY_QUOTA_SYNC_INTERVAL_SECONDS", 30)) * time.Second,
 		UpstreamWebSockets:             envBool("RELAY_UPSTREAM_WEBSOCKETS", true),
 		UnpricedModelPolicy:            strings.ToLower(env("UNPRICED_MODEL_POLICY", "allow")),
 		WebDistDir:                     strings.TrimSpace(os.Getenv("RELAY_WEB_DIST_DIR")),
@@ -140,8 +140,8 @@ func Load() (Config, error) {
 	if cfg.GatewayCircuitOpenDuration < time.Second || cfg.GatewayCircuitOpenDuration > 10*time.Minute {
 		return Config{}, errors.New("RELAY_CIRCUIT_OPEN_SECONDS must be between 1 and 600")
 	}
-	if cfg.QuotaSyncInterval < time.Minute {
-		return Config{}, errors.New("RELAY_QUOTA_SYNC_INTERVAL_SECONDS must be at least 60")
+	if cfg.QuotaSyncInterval < 10*time.Second {
+		return Config{}, errors.New("RELAY_QUOTA_SYNC_INTERVAL_SECONDS must be at least 10")
 	}
 	if cfg.UnpricedModelPolicy != "allow" && cfg.UnpricedModelPolicy != "deny" {
 		return Config{}, errors.New("UNPRICED_MODEL_POLICY must be allow or deny")
