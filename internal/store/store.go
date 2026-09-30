@@ -407,19 +407,20 @@ func (s Store) DeleteKey(ctx context.Context, tenantID, id string) error {
 	return result.Error
 }
 
+type joinedKey struct {
+	APIKey
+	TenantName           string         `gorm:"column:tenant_name"`
+	TenantEnabled        bool           `gorm:"column:tenant_enabled"`
+	TenantBalance        int64          `gorm:"column:tenant_balance"`
+	TenantRateLimit      *int           `gorm:"column:tenant_rate_limit"`
+	TenantTokenLimit     *int64         `gorm:"column:tenant_token_limit"`
+	TenantModels         pq.StringArray `gorm:"column:tenant_models;type:text[]"`
+	TenantExpiresAt      *time.Time     `gorm:"column:tenant_expires_at"`
+	TenantDailyTokens    int64          `gorm:"column:tenant_daily_tokens"`
+	TenantDailyTokensDay *time.Time     `gorm:"column:tenant_daily_tokens_day"`
+}
+
 func (s Store) ResolveKey(ctx context.Context, plain string) (KeyContext, error) {
-	type joinedKey struct {
-		APIKey
-		TenantName           string         `gorm:"column:tenant_name"`
-		TenantEnabled        bool           `gorm:"column:tenant_enabled"`
-		TenantBalance        int64          `gorm:"column:tenant_balance"`
-		TenantRateLimit      *int           `gorm:"column:tenant_rate_limit"`
-		TenantTokenLimit     *int64         `gorm:"column:tenant_token_limit"`
-		TenantModels         pq.StringArray `gorm:"column:tenant_models"`
-		TenantExpiresAt      *time.Time     `gorm:"column:tenant_expires_at"`
-		TenantDailyTokens    int64          `gorm:"column:tenant_daily_tokens"`
-		TenantDailyTokensDay *time.Time     `gorm:"column:tenant_daily_tokens_day"`
-	}
 	var row joinedKey
 	if err := scoped(ctx, s.DB).
 		Table("api_keys").
