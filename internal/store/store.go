@@ -78,6 +78,8 @@ type Usage struct {
 }
 
 type LogInput struct {
+	UsageQuality                                                                                                                                         string
+	LogUnit                                                                                                                                              string
 	FirstTokenMS                                                                                                                                         *int64
 	ID, TenantID, APIKeyID, ReservationRequestID, UpstreamRequestID, Model, Provider, AuthIndex, ParentSubscriptionID, ChildSubscriptionID, Method, Path string
 	UpstreamTraceID, UpstreamExecutionID, RequestedModel, ActualModel, UpstreamModel, ModelAlias, ExecutorType, AuthType                                 string
@@ -771,6 +773,7 @@ func requestLogItem(l LogInput) db.RequestLog {
 		stageTimings = "{}"
 	}
 	item := db.RequestLog{
+		LogUnit: l.LogUnit, UsageQuality: l.UsageQuality,
 		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, ReservationRequestID: nullableIdentifier(l.ReservationRequestID), UpstreamRequestID: l.UpstreamRequestID,
 		UpstreamTraceID: l.UpstreamTraceID, UpstreamExecutionID: l.UpstreamExecutionID,
 		Model: l.Model, RequestedModel: l.RequestedModel, ActualModel: l.ActualModel, UpstreamModel: l.UpstreamModel, ModelAlias: l.ModelAlias,
@@ -788,6 +791,9 @@ func requestLogItem(l LogInput) db.RequestLog {
 		ImageOutputTokens: l.Usage.ImageOutput, TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,
 		Settled: l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS, FirstTokenMS: l.FirstTokenMS,
 		ErrorCode: l.ErrorCode, ErrorMessage: l.ErrorMessage, StageTimings: stageTimings, StartedAt: l.StartedAt, CompletedAt: l.CompletedAt,
+	}
+	if item.LogUnit == "" {
+		item.LogUnit = LogUnitStep
 	}
 	if l.Price != nil {
 		item.PriceModel = l.Price.PricedModel
@@ -861,6 +867,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 		create = create.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
+				"log_unit", "usage_quality",
 				"model", "requested_model", "actual_model", "upstream_model", "model_alias",
 				"service_tier", "reasoning_effort", "upstream_request_id", "response_service_tier",
 				"status_code", "stream", "request_body_bytes",
@@ -915,7 +922,7 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 	since := time.Now().AddDate(0, 0, -30)
 	type totals struct{ Requests, Tokens, Cost int64 }
 	var total totals
-	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
+	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
 		Select("count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
 		Where("tenant_id = ? AND started_at >= ?", tenantID, since).Scan(&total).Error
 	if err != nil {
@@ -993,7 +1000,9 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if input.PageSize < 1 || input.PageSize > 200 {
 		input.PageSize = 50
 	}
-	query := scoped(ctx, s.DB).Model(&db.RequestLog{})
+	// The product list is a charge ledger. Trace-only and zero-cost events remain
+	// addressable by ID for diagnostics, but do not inflate its rows or summary.
+	query := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).Where("settled = true AND cost_nano_usd > 0")
 	if input.TenantID != "" {
 		query = query.Where("tenant_id = ?", input.TenantID)
 	}
@@ -1226,7 +1235,7 @@ func (s Store) AdminOverview(ctx context.Context) (map[string]any, error) {
 	var today totals
 	now := time.Now()
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	if err := database.Model(&db.RequestLog{}).Select(
+	if err := database.Model(&db.RequestLog{}).Where(generationLogSQL).Select(
 		"count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+
 			"COALESCE(sum(cost_nano_usd),0) AS cost, "+
 			requestLogUnitErrorSQL()+" AS errors",
@@ -1249,7 +1258,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	}
 	since := time.Now().AddDate(0, 0, -days+1)
 	since = time.Date(since.Year(), since.Month(), since.Day(), 0, 0, 0, 0, since.Location())
-	base := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where("started_at >= ?", since)
+	base := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).Where("started_at >= ?", since)
 	if tenantID != "" {
 		base = base.Where("tenant_id = ?", tenantID)
 	}
@@ -1325,7 +1334,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		Cost             int64  `json:"cost_nano_usd"`
 	}
 	dailyItems := make([]daily, 0)
-	dailyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
+	dailyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
 		Select(
 			"to_char(started_at, 'YYYY-MM-DD') AS date, "+"count(*) AS requests, "+
 				requestLogUnitErrorSQL()+" AS errors, "+
@@ -1382,7 +1391,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		Cost             int64  `json:"cost_nano_usd"`
 	}
 	models := make([]modelTotal, 0)
-	modelQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
+	modelQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
 		Select(
 			"model, "+"count(*) AS requests, "+
 				requestLogUnitErrorSQL()+" AS errors, "+
@@ -1438,7 +1447,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		Cost         int64  `json:"cost_nano_usd"`
 	}
 	apiKeys := make([]apiKeyTotal, 0)
-	apiKeyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).
+	apiKeyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
 		Select(
 			"api_key_id, api_key_name, api_key_prefix, tenant_name, "+"count(*) AS requests, "+
 				requestLogUnitErrorSQL()+" AS errors, "+
@@ -1462,7 +1471,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	users := make([]userTotal, 0)
 	if tenantID == "" {
 		var liveUsers []userTotal
-		if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Select(
+		if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).Select(
 			"tenant_id, tenant_name, "+"count(*) AS requests, "+
 				requestLogUnitErrorSQL()+" AS errors, "+
 				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",

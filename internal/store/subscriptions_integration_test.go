@@ -822,6 +822,22 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 	quotaInput.RequestID = quotaRequestID
 	quotaInput.TurnID = "resp_quota"
 	quotaInput.Log = quotaLog
+	prewarm := quotaInput
+	prewarm.TurnID, prewarm.CostNanoUSD, prewarm.Usage = "resp_prewarm", 0, Usage{}
+	prewarm.Log.LogUnit, prewarm.Log.UsageQuality = LogUnitPrewarm, "not_generated"
+	if inserted, err := store.AccrueWebSocketTurn(ctx, prewarm); err != nil || !inserted {
+		t.Fatalf("prewarm inserted=%v err=%v", inserted, err)
+	}
+	if inserted, err := store.AccrueWebSocketTurn(ctx, prewarm); err != nil || inserted {
+		t.Fatalf("prewarm replay inserted=%v err=%v", inserted, err)
+	}
+	var warmWindow db.ChildQuotaWindow
+	if err := database.First(&warmWindow, "child_subscription_id = ? AND kind = ?", child.ID, "daily").Error; err != nil {
+		t.Fatal(err)
+	}
+	if warmWindow.SettledNanoUSD != 0 {
+		t.Fatalf("prewarm consumed quota: %+v", warmWindow)
+	}
 	inserted, err = store.AccrueWebSocketTurn(ctx, quotaInput)
 	if err != nil || !inserted {
 		t.Fatalf("quota accrual inserted=%v, err=%v", inserted, err)

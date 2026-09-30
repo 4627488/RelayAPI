@@ -11,6 +11,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// Only runtime-complete usage or positive legacy token evidence can be repriced.
+// Empty legacy usage and explicit CPA accounting failures remain conservative.
+const repriceableLogSQL = "usage_quality = 'complete' OR (usage_quality = '' AND (total_tokens > 0 OR image_input_tokens > 0 OR image_output_tokens > 0))"
+
 type PendingPriceModel struct {
 	Model           string `json:"model"`
 	RequestCount    int64  `json:"request_count"`
@@ -95,6 +99,7 @@ func (s *Store) HistoricalModelPrices(ctx context.Context) ([]HistoricalModelPri
 	result := make([]HistoricalModelPrice, 0)
 	if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select("model, count(*) AS request_count, max(started_at) AS latest_started_at").
+		Where(generationLogSQL).
 		Where("model <> ''").
 		Group("model").Order("latest_started_at DESC, model").
 		Scan(&result).Error; err != nil {
@@ -129,6 +134,7 @@ func (s *Store) PendingPricing(ctx context.Context) ([]PendingPriceModel, error)
 	result := make([]PendingPriceModel, 0)
 	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
 		Select("model, count(*) AS request_count, max(started_at)::text AS latest_started_at").
+		Where(generationLogSQL).Where(repriceableLogSQL).
 		Where("pricing_complete = ? AND model <> '' AND status_code >= 200 AND status_code < 400", false).
 		Group("model").Order("request_count DESC, model").Scan(&result).Error
 	return result, err
@@ -140,6 +146,7 @@ func (s *Store) backfillPendingPricing(ctx context.Context) (int, error) {
 	}
 	var logs []db.RequestLog
 	if err := scoped(ctx, s.DB).
+		Where(generationLogSQL).Where(repriceableLogSQL).
 		Where("pricing_complete = ? AND model <> '' AND status_code >= 200 AND status_code < 400", false).
 		Find(&logs).Error; err != nil {
 		return 0, err

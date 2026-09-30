@@ -11,7 +11,15 @@ import (
 
 // CPA owns text token interpretation. Keep modality accounting until its public
 // usage SDK exposes image buckets; aggregate totals cannot price images safely.
-func (a *App) cpaBillingUsage(ctx context.Context, requestID, responseID, endpoint string, observed billing.Result) billing.Result {
+func (a *App) cpaBillingUsage(ctx context.Context, requestID, responseID, endpoint string, meta requestMeta, observed billing.Result) billing.Result {
+	// CPA's local WS prewarm has no executor and therefore no usage callback.
+	// Its dedicated synthetic identity, explicit request intent and complete
+	// zero usage must all match; ordinary missing usage never takes this path.
+	if meta.Prewarm && strings.HasPrefix(observed.RequestID, "resp_prewarm_") &&
+		observed.Found && observed.Usage == (store.Usage{}) {
+		observed.UsageQuality = "not_generated"
+		return observed
+	}
 	if a.nativeCPARuntime == nil {
 		return observed
 	}
@@ -26,12 +34,27 @@ func (a *App) cpaBillingUsage(ctx context.Context, requestID, responseID, endpoi
 	if canonical.Model == "" {
 		canonical.Model = observed.Model
 	}
+	if canonical.ResponseServiceTier == "" {
+		canonical.ResponseServiceTier = observed.ResponseServiceTier
+	}
 	return canonical
 }
 
 func cpaUsageResult(result relaybridge.UsageResult, complete bool) billing.Result {
+	if result.Quality == "not_generated" {
+		return billing.Result{RequestID: result.ResponseID, Model: result.Model,
+			ResponseServiceTier: result.ServiceTier, UsageQuality: "not_generated"}
+	}
+	quality := result.Quality
+	if quality == "" {
+		quality = "missing"
+		if complete && result.Found {
+			quality = "complete"
+		}
+	}
 	return billing.Result{
-		RequestID: result.ResponseID, Model: result.Model,
+		UsageQuality: quality,
+		RequestID:    result.ResponseID, Model: result.Model,
 		ResponseServiceTier: result.ServiceTier, Found: complete && result.Found,
 		Usage: store.Usage{
 			// Relay's prompt bucket includes cache reads but excludes cache writes.

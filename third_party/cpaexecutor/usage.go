@@ -189,12 +189,12 @@ func (s *executionUsageScope) resultLocked() (UsageResult, bool) {
 		if record.Failed || thinking.ParseSuffix(strings.TrimSpace(record.Model)).ModelName != thinking.ParseSuffix(s.model).ModelName {
 			continue
 		}
-		if !usage.GenerateEnabled(record.Generate) {
-			return UsageResult{Quality: "not_generated"}, false
-		}
 		b := record.Detail.TokenBreakdown
 		quality := string(b.Quality)
 		valid := b.Valid() && b.Quality == usage.TokenAccountingQualityComplete
+		if !valid && b.Quality == usage.TokenAccountingQualityComplete {
+			quality = string(usage.TokenAccountingQualityInconsistent)
+		}
 		if quality == "" {
 			quality = "missing"
 		}
@@ -205,6 +205,12 @@ func (s *executionUsageScope) resultLocked() (UsageResult, bool) {
 		tier := strings.TrimSpace(record.ResponseServiceTier)
 		if tier == "" {
 			tier = strings.TrimSpace(record.Detail.ResponseServiceTier)
+		}
+		if !usage.GenerateEnabled(record.Generate) {
+			// Non-generation is an explicit CPA outcome, not missing usage.
+			// Keep its identity even when no token breakdown was published.
+			return UsageResult{RequestID: record.RequestID, ResponseID: s.responseID,
+				Model: model, ServiceTier: tier, Quality: "not_generated"}, false
 		}
 		return UsageResult{RequestID: record.RequestID, ResponseID: s.responseID, Model: model, ServiceTier: tier,
 			InputTokens: b.Input.TotalTokens, OutputTokens: b.Output.TotalTokens, CachedTokens: b.Input.CacheReadTokens,

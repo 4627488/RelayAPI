@@ -46,7 +46,7 @@ type UsageProvider struct {
 
 func (s Store) usageObservability(ctx context.Context, tenantID string, since time.Time) (UsageObservability, error) {
 	base := func() *gorm.DB {
-		query := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where("started_at >= ?", since)
+		query := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).Where("started_at >= ?", since)
 		if tenantID != "" {
 			query = query.Where("tenant_id = ?", tenantID)
 		}

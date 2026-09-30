@@ -1,3 +1,4 @@
+import { requestLogCost, requestLogUsageQuality } from "@/lib/request-log"
 import {
   useCallback,
   useEffect,
@@ -1040,7 +1041,10 @@ function LogOverview({
                 "倍率",
                 log.price_multiplier != null ? `${log.price_multiplier}×` : "",
               ],
-              ["合计", money(log.cost_nano_usd)],
+              ["合计", requestLogCost(log)],
+              ["用量状态", requestLogUsageQuality(log)],
+              ["请求服务档位", log.service_tier || "未指定"],
+              ["实际服务档位", log.response_service_tier || "未返回"],
             ]}
           />
           {costRows.length ? (

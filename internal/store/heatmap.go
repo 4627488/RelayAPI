@@ -67,7 +67,7 @@ func (s Store) TokenHeatmap(ctx context.Context, tenantID string, now time.Time)
 	err := scoped(ctx, s.DB).Raw(`SELECT day, model, SUM(tokens) AS tokens FROM (
 		SELECT to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
 			model, SUM(GREATEST(total_tokens, 0)) AS tokens
-		FROM request_logs WHERE tenant_id = ? AND started_at >= ? AND started_at < ?
+		FROM request_logs WHERE log_unit NOT IN ('prewarm', 'connection') AND tenant_id = ? AND started_at >= ? AND started_at < ?
 		GROUP BY 1, model
 		UNION ALL
 		SELECT to_char(day, 'YYYY-MM-DD') AS day, model, SUM(GREATEST(total_tokens, 0)) AS tokens

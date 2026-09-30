@@ -13,6 +13,22 @@ import (
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
+func TestRequestLogPreservesEstimatedDebitAndPrewarmOutcome(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	missing := billing.Result{UsageQuality: "missing"}
+	input := requestLogInput(store.KeyContext{}, "request", store.Admission{}, requestMeta{}, r,
+		200, time.Now(), &missing, false, true, 10_000_000, "", requestLogContext{})
+	if input.CostNanoUSD == nil || *input.CostNanoUSD != 10_000_000 || input.PricingComplete || input.UsageQuality != "missing" {
+		t.Fatalf("estimated debit lost: %+v", input)
+	}
+	warm := billing.Result{UsageQuality: "not_generated"}
+	input = requestLogInput(store.KeyContext{}, "warm", store.Admission{}, requestMeta{}, r,
+		200, time.Now(), &warm, true, true, 0, "", requestLogContext{})
+	if input.LogUnit != store.LogUnitPrewarm || input.CostNanoUSD == nil || *input.CostNanoUSD != 0 || !input.PricingComplete {
+		t.Fatalf("prewarm log lost: %+v", input)
+	}
+}
+
 func TestSanitizedHeadersRedactsSecrets(t *testing.T) {
 	headers := http.Header{
 		"Authorization": {"Bearer secret"}, "Cookie": {"session=secret"},

@@ -110,10 +110,11 @@ func TestCPAUsageConcurrentRequestsIsolated(t *testing.T) {
 }
 
 func TestCPAUsageZeroMissingPrewarmCancellationAndCleanup(t *testing.T) {
-	for _, kind := range []string{"zero", "missing", "prewarm", "inconsistent"} {
+	for _, kind := range []string{"zero", "missing", "prewarm", "inconsistent", "invalid_complete"} {
 		t.Run(kind, func(t *testing.T) {
 			r := &Runtime{traces: newRequestTraceRegistry()}
 			scope := r.traces.usage.begin("request", "model")
+			scope.observeEnvelope([]byte(`{"response":{"id":"resp_test"}}`))
 			record := usageTestRecord("id", "model", 0)
 			switch kind {
 			case "zero":
@@ -124,12 +125,21 @@ func TestCPAUsageZeroMissingPrewarmCancellationAndCleanup(t *testing.T) {
 				record.Generate = usage.GenerateFlag(false)
 			case "inconsistent":
 				record.Detail.TokenBreakdown = usage.NewSubsetTokenBreakdown(1, 2, 0, 0, 0, 1)
+			case "invalid_complete":
+				record.Detail.TokenBreakdown = usage.NewSubsetTokenBreakdown(1, 0, 0, 0, 0, 1)
+				record.Detail.TokenBreakdown.Input.CacheReadTokens = 2
 			}
 			publishScope(scope, record)
 			scope.finish(true)
 			got, ok := r.RequestUsage(t.Context(), "request", "")
 			if ok != (kind == "zero") {
 				t.Fatalf("%s got %#v, %v", kind, got, ok)
+			}
+			if kind == "prewarm" && (got.Quality != "not_generated" || got.ResponseID != "resp_test" || got.Model != "model-served" || got.TotalTokens != 0) {
+				t.Fatalf("prewarm metadata lost: %#v", got)
+			}
+			if kind == "invalid_complete" && got.Quality != "inconsistent" {
+				t.Fatalf("invalid breakdown retained complete quality: %#v", got)
 			}
 			r.ReleaseRequestUsage("request")
 			publishScope(scope, record)

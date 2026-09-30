@@ -1165,10 +1165,9 @@ func webSocketStepLog(input WebSocketTurnAccrual, startedAt, completedAt time.Ti
 	stepLog.UpstreamRequestID = strings.TrimSpace(input.TurnID)
 	stepLog.Model, stepLog.ActualModel = input.Model, input.Model
 	stepLog.Usage = input.Usage
-	stepLog.CostNanoUSD = nil
-	if input.PricingComplete {
-		stepLog.CostNanoUSD = &input.CostNanoUSD
-	}
+	// The log amount must match the durable quota/balance accrual. Incomplete
+	// pricing labels this amount as estimated instead of hiding an actual debit.
+	stepLog.CostNanoUSD = &input.CostNanoUSD
 	stepLog.PricingComplete = input.PricingComplete
 	stepLog.StartedAt, stepLog.CompletedAt = startedAt, completedAt
 	stepLog.LatencyMS = completedAt.Sub(startedAt).Milliseconds()
@@ -1181,6 +1180,9 @@ func webSocketStepLog(input WebSocketTurnAccrual, startedAt, completedAt time.Ti
 // writes one billing-step log in the same transaction. Replayed terminal
 // frames are ignored by the request_id + turn_id primary key.
 func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccrual) (bool, error) {
+	if input.Log.LogUnit == LogUnitPrewarm && (input.CostNanoUSD != 0 || input.Usage != (Usage{}) || !input.PricingComplete) {
+		return false, errors.New("prewarm must have complete zero-cost accounting")
+	}
 	inserted := false
 	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
 		var reservation RequestReservation

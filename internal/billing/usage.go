@@ -17,7 +17,12 @@ type Result struct {
 	ResponseServiceTier string
 	Usage               store.Usage
 	Found               bool
+	// UsageQuality preserves the runtime accounting classification. Empty is
+	// reserved for legacy/native response parsing.
+	UsageQuality string
 }
+
+func (r Result) NonGenerated() bool { return r.UsageQuality == "not_generated" }
 
 func ParseResponse(payload []byte) Result {
 	var result Result

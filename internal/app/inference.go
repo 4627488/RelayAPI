@@ -251,8 +251,8 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			prefix, _, _ := capture.Info()
 			parsed.Model = billing.ParseResponse(prefix).Model
 		}
-		parsed = a.cpaBillingUsage(finalizeCtx, call.requestID, "", r.URL.Path, parsed)
-		if call.priceConfigured && parsed.Found {
+		parsed = a.cpaBillingUsage(finalizeCtx, call.requestID, "", r.URL.Path, call.meta, parsed)
+		if call.priceConfigured && parsed.Found && !parsed.NonGenerated() {
 			dimensions := requestPriceDimensions(call.key, call.meta, r.URL.Path, admissionAuthIndex(call.admission), parsed.ResponseServiceTier)
 			dimensions.PromptTokens = parsed.Usage.Prompt
 			if resolved, resolveErr := a.store.ResolvePrice(finalizeCtx, dimensions); resolveErr == nil {
@@ -264,22 +264,20 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		actual := int64(0)
 		settled := !call.billable
 		var cost *int64
-		if call.billable && status < http.StatusBadRequest && parsed.Found && call.priceConfigured && billing.UsageComplete(price, parsed.Usage) {
-			actual = billing.Cost(price, parsed.Usage)
-			cost = &actual
-			if err := a.store.SettleRequestReservation(finalizeCtx, call.requestID, actual, true); err == nil {
+		if call.billable && status < http.StatusBadRequest {
+			var effectivePrice *store.ResolvedPrice
+			if call.priceConfigured {
+				effectivePrice = &price
+			}
+			assessment := billing.Assess(parsed, effectivePrice, max64(call.admission.BalanceReservedNanoUSD, call.admission.QuotaReservedNanoUSD))
+			actual = assessment.CostNanoUSD
+			if assessment.Complete {
+				cost = &actual
+			}
+			if err := a.store.SettleRequestReservation(finalizeCtx, call.requestID, actual, assessment.Complete); err == nil {
 				settled = true
 			} else {
 				slog.Error("settle request", "request_id", call.requestID, "error", err)
-			}
-		} else if call.billable && status < http.StatusBadRequest {
-			// Missing usage must not become free parent capacity. Conservatively
-			// settle the reservation and keep pricing_complete=false for reconciliation.
-			actual = max64(call.admission.BalanceReservedNanoUSD, call.admission.QuotaReservedNanoUSD)
-			if err := a.store.SettleRequestReservation(finalizeCtx, call.requestID, actual, false); err == nil {
-				settled = true
-			} else {
-				slog.Error("settle incomplete request", "request_id", call.requestID, "error", err)
 			}
 		} else if call.billable {
 			a.releaseReservation(call.requestID, true)

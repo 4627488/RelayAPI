@@ -19,7 +19,15 @@ Text billing consumes CPA's public structured usage plugin records, correlated
 to an execution scope and, for WebSocket, a response ID. Failed attempts and
 auxiliary model records are excluded. Delivery waits are bounded to 750ms;
 missing or incomplete usage conservatively settles the existing reservation
-with `pricing_complete=false`. The plugin queue is in memory, while PostgreSQL
+with `pricing_complete=false`, preserving the accrued estimate in the log.
+Explicit CPA `Generate=false` records are complete zero-cost prewarm outcomes.
+CPA local synthetic prewarm has no executor callback: Relay recognizes it only
+with explicit prewarm intent, the CPA `resp_prewarm_` identity and complete zero
+usage. HTTP and WebSocket share the same settlement assessment.
+Request-log lists show only settled positive charges (balance or child quota);
+prewarm and connection events remain trace-only records addressable by ID.
+Generation statistics and retention rollups exclude those trace records.
+Requested Priority and upstream-confirmed Priority are displayed separately. The plugin queue is in memory, while PostgreSQL
 remains the accounting ledger. CPA does not expose image modality buckets in
 the public usage SDK, so image accounting retains the existing response parser.
 Relay still owns pricing rules, tenant balances and subscription quotas.

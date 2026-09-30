@@ -37,3 +37,14 @@ Keep the root and bridge CPA versions aligned. The two existing fork changes
 (policy-aware credential refresh and snapshot isolation) remain until an upstream
 equivalent preserves their contracts. This bridge does not introduce additional
 CPA source patches.
+
+## Usage outcome contract
+
+The public usage plugin remains the authority for executed text requests. A successful
+`Generate=false` record returns `Quality=not_generated` with response identity and
+model metadata, without token totals; the `RequestUsage` boolean still means complete
+generation token accounting. Consumers must handle this quality as a complete zero-cost
+outcome rather than missing usage. CPA's synthetic WebSocket prewarm bypasses execution
+and does not publish a usage record; its `resp_prewarm_` acknowledgement is handled at
+the Relay protocol boundary with explicit request intent and complete zero usage.
+Unknown, ambiguous and incomplete generation usage retain conservative accounting.

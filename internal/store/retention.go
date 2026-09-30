@@ -230,7 +230,7 @@ func (s Store) compactRequestLogs(ctx context.Context, cutoff time.Time, batch i
 			COALESCE(sum(CASE WHEN p.capacity_mode = 'observed' THEN l.cost_nano_usd ELSE 0 END),0) AS subscription_covered_nano_usd,
 			COALESCE(sum(CASE WHEN p.capacity_mode = 'observed' THEN 0 ELSE l.cost_nano_usd END),0) AS balance_charged_nano_usd
 			FROM request_logs l LEFT JOIN parent_subscriptions p ON p.id = l.parent_subscription_id
-			WHERE l.id IN ? GROUP BY 1, l.tenant_id, l.model`, ids).Scan(&rollups).Error; err != nil {
+			WHERE l.id IN ? AND l.log_unit NOT IN ('prewarm', 'connection') GROUP BY 1, l.tenant_id, l.model`, ids).Scan(&rollups).Error; err != nil {
 			return 0, err
 		}
 		for index := range rollups {

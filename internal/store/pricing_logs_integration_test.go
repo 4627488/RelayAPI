@@ -244,7 +244,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 			ID: item.id, TenantID: tenantID, APIKeyID: keyID, Model: "ws-model",
 			TenantName: tenantName, APIKeyName: keyName, APIKeyPrefix: keyPrefix,
 			Method: "GET", Path: "/v1/responses/ws", RequestType: "responses.websocket",
-			StatusCode: 101, Stream: true, ErrorCode: item.errorCode,
+			StatusCode: 101, Stream: true, ErrorCode: item.errorCode, CostNanoUSD: int64Pointer(1),
 			Settled: true, StartedAt: started, CompletedAt: time.Now(),
 		}); err != nil {
 			t.Fatal(err)
@@ -428,6 +428,13 @@ func TestQueryLogsCountsEveryBillingStep(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	for _, unit := range []string{LogUnitPrewarm, LogUnitConnection, LogUnitStep} {
+		if err := dataStore.WriteLog(ctx, LogInput{ID: identity.NewID(), TenantID: tenantID, APIKeyID: keyID,
+			LogUnit: unit, Model: "probe", Method: "GET", Path: "/v1/responses", StatusCode: 200,
+			CostNanoUSD: int64Pointer(0), PricingComplete: true, Settled: true, StartedAt: started, CompletedAt: started}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	page, err := dataStore.QueryLogs(ctx, LogQuery{TenantID: tenantID, PageSize: 25})
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +461,7 @@ func TestQueryLogsCountsEveryBillingStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dashboardInt64(overview["requests_30d"]) != 3 || dashboardInt64(overview["tokens_30d"]) != 42 {
+	if dashboardInt64(overview["requests_30d"]) != 4 || dashboardInt64(overview["tokens_30d"]) != 42 {
 		t.Fatalf("dashboard unit = %#v", overview)
 	}
 	report, err := dataStore.UsageReport(ctx, tenantID, 30)
@@ -473,7 +480,7 @@ func TestQueryLogsCountsEveryBillingStep(t *testing.T) {
 	if err := json.Unmarshal(rawSummary, &usageSummary); err != nil {
 		t.Fatal(err)
 	}
-	if usageSummary.Requests != 3 || usageSummary.Tokens != 42 || usageSummary.Cost != 35 {
+	if usageSummary.Requests != 4 || usageSummary.Tokens != 42 || usageSummary.Cost != 35 {
 		t.Fatalf("usage summary = %+v", usageSummary)
 	}
 }
@@ -505,5 +512,66 @@ func TestPostgresStringArrayPreservesEmptyArray(t *testing.T) {
 	}
 	if value != `{"grok-4.5"}` {
 		t.Fatalf("PostgreSQL array = %#v, want %q", value, `{"grok-4.5"}`)
+	}
+}
+
+func TestBackfillRequiresKnownUsageAndLeavesEstimatesIntact(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	database, err := db.Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, _ := database.DB()
+	defer connection.Close()
+	tx := database.Begin()
+	defer tx.Rollback()
+	tenantID, keyID := identity.NewID(), identity.NewID()
+	if err := tx.Create(&db.Tenant{ID: tenantID, Name: "backfill", OwnerEmail: tenantID + "@example.test", PasswordHash: "test", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Create(&db.APIKey{ID: keyID, TenantID: tenantID, Name: "backfill", KeyHash: []byte(keyID), Prefix: "relay_test", Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	price := pricing.Price{Model: "backfill-outcome-test", InputNanoUSDPerToken: 2, OutputNanoUSDPerToken: 10, PriceMultiplier: 1}
+	snapshot, err := pricing.Compile([]pricing.Price{price}, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataStore := Store{DB: tx, pricingCatalog: pricing.NewCatalog(snapshot)}
+	for _, tc := range []struct {
+		quality, unit string
+		tokens        int64
+		want          bool
+	}{
+		{"missing", LogUnitStep, 0, false}, {"", LogUnitStep, 0, false},
+		{"inconsistent", LogUnitStep, 10, false}, {"unclassified", LogUnitStep, 10, false},
+		{"not_generated", LogUnitPrewarm, 0, false},
+		{"complete", LogUnitStep, 10, true}, {"", LogUnitStep, 10, true},
+	} {
+		id := identity.NewID()
+		cost := int64(100)
+		row := db.RequestLog{ID: id, TenantID: tenantID, APIKeyID: keyID, Model: price.Model,
+			Method: "POST", Path: "/v1/responses", StatusCode: 200, LogUnit: tc.unit, UsageQuality: tc.quality,
+			PromptTokens: tc.tokens, TotalTokens: tc.tokens, CostNanoUSD: &cost, PricingComplete: false, Settled: true,
+			StartedAt: time.Now(), CompletedAt: time.Now()}
+		if err := tx.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		count, err := dataStore.backfillPendingPricing(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tc.want && count != 1 || !tc.want && count != 0 {
+			t.Fatalf("quality=%q unit=%q backfilled=%d", tc.quality, tc.unit, count)
+		}
+		if err := tx.First(&row, "id = ?", id).Error; err != nil {
+			t.Fatal(err)
+		}
+		if row.PricingComplete != tc.want || !tc.want && (row.CostNanoUSD == nil || *row.CostNanoUSD != 100) {
+			t.Fatalf("unknown usage estimate overwritten: %+v", row)
+		}
 	}
 }

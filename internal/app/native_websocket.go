@@ -192,7 +192,13 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 		started = accounting.currentStarted
 		timeline = newLatencyTimeline(started)
 	}
-	timeline.Step(completed, "step_interrupted", "未完成的计费块", "runtime", "从收到请求到连接结束，未观测到终止用量")
+	if !accounting.currentActive && accounting.turnsSeen == 0 {
+		logContext.logUnit = store.LogUnitConnection
+		pricingComplete, actual = true, 0
+		timeline.Step(completed, "connection_closed", "连接结束", "runtime", "未收到生成请求，不产生计费块")
+	} else {
+		timeline.Step(completed, "step_interrupted", "未完成的计费块", "runtime", "从收到请求到连接结束，未观测到终止用量")
+	}
 	logContext.completedAt = completed
 	logContext.requestBytes = accounting.requestBytes
 	logContext.forwardedBytes = accounting.forwardedBytes
@@ -253,21 +259,21 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 		logContext.errorCode = "response_incomplete"
 	}
 	var turnPrice *store.ResolvedPrice
-	if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
-		APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(accounting.admission),
-		ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
-		ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-		PromptTokens: turn.Usage.Prompt,
-	}); err == nil {
-		turnPrice = &resolved
+	if !turn.NonGenerated() {
+		if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
+			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(accounting.admission),
+			ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
+			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
+			PromptTokens: turn.Usage.Prompt,
+		}); err == nil {
+			turnPrice = &resolved
+		}
 	}
-	turnComplete := accounting.billable && turn.Found && turnPrice != nil && billing.UsageComplete(*turnPrice, turn.Usage)
+	turnComplete := turn.NonGenerated()
 	turnCost := int64(0)
 	if accounting.billable {
-		turnCost = max64(accounting.admission.BalanceReservedNanoUSD, accounting.admission.QuotaReservedNanoUSD)
-		if turnComplete {
-			turnCost = billing.Cost(*turnPrice, turn.Usage)
-		}
+		assessment := billing.Assess(turn, turnPrice, max64(accounting.admission.BalanceReservedNanoUSD, accounting.admission.QuotaReservedNanoUSD))
+		turnCost, turnComplete = assessment.CostNanoUSD, assessment.Complete
 	}
 	if failed && !turn.Found {
 		turnCost = 0
@@ -397,6 +403,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		resolved.ReasoningEffort = frameMeta.ReasoningEffort
 		meta = resolved
 	}
+	meta.Prewarm = frameMeta.Prewarm
 	if meta.Model == "" {
 		err = fmt.Errorf("response.create requires model")
 		accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "model_required"
@@ -556,7 +563,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 					turn.Found = false
 					turn.Usage = store.Usage{}
 				} else {
-					turn = a.cpaBillingUsage(context.WithoutCancel(r.Context()), requestID, turn.RequestID, r.URL.Path, turn)
+					turn = a.cpaBillingUsage(context.WithoutCancel(r.Context()), requestID, turn.RequestID, r.URL.Path, accounting.currentMeta, turn)
 				}
 				if turn.Model == "" {
 					turn.Model = accounting.currentModel
@@ -598,9 +605,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 				}
 			} else {
 				if accounting.turnsSeen == 0 {
-					accounting.pricingComplete = turn.Found
+					accounting.pricingComplete = turn.Found || turn.NonGenerated()
 				} else {
-					accounting.pricingComplete = accounting.pricingComplete && turn.Found
+					accounting.pricingComplete = accounting.pricingComplete && (turn.Found || turn.NonGenerated())
 				}
 				accounting.turnsSeen++
 			}
@@ -802,6 +809,8 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 		nextMeta.ReasoningEffort = frameMeta.ReasoningEffort
 	}
 	nextMeta.Stream = true
+	// Generation intent is per frame; a real follow-up must not inherit prewarm.
+	nextMeta.Prewarm = frameMeta.Prewarm
 	forwarded := payload
 	if frameMeta.Model != "" && a.nativeRuntime != nil {
 		upstreamModel := a.nativeRuntime.ResolveCredentialModel(accounting.admission.UpstreamCredentialID, nextMeta.Model)

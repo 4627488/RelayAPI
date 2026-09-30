@@ -218,6 +218,7 @@ func boundedErrorText(value string) string {
 }
 
 type requestLogContext struct {
+	logUnit         string
 	firstTokenMS    *int64
 	price           *store.ResolvedPrice
 	detail          *store.LogDetailInput
@@ -315,8 +316,16 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		actualModel = parsed.Model
 	}
 	var costPointer *int64
-	if pricingComplete {
+	if pricingComplete || (settled && cost > 0) {
 		costPointer = &cost
+	}
+	quality := ""
+	if parsed != nil {
+		quality = parsed.UsageQuality
+	}
+	unit := logContext.logUnit
+	if parsed != nil && parsed.NonGenerated() {
+		unit = store.LogUnitPrewarm
 	}
 	detail := logContext.detail
 	if detail != nil {
@@ -335,6 +344,7 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		completedAt = time.Now()
 	}
 	return store.LogInput{
+		LogUnit: unit, UsageQuality: quality,
 		ID: requestID, TenantID: key.TenantID, APIKeyID: key.ID, UpstreamRequestID: upstreamID, Model: meta.Model,
 		UpstreamTraceID: logContext.upstreamTraceID, RequestedModel: meta.RequestedModel, ActualModel: meta.Model, UpstreamModel: actualModel, ModelAlias: meta.ModelAlias, TenantName: key.TenantName,
 		APIKeyName: key.Name, APIKeyPrefix: key.Prefix, RequestType: requestType(r.URL.Path, isWebSocketUpgrade(r)),

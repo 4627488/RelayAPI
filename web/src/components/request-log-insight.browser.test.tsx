@@ -63,7 +63,7 @@ it.each([
   { width: 390, requested: "auto", actual: "priority", fast: true },
   { width: 1280, requested: "priority", actual: "priority", fast: true },
   { width: 390, requested: "priority", actual: "default", fast: false },
-  { width: 1280, requested: "priority", actual: undefined, fast: true },
+  { width: 1280, requested: "priority", actual: undefined, fast: false },
 ])(
   "shows Fast according to the actual tier at $width ($actual)",
   async ({ width, requested, actual, fast }) => {
@@ -81,7 +81,8 @@ it.each([
       expect(badges).toHaveLength(2)
       expect(document.body.innerText).toContain("Fast")
     } else {
-      expect(document.body.innerText).not.toContain("Fast")
+      expect(screen.getByText("Fast", { exact: true }).all()).toHaveLength(0)
+      expect(document.body.innerText).toContain("请求 Fast")
     }
   }
 )
@@ -251,4 +252,29 @@ it("does not show zero-priced rates when pricing is incomplete", async () => {
   await expect
     .element(popup.getByText("输入单价", { exact: true }))
     .not.toBeInTheDocument()
+})
+
+it("shows the estimated amount already accrued to quota", async () => {
+  const estimated = {
+    ...log,
+    pricing_complete: false,
+    cost_nano_usd: 10_000_000,
+    usage_quality: "missing",
+  }
+  const screen = await render(<RequestLogList logs={[estimated]} />)
+  await expect
+    .element(screen.getByText("估算 US$0.01", { exact: true }).first())
+    .toBeVisible()
+  await screen.getByRole("button", { name: "查看计费详情" }).first().click()
+  const popup = screen.getByRole("dialog", { name: "请求观测详情" })
+  await expect
+    .element(popup.getByText("用量缺失", { exact: true }))
+    .toBeVisible()
+  await expect
+    .element(
+      popup.getByText(
+        "此金额已用于余额或套餐额度结算；用量或价格未确认，按预留金额保守估算。"
+      )
+    )
+    .toBeVisible()
 })

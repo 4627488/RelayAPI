@@ -13,6 +13,7 @@ import { LatencyObservations } from "@/components/request-latency-timeline"
 import { parseLatencyTrace, measuredMS } from "@/lib/latency-trace"
 import type { RequestLog } from "@/lib/api"
 import type { Workspace } from "@/lib/routes"
+import { requestLogCost, requestLogUsageQuality } from "@/lib/request-log"
 import {
   bytes,
   cacheHitRateLabel,
@@ -162,7 +163,8 @@ export function RequestLogInsight({
           <TabsContent value="billing">
             <Facts
               rows={[
-                ["费用", money(log.cost_nano_usd)],
+                ["费用", requestLogCost(log)],
+                ["用量状态", requestLogUsageQuality(log)],
                 ["定价完成", state(log.pricing_complete)],
                 ["已结算", state(log.settled)],
                 ["计价模型", log.price_model],
@@ -200,6 +202,11 @@ export function RequestLogInsight({
                   : []),
               ]}
             />
+            {!log.pricing_complete && log.cost_nano_usd != null ? (
+              <p className="mt-3 text-xs text-muted-foreground">
+                此金额已用于余额或套餐额度结算；用量或价格未确认，按预留金额保守估算。
+              </p>
+            ) : null}
           </TabsContent>
           <TabsContent value="route">
             <Facts

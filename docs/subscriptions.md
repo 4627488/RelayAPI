@@ -27,7 +27,9 @@ the native runtime owns protocol translation, retries, and routing.
 8. Missing terminal usage on a successful upstream response never becomes free
    quota. Relay settles the conservative reservation and marks the request as
    pricing-incomplete for later reconciliation. Rejected upstream requests
-   release their reservations.
+   release their reservations. Explicit runtime non-generation is a complete
+   zero-cost result, and never consumes the conservative reservation. Logs retain
+   the actual accrued estimate when generation usage is unknown.
 9. Tenants see child names, shares, usage, and reset times, but never parent
    credential IDs, account emails, tokens, or provider-private metadata.
 

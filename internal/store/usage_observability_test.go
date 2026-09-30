@@ -51,6 +51,8 @@ func TestUsageObservabilityIntegration(t *testing.T) {
 		{"a", "step", 100, 0, 10, 200, "", now},
 		{"a", "step", 300, nil, nil, 200, "upstream_error", now},
 		{"a", "legacy_session", 9999, 999, 999, 200, "", now},
+		{"a", "prewarm", 99999, 99999, 99999, 200, "", now},
+		{"a", "connection", 99999, 99999, 99999, 503, "connect_failed", now},
 		{"b", "step", 8000, 5000, 6000, 503, "other_tenant", now},
 		{"a", "step", 8888, 888, 888, 500, "expired", now.Add(-48 * time.Hour)},
 	} {

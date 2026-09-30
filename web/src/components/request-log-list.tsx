@@ -14,11 +14,11 @@ import {
   cacheHitRateLabel,
   compactTokens,
   dateTime,
-  money,
   requestLogStatus,
   requestLogSucceeded,
   requestLogTransport,
 } from "@/lib/format"
+import { requestLogCost, requestLogTier } from "@/lib/request-log"
 import { routeHref, type Workspace } from "@/lib/routes"
 
 export function RequestLogKey({ log }: { log: RequestLog }) {
@@ -41,11 +41,7 @@ export function RequestLogKey({ log }: { log: RequestLog }) {
 
 function Result({ log }: { log: RequestLog }) {
   const routedModel = log.actual_model || log.model
-  const tier = (
-    log.response_service_tier?.trim() ||
-    log.service_tier?.trim() ||
-    ""
-  ).toLowerCase()
+  const tier = requestLogTier(log)
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Badge
@@ -60,12 +56,9 @@ function Result({ log }: { log: RequestLog }) {
       <span className="text-xs text-muted-foreground">
         {requestLogTransport(log.request_type, log.stream)}
       </span>
-      {tier === "priority" ? (
-        <Badge
-          variant="outline"
-          title="Priority 优先处理；默认按普通价格的 2 倍计费，管理员档位规则优先"
-        >
-          Fast
+      {tier ? (
+        <Badge variant="outline" title={tier.title}>
+          {tier.label}
         </Badge>
       ) : null}
       {log.upstream_model &&
@@ -238,7 +231,7 @@ export function RequestLogList({
                     section="billing"
                     workspace={workspace}
                   >
-                    {money(log.cost_nano_usd)}
+                    {requestLogCost(log)}
                   </RequestLogInsight>
                 </TableCell>
               </TableRow>
@@ -317,7 +310,7 @@ export function RequestLogList({
                       section="billing"
                       workspace={workspace}
                     >
-                      {money(log.cost_nano_usd)}
+                      {requestLogCost(log)}
                     </RequestLogInsight>
                   </dd>
                 </div>

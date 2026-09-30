@@ -23,11 +23,13 @@ type requestMeta struct {
 	ImageCount      int    `json:"n"`
 	RequestedModel  string `json:"-"`
 	ModelAlias      string `json:"-"`
+	Prewarm         bool   `json:"-"`
 }
 
 func readRequestMeta(body []byte, _ string) requestMeta {
 	values := gjson.GetManyBytes(body, "model", "stream", "service_tier", "reasoning_effort", "reasoning.effort", "n")
 	meta := requestMeta{
+		Prewarm:         gjson.GetBytes(body, "generate").Type == gjson.False,
 		Model:           strings.TrimSpace(values[0].String()),
 		Stream:          values[1].Bool(),
 		ServiceTier:     strings.TrimSpace(values[2].String()),
