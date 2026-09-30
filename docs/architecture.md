@@ -1,18 +1,28 @@
 # RelayAPI architecture
 
 RelayAPI is a Codex-first, multi-tenant policy and accounting gateway. It owns
-the provider runtime for Codex, Kimi, xAI/Grok and OpenAI-compatible services
-such as Aliyun Bailian. There is no external or embedded third-party proxy
-runtime.
+tenant policy, prices and durable accounting, and embeds CPA for provider
+execution for Codex, Kimi, xAI/Grok and OpenAI-compatible services such as
+Aliyun Bailian. The SDK adaptation lives in `third_party/cpaexecutor`.
 
 ## Request boundary
 
 The public layer authenticates the tenant key, resolves aliases, checks model
 policy, reserves balance/quota and strips untrusted `X-Relay-*` headers. The
-native runtime then selects the pinned encrypted credential, translates the
+embedded CPA runtime then selects the pinned encrypted credential, translates the
 wire protocol when needed, lowers unsupported tool declarations, performs
-OAuth refresh and sends the provider request. Terminal usage is persisted and
-settled before the response is considered complete.
+OAuth refresh and sends the provider request. HTTP settlement runs after the
+response boundary; WebSocket terminal turns are persisted before forwarding so
+the next turn remains subject to quota enforcement.
+
+Text billing consumes CPA's public structured usage plugin records, correlated
+to an execution scope and, for WebSocket, a response ID. Failed attempts and
+auxiliary model records are excluded. Delivery waits are bounded to 750ms;
+missing or incomplete usage conservatively settles the existing reservation
+with `pricing_complete=false`. The plugin queue is in memory, while PostgreSQL
+remains the accounting ledger. CPA does not expose image modality buckets in
+the public usage SDK, so image accounting retains the existing response parser.
+Relay still owns pricing rules, tenant balances and subscription quotas.
 
 Supported public protocols are Responses, Chat Completions, the OpenAI Images
 API (`/v1/images/generations` and `/v1/images/edits`), the OpenAI model
@@ -131,11 +141,21 @@ added twice into the critical path.
   stored token for later requests but is returned as-is.
 - HTTP, HTTPS, SOCKS5 and SOCKS5H proxies are implemented in Relay and apply to
   inference, WebSocket, discovery, OAuth, quota and system requests.
-- Provider credentials remain encrypted in PostgreSQL. The native runtime
-  is called in-process; there is no loopback HTTP hop or process-local API key.
+- Provider credentials remain encrypted in PostgreSQL. CPA runs in this process
+  behind the existing private loopback listener, with a process-local API key.
+  Public traffic must pass Relay admission before it reaches that listener.
 - PostgreSQL row locks make reservation and settlement idempotent and atomic.
 
 ## Models and pricing
+
+Fast (`service_tier=priority`) defaults to twice the normal token rates,
+including cache and reasoning rates. The returned service tier takes precedence
+over the requested tier: a `default` response to a `priority` request uses normal
+rates; when the upstream omits the tier, the requested tier is used. A matching
+administrator `service_tier` or `response_service_tier` price rule replaces this
+default, so configuring a 2x rule does not result in a 4x charge. Other model and
+account multipliers still compose normally. Request logs show a Fast badge and
+the billing detail shows requested/actual tiers and the total price multiplier.
 
 OpenAI-compatible accounts discover `GET {base_url}/models`; native providers
 use controlled defaults and credential-scoped discovery where supported.

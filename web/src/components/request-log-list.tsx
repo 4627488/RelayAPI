@@ -41,6 +41,11 @@ export function RequestLogKey({ log }: { log: RequestLog }) {
 
 function Result({ log }: { log: RequestLog }) {
   const routedModel = log.actual_model || log.model
+  const tier = (
+    log.response_service_tier?.trim() ||
+    log.service_tier?.trim() ||
+    ""
+  ).toLowerCase()
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Badge
@@ -55,6 +60,14 @@ function Result({ log }: { log: RequestLog }) {
       <span className="text-xs text-muted-foreground">
         {requestLogTransport(log.request_type, log.stream)}
       </span>
+      {tier === "priority" ? (
+        <Badge
+          variant="outline"
+          title="Priority 优先处理；默认按普通价格的 2 倍计费，管理员档位规则优先"
+        >
+          Fast
+        </Badge>
+      ) : null}
       {log.upstream_model &&
       routedModel &&
       log.upstream_model !== routedModel ? (

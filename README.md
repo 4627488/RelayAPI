@@ -72,9 +72,10 @@ Codex/xAI WebSocket 支持连接内多轮 `response.create`。收到一轮终态
 
 Relay 对外提供 OpenAI Responses、OpenAI Chat Completions 和 Codex direct 路径。
 Grok/xAI、Kimi 与其他 OpenAI-compatible 模型共用 `/v1/chat/completions` 或
-`/v1/responses`，由请求中的 `model` 和 native
+`/v1/responses`，由请求中的 `model` 和内嵌 CPA
 凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在独立“代理”页面维护和
 测试可复用代理，在“系统设置”中选择系统请求代理并热更新重试、调度和连接行为。
+CPA 负责协议转换和文本用量解释；Relay 保留用户鉴权、价格规则、额度预留和 PostgreSQL 结算。SDK 接入边界及暂时保留的内部依赖见 [CPA bridge](third_party/cpaexecutor/README.md)。图片用量仍由现有解析处理，等待 CPA 的公开用量接口支持图片字段。
 系统代理仅用于 Models.dev 同步、系统级 OAuth 等 RelayAPI 自身请求；每个模型账户单独
 选择代理，未选择时明确直连。账户代理同时作用于推理、模型发现、令牌刷新和额度查询。
 

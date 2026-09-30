@@ -227,6 +227,9 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 	finalizeCtx := context.WithoutCancel(r.Context())
 	a.finalizeResponse(func() {
 		finalizeStarted := time.Now()
+		if a.nativeCPARuntime != nil {
+			defer a.nativeCPARuntime.ReleaseRequestUsage(call.requestID)
+		}
 		price := call.price
 		logContext := call.logContext
 		if out.firstToken != nil && !out.firstToken.At.IsZero() {
@@ -248,6 +251,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			prefix, _, _ := capture.Info()
 			parsed.Model = billing.ParseResponse(prefix).Model
 		}
+		parsed = a.cpaBillingUsage(finalizeCtx, call.requestID, "", r.URL.Path, parsed)
 		if call.priceConfigured && parsed.Found {
 			dimensions := requestPriceDimensions(call.key, call.meta, r.URL.Path, admissionAuthIndex(call.admission), parsed.ResponseServiceTier)
 			dimensions.PromptTokens = parsed.Usage.Prompt

@@ -3,11 +3,9 @@ package relaybridge
 import (
 	"context"
 
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/constant"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/interfaces"
-	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/translator"
 	codexchat "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/openai/chat-completions"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/translator/translator"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/translator/builtin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -15,11 +13,11 @@ import (
 func init() {
 	// Official CPA only registers Responses → Chat Completions. Codex clients
 	// that hit Bailian with upstream_api=auto|responses need the reverse.
-	translator.Register(
-		constant.OpenAI,
-		constant.OpenaiResponse,
+	builtin.Registry().Register(
+		sdktranslator.FormatOpenAI,
+		sdktranslator.FormatOpenAIResponse,
 		convertOpenAIChatCompletionsRequestToOpenAIResponses,
-		interfaces.TranslateResponse{
+		sdktranslator.ResponseTransform{
 			Stream:    convertOpenAIResponsesResponseToOpenAIChatCompletions,
 			NonStream: convertOpenAIResponsesResponseToOpenAIChatCompletionsNonStream,
 		},
@@ -27,6 +25,8 @@ func init() {
 }
 
 func convertOpenAIChatCompletionsRequestToOpenAIResponses(modelName string, inputRawJSON []byte, stream bool) []byte {
+	// Dispatching through the SDK registry here would run plugin hooks again
+	// inside the outer Responses translation. Reuse only the built-in transform.
 	out := codexchat.ConvertOpenAIRequestToCodex(modelName, inputRawJSON, stream)
 	out, _ = sjson.DeleteBytes(out, "include")
 	root := gjson.ParseBytes(inputRawJSON)

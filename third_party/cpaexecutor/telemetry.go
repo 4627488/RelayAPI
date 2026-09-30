@@ -61,10 +61,11 @@ type ExecutionAttempt struct {
 type requestTraceRegistry struct {
 	mu     sync.Mutex
 	traces map[string]*RequestTrace
+	usage  *requestUsageStore
 }
 
 func newRequestTraceRegistry() *requestTraceRegistry {
-	return &requestTraceRegistry{traces: make(map[string]*RequestTrace)}
+	return &requestTraceRegistry{traces: make(map[string]*RequestTrace), usage: newRequestUsageStore()}
 }
 
 func (r *Runtime) requestTraceMiddleware() gin.HandlerFunc {
@@ -196,6 +197,7 @@ func (e *observedExecutor) Identifier() string { return e.inner.Identifier() }
 func (e *observedExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	state, traced := e.begin(ctx, auth, req, opts, "request")
 	response, err := e.inner.Execute(traced, auth, req, opts)
+	state.usage.observeEnvelope(response.Payload)
 	state.finish(err, "complete")
 	return response, err
 }
@@ -214,6 +216,7 @@ func (e *observedExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth
 		first := true
 		var terminal error
 		for chunk := range result.Chunks {
+			state.usage.observeEnvelope(chunk.Payload)
 			if first && len(chunk.Payload) > 0 {
 				first = false
 				state.firstChunk(time.Now())
@@ -303,6 +306,7 @@ type attemptState struct {
 	number    int
 	http      *attemptHTTPTrace
 	once      sync.Once
+	usage     *executionUsageScope
 }
 
 func (e *observedExecutor) begin(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options, kind string) (*attemptState, context.Context) {
@@ -316,6 +320,12 @@ func (e *observedExecutor) begin(ctx context.Context, auth *cliproxyauth.Auth, r
 	state := &attemptState{traces: e.traces, requestID: requestID, number: number, http: &attemptHTTPTrace{}}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if kind != "count" && e.traces != nil && e.traces.usage != nil {
+		state.usage = e.traces.usage.begin(requestID, req.Model)
+		if state.usage != nil {
+			ctx = context.WithValue(ctx, executionUsageContextKey{}, state.usage)
+		}
 	}
 	return state, httptrace.WithClientTrace(ctx, state.http.clientTrace())
 }
@@ -350,6 +360,7 @@ func (s *attemptState) finish(err error, successStatus string) {
 		return
 	}
 	s.once.Do(func() {
+		s.usage.finish(err == nil && successStatus == "complete")
 		completed := time.Now()
 		snapshot := s.http.snapshot()
 		s.traces.updateAttempt(s.requestID, s.number, func(attempt *ExecutionAttempt) {

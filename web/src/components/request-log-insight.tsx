@@ -166,6 +166,8 @@ export function RequestLogInsight({
                 ["定价完成", state(log.pricing_complete)],
                 ["已结算", state(log.settled)],
                 ["计价模型", log.price_model],
+                ["请求服务档位", log.service_tier || "未指定"],
+                ["实际服务档位", log.response_service_tier || "未返回"],
                 ["价格来源", log.price_source],
                 ["价格版本", log.price_version],
                 [

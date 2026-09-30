@@ -59,6 +59,33 @@ afterEach(async () => {
   await page.viewport(1280, 800)
 })
 
+it.each([
+  { width: 390, requested: "auto", actual: "priority", fast: true },
+  { width: 1280, requested: "priority", actual: "priority", fast: true },
+  { width: 390, requested: "priority", actual: "default", fast: false },
+  { width: 1280, requested: "priority", actual: undefined, fast: true },
+])(
+  "shows Fast according to the actual tier at $width ($actual)",
+  async ({ width, requested, actual, fast }) => {
+    await page.viewport(width, 800)
+    const screen = await render(
+      <RequestLogList
+        logs={[
+          { ...log, service_tier: requested, response_service_tier: actual },
+        ]}
+      />
+    )
+    if (fast) {
+      // Both responsive layouts exist, but only one is visible.
+      const badges = screen.getByText("Fast", { exact: true }).all()
+      expect(badges).toHaveLength(2)
+      expect(document.body.innerText).toContain("Fast")
+    } else {
+      expect(document.body.innerText).not.toContain("Fast")
+    }
+  }
+)
+
 it("opens v5 observations on hover and keeps rich details reachable", async () => {
   const screen = await render(
     <RequestLogInsight log={log} section="latency">

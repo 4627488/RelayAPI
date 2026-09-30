@@ -180,6 +180,11 @@ func (s *Snapshot) Resolve(dimensions Dimensions) (SnapshotPrice, bool) {
 				}
 			}
 			ruleMultiplier := matchingRuleMultiplier(model.rules, dimensions)
+			if effectiveServiceTier(dimensions) == "priority" && !hasMatchingTierRule(model.rules, dimensions) {
+				// Fast defaults to twice the normal rates. An explicit tier rule
+				// replaces this default instead of multiplying it a second time.
+				ruleMultiplier *= 2
+			}
 			if defaultLongContext(model.price.Model, dimensions.PromptTokens) && !hasPromptThresholdRule(model.rules) {
 				ruleMultiplier *= 2
 			}
@@ -287,6 +292,22 @@ func matchingRuleMultiplier(rules []Rule, dimensions Dimensions) float64 {
 		}
 	}
 	return multiplier
+}
+
+func effectiveServiceTier(dimensions Dimensions) string {
+	if tier := strings.TrimSpace(dimensions.ResponseServiceTier); tier != "" {
+		return strings.ToLower(tier)
+	}
+	return strings.ToLower(strings.TrimSpace(dimensions.ServiceTier))
+}
+
+func hasMatchingTierRule(rules []Rule, dimensions Dimensions) bool {
+	for _, rule := range rules {
+		if (rule.Field == "service_tier" || rule.Field == "response_service_tier") && dimensionValue(dimensions, rule.Field) == rule.Value {
+			return true
+		}
+	}
+	return false
 }
 
 func hasPromptThresholdRule(rules []Rule) bool {

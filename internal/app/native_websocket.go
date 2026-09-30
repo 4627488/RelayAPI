@@ -345,6 +345,9 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 // adaptation, reconnection and credential affinity.
 func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext,
 	meta requestMeta, requestID string, logDetail *store.LogDetailInput, accounting *nativeWebSocketAccounting) (nativeWebSocketSessionState, requestMeta, error) {
+	if a.nativeCPARuntime != nil {
+		defer a.nativeCPARuntime.ReleaseRequestUsage(requestID)
+	}
 	var session nativeWebSocketSessionState
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout:  30 * time.Second,
@@ -548,6 +551,13 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			turnKey := ""
 			if terminal {
 				turn = parseNativeWebSocketUsage(payload)
+				if a.nativeCPARuntime != nil && turn.RequestID == "" {
+					// Without an envelope ID a WS turn cannot be correlated safely.
+					turn.Found = false
+					turn.Usage = store.Usage{}
+				} else {
+					turn = a.cpaBillingUsage(context.WithoutCancel(r.Context()), requestID, turn.RequestID, r.URL.Path, turn)
+				}
 				if turn.Model == "" {
 					turn.Model = accounting.currentModel
 				}

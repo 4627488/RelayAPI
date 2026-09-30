@@ -16,16 +16,18 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v8/internal/api"
+	internalapi "github.com/router-for-me/CLIProxyAPI/v8/internal/api"
 	codexauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/wsrelay"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v8/sdk/access"
+	sdkapi "github.com/router-for-me/CLIProxyAPI/v8/sdk/api"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
 	sdkauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -111,10 +113,9 @@ type CredentialStatus struct {
 type Runtime struct {
 	mu               sync.RWMutex
 	modelUpdateMu    sync.Mutex
-	cfg              *internalconfig.Config
+	cfg              *config.Config
 	manager          *coreauth.Manager
 	handler          http.Handler
-	server           *api.Server
 	wsGateway        *wsrelay.Manager
 	routes           map[string]credentialRoute
 	modelRoutes      map[string]credentialRoute
@@ -151,15 +152,15 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 	if maxRetryInterval < 0 {
 		maxRetryInterval = 0
 	}
-	cfg := &internalconfig.Config{
-		SDKConfig: internalconfig.SDKConfig{
+	cfg := &config.Config{
+		SDKConfig: config.SDKConfig{
 			APIKeys:                    []string{apiKey},
 			PassthroughHeaders:         opts.PassthroughHeaders,
 			ProxyURL:                   strings.TrimSpace(opts.ProxyURL),
 			GPTImage2BaseModel:         strings.TrimSpace(opts.GPTImage2BaseModel),
 			VideoResultAuthCacheTTL:    strings.TrimSpace(opts.VideoResultAuthCacheTTL),
 			ForceModelPrefix:           opts.ForceModelPrefix,
-			Streaming:                  internalconfig.StreamingConfig{KeepAliveSeconds: opts.StreamKeepAliveSeconds, BootstrapRetries: opts.StreamBootstrapRetries},
+			Streaming:                  config.StreamingConfig{KeepAliveSeconds: opts.StreamKeepAliveSeconds, BootstrapRetries: opts.StreamBootstrapRetries},
 			NonStreamKeepAliveInterval: opts.NonStreamKeepAliveInterval,
 		},
 		CommercialMode:                true,
@@ -204,10 +205,10 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 	runtime.registerBaselineExecutors()
 
 	var engine *gin.Engine
-	serverOptions := []api.ServerOption{
-		api.WithMiddleware(runtime.requestTraceMiddleware(), runtime.pinCredentialMiddleware()),
-		api.WithEngineConfigurator(func(value *gin.Engine) { engine = value }),
-		api.WithRouterConfigurator(func(_ *gin.Engine, base *handlers.BaseAPIHandler, _ *internalconfig.Config) {
+	serverOptions := []sdkapi.ServerOption{
+		sdkapi.WithMiddleware(runtime.requestTraceMiddleware(), runtime.pinCredentialMiddleware()),
+		sdkapi.WithEngineConfigurator(func(value *gin.Engine) { engine = value }),
+		sdkapi.WithRouterConfigurator(func(_ *gin.Engine, base *handlers.BaseAPIHandler, _ *config.Config) {
 			base.SetModelRouterHost(runtime)
 		}),
 	}
@@ -216,15 +217,17 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 		captureStore := newOAuthCaptureStore(runtime.oauthDir, opts.OnOAuthCredential)
 		sdkauth.RegisterTokenStore(captureStore)
 		defer sdkauth.RegisterTokenStore(previousStore)
-		serverOptions = append(serverOptions, api.WithLocalManagementPassword(runtime.managementSecret))
+		serverOptions = append(serverOptions, sdkapi.WithLocalManagementPassword(runtime.managementSecret))
 	}
-	server := api.NewServer(cfg, manager, accessManager, "", serverOptions...)
+	// CPA's SDK currently owns a listener and watcher in Service.Run; it does
+	// not expose handler-only startup. Keep this single construction seam while
+	// configuring the handler through the public SDK options.
+	server := internalapi.NewServer(cfg, manager, accessManager, "", serverOptions...)
 	if engine == nil {
 		_ = os.RemoveAll(runtime.oauthDir)
 		return nil, fmt.Errorf("embedded CPA router was not initialized")
 	}
 	server.AttachWebsocketRoute(runtime.wsGateway.Path(), runtime.wsGateway.Handler())
-	runtime.server = server
 	runtime.handler = engine
 	if err := runtime.ReplaceCredentials(context.Background(), credentials); err != nil {
 		_ = runtime.Close(context.Background())
@@ -434,9 +437,9 @@ func (r *Runtime) DiscoverCredentialModels(ctx context.Context, id string) ([]st
 	return models, "cpa_upstream", nil
 }
 
-func cpaStaticModelsForAuth(provider string, auth *coreauth.Auth) []*registry.ModelInfo {
+func cpaStaticModelsForAuth(provider string, auth *coreauth.Auth) []*cliproxy.ModelInfo {
 	provider = normalizeProvider(provider)
-	var models []*registry.ModelInfo
+	var models []*cliproxy.ModelInfo
 	if provider != "codex" {
 		models = registry.GetStaticModelDefinitionsByChannel(provider)
 		return applyCPAAuthModelAliases(filterCPAExcludedModels(models, auth), auth)
@@ -458,7 +461,7 @@ func cpaStaticModelsForAuth(provider string, auth *coreauth.Auth) []*registry.Mo
 	return applyCPAAuthModelAliases(filterCPAExcludedModels(models, auth), auth)
 }
 
-func applyCPAAuthModelAliases(models []*registry.ModelInfo, auth *coreauth.Auth) []*registry.ModelInfo {
+func applyCPAAuthModelAliases(models []*cliproxy.ModelInfo, auth *coreauth.Auth) []*cliproxy.ModelInfo {
 	if len(models) == 0 || auth == nil {
 		return models
 	}
@@ -466,14 +469,14 @@ func applyCPAAuthModelAliases(models []*registry.ModelInfo, auth *coreauth.Auth)
 	if len(aliases) == 0 {
 		return models
 	}
-	byModel := make(map[string][]internalconfig.OAuthModelAlias, len(aliases))
+	byModel := make(map[string][]config.OAuthModelAlias, len(aliases))
 	for _, alias := range aliases {
 		name := strings.ToLower(strings.TrimSpace(alias.Name))
 		if name != "" && strings.TrimSpace(alias.Alias) != "" && !strings.EqualFold(alias.Name, alias.Alias) {
 			byModel[name] = append(byModel[name], alias)
 		}
 	}
-	result := make([]*registry.ModelInfo, 0, len(models)+len(aliases))
+	result := make([]*cliproxy.ModelInfo, 0, len(models)+len(aliases))
 	seen := make(map[string]struct{}, len(models)+len(aliases))
 	for _, model := range models {
 		if model == nil || strings.TrimSpace(model.ID) == "" {
@@ -514,7 +517,7 @@ func applyCPAAuthModelAliases(models []*registry.ModelInfo, auth *coreauth.Auth)
 	return result
 }
 
-func filterCPAExcludedModels(models []*registry.ModelInfo, auth *coreauth.Auth) []*registry.ModelInfo {
+func filterCPAExcludedModels(models []*cliproxy.ModelInfo, auth *coreauth.Auth) []*cliproxy.ModelInfo {
 	if len(models) == 0 || auth == nil {
 		return models
 	}
@@ -527,7 +530,7 @@ func filterCPAExcludedModels(models []*registry.ModelInfo, auth *coreauth.Auth) 
 	if len(excluded) == 0 {
 		return models
 	}
-	filtered := make([]*registry.ModelInfo, 0, len(models))
+	filtered := make([]*cliproxy.ModelInfo, 0, len(models))
 	for _, model := range models {
 		if model == nil {
 			continue
@@ -559,7 +562,7 @@ func unionModelIDs(base, extra []string) []string {
 	return models
 }
 
-func modelIDs(infos []*registry.ModelInfo) []string {
+func modelIDs(infos []*cliproxy.ModelInfo) []string {
 	seen := make(map[string]string, len(infos))
 	for _, info := range infos {
 		if info == nil {
@@ -644,7 +647,7 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 	type compiledCredential struct {
 		auth   *coreauth.Auth
 		route  credentialRoute
-		models []*registry.ModelInfo
+		models []*cliproxy.ModelInfo
 	}
 	compiled := make([]compiledCredential, 0, len(credentials))
 	for _, item := range credentials {
@@ -670,7 +673,7 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 	for id := range r.authIDs {
 		if _, keep := nextIDs[id]; !keep {
 			r.manager.Remove(ctx, id)
-			registry.GetGlobalRegistry().UnregisterClient(id)
+			cliproxy.GlobalModelRegistry().UnregisterClient(id)
 		}
 	}
 	r.routes = make(map[string]credentialRoute, len(compiled))
@@ -700,8 +703,8 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 			r.modelRoutes[key] = item.route
 			r.modelNames[key] = public
 		}
-		registry.GetGlobalRegistry().UnregisterClient(item.auth.ID)
-		registry.GetGlobalRegistry().RegisterClient(item.auth.ID, provider, item.models)
+		cliproxy.GlobalModelRegistry().UnregisterClient(item.auth.ID)
+		cliproxy.GlobalModelRegistry().RegisterClient(item.auth.ID, provider, item.models)
 	}
 	return nil
 }
@@ -781,19 +784,6 @@ func credentialCooldownSeconds(disabled bool) int {
 	return transientCredentialCooldownSeconds
 }
 
-func imageGenerationMode(value string) internalconfig.DisableImageGenerationMode {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "all":
-		return internalconfig.DisableImageGenerationAll
-	case "chat":
-		return internalconfig.DisableImageGenerationChat
-	case "passthrough":
-		return internalconfig.DisableImageGenerationPassthrough
-	default:
-		return internalconfig.DisableImageGenerationOff
-	}
-}
-
 func (r *Runtime) ensureExecutor(provider string) {
 	if _, ok := r.manager.Executor(provider); ok {
 		return
@@ -801,7 +791,7 @@ func (r *Runtime) ensureExecutor(provider string) {
 	r.manager.RegisterExecutor(observeExecutor(newOpenAICompatExecutor(provider, r.cfg), r.traces))
 }
 
-func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, credentialRoute, []*registry.ModelInfo, error) {
+func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, credentialRoute, []*cliproxy.ModelInfo, error) {
 	id := strings.TrimSpace(item.ID)
 	if id == "" {
 		return nil, credentialRoute{}, nil, fmt.Errorf("CPA credential requires an ID")
@@ -882,7 +872,7 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	}
 	publicModels = filterExcludedModelIDs(publicModels, auth)
 	route := credentialRoute{provider: provider, models: make(map[string]modelRoute)}
-	modelInfos := make([]*registry.ModelInfo, 0, len(publicModels)*2)
+	modelInfos := make([]*cliproxy.ModelInfo, 0, len(publicModels)*2)
 	seen := make(map[string]struct{})
 	for _, public := range publicModels {
 		public = strings.TrimSpace(public)
@@ -910,7 +900,7 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 			}
 			info := lookupCPAStaticModelInfo(lookupID, auth)
 			if info == nil {
-				info = &registry.ModelInfo{ID: model}
+				info = &cliproxy.ModelInfo{ID: model}
 			} else {
 				info.ID = model
 			}
@@ -923,7 +913,7 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	return auth, route, modelInfos, nil
 }
 
-func lookupCPAStaticModelInfo(modelID string, auth *coreauth.Auth) *registry.ModelInfo {
+func lookupCPAStaticModelInfo(modelID string, auth *coreauth.Auth) *cliproxy.ModelInfo {
 	for _, info := range cpaStaticModelsForAuth(auth.Provider, auth) {
 		if info != nil && strings.EqualFold(strings.TrimSpace(info.ID), strings.TrimSpace(modelID)) {
 			cloned := *info
@@ -954,9 +944,9 @@ func applyCPAAuthModelMetadata(auth *coreauth.Auth, metadata map[string]any) {
 	}
 	if rawAliases != nil {
 		payload, marshalErr := json.Marshal(rawAliases)
-		var aliases []internalconfig.OAuthModelAlias
+		var aliases []config.OAuthModelAlias
 		if marshalErr == nil && json.Unmarshal(payload, &aliases) == nil {
-			cfg := internalconfig.Config{OAuthModelAlias: map[string][]internalconfig.OAuthModelAlias{"auth": aliases}}
+			cfg := config.Config{OAuthModelAlias: map[string][]config.OAuthModelAlias{"auth": aliases}}
 			cfg.SanitizeOAuthModelAlias()
 			coreauth.SetOAuthModelAliasesAttribute(auth, cfg.OAuthModelAlias["auth"])
 		}
@@ -1131,7 +1121,7 @@ func (r *Runtime) Close(ctx context.Context) error {
 	r.manager.StopAutoRefresh()
 	r.mu.Lock()
 	for id := range r.authIDs {
-		registry.GetGlobalRegistry().UnregisterClient(id)
+		cliproxy.GlobalModelRegistry().UnregisterClient(id)
 	}
 	r.authIDs = map[string]struct{}{}
 	r.routes = map[string]credentialRoute{}

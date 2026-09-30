@@ -4,6 +4,9 @@ import (
 	"context"
 	"sync"
 
+	// The public model registry hook observes client registrations, not changes
+	// to CPA's static provider catalogs. Until the SDK exposes catalog refreshes,
+	// this callback is needed to rebuild database-backed credential grants.
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 )
 

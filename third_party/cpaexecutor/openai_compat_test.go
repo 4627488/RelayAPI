@@ -8,12 +8,93 @@ import (
 	"strings"
 	"testing"
 
-	internalconfig "github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdkconfig "github.com/router-for-me/CLIProxyAPI/v8/sdk/config"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
+
+// A plugin may delete a configuration update before execution. The original
+// request must not restore that update during CPA's thinking normalization.
+type removeConfigurationUpdateHooks struct{}
+
+func (removeConfigurationUpdateHooks) NormalizeRequest(_ context.Context, _, _ sdktranslator.Format, _ string, body []byte, _ bool) []byte {
+	out, _ := sjson.DeleteBytes(body, "input.0")
+	return out
+}
+
+func (removeConfigurationUpdateHooks) TranslateRequest(context.Context, sdktranslator.Format, sdktranslator.Format, string, []byte, bool) ([]byte, bool) {
+	return nil, false
+}
+
+func (removeConfigurationUpdateHooks) NormalizeResponseBefore(_ context.Context, _, _ sdktranslator.Format, _ string, _, _, body []byte, _ bool) []byte {
+	return body
+}
+
+func (removeConfigurationUpdateHooks) TranslateResponse(context.Context, sdktranslator.Format, sdktranslator.Format, string, []byte, []byte, []byte, bool) ([]byte, bool) {
+	return nil, false
+}
+
+func (removeConfigurationUpdateHooks) NormalizeResponseAfter(_ context.Context, _, _ sdktranslator.Format, _ string, _, _, body []byte, _ bool) []byte {
+	return body
+}
+
+func TestOpenAICompatResponsesHonorsPluginConfigurationUpdateRemoval(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		name := "nonstream"
+		if stream {
+			name = "stream"
+		}
+		t.Run(name, func(t *testing.T) {
+			sdktranslator.SetPluginHooks(removeConfigurationUpdateHooks{})
+			t.Cleanup(func() { sdktranslator.SetPluginHooks(nil) })
+			var gotBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotBody, _ = io.ReadAll(r.Body)
+				response := `{"id":"resp_update","object":"response","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}`
+				if stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":"+response+"}\n\n")
+					_, _ = io.WriteString(w, "data: [DONE]\n\n")
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, response)
+			}))
+			defer server.Close()
+			exec := newOpenAICompatExecutor("openai-compatibility", &sdkconfig.Config{})
+			auth := &cliproxyauth.Auth{Provider: "openai-compatibility", Attributes: map[string]string{
+				"base_url": server.URL + "/v1", "api_key": "test", "upstream_api": "responses",
+			}}
+			req := cliproxyexecutor.Request{Model: "private-responses", Payload: []byte(`{"model":"private-responses","reasoning":{"effort":"medium"},"input":[{"type":"configuration_update","reasoning":{"effort":"low"}},{"role":"user","content":"hi"}]}`), Metadata: map[string]any{
+				"cliproxy.resolved_api_key_model_info": &cliproxy.ModelInfo{ID: "private-responses", UserDefined: true},
+			}}
+			opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse, Stream: stream}
+			if stream {
+				result, err := exec.ExecuteStream(t.Context(), auth, req, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for chunk := range result.Chunks {
+					if chunk.Err != nil {
+						t.Fatal(chunk.Err)
+					}
+				}
+			} else if _, err := exec.Execute(t.Context(), auth, req, opts); err != nil {
+				t.Fatal(err)
+			}
+			if got := gjson.GetBytes(gotBody, "reasoning.effort").String(); got != "medium" {
+				t.Fatalf("plugin removal was overwritten: reasoning.effort = %q; body=%s", got, gotBody)
+			}
+			if len(gjson.GetBytes(gotBody, "input").Array()) != 1 {
+				t.Fatalf("configuration update retained: %s", gotBody)
+			}
+		})
+	}
+}
 
 func TestOpenAICompatExecutorUsesConfiguredResponsesUpstream(t *testing.T) {
 	var gotPath string
@@ -26,7 +107,7 @@ func TestOpenAICompatExecutorUsesConfiguredResponsesUpstream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := newOpenAICompatExecutor("openai-compatibility", &internalconfig.Config{})
+	exec := newOpenAICompatExecutor("openai-compatibility", &sdkconfig.Config{})
 	auth := &cliproxyauth.Auth{Provider: "openai-compatibility", Attributes: map[string]string{
 		"base_url": server.URL + "/v1", "api_key": "test", "upstream_api": "responses",
 	}}
@@ -75,7 +156,7 @@ func TestOpenAICompatExecutorAutoSelectsProtocolAndBailianCache(t *testing.T) {
 			}))
 			defer server.Close()
 
-			exec := newOpenAICompatExecutor("openai-compatibility", &internalconfig.Config{})
+			exec := newOpenAICompatExecutor("openai-compatibility", &sdkconfig.Config{})
 			auth := &cliproxyauth.Auth{Provider: "openai-compatibility", Attributes: map[string]string{
 				"base_url": server.URL + "/v1", "api_key": "test", "upstream_api": "auto",
 				"vendor": "aliyun-bailian", "cache_mode": test.cacheMode,
@@ -119,7 +200,7 @@ func TestOpenAICompatExecutorStreamsConfiguredResponsesUpstream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	exec := newOpenAICompatExecutor("openai-compatibility", &internalconfig.Config{})
+	exec := newOpenAICompatExecutor("openai-compatibility", &sdkconfig.Config{})
 	auth := &cliproxyauth.Auth{Provider: "openai-compatibility", Attributes: map[string]string{
 		"base_url": server.URL + "/v1", "api_key": "test", "upstream_api": "responses",
 	}}

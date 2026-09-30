@@ -88,6 +88,8 @@ export interface RequestLog {
   upstream_request_id?: string
   upstream_trace_id?: string
   upstream_execution_id?: string
+  service_tier?: string
+  response_service_tier?: string
   tenant_name?: string
   api_key_name?: string
   api_key_prefix?: string
