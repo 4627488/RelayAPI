@@ -401,7 +401,7 @@ func mergeOAuthCredentialSettings(current, replacement json.RawMessage) (json.Ra
 	if err := json.Unmarshal(replacement, &newDocument); err != nil {
 		return nil, err
 	}
-	for _, key := range []string{"websockets", "headers"} {
+	for _, key := range []string{"websockets", "headers", "model_routes"} {
 		if value, ok := oldDocument[key]; ok {
 			newDocument[key] = value
 		}
