@@ -189,6 +189,9 @@ func TestProbeXAIQuotaUsesCreditsPercentAndSubscriptionTier(t *testing.T) {
 	now := time.Now().UTC()
 	reset := now.Add(24 * time.Hour).Format(time.RFC3339)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Grok-Client-Version") != "1.0.44" || r.Header.Get("User-Agent") != "grok-pager/1.0.44 grok-shell/1.0.44" {
+			t.Errorf("outdated Grok quota client headers: %v", r.Header)
+		}
 		if r.Header.Get("X-XAI-Token-Auth") != "xai-grok-cli" {
 			t.Errorf("token auth = %q", r.Header.Get("X-XAI-Token-Auth"))
 		}

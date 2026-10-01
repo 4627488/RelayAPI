@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,42 @@ import (
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
+
+type grokHeaderTransport func(*http.Request) (*http.Response, error)
+
+func (f grokHeaderTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func (f grokHeaderTransport) RoundTripperFor(*coreauth.Auth) http.RoundTripper  { return f }
+
+func TestRuntimeGrokOAuthResponsesUsesSupportedClientVersion(t *testing.T) {
+	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, []Credential{{
+		ID: "grok-version", Provider: "xai", Enabled: true, Models: []string{"grok-4.6"},
+		Document: []byte(`{"type":"xai","auth_kind":"oauth","access_token":"test-token"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+	requests := 0
+	runtime.manager.SetRoundTripperProvider(grokHeaderTransport(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.String() != "https://cli-chat-proxy.grok.com/v1/responses" {
+			t.Errorf("Grok upstream URL = %q", r.URL.String())
+		}
+		if r.Header.Get("X-Grok-Client-Version") != "1.0.44" || r.Header.Get("User-Agent") != "xai-grok-workspace/1.0.44" {
+			t.Errorf("outdated Grok inference headers: %v", r.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}},
+			Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"grok-4.6\",\"output\":[]}}\n\n"))}, nil
+	}))
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"grok-4.6","input":"hi","stream":true}`))
+	request.Header.Set("Authorization", "Bearer internal-test-key")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	runtime.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || requests != 1 {
+		t.Fatalf("Grok response = %d %s; upstream requests = %d", response.Code, response.Body.String(), requests)
+	}
+}
 
 func TestRuntimeLeavesOfficialCodexMultiAgentDefault(t *testing.T) {
 	runtime, err := NewRuntime(Options{APIKey: "internal-test-key"}, nil)

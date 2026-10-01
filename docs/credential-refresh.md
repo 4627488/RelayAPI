@@ -19,13 +19,24 @@ encrypted credential store.
 ## Dependency maintenance
 
 The root module and `third_party/cpaexecutor/go.mod` pin the same replacement:
-[4627488/CLIProxyAPI commit dad77ec33c28](https://github.com/4627488/CLIProxyAPI/commit/dad77ec33c28dfc20d90654c798e175f19698944),
-on branch `relay/credential-refresh-v8.0.4`. This is upstream **v8.0.4** plus
+[4627488/CLIProxyAPI commit 683363787b6f](https://github.com/4627488/CLIProxyAPI/commit/683363787b6f8251ebb20deaa8f1ac4162ba1b03),
+on branch `codex/credential-refresh-v8.0.8`. This is upstream **v8.0.8** plus
 the shared refresh lifecycle patch and a credential snapshot race fix, with
 regression tests. The replacement version is
-`v8.0.0-20260929112143-dad77ec33c28`; the module path is `/v8` in both
+`v8.0.0-20261001061144-683363787b6f`; the module path is `/v8` in both
 Relay modules. The pseudo-version reflects the fork's tags, not a downgrade
-from upstream v8.0.4.
+from upstream v8.0.8.
+
+The shared refresh entry point passes the current registration epoch through
+the locked refresh body, preserving v8.0.8's protection against stale queued
+jobs refreshing a newly registered credential. The original refresh and
+snapshot patches remain in place.
+
+CPA v8.0.8 updates the Grok CLI chat-proxy identity to `1.0.44`, fixing HTTP
+426 without a Relay inference header override. Relay's quota probe uses the
+same version. Grok's protocol conversion remains owned by CPA; this upgrade
+also includes executor-aware Codex tool schema normalization, Kimi tool-output
+ordering, Claude tool-name translation and upstream stream failure handling.
 
 The bridge
 unions both Codex and xAI discovery snapshots with CPA's current catalog,
