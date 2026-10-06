@@ -129,7 +129,7 @@ export function quotaSummary(account: ProviderAccount) {
     const label = window.label || window.kind || "额度"
     return `${label} ${Math.round(window.used_percent)}%`
   }
-  if (account.quota_probe_status === "unsupported") return "上游无自动额度"
+  if (account.quota_probe_status === "unsupported") return "暂不支持额度查询"
   if (account.quota_probe_status === "error") {
     return account.quota_probe_error || "额度探测失败"
   }

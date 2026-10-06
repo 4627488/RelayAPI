@@ -29,6 +29,10 @@ Claude API Key 的默认 Base URL 是 `https://api.anthropic.com`，自定义地
 
 AI Studio 的浏览器执行通道使用管理员登录后的 `GET /api/admin/providers/accounts/{id}/ws` WebSocket 入口，连接已启用的 `aistudio` 账户。通道绑定该账户的数据库 ID；普通租户推理权限不能替换上游浏览器通道。模型请求仍从下面的公共协议入口进入正常准入与结算流程。
 
+额度查询由 Relay 独立接入，不随 CPA 执行器注册自动获得。目前支持 Codex、Kimi、xAI 和 Claude OAuth 订阅账户。Claude 使用 `/api/oauth/usage` 查询 5 小时、7 天及模型专属窗口，沿用账户代理与令牌刷新；只有具有未来重置时间的账户整体窗口参与额度准入，模型专属和额外用量仅作展示。Claude API Key 账户不适用该订阅查询接口。查询失败保留已有快照并显示错误，不推断无限额度。该接口没有公开的稳定协议保证，部署后仍需真实订阅账户验收。
+
+Claude 查询请求及响应形状依据 Claude Code 仓库中的实际调用记录：[OAuth usage 请求与限流报告](https://github.com/anthropics/claude-code/issues/30930)、[原始 utilization 百分比响应](https://github.com/anthropics/claude-code/issues/91406)、[模型专属及额外用量字段](https://github.com/anthropics/claude-code/issues/82656)。这些是调用记录，不是稳定 API 契约。
+
 ## 下游
 
 | 协议 | CPA 入口 |

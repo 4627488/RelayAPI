@@ -47,6 +47,7 @@ type QuotaWindow struct {
 }
 
 type quotaEndpoints struct {
+	claudeUsage       string
 	codexUsage        string
 	kimiUsage         string
 	kimiUsageFallback string
@@ -56,6 +57,7 @@ type quotaEndpoints struct {
 }
 
 var productionQuotaEndpoints = quotaEndpoints{
+	claudeUsage:       "https://api.anthropic.com/api/oauth/usage",
 	codexUsage:        "https://chatgpt.com/backend-api/wham/usage",
 	kimiUsage:         "https://api.kimi.com/coding/v1/usages",
 	kimiUsageFallback: "https://api.moonshot.ai/v1/usages",
@@ -88,6 +90,8 @@ func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaRepo
 
 func probeQuotaWithClient(ctx context.Context, client *http.Client, endpoints quotaEndpoints, authIndex, provider string, document map[string]any, now time.Time) (QuotaReport, error) {
 	switch provider {
+	case "claude", "anthropic":
+		return probeClaudeQuota(ctx, client, endpoints.claudeUsage, authIndex, provider, document, now)
 	case "codex", "codex-oauth", "chatgpt":
 		return probeCodexQuota(ctx, client, endpoints.codexUsage, authIndex, provider, document, now)
 	case "kimi", "kimi-code", "moonshot":

@@ -137,7 +137,7 @@ export function AccountStatusPanel({
           observedAt={quotaAccount.quota_observed_at}
         />
         <FieldDescription>
-          上游未提供额度不代表无限额度。这里只展示上游返回的观测结果。
+          这里只展示已查询到的上游额度。未查询到额度不代表无限额度。
         </FieldDescription>
       </FieldSet>
       {account.provider.toLowerCase() === "codex" && oauth ? (

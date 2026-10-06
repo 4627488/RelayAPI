@@ -34,7 +34,7 @@ export function QuotaSnapshot({
   if (!windows.length) {
     const message =
       status === "unsupported"
-        ? "上游未提供自动额度"
+        ? "当前账户暂不支持自动额度查询"
         : status === "error"
           ? error || "额度探测失败"
           : status === "supported"
