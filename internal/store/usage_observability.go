@@ -52,7 +52,7 @@ func (s Store) usageObservability(ctx context.Context, tenantID string, since ti
 		}
 		return query
 	}
-	result := UsageObservability{Failures: []UsageFailure{}, Providers: []UsageProvider{}}
+	var result UsageObservability
 	err := base().Select(`count(*) AS retained_requests,
  count(*) FILTER (WHERE log_unit = 'step') AS step_samples,
  count(first_token_ms) FILTER (WHERE log_unit = 'step' AND first_token_ms >= 0) AS first_token_samples,
@@ -69,6 +69,9 @@ func (s Store) usageObservability(ctx context.Context, tenantID string, since ti
 	if err != nil {
 		return result, err
 	}
+	// Scanning the summary row zeroes the struct; empty lists must serialize as [] rather than null.
+	result.Failures = []UsageFailure{}
+	result.Providers = []UsageProvider{}
 	err = base().Select("model, status_code, COALESCE(error_code, '') AS error_code, count(*) AS requests").
 		Where("status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> ''").
 		Group("model, status_code, error_code").Order("requests DESC, model, status_code, error_code").Limit(20).Scan(&result.Failures).Error

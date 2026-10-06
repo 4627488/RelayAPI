@@ -179,7 +179,7 @@ export function ObservationPanels({ report }: { report: UsageReport }) {
                   未结算 {compact(o.unsettled_requests)}
                 </Badge>
               </div>
-              {o.failures.length ? (
+              {o.failures?.length ? (
                 <div className="max-h-72 overflow-auto">
                   <Table tabIndex={0} aria-label="失败请求">
                     <TableHeader>

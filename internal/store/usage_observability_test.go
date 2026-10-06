@@ -84,7 +84,7 @@ func TestUsageObservabilityIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty.LatencyP50 != nil || empty.FirstTokenP50 != nil || empty.TTFTP50 != nil || empty.RetainedRequests != 0 {
+	if empty.LatencyP50 != nil || empty.FirstTokenP50 != nil || empty.TTFTP50 != nil || empty.RetainedRequests != 0 || empty.Failures == nil || empty.Providers == nil {
 		t.Fatalf("empty observations fabricated: %+v", empty)
 	}
 	global, err := store.usageObservability(context.Background(), "", now.Add(-time.Hour))
