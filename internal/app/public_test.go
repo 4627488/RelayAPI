@@ -87,3 +87,12 @@ func TestBearerSupportsCompatibleClientHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestBearerSupportsCPAQueryAuthentication(t *testing.T) {
+	for _, query := range []string{"key=relay_query", "auth_token=relay_query"} {
+		request := httptest.NewRequest(http.MethodGet, "/v1beta/models?"+query, nil)
+		if bearer(request) != "relay_query" {
+			t.Fatalf("query authentication rejected: %s", query)
+		}
+	}
+}

@@ -201,7 +201,17 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 		}
 		cfg.RemoteManagement.SecretKey = string(managementHash)
 	}
-	runtime.wsGateway = wsrelay.NewManager(wsrelay.Options{Path: "/v1/ws"})
+	runtime.wsGateway = wsrelay.NewManager(wsrelay.Options{
+		Path: "/v1/ws",
+		ProviderFactory: func(request *http.Request) (string, error) {
+			id := strings.TrimSpace(request.Header.Get("X-Relay-CPA-Auth-ID"))
+			auth, ok := manager.GetByID(id)
+			if !ok || auth == nil || auth.Provider != "aistudio" {
+				return "", fmt.Errorf("AI Studio channel requires a registered credential")
+			}
+			return id, nil
+		},
+	})
 	runtime.registerBaselineExecutors()
 
 	var engine *gin.Engine
@@ -223,6 +233,11 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 	// not expose handler-only startup. Keep this single construction seam while
 	// configuring the handler through the public SDK options.
 	server := internalapi.NewServer(cfg, manager, accessManager, "", serverOptions...)
+	providers := accessManager.Providers()
+	for index, provider := range providers {
+		providers[index] = relayPrincipalProvider{Provider: provider}
+	}
+	accessManager.SetProviders(providers)
 	if engine == nil {
 		_ = os.RemoveAll(runtime.oauthDir)
 		return nil, fmt.Errorf("embedded CPA router was not initialized")
@@ -266,6 +281,8 @@ func (r *Runtime) registerBaselineExecutors() {
 		executor.NewAIStudioExecutor(r.cfg, "aistudio", r.wsGateway),
 		executor.NewAntigravityExecutor(r.cfg),
 		executor.NewKimiExecutor(r.cfg),
+		executor.NewDevinExecutor(r.cfg),
+		executor.NewMetaExecutor(r.cfg),
 		newOpenAICompatExecutor("openai", r.cfg),
 		newOpenAICompatExecutor("openai-compatibility", r.cfg),
 	} {
@@ -864,8 +881,8 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	staticModels := modelIDs(cpaStaticModelsForAuth(provider, auth))
 	if len(publicModels) == 0 {
 		publicModels = staticModels
-	} else if (provider == "codex" || provider == "xai") && len(staticModels) > 0 {
-		// Stored Codex and xAI allowlists are discovery snapshots. Union CPA's current
+	} else if len(staticModels) > 0 {
+		// Stored provider allowlists are discovery snapshots. Union CPA's current
 		// static catalog so newly shipped official slugs stay routable without
 		// an admin rediscover. excluded_models still subtracts.
 		publicModels = unionModelIDs(publicModels, staticModels)
@@ -1015,6 +1032,9 @@ func stringValue(values map[string]any, key string) string {
 }
 
 func normalizeProvider(provider string) string {
+	if normalized, ok := NormalizeProvider(provider); ok {
+		return normalized
+	}
 	switch value := strings.ToLower(strings.TrimSpace(provider)); value {
 	case "grok":
 		return "xai"
@@ -1128,7 +1148,7 @@ func (r *Runtime) Close(ctx context.Context) error {
 	r.modelRoutes = map[string]credentialRoute{}
 	r.modelNames = map[string]string{}
 	r.mu.Unlock()
-	for _, provider := range []string{"codex", "xai", "claude", "gemini", "gemini-interactions", "vertex", "aistudio", "antigravity", "kimi", "openai", "openai-compatibility"} {
+	for _, provider := range []string{"codex", "xai", "claude", "gemini", "gemini-interactions", "vertex", "aistudio", "antigravity", "kimi", "devin", "meta", "openai", "openai-compatibility"} {
 		if exec, ok := r.manager.Executor(provider); ok {
 			CloseAllExecutionSessions(exec)
 		}

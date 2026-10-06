@@ -3,20 +3,33 @@ import { dateTime } from "@/lib/format"
 
 export const oauthProviders = [
   { value: "codex", label: "OpenAI Codex", detail: "ChatGPT / Codex 订阅账户" },
+  { value: "claude", label: "Claude", detail: "Anthropic 订阅账户" },
+  { value: "antigravity", label: "Antigravity", detail: "Google OAuth 账户" },
   { value: "kimi", label: "Kimi", detail: "使用设备码连接" },
   { value: "xai", label: "xAI", detail: "使用设备码连接" },
+  { value: "devin", label: "Devin", detail: "浏览器授权连接" },
+  { value: "meta", label: "Meta", detail: "浏览器授权连接" },
 ]
 
 export const apiKeyProviders = [
   { value: "openai", label: "OpenAI" },
+  { value: "claude", label: "Claude / Anthropic" },
+  { value: "gemini", label: "Google Gemini" },
+  { value: "gemini-interactions", label: "Gemini Interactions" },
+  { value: "vertex", label: "Google Vertex AI" },
   { value: "aliyun-bailian", label: "阿里云百炼" },
   { value: "openai-compatibility", label: "OpenAI 兼容接口" },
   { value: "codex", label: "Codex API Key" },
   { value: "xai", label: "xAI" },
+  { value: "kimi", label: "Kimi API Key" },
 ]
 
 export const importProviders = [
-  ...new Set([...apiKeyProviders.map((item) => item.value), "kimi"]),
+  ...new Set([
+    ...apiKeyProviders.map((item) => item.value),
+    ...oauthProviders.map((item) => item.value),
+    "aistudio",
+  ]),
 ]
 
 export type OAuthStart = {
@@ -126,6 +139,7 @@ export function quotaSummary(account: ProviderAccount) {
 export function normalizedOAuthProvider(provider: string) {
   const value = provider.trim().toLowerCase()
   if (value === "openai") return "codex"
+  if (value === "anthropic") return "claude"
   if (value === "grok" || value === "x.ai") return "xai"
   return value
 }

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	relaybridge "github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
+
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -147,20 +149,16 @@ func normalizedOAuthProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "openai", "codex":
 		return "codex"
-	case "grok", "x.ai", "xai":
-		return "xai"
 	default:
+		if normalized, ok := relaybridge.NormalizeProvider(provider); ok {
+			return normalized
+		}
 		return strings.ToLower(strings.TrimSpace(provider))
 	}
 }
 
 func supportsProviderOAuth(provider string) bool {
-	switch normalizedOAuthProvider(provider) {
-	case "codex", "kimi", "xai":
-		return true
-	default:
-		return false
-	}
+	return relaybridge.SupportsOAuth(normalizedOAuthProvider(provider))
 }
 
 func (a *App) captureProviderOAuthCredential(_ context.Context, sessionID, provider, label string, document []byte) error {

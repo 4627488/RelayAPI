@@ -70,7 +70,9 @@ Codex/xAI WebSocket 支持连接内多轮 `response.create`。收到一轮终态
 
 ## 客户端兼容
 
-Relay 对外提供 OpenAI Responses、OpenAI Chat Completions 和 Codex direct 路径。
+Relay 的上下游接入以当前内嵌 CPA 的内置执行器和协议路由为准，覆盖 OpenAI Responses、
+Chat Completions、Claude Messages、Gemini 原生协议及图片、视频和 Realtime 入口。
+提供商、认证方式、协议端点和验证边界见 [CPA 能力对齐](docs/cpa-capabilities.md)。
 Grok/xAI、Kimi 与其他 OpenAI-compatible 模型共用 `/v1/chat/completions` 或
 `/v1/responses`，由请求中的 `model` 和内嵌 CPA
 凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在独立“代理”页面维护和
@@ -79,8 +81,8 @@ CPA 负责协议转换和文本用量解释；Relay 保留用户鉴权、价格�
 系统代理仅用于 Models.dev 同步、系统级 OAuth 等 RelayAPI 自身请求；每个模型账户单独
 选择代理，未选择时明确直连。账户代理同时作用于推理、模型发现、令牌刷新和额度查询。
 
-模型账户使用内嵌运行时的凭据级模型目录：Codex、Kimi 和 xAI 使用 CPA 的受控目录；
-嵌入式 CPA 启动后立即同步远程模型定义，此后每 3 小时刷新一次。Codex 和 xAI 目录变化时，
+模型账户使用内嵌运行时的凭据级模型目录：内置提供商使用 CPA 的受控目录；
+嵌入式 CPA 启动后立即同步远程模型定义，此后每 3 小时刷新一次。提供商目录变化时，
 Relay 自动重建凭据路由并同步父订阅模型范围。OpenAI 及
 OpenAI-compatible 凭据由原生执行器携带同一凭据、代理和自定义请求头访问上游
 `GET {base_url}/models`。模型账户不接受自由填写模型名；管理员只能从原生运行时返回的

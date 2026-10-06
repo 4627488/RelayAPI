@@ -145,7 +145,7 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 func (a *App) onEmbeddedModelCatalogUpdate(providers []string) {
 	changed := false
 	for _, provider := range providers {
-		if provider == "codex" || provider == "xai" {
+		if _, supported := normalizeSupportedProvider(provider); supported {
 			changed = true
 			break
 		}
@@ -178,7 +178,7 @@ func (a *App) persistExpandedCredentialModels(ctx context.Context) error {
 	}
 	for _, row := range rows {
 		provider := strings.ToLower(strings.TrimSpace(row.Provider))
-		if provider != "codex" && provider != "xai" {
+		if _, supported := normalizeSupportedProvider(provider); !supported {
 			continue
 		}
 		live := a.nativeRuntime.CredentialModels(row.ID)
@@ -466,7 +466,10 @@ func (a *App) proxyEmbeddedCPA(w http.ResponseWriter, r *http.Request, body []by
 		return
 	}
 	copyHeaders(request.Header, r.Header)
-	request.Header.Set("Authorization", "Bearer "+client.APIKey)
+	request.Header.Set("Authorization", "Bearer "+runtimeAuthorizationToken(r.Context(), client.APIKey))
+	if principal, _ := r.Context().Value(runtimePrincipalContext).(string); principal != "" {
+		request.Header.Set("X-Relay-Principal", principal)
+	}
 	request.Header.Del("X-API-Key")
 	request.Header.Del("X-Goog-API-Key")
 	if cred := strings.TrimSpace(r.Header.Get("X-Relay-Upstream-Credential-ID")); cred != "" {
@@ -486,6 +489,24 @@ func (a *App) proxyEmbeddedCPA(w http.ResponseWriter, r *http.Request, body []by
 		return
 	}
 	defer response.Body.Close()
+	if isRealtimeSecretCreation(r.URL.Path) && response.StatusCode >= 200 && response.StatusCode < 300 {
+		payload, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		origin, ok := r.Context().Value(realtimeOriginContext).(realtimeAuthorization)
+		if readErr != nil || !ok {
+			writeError(w, http.StatusBadGateway, "realtime_secret_error", "无法创建 Realtime 临时凭据")
+			return
+		}
+		wrapped, wrapErr := a.wrapRealtimeSecret(payload, origin)
+		if wrapErr != nil {
+			writeError(w, http.StatusBadGateway, "realtime_secret_error", "无法创建 Realtime 临时凭据")
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(response.StatusCode)
+		_, _ = w.Write(wrapped)
+		return
+	}
 	copyHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
 	buf := make([]byte, 32<<10)

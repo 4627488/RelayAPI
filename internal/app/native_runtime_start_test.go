@@ -48,8 +48,8 @@ func TestRuntimeCredentialsEnablesProviderWebSocketsInRelayMode(t *testing.T) {
 
 func TestRuntimeCredentialsDropsUnsupportedProvider(t *testing.T) {
 	rows := []store.UpstreamCredentialSnapshot{{
-		ID: "gemini", Provider: "gemini", Enabled: true,
-		Document: json.RawMessage(`{"type":"gemini","api_key":"secret"}`),
+		ID: "unknown", Provider: "unknown", Enabled: true,
+		Document: json.RawMessage(`{"type":"unknown","api_key":"secret"}`),
 	}}
 	credentials := runtimeCredentials(rows, true, nil)
 	if len(credentials) != 0 {

@@ -63,10 +63,28 @@ func TestMergeOAuthCredentialSettingsPreservesNonNetworkOptions(t *testing.T) {
 }
 
 func TestNormalizedOAuthProvider(t *testing.T) {
-	tests := map[string]string{"anthropic": "anthropic", "openai": "codex", "grok": "xai", "kimi": "kimi"}
+	tests := map[string]string{"anthropic": "claude", "openai": "codex", "grok": "xai", "kimi": "kimi", "muse": "meta"}
 	for input, want := range tests {
 		if got := normalizedOAuthProvider(input); got != want {
 			t.Errorf("normalizedOAuthProvider(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestProviderOAuthMatchesCPABuiltins(t *testing.T) {
+	for _, provider := range []string{"claude", "anthropic", "codex", "openai", "antigravity", "kimi", "xai", "devin", "meta"} {
+		if !supportsProviderOAuth(provider) {
+			t.Errorf("CPA OAuth provider %s was hidden", provider)
+		}
+	}
+	for _, provider := range []string{"vertex", "gemini", "aistudio", "unknown"} {
+		if supportsProviderOAuth(provider) {
+			t.Errorf("non-OAuth provider %s exposed a login flow", provider)
+		}
+	}
+	sessions := newProviderOAuthSessions()
+	session := sessions.create("claude", "")
+	if err := sessions.capture(session.ID, "anthropic", "Claude", []byte(`{"type":"claude","access_token":"secret"}`)); err != nil {
+		t.Fatalf("Anthropic OAuth alias was not captured: %v", err)
 	}
 }

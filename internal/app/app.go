@@ -422,6 +422,7 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/codex-reset-credits", a.withAdmin(http.HandlerFunc(a.adminCodexResetCredits)))
 	a.mux.Handle("POST /api/admin/providers/accounts/{name}/codex-reset-credits/consume", a.withAdmin(http.HandlerFunc(a.adminCodexResetCredits)))
 	a.mux.Handle("POST /api/admin/providers/accounts/{name}/test", a.withAdmin(http.HandlerFunc(a.adminProviderAccountTest)))
+	a.mux.Handle("GET /api/admin/providers/accounts/{name}/ws", a.withAdmin(http.HandlerFunc(a.adminAIStudioChannel)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
 	a.mux.Handle("POST /api/admin/providers/oauth/sessions", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthStart)))
@@ -705,7 +706,16 @@ func bearer(r *http.Request) string {
 	if value = strings.TrimSpace(r.Header.Get("X-API-Key")); value != "" {
 		return value
 	}
-	return strings.TrimSpace(r.Header.Get("X-Goog-API-Key"))
+	if value = strings.TrimSpace(r.Header.Get("X-Goog-API-Key")); value != "" {
+		return value
+	}
+	if r.URL != nil {
+		if value = strings.TrimSpace(r.URL.Query().Get("key")); value != "" {
+			return value
+		}
+		return strings.TrimSpace(r.URL.Query().Get("auth_token"))
+	}
+	return ""
 }
 
 func allowed(model string, lists ...[]string) bool {

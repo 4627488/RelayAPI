@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	relaybridge "github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
 
 // normalizeSupportedProvider is the product boundary, not merely a UI list.
@@ -11,20 +13,10 @@ import (
 // adapter that Relay intentionally does not expose.
 func normalizeSupportedProvider(value string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "codex":
-		return "codex", true
-	case "kimi":
-		return "kimi", true
-	case "xai", "x.ai", "grok":
-		return "xai", true
-	case "openai":
-		return "openai", true
-	case "openai-compatible", "openai-compatibility":
-		return "openai-compatibility", true
 	case "aliyun-bailian", "bailian", "百炼":
 		return "aliyun-bailian", true
 	default:
-		return "", false
+		return relaybridge.NormalizeProvider(value)
 	}
 }
 

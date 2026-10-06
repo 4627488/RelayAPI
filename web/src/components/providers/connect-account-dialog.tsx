@@ -792,8 +792,7 @@ function CredentialFields({
               className="font-mono text-xs"
             />
             <FieldDescription>
-              用于导入 Codex、Kimi、xAI、OpenAI 或百炼凭据。OAuth 账户请使用
-              OAuth 标签页。
+              用于导入内嵌 CPA 支持的提供商凭据。OAuth 账户请使用 OAuth 标签页。
             </FieldDescription>
           </Field>
           <Field>

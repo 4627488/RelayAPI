@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/4627488/RelayAPI/internal/pricing"
@@ -313,13 +314,13 @@ func TestModelCatalogRevisionIsStableAndPermissionScoped(t *testing.T) {
 	}
 }
 
-func TestRetiredProtocolPathsAreRejectedBeforeAuthentication(t *testing.T) {
+func TestCPAProtocolPathsRequireAuthentication(t *testing.T) {
 	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens", "/v1beta/models/gemini:generateContent"} {
 		t.Run(path, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, path, nil)
 			recorder := httptest.NewRecorder()
 			new(App).handlePublic(recorder, request)
-			if recorder.Code != http.StatusNotFound {
+			if recorder.Code != http.StatusUnauthorized {
 				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 			}
 			var payload map[string]any
@@ -327,10 +328,37 @@ func TestRetiredProtocolPathsAreRejectedBeforeAuthentication(t *testing.T) {
 				t.Fatal(err)
 			}
 			errorObject, _ := payload["error"].(map[string]any)
-			if errorObject["code"] != "unsupported_protocol" {
+			if errorObject["code"] != "invalid_api_key" {
 				t.Fatalf("error = %#v", payload)
 			}
 		})
+	}
+}
+
+func TestGeminiCatalogFiltersTenantAndKeyModels(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
+	if !isNativeModelCatalogRequest(request) {
+		t.Fatal("Gemini catalog must use Relay's policy filtering")
+	}
+	filtered, err := filterModelCatalog([]byte(`{"models":[{"name":"models/gemini-public","displayName":"Public"},{"name":"models/gemini-private"}]}`), []string{"gemini-public"})
+	if err != nil || strings.Contains(string(filtered), "gemini-private") || !strings.Contains(string(filtered), "gemini-public") {
+		t.Fatalf("Gemini policy filter = %s, %v", filtered, err)
+	}
+}
+
+func TestProtocolCatalogAliasesInheritOnlyAuthorizedModels(t *testing.T) {
+	for _, payload := range []string{
+		`{"data":[{"id":"public","display_name":"Public"},{"id":"private"}],"has_more":false,"first_id":"public","last_id":"private"}`,
+		`{"models":[{"name":"models/public","displayName":"Public"},{"name":"models/private"}]}`,
+	} {
+		filtered, err := filterModelCatalog([]byte(payload), []string{"public"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		aliased, err := addProtocolModelAliases(filtered, []store.APIKeyModelAlias{{Alias: "fast", Model: "public"}, {Alias: "denied", Model: "private"}})
+		if err != nil || !strings.Contains(string(aliased), "fast") || strings.Contains(string(aliased), "denied") || strings.Contains(string(aliased), "private") {
+			t.Fatalf("alias discovery bypassed policy: %s %v", aliased, err)
+		}
 	}
 }
 

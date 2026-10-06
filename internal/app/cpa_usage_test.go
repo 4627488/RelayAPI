@@ -65,3 +65,17 @@ func TestCPAUsageMissingVersusExplicitZero(t *testing.T) {
 		t.Fatal("complete zero-token record should remain valid")
 	}
 }
+
+func TestCPATokenCountsAreCompleteZeroCostOutcomes(t *testing.T) {
+	for _, path := range []string{"/v1/messages/count_tokens", "/v1beta/models/gemini-2.5-flash:countTokens"} {
+		got := (&App{}).cpaBillingUsage(t.Context(), "count", "", path, requestMeta{Model: "test"},
+			billing.Result{Found: true, Usage: store.Usage{Prompt: 100, Total: 100}})
+		assessment := billing.Assess(got, nil, 10_000_000)
+		if !got.NonGenerated() || got.Usage != (store.Usage{}) || !assessment.Complete || assessment.CostNanoUSD != 0 {
+			t.Fatalf("token estimate was charged: %+v %+v", got, assessment)
+		}
+	}
+	if isTokenCountPath("/v1/messages") || isTokenCountPath("/v1beta/models/test:generateContent") {
+		t.Fatal("generation must not be classified as counting")
+	}
+}

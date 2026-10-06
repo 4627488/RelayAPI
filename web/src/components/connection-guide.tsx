@@ -151,6 +151,8 @@ export function ConnectionGuide() {
           <FieldGroup>
             {[
               ["启动 Codex", "rai codex"],
+              ["启动 Claude Code", "rai claude"],
+              ["启动 OpenCode", "rai opencode"],
               ["查看本站可用模型", "rai models"],
               ["恢复客户端默认模型", "rai use default"],
               ["查看当前连接和默认模型", "rai status"],

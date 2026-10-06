@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -48,6 +49,22 @@ func TestRequestMetadataReadsWebSocketQueryModel(t *testing.T) {
 	meta := requestMetadata(nil, request)
 	if meta.Model != "gpt-realtime" || !meta.Stream {
 		t.Fatalf("metadata = %+v", meta)
+	}
+}
+
+func TestGeminiModelPathControlsAdmissionAndAlias(t *testing.T) {
+	for _, action := range []string{"generateContent", "streamGenerateContent", "countTokens"} {
+		request := httptest.NewRequest(http.MethodPost, "/v1beta/models/fast:"+action+"?alt=sse", nil)
+		body := []byte(`{"model":"decoy","contents":[{"parts":[{"text":"hi"}]}]}`)
+		meta := requestMetadata(body, request)
+		if meta.Model != "fast" || meta.Stream != (action == "streamGenerateContent") {
+			t.Fatalf("path must control Gemini admission: %+v", meta)
+		}
+		resolved := resolveAPIKeyModel(meta.Model, []store.APIKeyModelAlias{{Alias: "fast", Model: "gemini-2.5-flash"}})
+		rewritten, err := rewriteRequestModel(body, request.URL, meta.Model, resolved.Model)
+		if err != nil || request.URL.Path != "/v1beta/models/gemini-2.5-flash:"+action || request.URL.Query().Get("alt") != "sse" || string(rewritten) != string(body) {
+			t.Fatalf("Gemini alias changed payload or action: %s %s %v", request.URL, rewritten, err)
+		}
 	}
 }
 
@@ -114,6 +131,32 @@ func TestRewriteRequestModelCoversBodyPathAndQuery(t *testing.T) {
 			t.Fatalf("rewritten query = %q", request.URL.RawQuery)
 		}
 	})
+}
+
+func TestMultipartModelAliasPreservesImageContents(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("model", "image-alias")
+	file, _ := writer.CreateFormFile("image", "input.png")
+	image := []byte{0, 1, 255, '\r', '\n', 128}
+	_, _ = file.Write(image)
+	_ = writer.Close()
+	request := httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
+	forwarded, err := rewriteRequestModel(body.Bytes(), request.URL, "image-alias", "gpt-image-2", writer.FormDataContentType())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := multipart.NewReader(bytes.NewReader(forwarded), writer.Boundary())
+	model, _ := reader.NextPart()
+	value, _ := io.ReadAll(model)
+	if string(value) != "gpt-image-2" {
+		t.Fatalf("model alias not rewritten: %s", value)
+	}
+	part, _ := reader.NextPart()
+	value, _ = io.ReadAll(part)
+	if part.FileName() != "input.png" || !bytes.Equal(value, image) {
+		t.Fatal("model rewrite corrupted the input image")
+	}
 }
 
 func TestReadBoundedRequestBody(t *testing.T) {

@@ -27,7 +27,7 @@ func isNativeModelCatalogRequest(r *http.Request) bool {
 		return false
 	}
 	path := strings.TrimRight(r.URL.Path, "/")
-	return path == "/v1/models"
+	return path == "/v1/models" || path == "/v1beta/models"
 }
 
 // serveModelCatalog preserves the standard OpenAI and rich Codex catalog
@@ -84,6 +84,12 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 				}
 				payload = disabled
 			}
+		} else {
+			payload, err = addProtocolModelAliases(payload, key.ModelAliases)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "model_catalog_error", "无法生成客户端模型别名")
+				return
+			}
 		}
 	}
 	copyHeaders(w.Header(), response.Header)
@@ -99,6 +105,72 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 	}
 	w.WriteHeader(response.StatusCode)
 	_, _ = io.Copy(w, bytes.NewReader(payload))
+}
+
+// Aliases inherit only the target metadata left after policy filtering. This
+// keeps OpenAI, Claude discovery and Gemini catalogs consistent with inference.
+func addProtocolModelAliases(payload []byte, aliases []store.APIKeyModelAlias) ([]byte, error) {
+	if len(aliases) == 0 {
+		return payload, nil
+	}
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		return nil, err
+	}
+	for _, field := range []string{"data", "models"} {
+		items, ok := document[field].([]any)
+		if !ok {
+			continue
+		}
+		targets := make(map[string]map[string]any)
+		for _, raw := range items {
+			if item, ok := raw.(map[string]any); ok {
+				targets[strings.ToLower(strings.TrimPrefix(catalogModelID(item), "models/"))] = item
+			}
+		}
+		for _, alias := range aliases {
+			target := targets[strings.ToLower(strings.TrimSpace(alias.Model))]
+			name := strings.TrimSpace(alias.Alias)
+			if target == nil || name == "" {
+				continue
+			}
+			entry := cloneCatalogItem(target)
+			for _, key := range []string{"id", "name", "model", "slug"} {
+				if value, ok := entry[key].(string); ok {
+					entry[key] = name
+					if key == "name" && strings.HasPrefix(value, "models/") {
+						entry[key] = "models/" + name
+					}
+				}
+			}
+			for _, key := range []string{"display_name", "displayName"} {
+				if _, ok := entry[key]; ok {
+					entry[key] = name
+				}
+			}
+			replaced := false
+			for index, raw := range items {
+				if item, ok := raw.(map[string]any); ok && strings.EqualFold(strings.TrimPrefix(catalogModelID(item), "models/"), name) {
+					items[index], replaced = entry, true
+					break
+				}
+			}
+			if !replaced {
+				items = append(items, entry)
+			}
+		}
+		document[field] = items
+		if field == "data" {
+			if _, ok := document["has_more"]; ok {
+				document["has_more"] = false
+				if len(items) > 0 {
+					document["first_id"] = catalogModelID(items[0].(map[string]any))
+					document["last_id"] = catalogModelID(items[len(items)-1].(map[string]any))
+				}
+			}
+		}
+	}
+	return json.Marshal(document)
 }
 
 // promoteCodexCatalogCapabilities implements Relay's default product policy:

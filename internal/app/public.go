@@ -51,16 +51,37 @@ func requestPriceDimensions(key store.KeyContext, meta requestMeta, path, authIn
 func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	timeline := newLatencyTimeline(started)
-	if retiredProtocolPath(r.URL.Path) {
-		writeError(w, http.StatusNotFound, "unsupported_protocol", "RelayAPI 仅支持 Responses 和 OpenAI 兼容协议")
+	if bearer(r) == "" {
+		writeError(w, http.StatusUnauthorized, "invalid_api_key", "请提供 API Key")
 		return
 	}
-	key, err := a.store.ResolveKey(r.Context(), bearer(r))
+	plainKey := bearer(r)
+	var realtimeAuth *realtimeAuthorization
+	if strings.HasPrefix(plainKey, realtimeSecretPrefix) {
+		authorization, err := a.openRealtimeSecret(plainKey, started)
+		if err != nil || !realtimeSecretCanAccess(r.URL.Path) {
+			writeError(w, http.StatusUnauthorized, "invalid_api_key", "Realtime 临时凭据无效或已过期")
+			return
+		}
+		realtimeAuth = &authorization
+		plainKey = authorization.RelayKey
+		r = r.WithContext(context.WithValue(r.Context(), realtimeAuthContext, authorization))
+	}
+	key, err := a.store.ResolveKey(r.Context(), plainKey)
 	if err != nil || !key.Enabled || !key.TenantEnabled || expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 无效或已停用")
 		return
 	}
 	timeline.Step(time.Now(), "resolve_key", "解析 API Key", "relay", "鉴权并加载租户与 Key 权限")
+	r = r.WithContext(context.WithValue(r.Context(), runtimePrincipalContext, key.ID))
+	// Query authentication is accepted by CPA/Gemini clients, but the Relay
+	// credential must not be sent to the provider or retained in URL logs.
+	query := r.URL.Query()
+	if query.Has("key") || query.Has("auth_token") {
+		query.Del("key")
+		query.Del("auth_token")
+		r.URL.RawQuery = query.Encode()
+	}
 	if isNativeModelCatalogRequest(r) {
 		a.serveModelCatalog(w, r, key)
 		return
@@ -100,6 +121,12 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	originalBody := body
 	logContext := requestLogContext{requestBytes: int64(len(body))}
 	meta := requestMetadata(body, r)
+	if realtimeAuth != nil && readRequestMeta(body, r.URL.Path).Model == "" && r.URL.Query().Get("model") == "" {
+		meta.Model = realtimeAuth.Model
+		query := r.URL.Query()
+		query.Set("model", realtimeAuth.Model)
+		r.URL.RawQuery = query.Encode()
+	}
 	resolved := resolveAPIKeyModel(meta.Model, key.ModelAliases)
 	if resolved.ModelAlias == "" {
 		resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, r, body)
@@ -113,7 +140,20 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	resolved.ReasoningEffort = meta.ReasoningEffort
 	resolved.ImageCount = meta.ImageCount
 	meta = resolved
-	body, err = rewriteRequestModel(body, r.URL, meta.RequestedModel, meta.Model)
+	if realtimeAuth != nil {
+		if meta.Model == "" {
+			meta.Model = realtimeAuth.Model
+		}
+		if !strings.EqualFold(meta.Model, realtimeAuth.Model) {
+			a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
+				publicError(http.StatusForbidden, "realtime_secret_scope_mismatch", "Realtime 临时凭据不能切换模型"))
+			return
+		}
+	}
+	if isRealtimeSecretCreation(r.URL.Path) {
+		r = r.WithContext(context.WithValue(r.Context(), realtimeOriginContext, realtimeAuthorization{RelayKey: plainKey, Model: meta.Model}))
+	}
+	body, err = rewriteRequestModel(body, r.URL, meta.RequestedModel, meta.Model, r.Header.Get("Content-Type"))
 	if err != nil {
 		a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
 			publicError(http.StatusBadRequest, "invalid_request", "无法改写请求模型"))
@@ -128,7 +168,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	}
 	timeline.Step(time.Now(), "model_resolution", "模型解析与权限", "relay", "解析别名、改写模型并检查 Key 模型权限")
 	var basePriceResult <-chan priceLookupResult
-	if billable {
+	if billable && !isNonGenerationPath(r.URL.Path) {
 		result := make(chan priceLookupResult, 1)
 		basePriceResult = result
 		dimensions := requestPriceDimensions(key, meta, r.URL.Path, "", "")
@@ -156,23 +196,27 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 
 	var price store.ResolvedPrice
 	var priceSnapshot []byte
-	priceConfigured := false
+	// Counting has a known zero price. Metered subscriptions still require
+	// admission, but no generation price or balance reservation is needed.
+	priceConfigured := isNonGenerationPath(r.URL.Path)
 	var deferredAdmissionPrice <-chan priceLookupResult
 	if billable {
-		lookup := <-basePriceResult
-		price, err = lookup.price, lookup.err
-		if err != nil {
-			if a.unpricedModelPolicy() == "deny" {
-				a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
-					publicError(http.StatusServiceUnavailable, "pricing_unavailable", "该模型尚未配置价格，请联系管理员完善计费配置"))
-				return
+		if basePriceResult != nil {
+			lookup := <-basePriceResult
+			price, err = lookup.price, lookup.err
+			if err != nil {
+				if a.unpricedModelPolicy() == "deny" {
+					a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
+						publicError(http.StatusServiceUnavailable, "pricing_unavailable", "该模型尚未配置价格，请联系管理员完善计费配置"))
+					return
+				}
+			} else {
+				priceConfigured = true
 			}
-		} else {
-			priceConfigured = true
 		}
 		priceSnapshot = store.EncodePriceSnapshot(price)
 		reserve := int64(0)
-		if priceConfigured {
+		if priceConfigured && !isNonGenerationPath(r.URL.Path) {
 			reserve = a.cfg.ReservationNanoUSD
 			if price.ImageOutputNanoUSDPerToken > 0 {
 				imageCount := int64(meta.ImageCount)
@@ -195,7 +239,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 			a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline, admissionUserError(err))
 			return
 		}
-		if priceConfigured {
+		if priceConfigured && !isNonGenerationPath(r.URL.Path) {
 			logContext.price = &price
 			admissionPriceResult := make(chan priceLookupResult, 1)
 			deferredAdmissionPrice = admissionPriceResult
@@ -245,9 +289,14 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func retiredProtocolPath(path string) bool {
+func isTokenCountPath(path string) bool {
 	path = strings.TrimRight(strings.TrimSpace(path), "/")
-	return path == "/v1/messages" || path == "/v1/messages/count_tokens" || strings.HasPrefix(path, "/v1beta/")
+	return path == "/v1/messages/count_tokens" ||
+		(strings.HasPrefix(path, "/v1beta/models/") && strings.HasSuffix(path, ":countTokens"))
+}
+
+func isNonGenerationPath(path string) bool {
+	return isTokenCountPath(path) || isRealtimeSecretCreation(path)
 }
 
 func isWebSocketUpgrade(r *http.Request) bool {

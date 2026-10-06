@@ -12,6 +12,11 @@ import (
 // CPA owns text token interpretation. Keep modality accounting until its public
 // usage SDK exposes image buckets; aggregate totals cannot price images safely.
 func (a *App) cpaBillingUsage(ctx context.Context, requestID, responseID, endpoint string, meta requestMeta, observed billing.Result) billing.Result {
+	// Token counting still requires subscription admission and credential pinning,
+	// but its estimate is never generation usage or a billable token total.
+	if isNonGenerationPath(endpoint) {
+		return billing.Result{Model: meta.Model, UsageQuality: "not_generated"}
+	}
 	// CPA's local WS prewarm has no executor and therefore no usage callback.
 	// Its dedicated synthetic identity, explicit request intent and complete
 	// zero usage must all match; ordinary missing usage never takes this path.
@@ -21,6 +26,11 @@ func (a *App) cpaBillingUsage(ctx context.Context, requestID, responseID, endpoi
 		return observed
 	}
 	if a.nativeCPARuntime == nil {
+		return observed
+	}
+	// CPA's direct Realtime transport does not publish executor usage records.
+	// Its terminal response.done envelope is the usage authority for each turn.
+	if isRealtimeWebSocketPath(endpoint) && observed.Found {
 		return observed
 	}
 	if strings.Contains(endpoint, "/images") || observed.Usage.ImageInput > 0 || observed.Usage.ImageOutput > 0 {

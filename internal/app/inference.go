@@ -206,6 +206,10 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			firstByteAt = time.Now()
 		}
 	}}
+	if isRealtimeSecretCreation(r.URL.Path) {
+		// Temporary credentials are response secrets, not request-log content.
+		out.capture = nil
+	}
 	runtimeStarted := time.Now()
 	if call.meta.Stream {
 		out.firstToken = &firstTokenObserver{}

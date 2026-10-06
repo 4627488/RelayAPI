@@ -24,6 +24,64 @@ type nativeWebSocketTestResult struct {
 	err     error
 }
 
+type realtimeTestRuntime struct {
+	upstreamruntime.Runtime
+	handler http.Handler
+}
+
+func (r realtimeTestRuntime) Handler() http.Handler                         { return r.handler }
+func (r realtimeTestRuntime) ResolveCredentialModel(_, model string) string { return model }
+
+func TestRealtimeServerCanSendSessionBeforeFirstClientFrame(t *testing.T) {
+	app := &App{cfg: config.Config{MaxRequestBytes: 1 << 20}}
+	app.nativeRuntime = realtimeTestRuntime{handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.WriteJSON(map[string]string{"type": "session.created"})
+		_, _, _ = conn.ReadMessage()
+	})}
+	result := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _, err := app.serveNativeWebSocket(w, r, store.KeyContext{}, requestMeta{Model: "gpt-realtime", Stream: true}, "realtime", nil,
+			&nativeWebSocketAccounting{billable: true})
+		result <- err
+	}))
+	defer server.Close()
+	client, _, err := websocket.DefaultDialer.Dial("ws"+server.URL[len("http"):]+"/v1/realtime?model=gpt-realtime", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_ = client.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var event map[string]string
+	if err := client.ReadJSON(&event); err != nil || event["type"] != "session.created" {
+		t.Fatalf("Realtime handshake waited for client frame: %v %v", event, err)
+	}
+	_ = client.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Realtime channel did not close")
+	}
+}
+
+func TestRealtimeSessionUpdateCannotChangeAdmittedModel(t *testing.T) {
+	accounting := &nativeWebSocketAccounting{currentMeta: requestMeta{Model: "gpt-realtime"}}
+	_, _, _, err := (&App{}).prepareNativeWebSocketRequest([]byte(`{"type":"session.update","session":{"model":"private-model"}}`), nil, store.KeyContext{}, accounting)
+	if err == nil {
+		t.Fatal("session update bypassed model admission")
+	}
+	if _, _, _, err := (&App{}).prepareNativeWebSocketRequest([]byte(`{"type":"session.update","session":{"model":"gpt-realtime","voice":"alloy"}}`), nil, store.KeyContext{}, accounting); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNativeResponsesWebSocketProbeDisconnectIsNotAnError(t *testing.T) {
 	app := &App{cfg: config.Config{MaxRequestBytes: 1 << 20}}
 	resultCh := make(chan nativeWebSocketTestResult, 1)

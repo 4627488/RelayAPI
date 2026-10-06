@@ -2,17 +2,20 @@ package app
 
 import "testing"
 
-func TestNormalizeSupportedProviderIsFocused(t *testing.T) {
+func TestNormalizeSupportedProviderMatchesCPABuiltins(t *testing.T) {
 	for input, want := range map[string]string{
 		"codex": "codex", "kimi": "kimi", "grok": "xai", "x.ai": "xai",
 		"openai-compatible": "openai-compatibility", "百炼": "aliyun-bailian",
+		"anthropic": "claude", "claude": "claude", "gemini": "gemini",
+		"antigravity": "antigravity", "vertex": "vertex", "aistudio": "aistudio",
+		"gemini-interactions-api-key": "gemini-interactions", "devin": "devin", "muse": "meta",
 	} {
 		got, ok := normalizeSupportedProvider(input)
 		if !ok || got != want {
 			t.Fatalf("normalizeSupportedProvider(%q) = (%q, %v), want (%q, true)", input, got, ok, want)
 		}
 	}
-	for _, input := range []string{"claude", "anthropic", "gemini", "antigravity", "vertex"} {
+	for _, input := range []string{"unknown", "", "plugin-not-installed"} {
 		if got, ok := normalizeSupportedProvider(input); ok {
 			t.Fatalf("normalizeSupportedProvider(%q) = %q, want unsupported", input, got)
 		}
@@ -28,6 +31,9 @@ func TestValidateSupportedCredentialDocumentRejectsExecutorEscape(t *testing.T) 
 		{"aliyun-bailian", `{"type":"openai-compatibility"}`},
 		{"aliyun-bailian", `{"type":"aliyun-bailian"}`},
 		{"openai", `{"type":"openai-compatibility"}`},
+		{"claude", `{"type":"anthropic"}`},
+		{"gemini", `{"type":"gemini-api-key"}`},
+		{"meta", `{"type":"muse"}`},
 	}
 	for _, test := range valid {
 		if err := validateSupportedCredentialDocument(test.provider, []byte(test.document)); err != nil {

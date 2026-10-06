@@ -103,11 +103,13 @@ func (s *oauthCaptureStore) Save(ctx context.Context, auth *coreauth.Auth) (stri
 }
 
 func (r *Runtime) StartOAuth(ctx context.Context, provider, sessionID string) (OAuthStartResult, error) {
-	provider = strings.ToLower(strings.TrimSpace(provider))
+	provider = normalizeProvider(provider)
 	paths := map[string]string{
 		"claude": "/v0/management/anthropic-auth-url", "codex": "/v0/management/codex-auth-url",
 		"antigravity": "/v0/management/antigravity-auth-url", "kimi": "/v0/management/kimi-auth-url",
-		"xai": "/v0/management/xai-auth-url",
+		"xai":   "/v0/management/xai-auth-url",
+		"devin": "/v0/management/devin-auth-url",
+		"meta":  "/v0/management/meta-auth-url",
 	}
 	path, ok := paths[provider]
 	if !ok {

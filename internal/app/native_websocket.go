@@ -85,6 +85,11 @@ type nativeWebSocketSessionState struct {
 	established bool
 }
 
+func isRealtimeWebSocketPath(path string) bool {
+	path = strings.TrimRight(path, "/")
+	return path == "/v1/realtime" || strings.HasPrefix(path, "/v1/realtime/calls/") || strings.HasPrefix(path, "/v1/live/")
+}
+
 const nativeWebSocketHeartbeatInterval = 30 * time.Second
 
 func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
@@ -368,8 +373,15 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	session.upgraded = true
 	defer downstream.Close()
 	downstream.SetReadLimit(a.maxRequestBytes())
-	_ = downstream.SetReadDeadline(time.Now().Add(30 * time.Second))
-	messageType, firstFrame, err := downstream.ReadMessage()
+	messageType := websocket.TextMessage
+	var firstFrame []byte
+	// Realtime sends session.created before the client sends its first event.
+	// Responses instead needs the first response.create to select its model.
+	waitFirstFrame := !isRealtimeWebSocketPath(r.URL.Path)
+	if waitFirstFrame {
+		_ = downstream.SetReadDeadline(time.Now().Add(30 * time.Second))
+		messageType, firstFrame, err = downstream.ReadMessage()
+	}
 	firstReceivedAt := time.Now()
 	firstRequestBody := append([]byte(nil), firstFrame[:min(len(firstFrame), requestLogDetailLimit)]...)
 	_ = downstream.SetReadDeadline(time.Time{})
@@ -379,7 +391,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		}
 		return session, meta, err
 	}
-	if (messageType != websocket.TextMessage && messageType != websocket.BinaryMessage) || !json.Valid(firstFrame) {
+	if waitFirstFrame && ((messageType != websocket.TextMessage && messageType != websocket.BinaryMessage) || !json.Valid(firstFrame)) {
 		err = fmt.Errorf("first websocket message must be a JSON response.create frame")
 		accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "invalid_request"
 		writeNativeWebSocketError(downstream, http.StatusBadRequest, "invalid_request", err.Error())
@@ -470,8 +482,10 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	defer upstream.Close()
 	upstream.SetReadLimit(a.maxRequestBytes())
 	accounting.currentReady = time.Now()
-	if err = upstream.WriteMessage(messageType, firstFrame); err != nil {
-		return session, meta, err
+	if waitFirstFrame {
+		if err = upstream.WriteMessage(messageType, firstFrame); err != nil {
+			return session, meta, err
+		}
 	}
 	accounting.forwardedBytes = int64(len(firstFrame))
 	session.established = true
@@ -545,6 +559,14 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			observedAt := time.Now()
 			accounting.mu.Lock()
 			defer accounting.mu.Unlock()
+			if !accounting.currentActive && isRealtimeWebSocketPath(r.URL.Path) {
+				var event struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal(payload, &event) == nil && event.Type == "response.created" {
+					accounting.startStep(nativeWebSocketBillingEntry{Meta: accounting.currentMeta, StartedAt: observedAt, ReadyAt: observedAt})
+				}
+			}
 			if !accounting.currentActive {
 				return payload, nil
 			}
@@ -733,7 +755,10 @@ func (a *App) dialEmbeddedCPAWebSocket(ctx context.Context, r *http.Request, adm
 		return nil, nil, fmt.Errorf("embedded CPA URL uses unsupported scheme %q", target.Scheme)
 	}
 	header := nativeRuntimeWebSocketHeaders(r.Header, requestID, admission.UpstreamCredentialID)
-	header.Set("Authorization", "Bearer "+client.APIKey)
+	header.Set("Authorization", "Bearer "+runtimeAuthorizationToken(r.Context(), client.APIKey))
+	if principal, _ := r.Context().Value(runtimePrincipalContext).(string); principal != "" {
+		header.Set("X-Relay-Principal", principal)
+	}
 	if admission.UpstreamCredentialID != "" {
 		header.Set("X-Relay-CPA-Auth-ID", admission.UpstreamCredentialID)
 	}
@@ -776,7 +801,23 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 	var event struct {
 		Type string `json:"type"`
 	}
-	if json.Unmarshal(payload, &event) != nil || event.Type != "response.create" {
+	if json.Unmarshal(payload, &event) != nil {
+		return payload, accounting.currentMeta, false, nil
+	}
+	if event.Type == "session.update" {
+		update := readRequestMeta(payload, "")
+		resolved := resolveAPIKeyModel(update.Model, key.ModelAliases)
+		if update.Model != "" && !strings.EqualFold(resolved.Model, accounting.currentMeta.Model) {
+			return nil, accounting.currentMeta, false, fmt.Errorf("session.update cannot change the admitted model")
+		}
+		if update.Model != "" && update.Model != resolved.Model {
+			copyURL := url.URL{}
+			forwarded, err := rewriteRequestModel(payload, &copyURL, update.Model, resolved.Model)
+			return forwarded, accounting.currentMeta, false, err
+		}
+		return payload, accounting.currentMeta, false, nil
+	}
+	if event.Type != "response.create" {
 		return payload, accounting.currentMeta, false, nil
 	}
 	frameMeta := readRequestMeta(payload, "")
@@ -786,6 +827,11 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 	}
 	if frameMeta.Model != "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
+		if request != nil {
+			if authorization, ok := request.Context().Value(realtimeAuthContext).(realtimeAuthorization); ok && !strings.EqualFold(resolved.Model, authorization.Model) {
+				return nil, nextMeta, true, fmt.Errorf("realtime client secret cannot change its scoped model")
+			}
+		}
 		if resolved.ModelAlias == "" {
 			resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, request, payload)
 			if !strings.EqualFold(resolved.Model, frameMeta.Model) {

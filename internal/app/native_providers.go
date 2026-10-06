@@ -36,7 +36,7 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 		var supported bool
 		input.Provider, supported = normalizeSupportedProvider(input.Provider)
 		if !supported {
-			writeError(w, http.StatusBadRequest, "unsupported_provider", "仅支持 Codex、Kimi、xAI/Grok、OpenAI 和阿里云百炼")
+			writeError(w, http.StatusBadRequest, "unsupported_provider", "请选择内嵌 CPA 支持的提供商")
 			return
 		}
 		input.Name = strings.TrimSpace(input.Name)
@@ -63,6 +63,8 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			baseURL := strings.TrimSpace(input.BaseURL)
 			if baseURL == "" {
 				switch input.Provider {
+				case "claude":
+					baseURL = "https://api.anthropic.com"
 				case "openai":
 					baseURL = "https://api.openai.com/v1"
 				case "aliyun-bailian":
