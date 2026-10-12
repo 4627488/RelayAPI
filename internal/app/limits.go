@@ -23,7 +23,9 @@ func (a *App) releaseReservation(requestID string, billable bool) {
 	if !billable {
 		return
 	}
-	if err := a.store.ReleaseRequestReservation(context.Background(), requestID); err != nil {
+	err := a.store.ReleaseRequestReservation(context.Background(), requestID)
+	a.observePersistence("reservation_release", err)
+	if err != nil {
 		slog.Error("release request reservation", "request_id", requestID, "error", err)
 	}
 }

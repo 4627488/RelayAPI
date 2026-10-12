@@ -53,6 +53,8 @@ type Credential struct {
 
 // Options controls the embedded CPA inference server.
 type Options struct {
+	// OnExecution observes each actual executor attempt, including retries.
+	OnExecution                func(ExecutionAttempt)
 	APIKey                     string
 	RequestRetry               int
 	MaxRetryCredentials        int
@@ -181,6 +183,7 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 		modelRoutes: make(map[string]credentialRoute), modelNames: make(map[string]string), authIDs: make(map[string]struct{}), globalProxy: strings.TrimSpace(opts.ProxyURL),
 		traces: newRequestTraceRegistry(), routingStrategy: routingStrategy,
 	}
+	runtime.traces.onExecution = opts.OnExecution
 	if opts.OnOAuthCredential != nil {
 		oauthDir, errTemp := os.MkdirTemp("", "relayapi-oauth-")
 		if errTemp != nil {

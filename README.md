@@ -7,9 +7,13 @@ RelayAPI 是 Codex 优先的 Go 多租户模型网关。原生数据平面在同
 [docs/image-billing.md](docs/image-billing.md)，父/子订阅与严格凭据路由见
 [docs/subscriptions.md](docs/subscriptions.md)。
 
+Prometheus 可观测性通过 `GET /metrics` 提供，包含 Relay 和内嵌 CPA 指标；抓取、鉴权、指标语义和告警示例见 [docs/observability.md](docs/observability.md)。
+
 ## 启动
 
 需要 Go 1.26+ 和 PostgreSQL。
+
+本机 Windows 开发可使用 [WSLC 开发容器](docs/development-container.md)，包含 Go、pnpm、Chromium 和独立的开发/测试 PostgreSQL 数据库。
 
 ```bash
 cp .env.example .env

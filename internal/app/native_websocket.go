@@ -147,6 +147,7 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 			actual = 0
 			settleErr = a.store.ReleaseRequestReservation(context.Background(), requestID)
 		}
+		a.observePersistence("websocket_settlement", settleErr)
 		if settleErr == nil {
 			settled = true
 		} else {
@@ -223,7 +224,14 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 	if !shouldRetainRequestDetail(requestID, statusCode, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
 		input.Detail = nil
 	}
-	if logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input); logErr != nil {
+	// Completed turns were already observed at durable accrual. Only observe an
+	// interrupted active turn here, avoiding connection-summary double counting.
+	if accounting.currentActive || accounting.turnsSeen == 0 {
+		a.observeInference(input)
+	}
+	logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input)
+	a.observePersistence("websocket_summary", logErr)
+	if logErr != nil {
 		slog.Error("upsert native websocket request log", "request_id", requestID, "error", logErr)
 	}
 	for index, pending := range accounting.pending {
@@ -239,7 +247,10 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 				requestBytes: pending.RequestBytes, forwardedBytes: pending.ForwardedBytes})
 		input.ReservationRequestID = sessionID
 		input.ReservedNanoUSD = 0
-		if logErr := a.store.WriteLog(context.WithoutCancel(r.Context()), input); logErr != nil {
+		a.observeInference(input)
+		logErr := a.store.WriteLog(context.WithoutCancel(r.Context()), input)
+		a.observePersistence("websocket_interrupted", logErr)
+		if logErr != nil {
 			slog.Error("write interrupted step", "step_id", id, "error", logErr)
 		}
 	}
@@ -280,7 +291,10 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 		assessment := billing.Assess(turn, turnPrice, max64(accounting.admission.BalanceReservedNanoUSD, accounting.admission.QuotaReservedNanoUSD))
 		turnCost, turnComplete = assessment.CostNanoUSD, assessment.Complete
 	}
-	if failed && !turn.Found {
+	// A terminal upstream error is never billable. Some providers include
+	// partial usage on response.failed/error events; that usage describes a
+	// failed attempt and must not become a charge or quota-window sample.
+	if failed {
 		turnCost = 0
 		turnComplete = true
 	}
@@ -340,9 +354,11 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 		LatencyMS: turnCompleted.Sub(entry.StartedAt).Milliseconds(), StartedAt: entry.StartedAt, CompletedAt: turnCompleted,
 		Log: input,
 	})
+	a.observePersistence("websocket_accrual", err)
 	if err != nil || !inserted {
 		return inserted, err
 	}
+	a.observeInference(input)
 	accounting.turnsSeen++
 	accounting.accruedNanoUSD = aggregateCost
 	accounting.pricingComplete = aggregateComplete

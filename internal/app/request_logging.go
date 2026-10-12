@@ -270,7 +270,10 @@ func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission 
 	if !shouldRetainRequestDetail(requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
 		input.Detail = nil
 	}
-	if err := a.store.WriteLog(context.WithoutCancel(r.Context()), input); err != nil {
+	a.observeInference(input)
+	err := a.store.WriteLog(context.WithoutCancel(r.Context()), input)
+	a.observePersistence("request_log", err)
+	if err != nil {
 		slog.Error("write request log", "request_id", requestID, "error", err)
 	}
 }

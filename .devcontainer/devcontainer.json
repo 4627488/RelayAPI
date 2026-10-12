@@ -1,0 +1,32 @@
+{
+  "name": "RelayAPI (WSLC)",
+  "build": { "dockerfile": "Dockerfile", "context": "." },
+  "workspaceMount": "source=relayapi-dev-workspace,target=/workspaces/RelayAPI,type=volume",
+  "workspaceFolder": "/workspaces/RelayAPI",
+  "mounts": [
+    "source=relayapi-dev-go,target=/home/node/go,type=volume",
+    "source=relayapi-dev-cache,target=/home/node/.cache,type=volume"
+  ],
+  "runArgs": [
+    "--name=relayapi-dev",
+    "--network=relayapi-dev",
+    "--env-file=${localWorkspaceFolder}/.devcontainer/.env.local",
+    "--publish=127.0.0.1:3000:3000",
+    "--publish=127.0.0.1:5173:5173",
+    "--shm-size=1g"
+  ],
+  "initializeCommand": [
+    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+    "${localWorkspaceFolder}/.devcontainer/initialize.ps1"
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteUser": "node",
+  "updateRemoteUserUID": false,
+  "shutdownAction": "stopContainer",
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go", "dbaeumer.vscode-eslint", "esbenp.prettier-vscode"],
+      "settings": { "terminal.integrated.defaultProfile.linux": "bash" }
+    }
+  }
+}

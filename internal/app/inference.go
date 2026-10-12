@@ -278,7 +278,9 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			if assessment.Complete {
 				cost = &actual
 			}
-			if err := a.store.SettleRequestReservation(finalizeCtx, call.requestID, actual, assessment.Complete); err == nil {
+			settleErr := a.store.SettleRequestReservation(finalizeCtx, call.requestID, actual, assessment.Complete)
+			a.observePersistence("http_settlement", settleErr)
+			if err := settleErr; err == nil {
 				settled = true
 			} else {
 				slog.Error("settle request", "request_id", call.requestID, "error", err)

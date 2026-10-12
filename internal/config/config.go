@@ -11,6 +11,7 @@ import (
 )
 
 type Config struct {
+	MetricsToken                   string
 	ListenAddr                     string
 	DatabaseURL                    string
 	SessionSecret                  string
@@ -53,6 +54,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
+		MetricsToken:                   strings.TrimSpace(os.Getenv("RELAY_METRICS_TOKEN")),
 		ListenAddr:                     env("LISTEN_ADDR", ":3000"),
 		DatabaseURL:                    strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		SessionSecret:                  strings.TrimSpace(os.Getenv("RELAY_SESSION_SECRET")),

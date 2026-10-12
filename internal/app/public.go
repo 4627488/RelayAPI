@@ -99,7 +99,21 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 			publicError(http.StatusServiceUnavailable, "runtime_unavailable", "模型运行时不可用"))
 		return
 	}
+	admissionStarted := time.Now()
 	lease, err := targetAdmission.Acquire(r.Context(), expectedBodyBytes)
+	if a.metrics != nil {
+		outcome := "accepted"
+		switch {
+		case errors.Is(err, gateway.ErrOverloaded):
+			outcome = "overloaded"
+		case errors.Is(err, gateway.ErrCircuitOpen):
+			outcome = "circuit_open"
+		case err != nil:
+			outcome = "canceled"
+		}
+		a.metrics.admissionOutcomes.WithLabelValues(outcome).Inc()
+		a.metrics.admissionDuration.WithLabelValues(outcome).Observe(time.Since(admissionStarted).Seconds())
+	}
 	if err != nil {
 		classified := writeAdmissionError(w, err, targetAdmission.AdmissionStatus())
 		a.logRejectedRequest(r, key, requestID, admission, requestMetadata(nil, r), nil, started, timeline, classified)

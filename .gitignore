@@ -1,4 +1,5 @@
 .env
+/.devcontainer/.env.local
 /.env.github.local
 /relayapi
 cliproxyapi/config.yaml

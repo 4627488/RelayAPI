@@ -52,8 +52,12 @@ func (a *App) adminSyncParentQuota(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) refreshParentQuotas(ctx context.Context) {
+	started := time.Now()
+	var jobErr error
+	defer func() { a.observeJob("quota_sync", started, jobErr) }()
 	parents, err := a.store.ListParentSubscriptions(ctx)
 	if err != nil {
+		jobErr = err
 		slog.Error("list parents for automatic quota sync", "error", err)
 		return
 	}
@@ -65,8 +69,12 @@ func (a *App) refreshParentQuotas(ctx context.Context) {
 	}
 	for _, result := range a.syncParentQuotas(ctx, eligible) {
 		if result.Status == "error" {
+			jobErr = errors.New("quota probe failed")
 			slog.Warn("automatic Upstream quota sync", "parent_id", result.ParentID, "provider", result.Provider, "error", result.Error)
 		}
+	}
+	if ctx.Err() != nil {
+		jobErr = ctx.Err()
 	}
 }
 

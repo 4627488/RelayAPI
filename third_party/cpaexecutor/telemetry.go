@@ -59,9 +59,10 @@ type ExecutionAttempt struct {
 }
 
 type requestTraceRegistry struct {
-	mu     sync.Mutex
-	traces map[string]*RequestTrace
-	usage  *requestUsageStore
+	onExecution func(ExecutionAttempt)
+	mu          sync.Mutex
+	traces      map[string]*RequestTrace
+	usage       *requestUsageStore
 }
 
 func newRequestTraceRegistry() *requestTraceRegistry {
@@ -301,6 +302,7 @@ func (e *observedExecutor) CloseExecutionSession(sessionID string) {
 }
 
 type attemptState struct {
+	attempt   ExecutionAttempt
 	traces    *requestTraceRegistry
 	requestID string
 	number    int
@@ -318,6 +320,7 @@ func (e *observedExecutor) begin(ctx context.Context, auth *cliproxyauth.Auth, r
 	started := time.Now()
 	number := e.traces.startAttempt(requestID, kind, e.Identifier(), req.Model, credentialID, started)
 	state := &attemptState{traces: e.traces, requestID: requestID, number: number, http: &attemptHTTPTrace{}}
+	state.attempt = ExecutionAttempt{Number: number, Kind: kind, Provider: e.Identifier(), Model: req.Model, CredentialID: credentialID, StartedAt: started}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -342,11 +345,15 @@ func (s *attemptState) headers(at time.Time) {
 		return
 	}
 	s.traces.updateAttempt(s.requestID, s.number, func(attempt *ExecutionAttempt) { attempt.HeadersAt = at })
+	s.attempt.HeadersAt = at
 }
 
 func (s *attemptState) firstChunk(at time.Time) {
 	if s == nil {
 		return
+	}
+	if s.attempt.FirstChunkAt.IsZero() {
+		s.attempt.FirstChunkAt = at
 	}
 	s.traces.updateAttempt(s.requestID, s.number, func(attempt *ExecutionAttempt) {
 		if attempt.FirstChunkAt.IsZero() {
@@ -363,7 +370,7 @@ func (s *attemptState) finish(err error, successStatus string) {
 		s.usage.finish(err == nil && successStatus == "complete")
 		completed := time.Now()
 		snapshot := s.http.snapshot()
-		s.traces.updateAttempt(s.requestID, s.number, func(attempt *ExecutionAttempt) {
+		complete := func(attempt *ExecutionAttempt) {
 			attempt.CompletedAt = completed
 			attempt.Status = successStatus
 			if err != nil {
@@ -382,7 +389,12 @@ func (s *attemptState) finish(err error, successStatus string) {
 			attempt.TLSCompletedAt = snapshot.tlsDone
 			attempt.RequestWrittenAt = snapshot.wroteRequest
 			attempt.FirstResponseAt = snapshot.firstResponseByte
-		})
+		}
+		s.traces.updateAttempt(s.requestID, s.number, complete)
+		complete(&s.attempt)
+		if s.traces != nil && s.traces.onExecution != nil {
+			s.traces.onExecution(s.attempt)
+		}
 	})
 }
 

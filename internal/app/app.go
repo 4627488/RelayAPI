@@ -31,6 +31,7 @@ import (
 )
 
 type App struct {
+	metrics           *appMetrics
 	cfg               config.Config
 	store             store.Store
 	mux               *http.ServeMux
@@ -88,6 +89,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		providerOAuth:     newProviderOAuthSessions(),
 		finalizationSlots: make(chan struct{}, finalizationCapacity),
 	}
+	a.initMetrics()
 	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
 		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
 	}
@@ -289,6 +291,7 @@ func (a *App) reclaimRuntimeMemory(reason string, heapAlloc uint64) {
 }
 
 func (a *App) runRetention(ctx context.Context) {
+	started := time.Now()
 	stats, err := a.store.RunRetention(ctx, time.Now(), store.RetentionPolicy{
 		SummaryDays:       a.cfg.RequestLogRetentionDays,
 		SuccessDetailDays: a.cfg.RequestSuccessDetailDays, ErrorDetailDays: a.cfg.RequestDetailRetentionDays,
@@ -297,6 +300,7 @@ func (a *App) runRetention(ctx context.Context) {
 		QuotaObservationDays: a.cfg.QuotaObservationDays, InvitationDays: a.cfg.InvitationRetentionDays,
 		BatchSize: a.cfg.RetentionBatchSize, MaxRuntime: a.cfg.RetentionMaxRuntime,
 	})
+	a.observeJob("retention", started, err)
 	if err != nil {
 		slog.Error("run retention", "error", err)
 	} else if stats.RequestLogs+stats.Details+stats.LifecycleEvents+stats.LifecyclePayloads+stats.Reservations+stats.QuotaObservations+stats.Invitations > 0 {
@@ -306,7 +310,9 @@ func (a *App) runRetention(ctx context.Context) {
 	}
 }
 
-func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error {
+func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) (resultErr error) {
+	started := time.Now()
+	defer func() { a.observeJob("pricing_catalog", started, resultErr) }()
 	a.pricingSyncMu.Lock()
 	defer a.pricingSyncMu.Unlock()
 	if onlyIfEmpty {
@@ -340,10 +346,11 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) error
 }
 
 func (a *App) Handler() http.Handler {
-	return securityHeaders(a.recoverer(a.mux))
+	return securityHeaders(a.observeHTTP(a.recoverer(a.mux)))
 }
 
 func (a *App) routes() {
+	a.mux.HandleFunc("GET /metrics", a.serveMetrics)
 	a.mux.HandleFunc("GET /healthz", a.health)
 	a.mux.HandleFunc("GET /.well-known/rai.json", a.raiDiscovery)
 	a.mux.HandleFunc("HEAD /.well-known/rai.json", a.raiDiscovery)

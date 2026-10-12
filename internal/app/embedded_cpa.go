@@ -76,7 +76,8 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 	}
 	secret := hex.EncodeToString(secretBytes)
 	runtime, err := relaybridge.NewRuntime(relaybridge.Options{
-		APIKey: secret, RequestRetry: settings.RequestRetry, MaxRetryCredentials: settings.MaxRetryCredentials,
+		OnExecution: a.observeCPAExecution,
+		APIKey:      secret, RequestRetry: settings.RequestRetry, MaxRetryCredentials: settings.MaxRetryCredentials,
 		MaxRetryInterval: time.Duration(settings.MaxRetryInterval) * time.Second, RoutingStrategy: settings.RoutingStrategy,
 		ProxyURL: firstNonEmptyString(systemProxyURL, "direct"), PassthroughHeaders: settings.PassthroughHeaders,
 		DisableImageGeneration: runtimeBridgeSettings(settings, systemProxyURL).DisableImageGeneration,
@@ -85,7 +86,9 @@ func (a *App) startEmbeddedCPA(ctx context.Context, importedProxy string) error 
 		StreamBootstrapRetries: settings.StreamBootstrapRetries, NonStreamKeepAliveInterval: settings.NonStreamKeepAliveInterval,
 		DisableCredentialCooling: settings.DisableCredentialCooling,
 		OnCredentialUpdated: func(updateCtx context.Context, id string, document []byte) {
-			if persistErr := a.persistEmbeddedCredential(updateCtx, id, document); persistErr != nil {
+			persistErr := a.persistEmbeddedCredential(updateCtx, id, document)
+			a.observePersistence("credential_refresh", persistErr)
+			if persistErr != nil {
 				slog.Warn("persist embedded CPA credential refresh", "credential_id", id, "error", persistErr)
 			}
 		},

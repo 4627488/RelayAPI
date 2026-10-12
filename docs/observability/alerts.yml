@@ -1,0 +1,53 @@
+groups:
+  - name: relayapi
+    rules:
+      - alert: RelayScrapeUnavailable
+        expr: up{job="relayapi"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'RelayAPI metrics unavailable ({{ $labels.instance }})'
+      - alert: RelayCPAUnavailable
+        expr: relay_cpa_up{job="relayapi"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Embedded CPA unavailable ({{ $labels.instance }})'
+      - alert: RelayInferenceFailures
+        expr: |
+          (sum by (job, instance) (rate(relay_inference_requests_total{job="relayapi",status=~"5.."}[5m]))
+            / clamp_min(sum by (job, instance) (rate(relay_inference_requests_total{job="relayapi"}[5m])), 0.001) > 0.05)
+          and sum by (job, instance) (increase(relay_inference_requests_total{job="relayapi"}[5m])) >= 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Relay inference 5xx exceeds 5% ({{ $labels.instance }})'
+      - alert: RelayPersistenceFailures
+        expr: sum by (job, instance, operation) (increase(relay_persistence_operations_total{job="relayapi",outcome="failure"}[5m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Relay persistence failed: {{ $labels.operation }} ({{ $labels.instance }})'
+      - alert: RelayAdmissionOverloaded
+        expr: sum by (job, instance) (rate(relay_admission_requests_total{job="relayapi",outcome="overloaded"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Relay admission is rejecting requests ({{ $labels.instance }})'
+      - alert: RelayCircuitOpen
+        expr: relay_admission_circuit_state{job="relayapi"} == 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Relay global circuit remains open ({{ $labels.instance }})'
+      - alert: RelayBackgroundJobFailures
+        expr: sum by (job, instance, task) (increase(relay_background_jobs_total{job="relayapi",outcome="failure"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Relay background task failed: {{ $labels.task }} ({{ $labels.instance }})'
