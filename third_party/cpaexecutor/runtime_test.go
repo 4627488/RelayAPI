@@ -38,7 +38,7 @@ func TestRuntimeGrokOAuthResponsesUsesSupportedClientVersion(t *testing.T) {
 		if r.URL.String() != "https://cli-chat-proxy.grok.com/v1/responses" {
 			t.Errorf("Grok upstream URL = %q", r.URL.String())
 		}
-		if r.Header.Get("X-Grok-Client-Version") != "1.0.44" || r.Header.Get("User-Agent") != "xai-grok-workspace/1.0.44" {
+		if r.Header.Get("X-Grok-Client-Version") != "1.0.46" || r.Header.Get("User-Agent") != "xai-grok-workspace/1.0.46" {
 			t.Errorf("outdated Grok inference headers: %v", r.Header)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}},
@@ -60,7 +60,7 @@ func TestRuntimeLeavesOfficialCodexMultiAgentDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
-	if runtime.cfg.Codex.OptimizeMultiAgentV2 {
+	if runtime.cfg.Client.Codex.OptimizeMultiAgentV2 {
 		t.Fatal("embedded CPA must keep official optimize-multi-agent-v2 default")
 	}
 }

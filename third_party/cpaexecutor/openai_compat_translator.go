@@ -24,10 +24,13 @@ func init() {
 	)
 }
 
-func convertOpenAIChatCompletionsRequestToOpenAIResponses(modelName string, inputRawJSON []byte, stream bool) []byte {
+func convertOpenAIChatCompletionsRequestToOpenAIResponses(modelName string, inputRawJSON []byte, stream bool) ([]byte, error) {
 	// Dispatching through the SDK registry here would run plugin hooks again
 	// inside the outer Responses translation. Reuse only the built-in transform.
-	out := codexchat.ConvertOpenAIRequestToCodex(modelName, inputRawJSON, stream)
+	out, err := codexchat.ConvertOpenAIRequestToCodex(modelName, inputRawJSON, stream)
+	if err != nil {
+		return nil, err
+	}
 	out, _ = sjson.DeleteBytes(out, "include")
 	root := gjson.ParseBytes(inputRawJSON)
 
@@ -47,7 +50,7 @@ func convertOpenAIChatCompletionsRequestToOpenAIResponses(modelName string, inpu
 	} else if value = root.Get("max_tokens"); value.Exists() {
 		out, _ = sjson.SetBytes(out, "max_output_tokens", value.Value())
 	}
-	return out
+	return out, nil
 }
 
 func convertOpenAIResponsesResponseToOpenAIChatCompletions(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {

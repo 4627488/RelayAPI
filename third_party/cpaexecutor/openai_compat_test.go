@@ -2,6 +2,7 @@ package relaybridge
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,33 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+func TestOpenAICompatResponsesRejectsUntranslatableContent(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("invalid request reached upstream")
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+			exec := newOpenAICompatExecutor("openai-compatibility", &sdkconfig.Config{})
+			auth := &cliproxyauth.Auth{Provider: "openai-compatibility", Attributes: map[string]string{
+				"base_url": server.URL + "/v1", "api_key": "test", "upstream_api": "responses",
+			}}
+			req := cliproxyexecutor.Request{Model: "test-model", Payload: []byte(`{"model":"test-model","messages":[{"role":"user","content":[{"type":"file","file":{"filename":"missing.pdf"}}]}]}`)}
+			opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI}
+			var err error
+			if stream {
+				_, err = exec.ExecuteStream(t.Context(), auth, req, opts)
+			} else {
+				_, err = exec.Execute(t.Context(), auth, req, opts)
+			}
+			if err == nil {
+				t.Fatal("untranslatable file content was silently discarded")
+			}
+		})
+	}
+}
 
 // A plugin may delete a configuration update before execution. The original
 // request must not restore that update during CPA's thinking normalization.
@@ -228,5 +256,36 @@ func TestOpenAICompatExecutorStreamsConfiguredResponsesUpstream(t *testing.T) {
 	}
 	if got := metadata[responseAffinityIDMetadataKey]; got != "resp_1" {
 		t.Fatalf("stream response affinity ID = %#v, want resp_1", got)
+	}
+}
+
+func TestOpenAICompatResponsesPayloadRulesRunAfterCleanup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if got := gjson.GetBytes(body, "stream_options.include_usage"); !got.Exists() || got.Bool() {
+			t.Errorf("configured stream_options overwritten after payload rules: %s", body)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+	cfg := &sdkconfig.Config{Payload: sdkconfig.PayloadConfig{Override: []sdkconfig.PayloadRule{{
+		Models: []sdkconfig.PayloadModelRule{{Name: "test-model"}},
+		Params: map[string]any{"stream_options.include_usage": false},
+	}}}}
+	exec := newOpenAICompatExecutor("openai-compatibility", cfg)
+	auth := &cliproxyauth.Auth{Provider: "openai-compatibility", Attributes: map[string]string{
+		"base_url": server.URL + "/v1", "api_key": "test", "upstream_api": "responses",
+	}}
+	req := cliproxyexecutor.Request{Model: "test-model", Payload: []byte(`{"model":"test-model","input":"hi","stream":true,"stream_options":{"include_usage":true}}`)}
+	result, err := exec.ExecuteStream(t.Context(), auth, req, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse, Stream: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for chunk := range result.Chunks {
+		if chunk.Err != nil {
+			t.Fatal(chunk.Err)
+		}
 	}
 }

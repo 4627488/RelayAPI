@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	xaiQuotaClientVersion = "1.0.44"
+	xaiQuotaClientVersion = "1.0.46"
 	xaiQuotaTokenAuth     = "xai-grok-cli"
 )
 

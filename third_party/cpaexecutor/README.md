@@ -33,10 +33,10 @@ migration needs a supported executor observation/rebind seam, database auth
 synchronization, and a listener/handler contract; verify hot updates and strict
 credential pinning before deleting the existing lifecycle.
 
-Keep the root and bridge CPA versions aligned. The two existing fork changes
-(policy-aware credential refresh and snapshot isolation) remain until an upstream
-equivalent preserves their contracts. This bridge does not introduce additional
-CPA source patches.
+Keep the root and bridge CPA versions aligned. The policy-aware credential
+refresh patch remains until an upstream equivalent preserves its contract.
+CPA v8.0.27 includes snapshot isolation upstream, so the fork no longer carries
+that patch. This bridge does not introduce additional CPA source patches.
 
 ## Usage outcome contract
 

@@ -9,7 +9,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/pelletier/go-toml/v2 v2.2.2
 	github.com/prometheus/client_golang v1.23.2
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.8
+	github.com/router-for-me/CLIProxyAPI/v8 v8.0.27
 	github.com/router-for-me/CLIProxyAPI/v8/relaybridge v0.0.0-00010101000000-000000000000
 	github.com/tidwall/gjson v1.18.0
 	github.com/zalando/go-keyring v0.2.6
@@ -23,8 +23,8 @@ require (
 
 replace github.com/router-for-me/CLIProxyAPI/v8/relaybridge => ./third_party/cpaexecutor
 
-// v8.0.8 plus CPA's shared RefreshCredential entry point; see docs/credential-refresh.md.
-replace github.com/router-for-me/CLIProxyAPI/v8 => github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261001061144-683363787b6f
+// v8.0.27 plus CPA's shared RefreshCredential entry point; see docs/credential-refresh.md.
+replace github.com/router-for-me/CLIProxyAPI/v8 => github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261013030156-0406005b5114
 
 require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect

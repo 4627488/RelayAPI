@@ -19,24 +19,28 @@ encrypted credential store.
 ## Dependency maintenance
 
 The root module and `third_party/cpaexecutor/go.mod` pin the same replacement:
-[4627488/CLIProxyAPI commit 683363787b6f](https://github.com/4627488/CLIProxyAPI/commit/683363787b6f8251ebb20deaa8f1ac4162ba1b03),
-on branch `codex/credential-refresh-v8.0.8`. This is upstream **v8.0.8** plus
-the shared refresh lifecycle patch and a credential snapshot race fix, with
-regression tests. The replacement version is
-`v8.0.0-20261001061144-683363787b6f`; the module path is `/v8` in both
+[4627488/CLIProxyAPI commit 0406005b5114](https://github.com/4627488/CLIProxyAPI/commit/0406005b51145a8dfae0b8e97a45a8edebf261bd),
+on branch `codex/credential-refresh-v8.0.27`. This is upstream **v8.0.27** plus
+the shared refresh lifecycle patch, with regression tests. The replacement version is
+`v8.0.0-20261013030156-0406005b5114`; the module path is `/v8` in both
 Relay modules. The pseudo-version reflects the fork's tags, not a downgrade
-from upstream v8.0.8.
+from upstream v8.0.27.
 
 The shared refresh entry point passes the current registration epoch through
-the locked refresh body, preserving v8.0.8's protection against stale queued
-jobs refreshing a newly registered credential. The original refresh and
-snapshot patches remain in place.
+the locked refresh body, preserving upstream's protection against stale queued
+jobs refreshing a newly registered credential. Snapshot isolation is now
+included upstream, so the fork no longer carries that patch.
 
-CPA v8.0.8 updates the Grok CLI chat-proxy identity to `1.0.44`, fixing HTTP
-426 without a Relay inference header override. Relay's quota probe uses the
-same version. Grok's protocol conversion remains owned by CPA; this upgrade
-also includes executor-aware Codex tool schema normalization, Kimi tool-output
-ordering, Claude tool-name translation and upstream stream failure handling.
+CPA v8.0.27 uses the Grok CLI chat-proxy identity `1.0.46`. Relay's quota probe
+uses the same version without overriding inference headers. Grok's protocol
+conversion remains owned by CPA.
+
+Request translators now return errors for content the target cannot represent.
+The compatible-provider Responses extension propagates those errors for both
+streaming and non-streaming requests before contacting upstream. Chat-only
+stream options are removed before payload configuration, so configured payload
+rules remain the final semantic step. Codex's multi-agent setting now lives
+under `Client.Codex`; Relay retains the upstream default.
 
 The bridge
 unions both Codex and xAI discovery snapshots with CPA's current catalog,
