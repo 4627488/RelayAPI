@@ -77,3 +77,5 @@ WHERE log_unit NOT IN ('prewarm','connection')
 Linux 验证发现并修复原生 WebSocket 在前一轮完成后的 EOF 与下一轮完整请求之间的竞态：收到下一轮响应前发生 EOF，可重连并重发一次独立完整请求；带 previous_response_id 的增量请求不自动重放，已收到新响应后也不重放。每轮重置终态判断，避免中途断开被误认为上一轮的正常结束。Linux 重连测试重复 30 次通过。
 
 验证：Go 全套测试与 vet、CPA bridge 测试与 vet、前端格式/类型/lint/93 个浏览器测试/构建通过；数据库和存储集成测试在隔离 PostgreSQL 库通过。Linux 应用和上游测试通过，其中应用套件跳过了一个需要 GNU base64 的 OpenCode 安装脚本测试（测试执行容器为 Alpine）；该包在 Windows 上完整测试通过。临时测试库已删除。应用变更通过统一提交推送后由既有 CI/CD 构建和部署。
+
+后续按用户要求，所有速度展示统一只使用输出 Token。请求日志速度为 `completion_tokens / ((latency_ms - first_token_ms) / 1000)`，缺少有效首 Token 时间或用量时不显示速度；今日全站图按完成时间统计每分钟输出 Token，不计输入或缓存输入。历史日志中的总 Token 仍用于用量和计费，速率 API 的 `tokens` 字段现在只表示输出 Token。迁移 15 将速率索引替换为覆盖 `completion_tokens` 的 `request_logs_output_token_rate_idx`；上表速率查询性能数据是修改口径前的实验。

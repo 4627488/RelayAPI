@@ -8,7 +8,7 @@ The native-column rename in [migrations.go](../../../../internal/db/migrations.g
 
 ## Decision
 
-Migration 14 keeps the current GORM names and drops the three legacy names. The [online script](../../../../deploy/optimize-request-log-indexes.sql) validates equivalent replacements and uses concurrent index operations. A partial covering index accelerates retained generation report aggregation without introducing a cache or changing financial calculations. The [rollback script](../../../../deploy/rollback-request-log-indexes.sql) recreates old indexes if required.
+Migration 14 keeps the current GORM names and drops the three legacy names. The [online script](../../../../deploy/optimize-request-log-indexes.sql) validates equivalent replacements and uses concurrent index operations. A partial covering index accelerates retained generation report aggregation without introducing a cache or changing financial calculations. Migration 15 replaces the minute-rate index with `request_logs_output_token_rate_idx`, covering only `completion_tokens`; all speed displays use output tokens, while input/total counts remain available for accounting. The [rollback script](../../../../deploy/rollback-request-log-indexes.sql) recreates old indexes if required.
 
 ## Alternatives considered
 

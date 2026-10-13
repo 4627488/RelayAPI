@@ -104,8 +104,7 @@ export function RequestLogInsight({
                 ["总耗时", measuredMS(log.latency_ms)],
                 ["首响应 / 首字节", measuredMS(log.ttft_ms)],
                 ["首 Token", measuredMS(log.first_token_ms)],
-                ["总 Token / 总耗时", requestTokenRateLabel(log)],
-                ["输出 / 首 Token 后耗时", requestTokenRateLabel(log, true)],
+                ["输出 Token 速度", requestTokenRateLabel(log)],
               ]}
             />
             <p className="text-xs text-muted-foreground">

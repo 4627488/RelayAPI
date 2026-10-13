@@ -11,8 +11,8 @@ INCLUDE (tenant_id, model, parent_subscription_id, log_unit, status_code, error_
          latency_ms, first_token_ms, ttftms, pricing_complete, settled)
 WHERE log_unit NOT IN ('prewarm', 'connection');
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS request_logs_token_rate_idx
-ON public.request_logs (completed_at) INCLUDE (total_tokens)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS request_logs_output_token_rate_idx
+ON public.request_logs (completed_at) INCLUDE (completion_tokens)
 WHERE log_unit NOT IN ('prewarm', 'connection');
 
 -- Refuse to remove a legacy index if its replacement differs or is invalid.
@@ -48,4 +48,5 @@ END $$;
 DROP INDEX CONCURRENTLY IF EXISTS public.idx_request_logs_cpa_request_id;
 DROP INDEX CONCURRENTLY IF EXISTS public.idx_request_logs_cpa_trace_id;
 DROP INDEX CONCURRENTLY IF EXISTS public.idx_request_logs_cpa_execution_id;
+DROP INDEX CONCURRENTLY IF EXISTS public.request_logs_token_rate_idx;
 VACUUM (ANALYZE) public.request_logs;

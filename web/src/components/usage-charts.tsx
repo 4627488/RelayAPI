@@ -26,7 +26,7 @@ import type { UsageReport } from "@/lib/api"
 import { compactTokens, money } from "@/lib/format"
 type TrendMetric = "requests" | "tokens" | "cost"
 const rateConfig = {
-  tokens_per_second: { label: "总 Token 速率", color: "var(--chart-4)" },
+  tokens_per_second: { label: "输出 Token 速率", color: "var(--chart-4)" },
 } satisfies ChartConfig
 
 export function TodayTokenRate({ report }: { report: UsageReport }) {
@@ -35,10 +35,10 @@ export function TodayTokenRate({ report }: { report: UsageReport }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>今日全站 Token 速率</CardTitle>
+        <CardTitle>今日全站输出 Token 速率</CardTitle>
         <CardDescription>
-          按当前时区、请求完成时间统计，每分钟总 Token ÷
-          秒数；含输入与输出，当前分钟按已过时间计算。此图始终展示全站数据。
+          按当前时区、请求完成时间统计，每分钟输出 Token ÷
+          秒数，当前分钟按已过时间计算。此图始终展示全站数据。
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

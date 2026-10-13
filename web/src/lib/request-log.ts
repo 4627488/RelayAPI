@@ -1,10 +1,7 @@
 import type { RequestLog } from "./api"
 import { money } from "./format"
 
-export function requestTokenRate(
-  log: RequestLog,
-  output = false
-): number | null {
+export function requestTokenRate(log: RequestLog): number | null {
   if (["connection", "prewarm", "legacy_session"].includes(log.log_unit || ""))
     return null
   if (
@@ -13,10 +10,11 @@ export function requestTokenRate(
     )
   )
     return null
-  const tokens = output ? log.completion_tokens : log.total_tokens
-  const first = output ? log.first_token_ms : 0
+  const tokens = log.completion_tokens
+  const first = log.first_token_ms
   if (
     first == null ||
+    !Number.isFinite(first) ||
     first < 0 ||
     !Number.isFinite(log.latency_ms) ||
     log.latency_ms <= first ||
@@ -27,8 +25,8 @@ export function requestTokenRate(
   return (tokens * 1000) / (log.latency_ms - first)
 }
 
-export function requestTokenRateLabel(log: RequestLog, output = false) {
-  const rate = requestTokenRate(log, output)
+export function requestTokenRateLabel(log: RequestLog) {
+  const rate = requestTokenRate(log)
   return rate == null
     ? "—"
     : `${rate.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} token/s`

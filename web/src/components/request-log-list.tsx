@@ -208,7 +208,7 @@ export function RequestLogList({
                   </RequestLogInsight>
                   <p
                     className="text-xs text-muted-foreground"
-                    title="总 Token ÷ 请求总耗时（含等待）；不是输出生成速度"
+                    title="输出 Token ÷ 首 Token 至请求结束的耗时"
                   >
                     {requestTokenRateLabel(log)}
                   </p>
@@ -333,9 +333,9 @@ export function RequestLogList({
                 <div>
                   <dt
                     className="text-xs text-muted-foreground"
-                    title="总 Token ÷ 请求总耗时（含等待）"
+                    title="输出 Token ÷ 首 Token 至请求结束的耗时"
                   >
-                    Token 速率
+                    输出 Token 速度
                   </dt>
                   <dd>{requestTokenRateLabel(log)}</dd>
                 </div>

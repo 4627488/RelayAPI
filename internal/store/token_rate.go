@@ -13,7 +13,8 @@ type TokenRatePoint struct {
 	TokensPerSecond float64   `json:"tokens_per_second"`
 }
 
-// TodayTokenRate counts completed generation logs once, in one-minute buckets.
+// TodayTokenRate counts only output tokens from completed generation logs,
+// once per log in one-minute buckets. Tokens in each point means output tokens.
 // The current bucket uses elapsed seconds instead of a full minute.
 func (s Store) TodayTokenRate(ctx context.Context, now time.Time, offsetMinutes int) ([]TokenRatePoint, error) {
 	local := now.In(time.FixedZone("browser", offsetMinutes*60))
@@ -24,7 +25,7 @@ func (s Store) TodayTokenRate(ctx context.Context, now time.Time, offsetMinutes 
 	}
 	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
 		Where("completed_at >= ? AND completed_at <= ?", start, now).
-		Select("floor(extract(epoch FROM completed_at) / 60)::bigint AS bucket, COALESCE(sum(total_tokens), 0) AS tokens").
+		Select("floor(extract(epoch FROM completed_at) / 60)::bigint AS bucket, COALESCE(sum(completion_tokens), 0) AS tokens").
 		Group("bucket").Scan(&rows).Error
 	if err != nil {
 		return nil, err

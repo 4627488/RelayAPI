@@ -59,6 +59,7 @@ func TestUsageIndexMigrationRemovesOnlyLegacyDuplicates(t *testing.T) {
 			`CREATE INDEX IF NOT EXISTS idx_request_logs_cpa_trace_id ON request_logs(upstream_trace_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_request_logs_cpa_execution_id ON request_logs(upstream_execution_id)`,
 			`DELETE FROM schema_migrations WHERE version = 14`,
+			`DELETE FROM schema_migrations WHERE version = 15`,
 		} {
 			if err := database.Exec(statement).Error; err != nil {
 				return err
@@ -68,12 +69,12 @@ func TestUsageIndexMigrationRemovesOnlyLegacyDuplicates(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"idx_request_logs_cpa_request_id", "idx_request_logs_cpa_trace_id", "idx_request_logs_cpa_execution_id"} {
+	for _, name := range []string{"idx_request_logs_cpa_request_id", "idx_request_logs_cpa_trace_id", "idx_request_logs_cpa_execution_id", "request_logs_token_rate_idx"} {
 		if database.Migrator().HasIndex(&RequestLog{}, name) {
 			t.Fatalf("legacy index remains: %s", name)
 		}
 	}
-	for _, name := range []string{"idx_request_logs_upstream_request_id", "idx_request_logs_upstream_trace_id", "idx_request_logs_upstream_execution_id", "request_logs_usage_cover_idx", "request_logs_token_rate_idx"} {
+	for _, name := range []string{"idx_request_logs_upstream_request_id", "idx_request_logs_upstream_trace_id", "idx_request_logs_upstream_execution_id", "request_logs_usage_cover_idx", "request_logs_output_token_rate_idx"} {
 		if !database.Migrator().HasIndex(&RequestLog{}, name) {
 			t.Fatalf("required index missing: %s", name)
 		}

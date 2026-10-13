@@ -245,6 +245,15 @@ var migrations = []migration{
 			`DROP INDEX IF EXISTS idx_request_logs_cpa_execution_id`,
 		},
 	},
+	{
+		version: 15,
+		name:    "count output tokens only in token rate reports",
+		statements: []string{
+			`CREATE INDEX IF NOT EXISTS request_logs_output_token_rate_idx ON request_logs (completed_at)
+			 INCLUDE (completion_tokens) WHERE log_unit NOT IN ('prewarm', 'connection')`,
+			`DROP INDEX IF EXISTS request_logs_token_rate_idx`,
+		},
+	},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this

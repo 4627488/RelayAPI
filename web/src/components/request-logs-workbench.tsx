@@ -962,8 +962,7 @@ function LogOverview({
             ],
             ["首字节", log.ttft_ms != null ? `${log.ttft_ms} ms` : ""],
             ["计费块耗时", `${log.latency_ms} ms`],
-            ["总 Token / 总耗时", requestTokenRateLabel(log)],
-            ["输出 / 首 Token 后耗时", requestTokenRateLabel(log, true)],
+            ["输出 Token 速度", requestTokenRateLabel(log)],
           ]}
         />
         <p className="text-xs text-muted-foreground">
