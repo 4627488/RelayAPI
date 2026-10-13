@@ -19,7 +19,7 @@ import {
 import {
   UsageTrend,
   CostBreakdown,
-  TodayTokenRate,
+  Last24HoursTokenRate,
 } from "@/components/usage-charts"
 import { AccountHealthPanel } from "@/components/account-health-panel"
 import { PeriodControl } from "@/components/usage-view"
@@ -183,7 +183,7 @@ export function OverviewPage({
         </Alert>
       )}
       <AnalyticsSummary report={data.usage} />
-      {admin && <TodayTokenRate report={data.usage} />}
+      {admin && <Last24HoursTokenRate report={data.usage} />}
       {!admin && <TokenHeatmap key={data.usage.generated_at} />}
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <UsageTrend report={data.usage} />

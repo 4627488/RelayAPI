@@ -221,7 +221,7 @@ func (a *App) adminUsage(w http.ResponseWriter, r *http.Request) {
 	if offset < -720 || offset > 840 {
 		offset = 0
 	}
-	rate, err := a.store.TodayTokenRate(r.Context(), time.Now(), offset)
+	rate, err := a.store.Last24HoursTokenRate(r.Context(), time.Now(), offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
 		return

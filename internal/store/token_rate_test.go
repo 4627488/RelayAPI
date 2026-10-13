@@ -24,7 +24,7 @@ func TestTokenRatePoints(t *testing.T) {
 	}
 }
 
-func TestTodayTokenRateIntegration(t *testing.T) {
+func TestLast24HoursTokenRateIntegration(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is not configured")
@@ -46,7 +46,8 @@ func TestTodayTokenRateIntegration(t *testing.T) {
 	if err := tx.Exec(`CREATE TEMP TABLE request_logs (completed_at timestamptz, log_unit text, completion_tokens bigint, total_tokens bigint) ON COMMIT DROP`).Error; err != nil {
 		t.Fatal(err)
 	}
-	start := time.Date(2026, 10, 13, 0, 0, 0, 0, time.FixedZone("test", 8*3600))
+	start := time.Date(2026, 10, 12, 0, 0, 30, 0, time.FixedZone("test", 8*3600))
+	now := start.Add(24 * time.Hour)
 	for _, row := range []struct {
 		at     time.Time
 		unit   string
@@ -55,21 +56,40 @@ func TestTodayTokenRateIntegration(t *testing.T) {
 		{start.Add(-time.Second), "step", 9999},
 		{start.Add(10 * time.Second), "step", 60},
 		{start.Add(20 * time.Second), "step", 120},
-		{start.Add(2 * time.Minute), "step", 90},
+		{now.Add(-10 * time.Second), "step", 90},
 		{start.Add(time.Minute), "connection", 9999},
 		{start.Add(time.Minute), "prewarm", 9999},
-		{start.Add(3 * time.Minute), "step", 9999},
+		{now.Add(time.Second), "step", 9999},
 	} {
 		// Input-heavy totals must not inflate output speed.
 		if err := tx.Exec("INSERT INTO request_logs VALUES (?, ?, ?, ?)", row.at, row.unit, row.tokens, row.tokens+100000).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
-	points, err := (Store{DB: tx}).TodayTokenRate(context.Background(), start.Add(150*time.Second), 480)
+	points, err := (Store{DB: tx}).Last24HoursTokenRate(context.Background(), now, 480)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(points) != 3 || !points[0].Time.Equal(start) || points[0].Tokens != 180 || points[0].TokensPerSecond != 3 || points[1].TokensPerSecond != 0 || points[2].TokensPerSecond != 3 {
+	if len(points) != 1441 || !points[0].Time.Equal(start) || points[0].Tokens != 180 || points[0].TokensPerSecond != 6 || points[1].TokensPerSecond != 0 || points[1440].TokensPerSecond != 3 {
 		t.Fatalf("unexpected buckets: %+v", points)
+	}
+}
+
+func TestTokenRatePointsRollingWindow(t *testing.T) {
+	for _, offset := range []int{0, 480, -300} {
+		now := time.Date(2026, 10, 13, 0, 2, 30, 0, time.FixedZone("browser", offset*60))
+		start := now.Add(-24 * time.Hour)
+		points := tokenRatePoints(start, now, map[int64]int64{
+			start.Unix() / 60: 180,
+			now.Unix() / 60:   90,
+		})
+		if len(points) != 1441 || !points[0].Time.Equal(start) || points[0].TokensPerSecond != 6 || points[1440].TokensPerSecond != 3 {
+			t.Fatalf("offset %d: unexpected window endpoints: %+v / %+v (%d)", offset, points[0], points[len(points)-1], len(points))
+		}
+		for i, point := range points[1 : len(points)-1] {
+			if point.Time.Second() != 0 || point.TokensPerSecond != 0 {
+				t.Fatalf("bucket %d: %+v", i+1, point)
+			}
+		}
 	}
 }

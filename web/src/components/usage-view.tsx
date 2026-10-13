@@ -12,7 +12,7 @@ import {
   UsageTrend,
   TokenBreakdown,
   CostBreakdown,
-  TodayTokenRate,
+  Last24HoursTokenRate,
 } from "@/components/usage-charts"
 import { PageHeader } from "@/components/workspace-ui"
 import { Button } from "@/components/ui/button"
@@ -153,7 +153,7 @@ export function UsageView({
         </Alert>
       )}
       <AnalyticsSummary report={report} />
-      {admin && <TodayTokenRate report={report} />}
+      {admin && <Last24HoursTokenRate report={report} />}
       <UsageTrend report={report} />
       <ObservationPanels report={report} />
       <div className="grid min-w-0 gap-4 xl:grid-cols-2">

@@ -13,12 +13,12 @@ type TokenRatePoint struct {
 	TokensPerSecond float64   `json:"tokens_per_second"`
 }
 
-// TodayTokenRate counts only output tokens from completed generation logs,
+// Last24HoursTokenRate counts only output tokens from completed generation logs,
 // once per log in one-minute buckets. Tokens in each point means output tokens.
-// The current bucket uses elapsed seconds instead of a full minute.
-func (s Store) TodayTokenRate(ctx context.Context, now time.Time, offsetMinutes int) ([]TokenRatePoint, error) {
+// The rolling window covers exactly 24 hours; partial buckets use elapsed seconds.
+func (s Store) Last24HoursTokenRate(ctx context.Context, now time.Time, offsetMinutes int) ([]TokenRatePoint, error) {
 	local := now.In(time.FixedZone("browser", offsetMinutes*60))
-	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location())
+	start := local.Add(-24 * time.Hour)
 	var rows []struct {
 		Bucket int64
 		Tokens int64
@@ -38,12 +38,13 @@ func (s Store) TodayTokenRate(ctx context.Context, now time.Time, offsetMinutes 
 }
 
 func tokenRatePoints(start, now time.Time, totals map[int64]int64) []TokenRatePoint {
-	points := make([]TokenRatePoint, 0, 1440)
-	for at := start; !at.After(now); at = at.Add(time.Minute) {
-		seconds := now.Sub(at).Seconds()
-		if seconds > 60 {
-			seconds = 60
+	points := make([]TokenRatePoint, 0, 1441)
+	for at := start; !at.After(now); at = at.Truncate(time.Minute).Add(time.Minute) {
+		end := at.Truncate(time.Minute).Add(time.Minute)
+		if end.After(now) {
+			end = now
 		}
+		seconds := end.Sub(at).Seconds()
 		if seconds < 1 {
 			seconds = 1
 		}
