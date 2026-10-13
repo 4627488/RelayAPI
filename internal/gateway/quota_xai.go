@@ -23,12 +23,18 @@ func probeXAIQuota(ctx context.Context, client *http.Client, endpoints quotaEndp
 	headers := xaiQuotaHeaders(document, token)
 
 	creditsStatus, credits, creditsErr := requestQuotaHTTP(ctx, client, endpoints.xaiCredits, headers)
+	if creditsStatus == http.StatusTooManyRequests {
+		return QuotaReport{}, fmt.Errorf("xAI quota request: %w", creditsErr)
+	}
 	billingStatus, billing, billingErr := requestQuotaHTTP(ctx, client, endpoints.xaiBilling, headers)
+	if billingStatus == http.StatusTooManyRequests {
+		return QuotaReport{}, fmt.Errorf("xAI quota request: %w", billingErr)
+	}
 	creditsUnavailable := xaiBillingUnavailable(creditsStatus, creditsErr)
 	billingUnavailable := xaiBillingUnavailable(billingStatus, billingErr)
 
 	if creditsErr != nil && !creditsUnavailable && billingErr != nil && !billingUnavailable {
-		return QuotaReport{}, fmt.Errorf("xAI quota requests failed: credits: %v; billing: %v", creditsErr, billingErr)
+		return QuotaReport{}, fmt.Errorf("xAI quota requests failed: %w", errors.Join(fmt.Errorf("credits: %w", creditsErr), fmt.Errorf("billing: %w", billingErr)))
 	}
 	if creditsUnavailable && billingUnavailable {
 		return QuotaReport{AuthIndex: authIndex, Provider: provider, Supported: false, Source: "xai-billing", Observed: now, Windows: []QuotaWindow{}}, nil

@@ -1,6 +1,39 @@
 import type { RequestLog } from "./api"
 import { money } from "./format"
 
+export function requestTokenRate(
+  log: RequestLog,
+  output = false
+): number | null {
+  if (["connection", "prewarm", "legacy_session"].includes(log.log_unit || ""))
+    return null
+  if (
+    ["missing", "incomplete", "inconsistent", "ambiguous"].includes(
+      log.usage_quality || ""
+    )
+  )
+    return null
+  const tokens = output ? log.completion_tokens : log.total_tokens
+  const first = output ? log.first_token_ms : 0
+  if (
+    first == null ||
+    first < 0 ||
+    !Number.isFinite(log.latency_ms) ||
+    log.latency_ms <= first ||
+    !Number.isFinite(tokens) ||
+    tokens <= 0
+  )
+    return null
+  return (tokens * 1000) / (log.latency_ms - first)
+}
+
+export function requestTokenRateLabel(log: RequestLog, output = false) {
+  const rate = requestTokenRate(log, output)
+  return rate == null
+    ? "—"
+    : `${rate.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} token/s`
+}
+
 export function requestLogCost(log: RequestLog) {
   const amount = money(log.cost_nano_usd)
   return log.cost_nano_usd != null && !log.pricing_complete

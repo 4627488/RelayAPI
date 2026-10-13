@@ -48,6 +48,13 @@ the native runtime owns protocol translation, retries, and routing.
 - normalized quota-probe capability, status, last error, observation time, and
   the latest secret-free upstream quota snapshot used by both management views.
 
+Quota probes serialize per credential across automatic and manual sync. HTTP 429
+starts a 1/2/4/8/15-minute exponential cooldown, capped at 15 minutes unless
+`Retry-After` requests a later retry. A successful probe clears the backoff.
+Skipped probes preserve the last stored observation; the single-account sync
+API returns 429 with `Retry-After` and `retry_at` during cooldown. Backoff lives
+in the application process and resets on restart; it does not restrict inference.
+
 `parent_quota_windows` stores arbitrary observed window kinds such as `5h`,
 `7d`, `daily`, `monthly`, or `credits`. Window identity and timing are updated
 by quota probes or native runtime metadata; administrators may only override each

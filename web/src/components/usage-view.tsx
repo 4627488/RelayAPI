@@ -12,6 +12,7 @@ import {
   UsageTrend,
   TokenBreakdown,
   CostBreakdown,
+  TodayTokenRate,
 } from "@/components/usage-charts"
 import { PageHeader } from "@/components/workspace-ui"
 import { Button } from "@/components/ui/button"
@@ -66,6 +67,8 @@ export function UsageView({
   const [users, setUsers] = useState(initialUsers)
   const load = useCallback(() => {
     const params = new URLSearchParams({ days: String(days) })
+    if (admin)
+      params.set("timezone_offset", String(-new Date().getTimezoneOffset()))
     if (admin && userID !== "all") params.set("user_id", userID)
     return api<UsageReport>(
       `${admin ? "/api/admin/usage" : "/api/usage"}?${params}`
@@ -150,6 +153,7 @@ export function UsageView({
         </Alert>
       )}
       <AnalyticsSummary report={report} />
+      {admin && <TodayTokenRate report={report} />}
       <UsageTrend report={report} />
       <ObservationPanels report={report} />
       <div className="grid min-w-0 gap-4 xl:grid-cols-2">

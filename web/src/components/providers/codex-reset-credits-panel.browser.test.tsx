@@ -58,7 +58,9 @@ it("shows the upstream count and expiry, and only spends after confirmation", as
     .getByRole("button", { name: "使用一次重置", exact: true })
     .click()
   await Promise.all(
-    document.getAnimations().map((animation) => animation.finished)
+    document
+      .getAnimations()
+      .map((animation) => animation.finished.catch(() => {}))
   )
   await expectNoA11yViolations()
   await screen.getByRole("button", { name: "取消", exact: true }).click()

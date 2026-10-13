@@ -1,4 +1,8 @@
-import { requestLogCost, requestLogUsageQuality } from "@/lib/request-log"
+import {
+  requestLogCost,
+  requestLogUsageQuality,
+  requestTokenRateLabel,
+} from "@/lib/request-log"
 import {
   useCallback,
   useEffect,
@@ -958,8 +962,14 @@ function LogOverview({
             ],
             ["首字节", log.ttft_ms != null ? `${log.ttft_ms} ms` : ""],
             ["计费块耗时", `${log.latency_ms} ms`],
+            ["总 Token / 总耗时", requestTokenRateLabel(log)],
+            ["输出 / 首 Token 后耗时", requestTokenRateLabel(log, true)],
           ]}
         />
+        <p className="text-xs text-muted-foreground">
+          速率单位为 token/s。输出速率按首 Token
+          至请求结束的耗时估算；缺少有效用量或耗时的记录显示 —。
+        </p>
       </DetailGroup>
 
       {turns.length ? (

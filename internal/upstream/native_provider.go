@@ -22,6 +22,7 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 	}
 	copyProviderHeaders(request.Header, source.Header)
 	credential.authorize(request.Header, requestPath)
+	credential.applyCodexRoutingHint(request.Header, body)
 	clientTraceState, clientTrace := providerClientTrace()
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace))
 	attemptStarted := time.Now()
@@ -51,6 +52,27 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 		_ = r.refreshCredential(source.Context(), credential)
 	}
 	return response, err
+}
+
+// Derive the hint from the final body so aliases and protocol translation do
+// not leave the backend routing a different model or tier than requested.
+func (c *nativeCredential) applyCodexRoutingHint(header http.Header, body []byte) {
+	if c.Provider != "codex" || c.APIKey != "" {
+		return
+	}
+	if hint := c.Headers.Get("X-Codex-Routing-Hint"); hint != "" {
+		header.Set("X-Codex-Routing-Hint", hint)
+		return
+	}
+	model := jsonString(body, "model")
+	if model == "" {
+		return
+	}
+	hint := "model=" + model
+	if tier := jsonString(body, "service_tier"); tier != "" {
+		hint += ";tier=" + tier
+	}
+	header.Set("X-Codex-Routing-Hint", hint)
 }
 
 func (r *nativeRuntime) RefreshCredential(ctx context.Context, id string, force bool) ([]byte, bool, error) {

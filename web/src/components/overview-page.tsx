@@ -16,7 +16,11 @@ import {
   AttributionPanel,
   ObservationPanels,
 } from "@/components/analytics-panels"
-import { UsageTrend, CostBreakdown } from "@/components/usage-charts"
+import {
+  UsageTrend,
+  CostBreakdown,
+  TodayTokenRate,
+} from "@/components/usage-charts"
 import { AccountHealthPanel } from "@/components/account-health-panel"
 import { PeriodControl } from "@/components/usage-view"
 import { PageHeader } from "@/components/workspace-ui"
@@ -76,7 +80,9 @@ export function OverviewPage({
       subscriptions,
       currentSession,
     ] = await Promise.all([
-      api<UsageReport>(`${prefix}/usage?days=${days}`),
+      api<UsageReport>(
+        `${prefix}/usage?days=${days}&timezone_offset=${-new Date().getTimezoneOffset()}`
+      ),
       optional<{ items: RequestLog[] }>(
         `${prefix}/logs?page_size=6`,
         "最近请求"
@@ -177,6 +183,7 @@ export function OverviewPage({
         </Alert>
       )}
       <AnalyticsSummary report={data.usage} />
+      {admin && <TodayTokenRate report={data.usage} />}
       {!admin && <TokenHeatmap key={data.usage.generated_at} />}
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <UsageTrend report={data.usage} />

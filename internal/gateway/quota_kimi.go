@@ -29,7 +29,7 @@ func probeKimiQuota(ctx context.Context, client *http.Client, endpoints quotaEnd
 
 	var payload map[string]any
 	var source string
-	errorsByEndpoint := make([]string, 0, 2)
+	errorsByEndpoint := make([]error, 0, 2)
 	for _, candidate := range []struct {
 		endpoint string
 		source   string
@@ -42,19 +42,22 @@ func probeKimiQuota(ctx context.Context, client *http.Client, endpoints quotaEnd
 		}
 		value, err := requestQuotaJSON(ctx, client, candidate.endpoint, headers)
 		if err != nil {
-			errorsByEndpoint = append(errorsByEndpoint, fmt.Sprintf("%s: %v", candidate.source, err))
+			errorsByEndpoint = append(errorsByEndpoint, fmt.Errorf("%s: %w", candidate.source, err))
+			if status, ok := err.(*QuotaHTTPError); ok && status.StatusCode == http.StatusTooManyRequests {
+				return QuotaReport{}, fmt.Errorf("Kimi quota request: %w", err)
+			}
 			continue
 		}
 		root := quotaPayloadRoot(value)
 		if root["usage"] == nil && root["limits"] == nil {
-			errorsByEndpoint = append(errorsByEndpoint, candidate.source+": response contains no usage or limits")
+			errorsByEndpoint = append(errorsByEndpoint, fmt.Errorf("%s: response contains no usage or limits", candidate.source))
 			continue
 		}
 		payload, source = root, candidate.source
 		break
 	}
 	if payload == nil {
-		return QuotaReport{}, fmt.Errorf("Kimi quota requests failed: %s", strings.Join(errorsByEndpoint, "; "))
+		return QuotaReport{}, fmt.Errorf("Kimi quota requests failed: %w", errors.Join(errorsByEndpoint...))
 	}
 
 	windows := make([]QuotaWindow, 0, 2)

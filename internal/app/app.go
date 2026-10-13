@@ -38,6 +38,7 @@ type App struct {
 	stop              chan struct{}
 	wg                sync.WaitGroup
 	pricingSyncMu     sync.Mutex
+	quotaBackoff      quotaProbeBackoff
 	setupBox          identity.SecretBox
 	nativeAdmission   atomic.Pointer[gateway.Client]
 	nativeRuntime     upstream.Runtime

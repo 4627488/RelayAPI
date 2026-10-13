@@ -45,9 +45,12 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 	var upstreamFrames <-chan websocketFrame
 	var restorer *toolResponseRestorer
 	terminalSeen := false
+	var replayAfterTerminal *websocketFrame
 
-	connect := func() error {
-		connection, response, dialErr := credential.dialWebSocket(request.Context(), request.URL.Path, request.Header)
+	connect := func(payload []byte) error {
+		header := request.Header.Clone()
+		credential.applyCodexRoutingHint(header, payload)
+		connection, response, dialErr := credential.dialWebSocket(request.Context(), request.URL.Path, header)
 		if dialErr != nil {
 			r.mu.RLock()
 			threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown
@@ -78,6 +81,13 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 		if !credential.WebSockets {
 			return errors.New("upstream WebSocket is disabled for this credential")
 		}
+		// A client can send the next full turn before the reader observes the
+		// previous turn's EOF. Retain it until the first upstream frame, so that
+		// an EOF in that gap reconnects instead of silently dropping the turn.
+		replayAfterTerminal = nil
+		if upstream != nil && terminalSeen && websocketFullRequest(payload) {
+			replayAfterTerminal = &websocketFrame{kind: kind, payload: payload}
+		}
 		payload = rewriteJSONModel(payload, credential.ModelRoutes[strings.ToLower(model)])
 		if credential.Provider == "codex" {
 			if adapted, adaptErr := prepareCodexWebsiteRequest(payload); adaptErr == nil {
@@ -92,10 +102,11 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 			}
 		}
 		if upstream == nil {
-			if connectErr := connect(); connectErr != nil {
+			if connectErr := connect(payload); connectErr != nil {
 				return connectErr
 			}
 		}
+		terminalSeen = false
 		return upstream.WriteMessage(kind, payload)
 	}
 	if err = forward(messageType, first); err != nil {
@@ -117,6 +128,14 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 				return
 			}
 			if err = forward(message.kind, message.payload); err != nil {
+				if pending := replayAfterTerminal; pending != nil {
+					_ = upstream.Close()
+					upstream, upstreamFrames = nil, nil
+					err = forward(pending.kind, pending.payload)
+				}
+				if err == nil {
+					continue
+				}
 				_ = downstream.WriteJSON(map[string]any{"type": "error", "error": map[string]any{"type": "upstream_websocket_failed", "message": err.Error()}})
 				return
 			}
@@ -126,12 +145,20 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 					_ = upstream.Close()
 				}
 				upstream, upstreamFrames = nil, nil
+				if pending := replayAfterTerminal; pending != nil {
+					if err = forward(pending.kind, pending.payload); err != nil {
+						_ = downstream.WriteJSON(map[string]any{"type": "error", "error": map[string]any{"type": "upstream_websocket_failed", "message": err.Error()}})
+						return
+					}
+					continue
+				}
 				if terminalSeen {
 					continue
 				}
 				return
 			}
 			payload := message.payload
+			replayAfterTerminal = nil
 			if restorer != nil {
 				payload = restorer.restore(payload)
 				if len(payload) == 0 {
@@ -144,6 +171,14 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 			}
 		}
 	}
+}
+
+func websocketFullRequest(payload []byte) bool {
+	var event map[string]any
+	if json.Unmarshal(payload, &event) != nil || anyString(event["type"]) != "response.create" || anyString(event["previous_response_id"]) != "" {
+		return false
+	}
+	return event["input"] != nil
 }
 
 func readWebSocketFrames(connection *websocket.Conn, output chan<- websocketFrame) {

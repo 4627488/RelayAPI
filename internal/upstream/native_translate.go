@@ -283,6 +283,9 @@ func chatToResponsesResponse(payload []byte, model string) []byte {
 		_ = details
 	}
 	response := map[string]any{"id": firstNonEmpty(anyString(source["id"]), generatedID("resp")), "object": "response", "created_at": unixNumber(source["created"]), "status": status, "model": firstNonEmpty(anyString(source["model"]), model), "output": output, "parallel_tool_calls": true}
+	if tier, ok := source["service_tier"]; ok {
+		response["service_tier"] = tier
+	}
 	if details, ok := incompleteDetails(finish); ok {
 		response["incomplete_details"] = details
 	}
@@ -346,6 +349,9 @@ func responsesToChatResponse(payload []byte, model string) []byte {
 		finish = "length"
 	}
 	target := map[string]any{"id": source["id"], "object": "chat.completion", "created": unixNumber(source["created_at"]), "model": firstNonEmpty(anyString(source["model"]), model), "choices": []any{map[string]any{"index": 0, "message": message, "finish_reason": finish}}}
+	if tier, ok := source["service_tier"]; ok {
+		target["service_tier"] = tier
+	}
 	if usage, ok := source["usage"].(map[string]any); ok {
 		target["usage"] = responsesUsageToChat(usage)
 	}
@@ -372,6 +378,7 @@ func translateResponsesStreamToChat(w io.Writer, source io.Reader, fallbackModel
 	nextToolIndex := 0
 	toolSeen := false
 	finish := "stop"
+	serviceTier := ""
 	emit := func(delta map[string]any, finishReason any, usage any) error {
 		chunk := map[string]any{
 			"id":      responseID,
@@ -379,6 +386,9 @@ func translateResponsesStreamToChat(w io.Writer, source io.Reader, fallbackModel
 			"created": time.Now().Unix(),
 			"model":   model,
 			"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finishReason}},
+		}
+		if serviceTier != "" {
+			chunk["service_tier"] = serviceTier
 		}
 		if usage != nil {
 			chunk["usage"] = usage
@@ -405,6 +415,9 @@ func translateResponsesStreamToChat(w io.Writer, source io.Reader, fallbackModel
 			continue
 		}
 		if response, ok := event["response"].(map[string]any); ok {
+			if tier := anyString(response["service_tier"]); tier != "" {
+				serviceTier = tier
+			}
 			if id := anyString(response["id"]); id != "" {
 				responseID = id
 			}
@@ -522,6 +535,7 @@ func translateChatStreamToResponses(w io.Writer, source io.Reader, fallbackModel
 	sequence := 0
 	var finalOutput []any
 	var latestUsage any
+	serviceTier := ""
 	finishReason := ""
 	terminalReady, completed := false, false
 	emit := func(event map[string]any) error {
@@ -542,7 +556,11 @@ func translateChatStreamToResponses(w io.Writer, source io.Reader, fallbackModel
 		if responseID == "" {
 			responseID = generatedID("resp")
 		}
-		return emit(map[string]any{"type": "response.created", "response": map[string]any{"id": responseID, "object": "response", "created_at": unixNumber(createdAt), "status": "in_progress", "model": model, "output": []any{}}})
+		response := map[string]any{"id": responseID, "object": "response", "created_at": unixNumber(createdAt), "status": "in_progress", "model": model, "output": []any{}}
+		if serviceTier != "" {
+			response["service_tier"] = serviceTier
+		}
+		return emit(map[string]any{"type": "response.created", "response": response})
 	}
 	finalize := func() error {
 		if terminalReady {
@@ -604,6 +622,9 @@ func translateChatStreamToResponses(w io.Writer, source io.Reader, fallbackModel
 		event := "response.completed"
 		status := "completed"
 		response := map[string]any{"id": responseID, "object": "response", "status": status, "model": model, "output": finalOutput, "usage": chatUsageToResponses(latestUsage)}
+		if serviceTier != "" {
+			response["service_tier"] = serviceTier
+		}
 		if details, ok := incompleteDetails(finishReason); ok {
 			event = "response.incomplete"
 			response["status"] = "incomplete"
@@ -638,6 +659,9 @@ func translateChatStreamToResponses(w io.Writer, source io.Reader, fallbackModel
 		}
 		if chunk["usage"] != nil {
 			latestUsage = chunk["usage"]
+		}
+		if tier := anyString(chunk["service_tier"]); tier != "" {
+			serviceTier = tier
 		}
 		if err := ensureCreated(chunk["created"]); err != nil {
 			return err

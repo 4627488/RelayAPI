@@ -227,6 +227,24 @@ var migrations = []migration{
 			`ALTER TABLE parent_quota_resets ADD CONSTRAINT parent_quota_reset_parent_fk FOREIGN KEY (parent_subscription_id) REFERENCES parent_subscriptions(id) ON DELETE CASCADE`,
 		},
 	},
+	{
+		version: 14,
+		name:    "cover retained usage reports and remove renamed duplicate indexes",
+		statements: []string{
+			`CREATE INDEX IF NOT EXISTS request_logs_usage_cover_idx ON request_logs (started_at)
+			 INCLUDE (tenant_id, model, parent_subscription_id, log_unit, status_code, error_code,
+			 prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens,
+			 reasoning_tokens, image_input_tokens, cached_image_input_tokens,
+			 image_output_tokens, total_tokens, cost_nano_usd, provider,
+			 latency_ms, first_token_ms, ttftms, pricing_complete, settled)
+			 WHERE log_unit NOT IN ('prewarm', 'connection')`,
+			`CREATE INDEX IF NOT EXISTS request_logs_token_rate_idx ON request_logs (completed_at)
+			 INCLUDE (total_tokens) WHERE log_unit NOT IN ('prewarm', 'connection')`,
+			`DROP INDEX IF EXISTS idx_request_logs_cpa_request_id`,
+			`DROP INDEX IF EXISTS idx_request_logs_cpa_trace_id`,
+			`DROP INDEX IF EXISTS idx_request_logs_cpa_execution_id`,
+		},
+	},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this

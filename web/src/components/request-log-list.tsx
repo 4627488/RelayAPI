@@ -18,7 +18,11 @@ import {
   requestLogSucceeded,
   requestLogTransport,
 } from "@/lib/format"
-import { requestLogCost, requestLogTier } from "@/lib/request-log"
+import {
+  requestLogCost,
+  requestLogTier,
+  requestTokenRateLabel,
+} from "@/lib/request-log"
 import { routeHref, type Workspace } from "@/lib/routes"
 
 export function RequestLogKey({ log }: { log: RequestLog }) {
@@ -202,6 +206,12 @@ export function RequestLogList({
                   >
                     {compactTokens(log.total_tokens)}
                   </RequestLogInsight>
+                  <p
+                    className="text-xs text-muted-foreground"
+                    title="总 Token ÷ 请求总耗时（含等待）；不是输出生成速度"
+                  >
+                    {requestTokenRateLabel(log)}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     缓存率{" "}
                     {cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}
@@ -319,6 +329,15 @@ export function RequestLogList({
                   <dd>
                     {cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}
                   </dd>
+                </div>
+                <div>
+                  <dt
+                    className="text-xs text-muted-foreground"
+                    title="总 Token ÷ 请求总耗时（含等待）"
+                  >
+                    Token 速率
+                  </dt>
+                  <dd>{requestTokenRateLabel(log)}</dd>
                 </div>
                 <div>
                   <dt className="text-xs text-muted-foreground">首 Token</dt>

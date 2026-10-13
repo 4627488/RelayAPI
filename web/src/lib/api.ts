@@ -276,6 +276,11 @@ export interface UsageObservability {
 }
 
 export interface UsageReport {
+  token_rate?: Array<{
+    time: string
+    tokens: number
+    tokens_per_second: number
+  }>
   period_start?: string
   generated_at?: string
   observability?: UsageObservability

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 import { ShieldCheckIcon, WalletCardsIcon } from "lucide-react"
 import {
   Card,
@@ -25,6 +25,98 @@ import {
 import type { UsageReport } from "@/lib/api"
 import { compactTokens, money } from "@/lib/format"
 type TrendMetric = "requests" | "tokens" | "cost"
+const rateConfig = {
+  tokens_per_second: { label: "总 Token 速率", color: "var(--chart-4)" },
+} satisfies ChartConfig
+
+export function TodayTokenRate({ report }: { report: UsageReport }) {
+  const data = report.token_rate ?? []
+  const peak = Math.max(0, ...data.map((point) => point.tokens_per_second))
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>今日全站 Token 速率</CardTitle>
+        <CardDescription>
+          按当前时区、请求完成时间统计，每分钟总 Token ÷
+          秒数；含输入与输出，当前分钟按已过时间计算。此图始终展示全站数据。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <p className="text-sm tabular-nums">
+          分钟峰值 {peak.toLocaleString("zh-CN", { maximumFractionDigits: 1 })}{" "}
+          token/s
+        </p>
+        {data.length ? (
+          <ChartContainer config={rateConfig} className="h-72 w-full">
+            <AreaChart
+              data={data}
+              accessibilityLayer
+              margin={{ left: 4, right: 4 }}
+            >
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="time"
+                tickLine={false}
+                axisLine={false}
+                minTickGap={40}
+                tickFormatter={(value: string) =>
+                  new Date(value).toLocaleTimeString("zh-CN", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: false,
+                  })
+                }
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width={65}
+                tickFormatter={(value: number) => compactTokens(value)}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    labelFormatter={(value) =>
+                      new Date(String(value)).toLocaleTimeString("zh-CN", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        hour12: false,
+                      })
+                    }
+                    formatter={(value) => (
+                      <span className="tabular-nums">
+                        {Number(value).toLocaleString("zh-CN", {
+                          maximumFractionDigits: 1,
+                        })}{" "}
+                        token/s
+                      </span>
+                    )}
+                  />
+                }
+              />
+              <Area
+                dataKey="tokens_per_second"
+                type="stepAfter"
+                fill="var(--color-tokens_per_second)"
+                fillOpacity={0.12}
+                stroke="var(--color-tokens_per_second)"
+                strokeWidth={1.5}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ChartContainer>
+        ) : (
+          <Empty className="h-72">
+            <EmptyHeader>
+              <EmptyTitle>暂无速率数据</EmptyTitle>
+              <EmptyDescription>刷新以读取今天的全站速率。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
 const trendConfig = {
   requests: { label: "请求", color: "var(--chart-3)" },
   errors: { label: "错误", color: "var(--destructive)" },

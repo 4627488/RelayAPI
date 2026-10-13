@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,14 +18,15 @@ import (
 )
 
 type quotaSyncResult struct {
-	ParentID   string    `json:"parent_id"`
-	AuthIndex  string    `json:"upstream_auth_index"`
-	Provider   string    `json:"provider"`
-	Supported  bool      `json:"supported"`
-	Status     string    `json:"status"`
-	ObservedAt time.Time `json:"observed_at,omitempty"`
-	Windows    int       `json:"windows"`
-	Error      string    `json:"error,omitempty"`
+	ParentID   string     `json:"parent_id"`
+	AuthIndex  string     `json:"upstream_auth_index"`
+	Provider   string     `json:"provider"`
+	Supported  bool       `json:"supported"`
+	Status     string     `json:"status"`
+	ObservedAt time.Time  `json:"observed_at,omitempty"`
+	Windows    int        `json:"windows"`
+	Error      string     `json:"error,omitempty"`
+	RetryAt    *time.Time `json:"retry_at,omitempty"`
 }
 
 func (a *App) adminSyncParentQuotas(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +50,13 @@ func (a *App) adminSyncParentQuota(w http.ResponseWriter, r *http.Request) {
 	if result.Status == "error" {
 		status = http.StatusBadGateway
 	}
+	if result.RetryAt != nil {
+		status = http.StatusTooManyRequests
+		seconds := max(1, int(time.Until(*result.RetryAt).Seconds())+1)
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	} else if result.Status == "in_progress" {
+		status = http.StatusConflict
+	}
 	writeJSON(w, status, result)
 }
 
@@ -70,7 +79,7 @@ func (a *App) refreshParentQuotas(ctx context.Context) {
 	for _, result := range a.syncParentQuotas(ctx, eligible) {
 		if result.Status == "error" {
 			jobErr = errors.New("quota probe failed")
-			slog.Warn("automatic Upstream quota sync", "parent_id", result.ParentID, "provider", result.Provider, "error", result.Error)
+			slog.Warn("automatic Upstream quota sync", "parent_id", result.ParentID, "provider", result.Provider, "retry_at", result.RetryAt, "error", result.Error)
 		}
 	}
 	if ctx.Err() != nil {
@@ -115,12 +124,30 @@ func (a *App) syncParentQuotas(ctx context.Context, parents []store.ParentSubscr
 	return items
 }
 
-func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscription) quotaSyncResult {
-	result := quotaSyncResult{ParentID: parent.ID, AuthIndex: firstNonEmptyString(parent.UpstreamCredentialID, parent.UpstreamAuthIndex), Provider: parent.Provider}
+func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscription) (result quotaSyncResult) {
+	result = quotaSyncResult{ParentID: parent.ID, AuthIndex: firstNonEmptyString(parent.UpstreamCredentialID, parent.UpstreamAuthIndex), Provider: parent.Provider}
+	id := result.AuthIndex
+	if allowed, retryAt := a.quotaBackoff.begin(id, time.Now()); !allowed {
+		result.Status = "in_progress"
+		result.Error = "额度查询正在进行"
+		if !retryAt.IsZero() && retryAt.After(time.Now()) {
+			result.Status = "cooldown"
+			result.Error = "上游额度查询已限流，请稍后重试"
+			result.RetryAt = &retryAt
+		}
+		return result
+	}
+	var probeErr error
+	defer func() {
+		if retryAt := a.quotaBackoff.finish(id, time.Now(), probeErr); !retryAt.IsZero() {
+			result.RetryAt = &retryAt
+		}
+	}()
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	credential, err := a.nativeQuotaCredential(probeCtx, parent)
 	if err != nil {
+		probeErr = err
 		result.Status = "error"
 		result.Error = err.Error()
 		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
@@ -132,12 +159,14 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 	}
 	proxyURL, err := a.proxyURL(probeCtx, proxyID)
 	if err != nil {
+		probeErr = err
 		result.Status = "error"
 		result.Error = "读取账户代理失败: " + err.Error()
 		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
 		return result
 	}
 	report, err := a.probeQuotaWithRefresh(probeCtx, parent, credential, proxyURL)
+	probeErr = err
 	if err != nil {
 		result.Status = "error"
 		result.Error = err.Error()

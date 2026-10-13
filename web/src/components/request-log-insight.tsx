@@ -13,7 +13,11 @@ import { LatencyObservations } from "@/components/request-latency-timeline"
 import { parseLatencyTrace, measuredMS } from "@/lib/latency-trace"
 import type { RequestLog } from "@/lib/api"
 import type { Workspace } from "@/lib/routes"
-import { requestLogCost, requestLogUsageQuality } from "@/lib/request-log"
+import {
+  requestLogCost,
+  requestLogUsageQuality,
+  requestTokenRateLabel,
+} from "@/lib/request-log"
 import {
   bytes,
   cacheHitRateLabel,
@@ -100,8 +104,14 @@ export function RequestLogInsight({
                 ["总耗时", measuredMS(log.latency_ms)],
                 ["首响应 / 首字节", measuredMS(log.ttft_ms)],
                 ["首 Token", measuredMS(log.first_token_ms)],
+                ["总 Token / 总耗时", requestTokenRateLabel(log)],
+                ["输出 / 首 Token 后耗时", requestTokenRateLabel(log, true)],
               ]}
             />
+            <p className="text-xs text-muted-foreground">
+              速率单位为 token/s。输出速率为输出 Token 除以首 Token
+              至请求结束的耗时，是生成速度估算；缺少有效用量或耗时的记录显示 —。
+            </p>
             {trace && (trace.segments.length || trace.marks.length) ? (
               <>
                 <p className="text-xs text-muted-foreground">

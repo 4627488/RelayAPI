@@ -217,6 +217,16 @@ func (a *App) adminUsage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
 		return
 	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("timezone_offset"))
+	if offset < -720 || offset > 840 {
+		offset = 0
+	}
+	rate, err := a.store.TodayTokenRate(r.Context(), time.Now(), offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
+		return
+	}
+	value["token_rate"] = rate
 	writeJSON(w, http.StatusOK, value)
 }
 

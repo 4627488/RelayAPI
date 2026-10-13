@@ -251,6 +251,7 @@ func TestNativeResponsesWebSocketCompletedThenUpstreamEOFReconnectsNextFullTurn(
 		t.Fatal(err)
 	}
 	defer client.Close()
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if err = client.WriteJSON(map[string]any{"type": "response.create", "model": "gpt-test"}); err != nil {
 		t.Fatal(err)
 	}
