@@ -59,6 +59,65 @@ afterEach(async () => {
 })
 
 describe("subscription allocation", () => {
+  it("does not show another account when a credential has no allocation record", async () => {
+    vi.mocked(api).mockImplementation(async (path) => ({
+      items: path.endsWith("parents") ? parents : [],
+    }))
+    const screen = await render(
+      <AdminSubscriptionsView accountID="unknown-credential" />
+    )
+    await expect.element(screen.getByText("账户授权信息尚未就绪")).toBeVisible()
+    await expect
+      .element(screen.getByRole("heading", { name: "研发共享账户" }))
+      .not.toBeInTheDocument()
+  })
+
+  it("migrates a historical balance grant to a current account", async () => {
+    const historical = {
+      ...parents[1],
+      item: {
+        ...parents[1].item,
+        id: "deleted-parent",
+        name: "已删除账户",
+        status: "missing",
+      },
+    }
+    const grant = {
+      ...grants[0],
+      name: "历史用户",
+      parent_subscription_id: "deleted-parent",
+      starts_at: "2026-10-01T00:00:00Z",
+      expires_at: "",
+    }
+    vi.mocked(api).mockImplementation(async (path) => ({
+      items: path.endsWith("parents")
+        ? [historical, ...parents]
+        : path.endsWith("children")
+          ? [grant]
+          : [],
+    }))
+    const screen = await render(<AdminSubscriptionsView historicalOnly />)
+    await screen.getByRole("button", { name: "管理 历史用户" }).click()
+    await screen.getByRole("menuitem", { name: "迁移授权" }).click()
+    await screen.getByRole("combobox").first().click()
+    await screen
+      .getByRole("option", { name: "Kimi 团队账户 · 余额结算" })
+      .click()
+    await screen.getByRole("button", { name: "保存授权" }).click()
+    await expect
+      .poll(() =>
+        vi
+          .mocked(api)
+          .mock.calls.some(
+            ([path, init]) =>
+              path === "/api/admin/subscriptions/children/grant-0" &&
+              init?.method === "PUT" &&
+              JSON.parse(String(init.body)).parent_subscription_id ===
+                "parent-1"
+          )
+      )
+      .toBe(true)
+  })
   it("confirms account deletion, keeps failed deletion retryable, and refreshes after success", async () => {
     const unavailable = {
       ...parents[0],
@@ -129,7 +188,7 @@ describe("subscription allocation", () => {
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width)
       await expectNoA11yViolations()
       await screen
-        .getByRole("textbox", { name: "搜索租户授权" })
+        .getByRole("textbox", { name: "搜索用户授权" })
         .fill("developer3")
       await expect
         .poll(() => document.body.innerText)
@@ -147,7 +206,7 @@ describe("subscription allocation", () => {
         .element(screen.getByRole("heading", { name: "Kimi 团队账户" }))
         .toBeVisible()
       await expect
-        .element(screen.getByRole("textbox", { name: "搜索租户授权" }))
+        .element(screen.getByRole("textbox", { name: "搜索用户授权" }))
         .toHaveValue("")
       await screen
         .getByRole("button", { name: "添加用户", exact: true })

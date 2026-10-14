@@ -82,6 +82,8 @@ export function parseAppRoute(location: RouteLocation): AppRoute {
   const requestedPage = segments[offset] || "overview"
   let page = requestedPage as Page
 
+  if (workspace === "admin" && page === "subscriptions") page = "providers"
+
   if (
     workspace === "admin" &&
     requestedPage === "users" &&
@@ -124,6 +126,8 @@ export function routeHref(route: Omit<AppRoute, "valid">) {
       path += "/users/invitations"
     } else if (route.workspace === "admin" && route.page === "proxies") {
       path += "/settings/proxies"
+    } else if (route.workspace === "admin" && route.page === "subscriptions") {
+      path += "/providers"
     } else {
       path += `/${route.page}`
     }

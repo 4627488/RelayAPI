@@ -37,11 +37,6 @@ const RequestLogsWorkbench = lazy(() =>
     default: module.RequestLogsWorkbench,
   }))
 )
-const AdminSubscriptionsView = lazy(() =>
-  import("@/components/admin-subscriptions-view").then((module) => ({
-    default: module.AdminSubscriptionsView,
-  }))
-)
 
 interface AdminWorkspaceProps {
   page: Page
@@ -65,7 +60,7 @@ export function AdminWorkspace({
       />
     )
   }
-  if (page === "providers") return <ProvidersView />
+  if (page === "providers" || page === "subscriptions") return <ProvidersView />
   if (page === "settings" || page === "proxies") {
     return (
       <SettingsHub
@@ -76,7 +71,6 @@ export function AdminWorkspace({
       />
     )
   }
-  if (page === "subscriptions") return <AdminSubscriptionsView />
   if (page === "logs") return <RequestLogsWorkbench admin />
   if (page === "pricing") return <PricingView />
   if (page === "usage") return <UsageView admin />

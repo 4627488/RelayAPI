@@ -7,6 +7,20 @@ function location(pathname: string, hash = "") {
 }
 
 describe("application routes", () => {
+  it("canonicalizes admin allocations into accounts while keeping user subscriptions", () => {
+    expect(parseAppRoute(location("/admin/subscriptions"))).toMatchObject({
+      workspace: "admin",
+      page: "providers",
+      valid: false,
+    })
+    expect(routeHref({ workspace: "admin", page: "subscriptions" })).toBe(
+      "/admin/providers"
+    )
+    expect(parseAppRoute(location("/app/subscriptions"))).toMatchObject({
+      page: "subscriptions",
+      valid: true,
+    })
+  })
   it("parses canonical user and admin pages", () => {
     expect(parseAppRoute(location("/app/usage"))).toMatchObject({
       workspace: "user",

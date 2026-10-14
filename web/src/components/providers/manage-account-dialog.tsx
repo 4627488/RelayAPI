@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -76,6 +76,8 @@ type Props = {
   onTest: (account: ProviderAccount) => void
   lastTest?: ProviderAccountTestResult
   proxies: OutboundProxy[]
+  initialTab?: string
+  accessPanel?: ReactNode
 }
 export function ManageAccountDialog(props: Props) {
   return props.account ? (
@@ -97,8 +99,10 @@ function AccountDetails({
   onTest,
   lastTest,
   proxies,
+  initialTab = "status",
+  accessPanel,
 }: Props & { account: ProviderAccount }) {
-  const [tab, setTab] = useState("status")
+  const [tab, setTab] = useState(initialTab)
   const [name, setName] = useState(displayName(account))
   const [baseURL, setBaseURL] = useState(account.base_url ?? "")
   const [proxyID, setProxyID] = useState(account.proxy_id ?? "")
@@ -329,6 +333,11 @@ function AccountDetails({
             className="min-h-0 flex-1 px-6"
           >
             <TabsList variant="line" className="w-full shrink-0">
+              {accessPanel ? (
+                <TabsTrigger disabled={busy || dirty} value="access">
+                  用户授权
+                </TabsTrigger>
+              ) : null}
               <TabsTrigger disabled={busy} value="status">
                 运行状态
               </TabsTrigger>
@@ -346,6 +355,11 @@ function AccountDetails({
               disabled={busy}
               className="min-h-0 min-w-0 flex-1 overflow-y-auto py-3"
             >
+              {accessPanel ? (
+                <TabsContent value="access">
+                  {tab === "access" ? accessPanel : null}
+                </TabsContent>
+              ) : null}
               <TabsContent value="status">
                 <AccountStatusPanel
                   account={account}
@@ -739,7 +753,7 @@ function AccountDetails({
               >
                 关闭
               </Button>
-              {tab !== "status" ? (
+              {tab !== "status" && tab !== "access" ? (
                 <Button
                   disabled={
                     busy ||
