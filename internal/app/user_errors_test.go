@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"unicode"
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
@@ -42,12 +43,20 @@ func TestAdmissionUserErrorSeparatesBillingSubscriptionAndInternalFailures(t *te
 		if got.Status != test.status || got.Code != test.code {
 			t.Fatalf("classification for %v = %+v", test.err, got)
 		}
+		for _, char := range got.Message {
+			if unicode.Is(unicode.Han, char) {
+				t.Fatalf("expected an English error message: %q", got.Message)
+			}
+		}
 	}
 }
 
 func TestWriteErrorIncludesStableTypeRetryabilityAndHeader(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	writeError(recorder, http.StatusServiceUnavailable, "subscription_unavailable", "订阅不可用")
+	writeError(recorder, http.StatusServiceUnavailable, "subscription_unavailable", "Your subscription is unavailable. Contact your administrator.")
+	if recorder.Header().Get("X-Relay-Error-Source") != "relay" {
+		t.Fatalf("error source = %q", recorder.Header().Get("X-Relay-Error-Source"))
+	}
 	if recorder.Code != http.StatusServiceUnavailable || recorder.Header().Get("X-Relay-Error-Code") != "subscription_unavailable" {
 		t.Fatalf("status/header = %d/%q", recorder.Code, recorder.Header().Get("X-Relay-Error-Code"))
 	}

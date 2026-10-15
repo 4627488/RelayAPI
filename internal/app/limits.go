@@ -58,10 +58,10 @@ func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
 			return err
 		}
 		if key.TenantTokenLimit != nil && tenantTokens >= *key.TenantTokenLimit {
-			return &requestLimitError{Code: "tenant_daily_token_limit_exceeded", Message: "租户今日 Token 使用额度已用尽，请等待次日重置"}
+			return &requestLimitError{Code: "tenant_daily_token_limit_exceeded", Message: "Your account has reached its daily token limit. Wait for the daily reset."}
 		}
 		if key.TokenLimitDaily != nil && keyTokens >= *key.TokenLimitDaily {
-			return &requestLimitError{Code: "api_key_daily_token_limit_exceeded", Message: "该 API Key 今日 Token 使用额度已用尽，请等待次日重置"}
+			return &requestLimitError{Code: "api_key_daily_token_limit_exceeded", Message: "This API key has reached its daily token limit. Wait for the daily reset."}
 		}
 	}
 	// Per-minute admission is intentionally process-local; PostgreSQL remains the source of truth for billing.
@@ -70,7 +70,7 @@ func (a *App) enforceLimits(ctx context.Context, key store.KeyContext) error {
 		limit = key.TenantRateLimit
 	}
 	if limit != nil && !a.allowRate(key.ID, *limit) {
-		return &requestLimitError{Code: "api_key_rate_limit_exceeded", Message: "该 API Key 每分钟请求次数已达上限，请稍后重试"}
+		return &requestLimitError{Code: "api_key_rate_limit_exceeded", Message: "This API key has reached its per-minute request limit. Try again later."}
 	}
 	return nil
 }

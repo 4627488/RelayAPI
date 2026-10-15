@@ -134,6 +134,10 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	} else {
 		credential.releaseProbe()
 	}
+	if response.StatusCode >= http.StatusBadRequest {
+		writeProviderError(w, response)
+		return
+	}
 	var source io.Reader = response.Body
 	modelObserver := &responseModelObserver{stream: clientStream || collectStream || strings.Contains(response.Header.Get("Content-Type"), "text/event-stream")}
 	source = io.TeeReader(source, modelObserver)
@@ -317,9 +321,63 @@ func copyResponseHeaders(destination, source http.Header) {
 }
 
 func writeRuntimeError(w http.ResponseWriter, status int, code, message string) {
+	source := "relay"
+	if code == "upstream_connection_failed" || code == "upstream_response_invalid" {
+		source = "upstream"
+		message = "Upstream service error: " + message
+	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Relay-Error-Source", source)
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": code, "code": code, "message": message}})
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": code, "code": code, "message": message, "source": source}})
+}
+
+// Preserve provider error fields while identifying the service that rejected
+// the request. Bound reads and avoid exposing HTML gateway pages to API clients.
+func writeProviderError(w http.ResponseWriter, response *http.Response) {
+	const limit = 64 << 10
+	payload, readErr := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	var root map[string]any
+	if readErr != nil || len(payload) > limit || json.Unmarshal(payload, &root) != nil || root == nil {
+		root = make(map[string]any)
+		text := strings.TrimSpace(string(payload))
+		if readErr == nil && len(payload) <= limit && !strings.HasPrefix(text, "<") {
+			root["message"] = text
+		}
+	}
+	value, ok := root["error"].(map[string]any)
+	if !ok || value == nil {
+		value = make(map[string]any)
+		if message, ok := root["error"].(string); ok {
+			value["message"] = message
+		} else if message, ok := root["message"].(string); ok {
+			value["message"] = message
+		}
+		root["error"] = value
+	}
+	message, _ := value["message"].(string)
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = http.StatusText(response.StatusCode)
+	}
+	if message == "" {
+		message = "The upstream service rejected the request."
+	}
+	value["message"] = "Upstream service error: " + message
+	value["source"] = "upstream"
+	if value["code"] == nil {
+		value["code"] = "upstream_http_error"
+	}
+	if value["type"] == nil {
+		value["type"] = "upstream_error"
+	}
+	copyResponseHeaders(w.Header(), response.Header)
+	w.Header().Del("Content-Length")
+	w.Header().Del("Content-Encoding")
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Relay-Error-Source", "upstream")
+	w.WriteHeader(response.StatusCode)
+	_ = json.NewEncoder(w).Encode(root)
 }
 
 func firstNonEmpty(values ...string) string {

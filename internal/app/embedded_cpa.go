@@ -496,12 +496,12 @@ func (a *App) proxyEmbeddedCPA(w http.ResponseWriter, r *http.Request, body []by
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 		origin, ok := r.Context().Value(realtimeOriginContext).(realtimeAuthorization)
 		if readErr != nil || !ok {
-			writeError(w, http.StatusBadGateway, "realtime_secret_error", "无法创建 Realtime 临时凭据")
+			writeError(w, http.StatusBadGateway, "realtime_secret_error", "Relay could not create a Realtime temporary credential. Try again later.")
 			return
 		}
 		wrapped, wrapErr := a.wrapRealtimeSecret(payload, origin)
 		if wrapErr != nil {
-			writeError(w, http.StatusBadGateway, "realtime_secret_error", "无法创建 Realtime 临时凭据")
+			writeError(w, http.StatusBadGateway, "realtime_secret_error", "Relay could not create a Realtime temporary credential. Try again later.")
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")

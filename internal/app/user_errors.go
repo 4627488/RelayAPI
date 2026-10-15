@@ -10,7 +10,7 @@ import (
 )
 
 // userFacingError is Relay's own public error contract (auth, admission,
-// policy). Provider responses are forwarded as written.
+// policy).
 type userFacingError struct {
 	Status         int
 	Code           string
@@ -52,13 +52,14 @@ func writeUserFacingError(w http.ResponseWriter, value userFacingError) {
 		value.Status = http.StatusInternalServerError
 	}
 	w.Header().Set("X-Relay-Error-Code", value.Code)
+	w.Header().Set("X-Relay-Error-Source", "relay")
 	details := map[string]any{"retryable": value.Retryable}
 	if value.UpstreamStatus > 0 {
 		details["upstream_status"] = value.UpstreamStatus
 	}
 	writeJSON(w, value.Status, map[string]any{"error": map[string]any{
 		"code": value.Code, "type": errorTypeForStatus(value.Status),
-		"message": value.Message, "details": details,
+		"message": value.Message, "details": details, "source": "relay",
 	}})
 }
 
@@ -67,17 +68,17 @@ func admissionUserError(err error) userFacingError {
 	case err == nil:
 		return userFacingError{}
 	case errors.Is(err, store.ErrInsufficientBalance):
-		return userFacingError{Status: http.StatusPaymentRequired, Code: "insufficient_balance", Message: "账户余额不足，请充值后重试"}
+		return userFacingError{Status: http.StatusPaymentRequired, Code: "insufficient_balance", Message: "Your account balance is insufficient. Add funds and try again."}
 	case errors.Is(err, store.ErrSubscriptionPrice):
-		return userFacingError{Status: http.StatusServiceUnavailable, Code: "subscription_pricing_unavailable", Message: "该订阅的模型价格尚未配置，请联系管理员完善计费配置"}
+		return userFacingError{Status: http.StatusServiceUnavailable, Code: "subscription_pricing_unavailable", Message: "Pricing is not configured for this subscription. Contact your administrator."}
 	case errors.Is(err, store.ErrSubscriptionUnavailable):
-		return userFacingError{Status: http.StatusServiceUnavailable, Code: "subscription_unavailable", Message: "分配给你的订阅当前不可用，请联系管理员检查模型账户或订阅配置"}
+		return userFacingError{Status: http.StatusServiceUnavailable, Code: "subscription_unavailable", Message: "Your assigned subscription is unavailable. Contact your administrator to check the model account and subscription settings."}
 	case errors.Is(err, store.ErrSubscriptionRequired):
-		return userFacingError{Status: http.StatusForbidden, Code: "subscription_not_assigned", Message: "你尚未获得该模型对应订阅的使用权限"}
+		return userFacingError{Status: http.StatusForbidden, Code: "subscription_not_assigned", Message: "You do not have a subscription for this model. Contact your administrator to request access."}
 	case errors.Is(err, store.ErrSubscriptionExhausted):
-		return userFacingError{Status: http.StatusPaymentRequired, Code: "subscription_quota_exhausted", Message: "分配给你的订阅额度已用尽，请等待额度重置或联系管理员"}
+		return userFacingError{Status: http.StatusPaymentRequired, Code: "subscription_quota_exhausted", Message: "Your subscription quota is exhausted. Wait for it to reset or contact your administrator."}
 	default:
-		return userFacingError{Status: http.StatusInternalServerError, Code: "admission_internal_error", Message: "请求准入检查失败，请稍后重试；若持续出现请联系管理员", Retryable: true}
+		return userFacingError{Status: http.StatusInternalServerError, Code: "admission_internal_error", Message: "Relay could not check whether this request is allowed. Try again later. If the problem persists, contact your administrator.", Retryable: true}
 	}
 }
 

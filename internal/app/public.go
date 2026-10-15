@@ -52,7 +52,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	timeline := newLatencyTimeline(started)
 	if bearer(r) == "" {
-		writeError(w, http.StatusUnauthorized, "invalid_api_key", "请提供 API Key")
+		writeError(w, http.StatusUnauthorized, "invalid_api_key", "An API key is required. Provide it in the Authorization header.")
 		return
 	}
 	plainKey := bearer(r)
@@ -60,7 +60,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(plainKey, realtimeSecretPrefix) {
 		authorization, err := a.openRealtimeSecret(plainKey, started)
 		if err != nil || !realtimeSecretCanAccess(r.URL.Path) {
-			writeError(w, http.StatusUnauthorized, "invalid_api_key", "Realtime 临时凭据无效或已过期")
+			writeError(w, http.StatusUnauthorized, "invalid_api_key", "The Realtime temporary credential is invalid or has expired. Create a new credential.")
 			return
 		}
 		realtimeAuth = &authorization
@@ -69,7 +69,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	}
 	key, err := a.store.ResolveKey(r.Context(), plainKey)
 	if err != nil || !key.Enabled || !key.TenantEnabled || expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
-		writeError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 无效或已停用")
+		writeError(w, http.StatusUnauthorized, "invalid_api_key", "The API key is invalid or disabled. Check your key or contact your administrator.")
 		return
 	}
 	timeline.Step(time.Now(), "resolve_key", "解析 API Key", "relay", "鉴权并加载租户与 Key 权限")
@@ -96,7 +96,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	targetAdmission := a.admission()
 	if targetAdmission == nil || a.nativeRuntime == nil || a.inferenceCPA() == nil {
 		a.rejectPublic(w, r, key, requestID, admission, requestMetadata(nil, r), nil, started, timeline,
-			publicError(http.StatusServiceUnavailable, "runtime_unavailable", "模型运行时不可用"))
+			publicError(http.StatusServiceUnavailable, "runtime_unavailable", "The model runtime is unavailable. Try again later."))
 		return
 	}
 	admissionStarted := time.Now()
@@ -125,7 +125,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	body, err := readBoundedRequestBody(w, r, a.maxRequestBytes())
 	if err != nil {
 		a.rejectPublic(w, r, key, requestID, admission, requestMetadata(body, r), body, started, timeline,
-			publicError(http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("请求体超过 %d MiB", a.maxRequestBytes()>>20)))
+			publicError(http.StatusRequestEntityTooLarge, "body_too_large", fmt.Sprintf("The request body exceeds the %d MiB limit. Reduce the request size.", a.maxRequestBytes()>>20)))
 		return
 	}
 	if len(body) >= largeRequestMemoryReleaseBytes {
@@ -160,7 +160,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		}
 		if !strings.EqualFold(meta.Model, realtimeAuth.Model) {
 			a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
-				publicError(http.StatusForbidden, "realtime_secret_scope_mismatch", "Realtime 临时凭据不能切换模型"))
+				publicError(http.StatusForbidden, "realtime_secret_scope_mismatch", "This Realtime temporary credential cannot be used with a different model."))
 			return
 		}
 	}
@@ -170,14 +170,14 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	body, err = rewriteRequestModel(body, r.URL, meta.RequestedModel, meta.Model, r.Header.Get("Content-Type"))
 	if err != nil {
 		a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
-			publicError(http.StatusBadRequest, "invalid_request", "无法改写请求模型"))
+			publicError(http.StatusBadRequest, "invalid_request", "Relay could not update the model in the request. Check the request format."))
 		return
 	}
 	websocket := isWebSocketUpgrade(r)
 	billable := meta.Model != "" && (websocket || (r.Method != http.MethodGet && r.Method != http.MethodHead))
 	if meta.Model != "" && !key.AllowsModel(meta.Model) {
 		a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
-			publicError(http.StatusForbidden, "model_not_allowed", "该 API Key 无权使用此模型"))
+			publicError(http.StatusForbidden, "model_not_allowed", "This API key does not have access to the requested model."))
 		return
 	}
 	timeline.Step(time.Now(), "model_resolution", "模型解析与权限", "relay", "解析别名、改写模型并检查 Key 模型权限")
@@ -197,7 +197,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	if err := a.enforceLimits(r.Context(), key); err != nil {
-		classified := publicError(http.StatusInternalServerError, "usage_limit_check_failed", "暂时无法检查使用限制，请稍后重试")
+		classified := publicError(http.StatusInternalServerError, "usage_limit_check_failed", "Relay could not check usage limits. Try again later.")
 		var limitErr *requestLimitError
 		if errors.As(err, &limitErr) {
 			classified = publicError(http.StatusTooManyRequests, limitErr.Code, limitErr.Message)
@@ -221,7 +221,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				if a.unpricedModelPolicy() == "deny" {
 					a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
-						publicError(http.StatusServiceUnavailable, "pricing_unavailable", "该模型尚未配置价格，请联系管理员完善计费配置"))
+						publicError(http.StatusServiceUnavailable, "pricing_unavailable", "Pricing is not configured for this model. Contact your administrator."))
 					return
 				}
 			} else {
@@ -322,20 +322,20 @@ func writeAdmissionError(w http.ResponseWriter, err error, status gateway.Admiss
 	httpStatus := http.StatusServiceUnavailable
 	retryable := true
 	code := "upstream_overloaded"
-	message := "运行时当前并发已达到安全上限，请稍后重试"
+	message := "Relay is handling the maximum number of concurrent requests. Try again later."
 	switch {
 	case errors.Is(err, context.Canceled):
 		httpStatus = 499
 		retryable = false
 		code = "client_canceled"
-		message = "请求已由客户端取消"
+		message = "The request was canceled by the client."
 	case errors.Is(err, context.DeadlineExceeded):
 		httpStatus = http.StatusGatewayTimeout
 		code = "request_timeout"
-		message = "请求在等待运行时准入时超时"
+		message = "The request timed out while waiting for Relay capacity. Try again later."
 	case errors.Is(err, gateway.ErrCircuitOpen):
 		code = "upstream_circuit_open"
-		message = "运行时正在从连续故障中恢复，请稍后重试"
+		message = "Relay is recovering from repeated failures. Try again later."
 		if status.RetryAfterMS > 0 {
 			retryAfter = (status.RetryAfterMS + 999) / 1000
 		}
@@ -344,13 +344,14 @@ func writeAdmissionError(w http.ResponseWriter, err error, status gateway.Admiss
 		w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
 	}
 	w.Header().Set("X-Relay-Error-Code", code)
+	w.Header().Set("X-Relay-Error-Source", "relay")
 	details := map[string]any{"retryable": retryable}
 	if retryable {
 		details["retry_after_seconds"] = retryAfter
 	}
 	writeJSON(w, httpStatus, map[string]any{"error": map[string]any{
 		"code": code, "type": "service_unavailable", "message": message,
-		"details": details,
+		"details": details, "source": "relay",
 	}})
 	return userFacingError{Status: httpStatus, Code: code, Message: message, Retryable: retryable}
 }

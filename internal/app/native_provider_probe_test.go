@@ -122,7 +122,7 @@ func TestProbeNativeAccountReturnsProviderError(t *testing.T) {
 	result := probeNativeAccount(t.Context(), runtime, store.UpstreamCredentialSnapshot{
 		ID: "openai-1", Provider: "openai", Enabled: true, Models: []string{"gpt-public"},
 	}, "gpt-public")
-	if result.OK || result.StatusCode != http.StatusTooManyRequests || result.Error != "rate limited" {
+	if result.OK || result.StatusCode != http.StatusTooManyRequests || result.Error != "Upstream service error: rate limited" {
 		t.Fatalf("probe result = %+v", result)
 	}
 }

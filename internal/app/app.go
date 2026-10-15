@@ -476,7 +476,7 @@ func (a *App) routes() {
 func (a *App) frontend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "不支持的请求方法")
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "This HTTP method is not supported for this endpoint.")
 		return
 	}
 	if a.cfg.WebDistDir == "" {
@@ -489,7 +489,7 @@ func (a *App) frontend(w http.ResponseWriter, r *http.Request) {
 	}
 	root, err := filepath.Abs(a.cfg.WebDistDir)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "web_root_invalid", "前端目录无效")
+		writeError(w, http.StatusInternalServerError, "web_root_invalid", "The web directory is invalid. Contact your administrator.")
 		return
 	}
 	requested := filepath.Join(root, clean)
@@ -554,7 +554,7 @@ func (a *App) tenantLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant, err := a.store.Login(r.Context(), input.Email, input.Password)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", "邮箱或密码错误")
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "The email address or password is incorrect.")
 		return
 	}
 	a.setSession(w, identity.Session{Role: "tenant", TenantID: tenant.ID, PasswordVersion: tenant.PasswordVersion, Expires: time.Now().Add(12 * time.Hour).Unix()})
@@ -585,7 +585,7 @@ func (a *App) withSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, err := a.session(r)
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "请先登录")
+			writeError(w, http.StatusUnauthorized, "unauthorized", "Sign in to continue.")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey, session)))
@@ -597,11 +597,11 @@ func (a *App) withAdmin(next http.Handler) http.Handler {
 		session := currentSession(r)
 		tenant, err := a.store.GetTenant(r.Context(), session.TenantID)
 		if err != nil || !tenant.Enabled || !tenant.IsAdmin {
-			writeError(w, http.StatusForbidden, "forbidden", "需要管理员权限")
+			writeError(w, http.StatusForbidden, "forbidden", "Administrator access is required.")
 			return
 		}
 		if tenant.MustChangePassword {
-			writeError(w, http.StatusForbidden, "password_change_required", "请先修改临时密码")
+			writeError(w, http.StatusForbidden, "password_change_required", "Change your temporary password before continuing.")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -612,12 +612,12 @@ func (a *App) withTenantSession(next http.Handler) http.Handler {
 	return a.withSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session := currentSession(r)
 		if session.TenantID == "" {
-			writeError(w, http.StatusForbidden, "forbidden", "需要租户权限")
+			writeError(w, http.StatusForbidden, "forbidden", "Tenant access is required.")
 			return
 		}
 		tenant, err := a.store.GetTenant(r.Context(), session.TenantID)
 		if err != nil || !tenant.Enabled || tenant.PasswordVersion != session.PasswordVersion {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "登录已失效，请重新登录")
+			writeError(w, http.StatusUnauthorized, "unauthorized", "Your session has expired. Sign in again.")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -628,11 +628,11 @@ func (a *App) withTenant(next http.Handler) http.Handler {
 	return a.withTenantSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenant, err := a.store.GetTenant(r.Context(), currentSession(r).TenantID)
 		if err != nil || !tenant.Enabled {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "账户不存在或已停用")
+			writeError(w, http.StatusUnauthorized, "unauthorized", "The account does not exist or is disabled.")
 			return
 		}
 		if tenant.MustChangePassword {
-			writeError(w, http.StatusForbidden, "password_change_required", "请先修改临时密码")
+			writeError(w, http.StatusForbidden, "password_change_required", "Change your temporary password before continuing.")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -648,7 +648,7 @@ func (a *App) me(w http.ResponseWriter, r *http.Request) {
 	session := currentSession(r)
 	tenant, err := a.store.GetTenant(r.Context(), session.TenantID)
 	if err != nil || !tenant.Enabled {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "账户不存在或已停用")
+		writeError(w, http.StatusUnauthorized, "unauthorized", "The account does not exist or is disabled.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"role": "tenant", "is_admin": tenant.IsAdmin, "tenant": tenant})
@@ -659,7 +659,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "请求 JSON 无效")
+		writeError(w, http.StatusBadRequest, "invalid_json", "The request body is not valid JSON. Check its format and try again.")
 		return false
 	}
 	return true
@@ -699,7 +699,7 @@ func (a *App) recoverer(next http.Handler) http.Handler {
 		defer func() {
 			if value := recover(); value != nil {
 				slog.Error("panic", "value", value, "path", r.URL.Path)
-				writeError(w, http.StatusInternalServerError, "internal_error", "服务内部错误")
+				writeError(w, http.StatusInternalServerError, "internal_error", "Relay encountered an internal error. Try again later. If the problem persists, contact your administrator.")
 			}
 		}()
 		next.ServeHTTP(w, r)

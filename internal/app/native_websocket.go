@@ -243,7 +243,7 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 		detail.RequestBodyTruncated = pending.RequestBytes > int64(len(pending.RequestBody))
 		detail.StageTimings = trace.JSON(completed)
 		input := requestLogInput(key, id, admission, pending.Meta, r, 499, pending.StartedAt, nil, false, settled, 0,
-			"连接结束前未收到终止用量", requestLogContext{detail: detail, completedAt: completed, errorCode: "step_interrupted", stageTimings: detail.StageTimings,
+			"The connection closed before final usage was received.", requestLogContext{detail: detail, completedAt: completed, errorCode: "step_interrupted", stageTimings: detail.StageTimings,
 				requestBytes: pending.RequestBytes, forwardedBytes: pending.ForwardedBytes})
 		input.ReservationRequestID = sessionID
 		input.ReservedNanoUSD = 0
@@ -994,7 +994,7 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 	price, priceErr := a.store.ResolvePrice(ctx, dimensions)
 	priceConfigured := priceErr == nil
 	if !priceConfigured && a.unpricedModelPolicy() == "deny" {
-		return store.Admission{}, nil, "pricing_unavailable", fmt.Errorf("该模型尚未配置价格，请联系管理员完善计费配置")
+		return store.Admission{}, nil, "pricing_unavailable", fmt.Errorf("Pricing is not configured for this model. Contact your administrator.")
 	}
 	reserve := int64(0)
 	if priceConfigured {
@@ -1050,8 +1050,13 @@ func saturatingAdd(left, right int64) int64 {
 }
 
 func writeNativeWebSocketError(conn *websocket.Conn, status int, code, message string) {
+	source := "relay"
+	if code == "upstream_connection_failed" {
+		source = "upstream"
+		message = "Upstream service error: " + message
+	}
 	payload, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{
-		"type": errorTypeForStatus(status), "code": code, "message": message,
+		"type": errorTypeForStatus(status), "code": code, "message": message, "source": source,
 		"details": map[string]any{"retryable": defaultErrorRetryable(status, code)},
 	}})
 	_ = conn.WriteMessage(websocket.TextMessage, payload)
