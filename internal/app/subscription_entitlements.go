@@ -24,6 +24,38 @@ type tenantEntitlementWindow struct {
 	ObservedAt          *time.Time `json:"observed_at,omitempty"`
 }
 
+func projectTenantSubscription(parent store.ParentSubscription, child store.ChildSubscription, parentWindows []store.ParentQuotaWindow, windows []store.ChildQuotaWindow, resets []tenantQuotaReset, now time.Time) map[string]any {
+	models, modelSource := effectiveSubscriptionModels(parent, child)
+	available, message := tenantSubscriptionAvailability(parent, child, now)
+	if available && parent.CapacityMode == db.ParentCapacityObserved && len(parentWindows) == 0 && parent.QuotaProbeStatus == "unsupported" {
+		available, message = false, "订阅额度暂不可用，请联系管理员"
+	}
+	billingMode := "balance"
+	if parent.CapacityMode != db.ParentCapacityUnmetered && len(parentWindows) > 0 {
+		billingMode = "quota"
+	}
+	return map[string]any{
+		"id": child.ID, "name": tenantSubscriptionName(parent, child), "allocation_ppm": child.AllocationPPM,
+		"priority": child.Priority, "enabled": child.Enabled, "model_allowlist": child.ModelAllowlist,
+		"starts_at": child.StartsAt, "expires_at": child.ExpiresAt, "capacity_mode": parent.CapacityMode, "windows": windows,
+		"available": available, "availability_message": message,
+		"billing_mode": billingMode, "parent_quota_probe_status": parent.QuotaProbeStatus,
+		"parent_quota_observed_at":  parent.QuotaObservedAt,
+		"effective_model_allowlist": models, "model_source": modelSource,
+		"entitlement_windows": projectTenantEntitlements(parentWindows, child, windows),
+		"reset_history":       resets,
+	}
+}
+
+func tenantSubscriptionName(parent store.ParentSubscription, child store.ChildSubscription) string {
+	name := strings.TrimSpace(child.Name)
+	// Legacy balance grants copied the credential name. Do not expose that identity.
+	if name == "" || name == parent.Name || name == parent.UpstreamCredentialName || name == parent.UpstreamCredentialID || strings.Contains(name, "@") {
+		return "模型订阅"
+	}
+	return name
+}
+
 func projectTenantEntitlements(parent []store.ParentQuotaWindow, child store.ChildSubscription, state []store.ChildQuotaWindow) []tenantEntitlementWindow {
 	byKind := make(map[string]store.ChildQuotaWindow, len(state))
 	for _, window := range state {

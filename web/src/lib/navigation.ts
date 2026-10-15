@@ -6,6 +6,7 @@ import {
   KeyRoundIcon,
   ListIcon,
   PackageOpenIcon,
+  BoxesIcon,
   PlugIcon,
   SettingsIcon,
   SlidersHorizontalIcon,
@@ -23,6 +24,7 @@ export interface NavigationItem {
 
 export const userNavigation: NavigationItem[] = [
   { id: "overview", label: "总览", icon: GaugeIcon, section: "开始使用" },
+  { id: "models", label: "模型列表", icon: BoxesIcon, section: "开始使用" },
   { id: "guide", label: "接入指南", icon: BookOpenIcon, section: "开始使用" },
   { id: "keys", label: "API 密钥", icon: KeyRoundIcon, section: "开始使用" },
   {
@@ -68,6 +70,7 @@ export const workspaceLabels: Record<Workspace, string> = {
 }
 
 export const pageLabels: Partial<Record<Page, string>> = {
+  models: "模型列表",
   account: "账户设置",
   overview: "总览",
   usage: "用量",

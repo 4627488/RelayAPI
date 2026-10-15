@@ -392,6 +392,7 @@ func (a *App) routes() {
 	a.mux.Handle("DELETE /api/usage/heatmap/share", a.withTenant(http.HandlerFunc(a.revokeHeatmapShare)))
 	a.mux.HandleFunc("GET /share/usage/{token}/heatmap.svg", a.sharedHeatmapSVG)
 	a.mux.Handle("GET /api/subscriptions", a.withTenant(http.HandlerFunc(a.tenantSubscriptions)))
+	a.mux.Handle("GET /api/models", a.withTenant(http.HandlerFunc(a.tenantModels)))
 	a.mux.Handle("POST /api/agent-setup", a.withTenant(http.HandlerFunc(a.createAgentSetup)))
 	a.mux.Handle("GET /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("GET /api/rai/devices", a.withTenant(http.HandlerFunc(a.raiDevices)))

@@ -104,6 +104,7 @@ import {
   type User,
 } from "@/lib/api"
 import { dateTime, money } from "@/lib/format"
+import { providerLabel } from "@/components/providers/provider-helpers"
 
 const capacityModes: Array<{
   value: CapacityMode
@@ -1799,13 +1800,13 @@ function ChildSettingsDialog({
         <DialogHeader>
           <DialogTitle>编辑用户授权</DialogTitle>
           <DialogDescription>
-            修改模型范围、账户份额和路由优先级。
+            订阅名称会展示给用户，请勿填写上游邮箱或凭据标识。
           </DialogDescription>
         </DialogHeader>
         <form id="child-settings-form" onSubmit={save}>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="child-name">授权名称</FieldLabel>
+              <FieldLabel htmlFor="child-name">订阅名称</FieldLabel>
               <Input
                 id="child-name"
                 name="name"
@@ -2062,7 +2063,7 @@ function defaultChildName(parent?: ParentSubscription) {
     provider.includes("codex") ||
     provider.includes("chatgpt")
       ? "ChatGPT"
-      : parent.name.trim()
+      : providerLabel(parent.provider)
   const plan = displayPlan(parent.plan_type)
   return plan ? `${product} ${plan}` : product || "用户授权"
 }

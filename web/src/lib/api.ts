@@ -581,6 +581,32 @@ export interface SubscriptionQuotaReset {
   reset_at: string
 }
 
+export type TenantSubscription = Pick<
+  ChildSubscription,
+  | "id"
+  | "name"
+  | "enabled"
+  | "starts_at"
+  | "expires_at"
+  | "capacity_mode"
+  | "billing_mode"
+  | "available"
+  | "model_allowlist"
+  | "effective_model_allowlist"
+  | "entitlement_windows"
+  | "reset_history"
+>
+
+export interface TenantModel {
+  id: string
+  settlements: Array<{
+    mode: "balance" | "subscription"
+    subscription_id?: string
+    subscription_name?: string
+    available: boolean
+  }>
+}
+
 export class ApiError extends Error {
   status: number
   code?: string

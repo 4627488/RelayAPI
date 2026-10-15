@@ -33,6 +33,8 @@ the native runtime owns protocol translation, retries, and routing.
 9. Tenants see child names, shares, usage, and reset times, but never parent
    credential IDs, account emails, tokens, or provider-private metadata.
 
+The personal subscription page shows only observed/shared subscriptions, using the administrator-editable child name. The tenant response omits parent names and plan metadata and anonymizes legacy names copied from credential identities. The separate personal model catalog (`GET /api/models`, `/app/models`) combines balance access into model IDs and links quota settlement options to the corresponding personal subscription section. It respects active grant and model policies, merges balance options without account identities, and never advertises ordinary balance fallback for a model claimed by a subscription. Exhausted or unavailable grants remain discoverable as temporarily unavailable, with links to inspect quota. Subscription expiration and quota reset are separate dates; a reset after subscription expiry is not presented as an upcoming renewal.
+
 ## Data model
 
 ### Parent subscriptions

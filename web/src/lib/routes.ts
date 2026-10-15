@@ -17,6 +17,7 @@ export type Page =
   | "settings"
   | "subscriptions"
   | "pricing"
+  | "models"
 
 export interface AppRoute {
   workspace: Workspace
@@ -28,6 +29,7 @@ export interface AppRoute {
 type RouteLocation = Pick<Location, "pathname" | "hash">
 
 const userPages = new Set<Page>([
+  "models",
   "account",
   "overview",
   "usage",
