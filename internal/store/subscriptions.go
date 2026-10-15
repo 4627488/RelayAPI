@@ -1066,6 +1066,13 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 					Where("parent_subscription_id = ?", parent.ID).Find(&parentWindows).Error; err != nil {
 					return err
 				}
+				activeWindows := parentWindows[:0]
+				for _, window := range parentWindows {
+					if !claudeQuotaWindowIdle(parent, window, time.Now()) {
+						activeWindows = append(activeWindows, window)
+					}
+				}
+				parentWindows = activeWindows
 				if len(parentWindows) == 0 {
 					if parent.CapacityMode != db.ParentCapacityObserved || parent.QuotaProbeStatus == "unsupported" {
 						return ErrSubscriptionUnavailable
@@ -1147,6 +1154,38 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 		return nil
 	})
 	return result, err
+}
+
+// Claude starts its next five-hour window on the next inference request. A
+// successful post-reset usage observation of 0% with no reset confirms that it
+// is idle. Keep the calibrated row (and manual conversion), but do not let the
+// old generation prevent the request that starts the next one. An expired or
+// failed probe alone is never evidence that capacity has recovered.
+func claudeQuotaWindowIdle(parent ParentSubscription, window ParentQuotaWindow, now time.Time) bool {
+	if window.Kind != "5h" || window.ResetsAt.After(now) {
+		return false
+	}
+	var report struct {
+		Source    string    `json:"source"`
+		Supported bool      `json:"supported"`
+		Observed  time.Time `json:"observed_at"`
+		Windows   []struct {
+			Kind        string     `json:"kind"`
+			Used        *float64   `json:"used_percent"`
+			Reset       *time.Time `json:"resets_at"`
+			Enforceable bool       `json:"enforceable"`
+		} `json:"windows"`
+	}
+	if json.Unmarshal(parent.QuotaSnapshot, &report) != nil || !report.Supported || report.Source != "claude-oauth-usage" ||
+		!report.Observed.After(window.ResetsAt) || report.Observed.After(now) {
+		return false
+	}
+	for _, observed := range report.Windows {
+		if observed.Kind == window.Kind && observed.Used != nil && *observed.Used == 0 && observed.Reset == nil && !observed.Enforceable {
+			return true
+		}
+	}
+	return false
 }
 
 func (s Store) SettleRequestReservation(ctx context.Context, requestID string, actual int64, pricingComplete bool) error {

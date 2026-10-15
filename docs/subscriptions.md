@@ -185,6 +185,25 @@ Only standard `5h` / `7d` / `1d` windows with a future reset are enforceable.
 A credential may instead expose normalized `relay_quota` metadata directly.
 Reports exclude credential fields and raw upstream payloads.
 
+Claude uses `GET https://api.anthropic.com/api/oauth/usage`. Its usage endpoint
+has a separate rate limit from inference. Manual and background refreshes share
+one schedule per parent: successful Claude observations are cached for at least
+five minutes, failures back off exponentially to one hour with positive jitter,
+and a later upstream `Retry-After` always wins. The API returns `retry_at` and
+marks reused observations `cached`; failed probes retain the last successful
+snapshot and never disable the inference credential.
+
+Claude can report an idle five-hour window as zero usage with no reset time.
+When a successful observation after the old reset confirms this state, admission
+ignores that expired five-hour generation so the next request can start the new
+cycle. The stored capacity conversion and generation history remain intact;
+weekly windows continue to enforce child shares. If no active calibrated window
+remains, normal learning-mode balance reservation applies. A failed probe, a
+missing window, or an observation before the reset cannot release an expired
+window. Future upstream reset times are never shortened. See Sub2API's
+[window cooldown implementation](https://github.com/Wei-Shaw/sub2api/pull/3250/files)
+and Claude Code's [usage-endpoint throttling report](https://github.com/anthropics/claude-code/issues/30930).
+
 Codex, Kimi, and xAI are probed with the encrypted native credential and the
 reusable proxy explicitly selected for that model account. An account without a
 selected proxy always uses a direct connection and does not inherit the system

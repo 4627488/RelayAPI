@@ -51,7 +51,9 @@ func (a *App) adminSyncParentQuota(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusBadGateway
 	}
 	if result.RetryAt != nil {
-		status = http.StatusTooManyRequests
+		if result.Status != "cached" {
+			status = http.StatusTooManyRequests
+		}
 		seconds := max(1, int(time.Until(*result.RetryAt).Seconds())+1)
 		w.Header().Set("Retry-After", strconv.Itoa(seconds))
 	} else if result.Status == "in_progress" {
@@ -126,20 +128,29 @@ func (a *App) syncParentQuotas(ctx context.Context, parents []store.ParentSubscr
 
 func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscription) (result quotaSyncResult) {
 	result = quotaSyncResult{ParentID: parent.ID, AuthIndex: firstNonEmptyString(parent.UpstreamCredentialID, parent.UpstreamAuthIndex), Provider: parent.Provider}
+	// Usage metadata has a much smaller rate limit than inference. Reuse the
+	// durable successful observation rather than creating another cache.
+	if (strings.EqualFold(parent.Provider, "claude") || strings.EqualFold(parent.Provider, "anthropic")) && parent.QuotaObservedAt != nil && parent.QuotaSupported {
+		next := parent.QuotaObservedAt.Add(5 * time.Minute)
+		if next.After(time.Now()) {
+			result.Status, result.Supported, result.ObservedAt, result.RetryAt = "cached", true, *parent.QuotaObservedAt, &next
+			return result
+		}
+	}
 	id := result.AuthIndex
 	if allowed, retryAt := a.quotaBackoff.begin(id, time.Now()); !allowed {
 		result.Status = "in_progress"
 		result.Error = "额度查询正在进行"
 		if !retryAt.IsZero() && retryAt.After(time.Now()) {
 			result.Status = "cooldown"
-			result.Error = "上游额度查询已限流，请稍后重试"
+			result.Error = "额度查询暂不可用，正在等待重试"
 			result.RetryAt = &retryAt
 		}
 		return result
 	}
 	var probeErr error
 	defer func() {
-		if retryAt := a.quotaBackoff.finish(id, time.Now(), probeErr); !retryAt.IsZero() {
+		if retryAt := a.quotaBackoff.finish(id, time.Now(), probeErr, parent.Provider); !retryAt.IsZero() {
 			result.RetryAt = &retryAt
 		}
 	}()
