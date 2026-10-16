@@ -61,8 +61,6 @@ export function UserWorkspace({
   session,
   onPageChange,
 }: UserWorkspaceProps) {
-  const tenantModels = session.tenant?.model_allowlist ?? []
-
   return (
     <Suspense fallback={<LoadingView />}>
       {page === "models" ? (
@@ -70,7 +68,7 @@ export function UserWorkspace({
       ) : page === "account" ? (
         <AccountSettings />
       ) : page === "keys" ? (
-        <UserKeys tenantModels={tenantModels} />
+        <UserKeys />
       ) : page === "rai-devices" ? (
         <RAIDevices />
       ) : page === "logs" ? (

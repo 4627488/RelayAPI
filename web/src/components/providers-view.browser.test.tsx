@@ -137,9 +137,11 @@ describe("providers view", () => {
         .getByRole("button", { name: "添加用户", exact: true })
         .click()
       await expect
-        .element(screen.getByRole("dialog", { name: "授权用户" }))
+        .element(screen.getByRole("dialog", { name: "分配给用户" }))
         .toBeVisible()
-      await expect.element(screen.getByRole("combobox")).toBeDisabled()
+      await expect
+        .element(screen.getByRole("combobox", { name: "模型来源" }))
+        .toBeDisabled()
       await screen.getByRole("button", { name: "取消", exact: true }).click()
       await screen.getByRole("button", { name: "关闭", exact: true }).click()
       await page.viewport(1280, 800)

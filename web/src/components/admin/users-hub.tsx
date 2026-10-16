@@ -68,7 +68,7 @@ export function UsersHub({
       {tab === "accounts" ? (
         <PageHeader
           title="用户"
-          description="管理登录权限、额度与账户生命周期。"
+          description="分配可用模型与共享订阅，管理用户余额和登录权限。"
         />
       ) : null}
       <Tabs

@@ -79,6 +79,12 @@ import {
   type ChildSubscription,
 } from "@/lib/api"
 
+const AssignUsersDialog = lazy(() =>
+  import("@/components/admin/assign-users-dialog").then((module) => ({
+    default: module.AssignUsersDialog,
+  }))
+)
+
 const AccountAccessPanel = lazy(() =>
   import("@/components/admin-subscriptions-view").then((module) => ({
     default: module.AdminSubscriptionsView,
@@ -132,6 +138,7 @@ export function ProvidersView() {
   const [provider, setProvider] = useState("all")
   const [statusFilter, setStatusFilter] = useState("all")
   const [authFilter, setAuthFilter] = useState("all")
+  const [assignmentOpen, setAssignmentOpen] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
   const [reauthenticating, setReauthenticating] =
     useState<ProviderAccount | null>(null)
@@ -367,6 +374,10 @@ export function ProvidersView() {
         description="连接上游账户，管理模型、额度和用户授权。"
         actions={
           <>
+            <Button variant="outline" onClick={() => setAssignmentOpen(true)}>
+              <UsersIcon data-icon="inline-start" />
+              分配给用户
+            </Button>
             <Button
               variant="outline"
               disabled={syncingQuota}
@@ -750,6 +761,12 @@ export function ProvidersView() {
       </Tabs>
 
       <Suspense fallback={null}>
+        {assignmentOpen ? (
+          <AssignUsersDialog
+            onOpenChange={setAssignmentOpen}
+            onSaved={loadAccess}
+          />
+        ) : null}
         {connectOpen || reauthenticating ? (
           <ConnectAccountDialog
             open={connectOpen || Boolean(reauthenticating)}

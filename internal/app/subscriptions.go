@@ -352,7 +352,17 @@ func (a *App) adminChildSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(input.TenantIDs) > 0 {
-		items, err := a.store.GrantBalanceSubscriptionAccess(r.Context(), input.ParentSubscriptionID, input.TenantIDs)
+		parent, err := a.store.GetParentSubscription(r.Context(), input.ParentSubscriptionID)
+		if err != nil {
+			writeSubscriptionError(w, err)
+			return
+		}
+		var items []store.ChildSubscription
+		if parent.CapacityMode == db.ParentCapacityUnmetered {
+			items, err = a.store.GrantBalanceSubscriptionAccess(r.Context(), input.ParentSubscriptionID, input.TenantIDs)
+		} else {
+			items, err = a.store.CreateSharedSubscriptionGrants(r.Context(), childFromInput("", input), input.TenantIDs)
+		}
 		if err != nil {
 			writeSubscriptionError(w, err)
 			return

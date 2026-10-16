@@ -213,7 +213,7 @@ describe("subscription allocation", () => {
         .first()
         .click()
       await expect
-        .element(screen.getByRole("dialog", { name: "授权用户" }))
+        .element(screen.getByRole("dialog", { name: "分配给用户" }))
         .toBeVisible()
     }
   )

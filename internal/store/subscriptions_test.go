@@ -65,6 +65,28 @@ func TestSubscriptionModelGrantExpandsTenantPoolButRespectsKeyPolicy(t *testing.
 	}
 }
 
+func TestInheritedKeyPolicyIncludesNewEntitlementsButExplicitSelectionDoesNot(t *testing.T) {
+	for _, selection := range [][]string{nil, {}} {
+		key := KeyContext{APIKey: APIKey{ModelAllowlist: selection}, TenantModels: []string{"balance"}}
+		if !key.AllowsModel("balance") || key.AllowsModel("not-granted") {
+			t.Fatal("inherited key did not respect initial tenant policy")
+		}
+		key.TenantModels = append(key.TenantModels, "new-balance")
+		key.SubscriptionModelGrants = []SubscriptionModelGrant{{UpstreamModels: []string{"new-shared"}}}
+		if !key.AllowsModel("new-balance") || !key.AllowsModel("new-shared") {
+			t.Fatal("inherited key froze a snapshot of model permissions")
+		}
+		key.ModelAllowlist = []string{"balance"}
+		if key.AllowsModel("new-balance") || key.AllowsModel("new-shared") {
+			t.Fatal("new entitlement bypassed an explicit key restriction")
+		}
+		key.ModelAllowlist = []string{"not-granted"}
+		if key.AllowsModel("not-granted") {
+			t.Fatal("a key model selection granted a tenant permission")
+		}
+	}
+}
+
 func TestCanonicalBalanceGrantHasNoQuotaSliceConfiguration(t *testing.T) {
 	now := time.Now()
 	expires := now.Add(time.Hour)

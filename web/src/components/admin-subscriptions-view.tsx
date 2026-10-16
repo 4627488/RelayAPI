@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -34,7 +36,6 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -95,7 +96,6 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   api,
   deleteRequest,
-  postJSON,
   type CapacityMode,
   type ChildSubscription,
   type ParentSubscription,
@@ -104,7 +104,12 @@ import {
   type User,
 } from "@/lib/api"
 import { dateTime, money } from "@/lib/format"
-import { providerLabel } from "@/components/providers/provider-helpers"
+
+const AssignUsersDialog = lazy(() =>
+  import("@/components/admin/assign-users-dialog").then((module) => ({
+    default: module.AssignUsersDialog,
+  }))
+)
 
 const capacityModes: Array<{
   value: CapacityMode
@@ -152,12 +157,6 @@ export function AdminSubscriptionsView({
   const [selectedParentID, setSelectedParentID] = useState("")
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignParentID, setAssignParentID] = useState("")
-  const [assignTenantID, setAssignTenantID] = useState("")
-  const [assignTenantIDs, setAssignTenantIDs] = useState<string[]>([])
-  const [assignName, setAssignName] = useState("")
-  const [assignPercent, setAssignPercent] = useState("10")
-  const [assignPriority, setAssignPriority] = useState("100")
-  const [assignModels, setAssignModels] = useState<string[]>([])
   const [parentEditor, setParentEditor] =
     useState<ParentSubscriptionView | null>(null)
   const [deletingAccount, setDeletingAccount] =
@@ -275,92 +274,7 @@ export function AdminSubscriptionsView({
 
   function openAssignment(view: ParentSubscriptionView) {
     setAssignParentID(view.item.id)
-    setAssignTenantID("")
-    setAssignTenantIDs([])
-    setAssignName(defaultChildName(view.item))
-    setAssignPercent("10")
-    setAssignPriority("100")
-    setAssignModels([])
     setAssignOpen(true)
-  }
-
-  function changeAssignParent(parentID: string) {
-    const view = currentParents.find((item) => item.item.id === parentID)
-    setAssignParentID(parentID)
-    setAssignName(defaultChildName(view?.item))
-    setAssignPercent("10")
-    setAssignModels([])
-    setAssignTenantID("")
-    setAssignTenantIDs([])
-  }
-
-  async function createAssignment(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const view = currentParents.find((item) => item.item.id === assignParentID)
-    const balanceMode = view?.item.capacity_mode === "unmetered"
-    if (
-      !view ||
-      (balanceMode ? assignTenantIDs.length === 0 : !assignTenantID)
-    ) {
-      toast.add({
-        title: balanceMode ? "请至少选择一位用户" : "请选择模型账户和用户",
-        type: "error",
-      })
-      return
-    }
-    if (!isAllocatable(view)) {
-      toast.add({ title: accountBlockReason(view), type: "error" })
-      return
-    }
-    const allocationPPM =
-      view.item.capacity_mode === "unmetered"
-        ? 1_000_000
-        : Math.round(Number(assignPercent) * 10_000)
-    if (
-      view.item.capacity_mode !== "unmetered" &&
-      (!Number.isFinite(allocationPPM) || allocationPPM <= 0)
-    ) {
-      toast.add({ title: "请输入有效的账户额度占比", type: "error" })
-      return
-    }
-    setPending(true)
-    try {
-      await postJSON(
-        "/api/admin/subscriptions/children",
-        balanceMode
-          ? {
-              tenant_ids: assignTenantIDs,
-              parent_subscription_id: view.item.id,
-            }
-          : {
-              tenant_id: assignTenantID,
-              parent_subscription_id: view.item.id,
-              name: assignName.trim(),
-              allocation_ppm: allocationPPM,
-              priority: Number(assignPriority || 100),
-              enabled: true,
-              model_allowlist: assignModels,
-              starts_at: new Date().toISOString(),
-              expires_at: "",
-            }
-      )
-      setAssignOpen(false)
-      toast.add({
-        title: balanceMode
-          ? `已授权 ${assignTenantIDs.length} 位用户`
-          : "已分配给用户",
-        type: "success",
-      })
-      await load()
-      onChanged?.()
-    } catch (cause) {
-      toast.add({
-        title: cause instanceof Error ? cause.message : "分配失败",
-        type: "error",
-      })
-    } finally {
-      setPending(false)
-    }
   }
 
   async function toggleChild(child: ChildSubscription) {
@@ -439,22 +353,6 @@ export function AdminSubscriptionsView({
       setPending(false)
     }
   }
-
-  const assignParent = currentParents.find(
-    (view) => view.item.id === assignParentID
-  )
-  const assignPPM = Math.round(Number(assignPercent || 0) * 10_000)
-  const projectedAllocationPPM = assignParent
-    ? assignParent.allocated_ppm + assignPPM
-    : assignPPM
-  const alreadyAssignedTenantIDs = new Set(
-    children
-      .filter((child) => child.parent_subscription_id === assignParentID)
-      .map((child) => child.tenant_id)
-  )
-  const balanceGrantTenants = tenants.filter(
-    (tenant) => tenant.enabled && !alreadyAssignedTenantIDs.has(tenant.id)
-  )
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -599,234 +497,18 @@ export function AdminSubscriptionsView({
         </div>
       )}
 
-      <Dialog
-        open={assignOpen}
-        onOpenChange={(open) => {
-          if (!pending) setAssignOpen(open)
-        }}
-      >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>
-              {assignParent?.item.capacity_mode === "unmetered"
-                ? "授权用户"
-                : "分配共享额度"}
-            </DialogTitle>
-            <DialogDescription>
-              {assignParent?.item.capacity_mode === "unmetered"
-                ? "所选用户将获得该账户的全部模型权限，调用费用从各自余额扣除。"
-                : "为一个用户创建带独立份额的额度授权。"}
-            </DialogDescription>
-          </DialogHeader>
-          <form id="assign-subscription-form" onSubmit={createAssignment}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel>模型账户</FieldLabel>
-                <Select
-                  disabled={Boolean(accountID)}
-                  items={currentParents.map((view) => ({
-                    value: view.item.id,
-                    label: `${view.item.name} · ${billingLabel(view)}`,
-                  }))}
-                  value={assignParentID}
-                  onValueChange={(value) => changeAssignParent(value ?? "")}
-                  required
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择模型账户" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {currentParents.map((view) => (
-                        <SelectItem
-                          key={view.item.id}
-                          value={view.item.id}
-                          disabled={!isAllocatable(view)}
-                        >
-                          {view.item.name} · {billingLabel(view)}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                {assignParent ? (
-                  <FieldDescription>
-                    {isAllocatable(assignParent)
-                      ? accountAllocationHint(assignParent)
-                      : accountBlockReason(assignParent)}
-                  </FieldDescription>
-                ) : null}
-              </Field>
-
-              {assignParent?.item.capacity_mode === "unmetered" ? (
-                <Field>
-                  <FieldLabel>用户</FieldLabel>
-                  {balanceGrantTenants.length ? (
-                    <div className="flex max-h-64 flex-col gap-1 overflow-y-auto p-2">
-                      {balanceGrantTenants.map((tenant) => {
-                        const checked = assignTenantIDs.includes(tenant.id)
-                        return (
-                          <label
-                            key={tenant.id}
-                            className="flex cursor-pointer items-center gap-3 px-2 py-2 hover:bg-muted/60"
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(value) =>
-                                setAssignTenantIDs((current) =>
-                                  value
-                                    ? [...current, tenant.id]
-                                    : current.filter((id) => id !== tenant.id)
-                                )
-                              }
-                            />
-                            <span className="min-w-0">
-                              <span className="block truncate text-sm font-medium">
-                                {tenant.name}
-                              </span>
-                              <span className="block truncate text-xs text-muted-foreground">
-                                {tenant.owner_email}
-                              </span>
-                            </span>
-                          </label>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <div className="p-4 text-sm text-muted-foreground">
-                      所有可用用户都已获得该账户权限。
-                    </div>
-                  )}
-                  <FieldDescription>
-                    已选择 {assignTenantIDs.length}{" "}
-                    位；以后仍可继续添加其他用户。
-                  </FieldDescription>
-                </Field>
-              ) : (
-                <Field>
-                  <FieldLabel>用户</FieldLabel>
-                  <Select
-                    items={tenants
-                      .filter((tenant) => tenant.enabled)
-                      .map((tenant) => ({
-                        value: tenant.id,
-                        label: `${tenant.name} · ${tenant.owner_email}`,
-                      }))}
-                    value={assignTenantID}
-                    onValueChange={(value) => setAssignTenantID(value ?? "")}
-                    required
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="选择用户" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {tenants
-                          .filter((tenant) => tenant.enabled)
-                          .map((tenant) => (
-                            <SelectItem key={tenant.id} value={tenant.id}>
-                              {tenant.name} · {tenant.owner_email}
-                            </SelectItem>
-                          ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
-              )}
-
-              {assignParent?.item.capacity_mode !== "unmetered" ? (
-                <Field>
-                  <FieldLabel htmlFor="assign-name">授权名称</FieldLabel>
-                  <Input
-                    id="assign-name"
-                    value={assignName}
-                    onChange={(event) => setAssignName(event.target.value)}
-                    placeholder="例如：研发团队"
-                    required
-                  />
-                </Field>
-              ) : null}
-
-              {assignParent?.item.capacity_mode === "observed" ? (
-                <Field>
-                  <FieldLabel htmlFor="assign-percent">账户额度占比</FieldLabel>
-                  <Input
-                    id="assign-percent"
-                    type="number"
-                    min="0.0001"
-                    step="0.0001"
-                    value={assignPercent}
-                    onChange={(event) => setAssignPercent(event.target.value)}
-                    required
-                  />
-                  <FieldDescription>
-                    分配后总计 {percent(projectedAllocationPPM)}；允许超过
-                    100%。
-                  </FieldDescription>
-                  {projectedAllocationPPM > nominalAllocationPPM ? (
-                    <OversubscriptionWarning
-                      allocatedPPM={projectedAllocationPPM}
-                    />
-                  ) : null}
-                </Field>
-              ) : null}
-
-              {assignParent?.item.capacity_mode !== "unmetered" ? (
-                <Field>
-                  <FieldLabel htmlFor="assign-priority">路由优先级</FieldLabel>
-                  <Input
-                    id="assign-priority"
-                    type="number"
-                    value={assignPriority}
-                    onChange={(event) => setAssignPriority(event.target.value)}
-                    required
-                  />
-                  <FieldDescription>
-                    同一用户有多个可用账户时，数值越大越优先。
-                  </FieldDescription>
-                </Field>
-              ) : null}
-
-              {assignParent?.item.capacity_mode !== "unmetered" ? (
-                <Field>
-                  <FieldLabel htmlFor="assign-models">可用模型</FieldLabel>
-                  <ModelSelector
-                    id="assign-models"
-                    options={parentModelOptions(assignParent)}
-                    value={assignModels}
-                    onChange={setAssignModels}
-                    allLabel="继承账户全部模型"
-                  />
-                </Field>
-              ) : null}
-            </FieldGroup>
-          </form>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={pending}
-              onClick={() => setAssignOpen(false)}
-            >
-              取消
-            </Button>
-            <Button
-              type="submit"
-              form="assign-subscription-form"
-              disabled={
-                pending ||
-                (assignParent?.item.capacity_mode === "unmetered" &&
-                  assignTenantIDs.length === 0)
-              }
-            >
-              {pending ? <Spinner /> : <PlusIcon data-icon="inline-start" />}
-              {assignParent?.item.capacity_mode === "unmetered"
-                ? "确认授权"
-                : "确认分配"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
+      {assignOpen ? (
+        <Suspense fallback={null}>
+          <AssignUsersDialog
+            fixedParentID={assignParentID}
+            onOpenChange={setAssignOpen}
+            onSaved={async () => {
+              await load()
+              onChanged?.()
+            }}
+          />
+        </Suspense>
+      ) : null}
       <AlertDialog
         open={Boolean(deletingAccount)}
         onOpenChange={(open) => {
@@ -2053,19 +1735,6 @@ function hasObservableQuota(view: ParentSubscriptionView) {
 
 function quotaUSDInputValue(nanoUSD: number) {
   return (nanoUSD / 1_000_000_000).toFixed(6).replace(/\.?0+$/, "")
-}
-
-function defaultChildName(parent?: ParentSubscription) {
-  if (!parent) return ""
-  const provider = parent.provider.trim().toLowerCase()
-  const product =
-    provider.includes("openai") ||
-    provider.includes("codex") ||
-    provider.includes("chatgpt")
-      ? "ChatGPT"
-      : providerLabel(parent.provider)
-  const plan = displayPlan(parent.plan_type)
-  return plan ? `${product} ${plan}` : product || "用户授权"
 }
 
 function quotaWindowLabel(kind: string) {

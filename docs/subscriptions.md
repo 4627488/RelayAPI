@@ -130,6 +130,8 @@ rejects the request instead of silently bypassing the configured subscription.
 
 ## Capacity modes
 
+API-key model permissions are the intersection of the key's optional model restriction and the user's balance-model permissions plus active subscription grants. An empty key model restriction inherits future entitlement changes; it is not a snapshot of today's catalog and does not grant tenant permissions by itself. Runtime model publication remains authoritative for discovery. Standard, Gemini and Codex-compatible model metadata lists and per-model GET/HEAD requests, rai discovery and setup scripts use the same resolved-target policy as inference. Key aliases cannot expose denied targets or leave a shadowed native model visible. Metadata reads do not consume quota or silently change settlement policy; exhaustion affects admission rather than removing the model entitlement. Conditional metadata requests recheck authorization before returning 304. Codex lists retain hidden tombstones to prevent bundled denied models from reappearing.
+
 - `unmetered`: routing is pinned but no child quota is reserved. Balance billing
   and tenant/key limits still apply. This is the normal mode for pay-as-you-go
   upstream API keys: the key remains private in native runtime, any number of child access
@@ -243,3 +245,9 @@ The legacy Next.js implementation is a behavioral reference, not a storage or
 provider abstraction to copy. This design replaces its floating-point shares,
 SQLite concurrency, in-memory calibration tasks, and Codex/Grok registry with
 PostgreSQL row locking and native runtime-native identity/routing.
+
+## User assignment workflow
+
+Administrators can select users in the existing user list and assign models in one batch, or start from a model account with its source pinned. Both entries use the same form. Balance access grants model access charged to each user's balance. Shared subscriptions apply an editable public name, a per-user allocation and an optional common expiry. Fixed per-user percentages and even division of the nominal unallocated percentage are supported; the preview shows the resulting total, including oversubscription warnings.
+
+`POST /api/admin/subscriptions/children` accepts `tenant_ids` for either mode. Shared batches validate all selected users and reuse single-child validation within one transaction. Existing enabled, unexpired grants for the selected source are skipped by the assignment UI, including scheduled grants; editing existing grants remains available in account details.
