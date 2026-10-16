@@ -59,7 +59,7 @@ func TestBalanceSubscriptionBulkGrantAuthorizesMultipleTenants(t *testing.T) {
 		t.Fatalf("grants = %+v", items)
 	}
 	for _, item := range items {
-		if item.AllocationPPM != 1_000_000 || item.Priority != 100 || item.Name != parent.Name || len(item.ModelAllowlist) != 0 || item.ExpiresAt != nil {
+		if item.AllocationPPM != 1_000_000 || item.Priority != 100 || item.Name != DefaultSubscriptionName(parent, 1_000_000) || len(item.ModelAllowlist) != 0 || item.ExpiresAt != nil {
 			t.Fatalf("grant retained quota allocation fields: %+v", item)
 		}
 	}

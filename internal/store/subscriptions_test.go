@@ -90,11 +90,11 @@ func TestInheritedKeyPolicyIncludesNewEntitlementsButExplicitSelectionDoesNot(t 
 func TestCanonicalBalanceGrantHasNoQuotaSliceConfiguration(t *testing.T) {
 	now := time.Now()
 	expires := now.Add(time.Hour)
-	got := canonicalBalanceGrant(ParentSubscription{ID: "parent", Name: "Grok account"}, ChildSubscription{
+	got := canonicalBalanceGrant(ParentSubscription{ID: "parent", Name: "private@example.com", Provider: "xai", PlanType: "SuperGrok Heavy", CapacityMode: "unmetered"}, ChildSubscription{
 		Name: "custom", AllocationPPM: 10_000, Priority: 999,
 		ModelAllowlist: []string{"grok-4.6"}, ExpiresAt: &expires,
 	})
-	if got.ParentSubscriptionID != "parent" || got.Name != "Grok account" || got.AllocationPPM != 1_000_000 || got.Priority != 100 || len(got.ModelAllowlist) != 0 || got.ExpiresAt != nil {
+	if got.ParentSubscriptionID != "parent" || got.Name != "Grok SuperHeavy 余额付费" || got.AllocationPPM != 1_000_000 || got.Priority != 100 || len(got.ModelAllowlist) != 0 || got.ExpiresAt != nil {
 		t.Fatalf("balance grant retained quota-slice configuration: %+v", got)
 	}
 }

@@ -71,6 +71,7 @@ function setup(mode = "observed", existing = false) {
             id: "source",
             name: "团队模型来源",
             provider: "openai",
+            plan_type: "pro",
             status: "active",
             enabled: true,
             capacity_mode: mode,
@@ -89,6 +90,28 @@ function setup(mode = "observed", existing = false) {
 }
 
 describe("user assignment", () => {
+  it("updates the default product name with the share and preserves manual names", async () => {
+    setup()
+    const screen = await render(
+      <AssignUsersDialog
+        initialUserIDs={["alice"]}
+        fixedParentID="source"
+        onOpenChange={() => {}}
+      />
+    )
+    const name = screen.getByLabelText("用户看到的订阅名")
+    await expect.element(name).toHaveValue("ChatGPT Pro 2X")
+    await screen.getByLabelText("每人份额（%）").fill("12.5")
+    await expect.element(name).toHaveValue("ChatGPT Pro 2.5X")
+    await name.fill("研发组订阅")
+    await screen.getByLabelText("每人份额（%）").fill("25")
+    await expect.element(name).toHaveValue("研发组订阅")
+    await screen.getByRole("button", { name: "确认分配给 1 人" }).click()
+    expect(postMock).toHaveBeenCalledWith(
+      "/api/admin/subscriptions/children",
+      expect.objectContaining({ name: "研发组订阅", allocation_ppm: 250000 })
+    )
+  })
   it.each([390, 1280])(
     "previews and submits a shared batch at %s",
     async (width) => {

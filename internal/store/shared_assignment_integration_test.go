@@ -25,7 +25,7 @@ func TestSharedAssignmentBatchValidationAndLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sqlDB.Close()
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	dataStore := Store{DB: database}
 	ids := []string{identity.NewID(), identity.NewID(), identity.NewID()}
 	for index, id := range ids {
@@ -33,7 +33,12 @@ func TestSharedAssignmentBatchValidationAndLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	parent, err := dataStore.UpsertParentSubscription(ctx, ParentSubscription{UpstreamCredentialID: identity.NewID(), Name: "shared source", Status: "available", CapacityMode: db.ParentCapacityObserved, Enabled: true})
+	// GORM applies Tenant.Enabled's true database default during Create even
+	// when a fixture supplies false, so explicitly disable the last user.
+	if err := database.Model(&Tenant{}).Where("id = ?", ids[2]).Update("enabled", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	parent, err := dataStore.UpsertParentSubscription(ctx, ParentSubscription{UpstreamCredentialID: identity.NewID(), Name: "private@example.test", Provider: "codex", PlanType: "pro", Status: "available", CapacityMode: db.ParentCapacityObserved, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,5 +84,11 @@ func TestSharedAssignmentBatchValidationAndLifecycle(t *testing.T) {
 		if item.Name != template.Name || item.AllocationPPM != template.AllocationPPM || !item.StartsAt.Equal(starts) || item.ExpiresAt == nil || !item.ExpiresAt.Equal(expires) {
 			t.Fatalf("batch changed lifecycle: %+v", item)
 		}
+	}
+	template.Name = ""
+	template.AllocationPPM = 125000
+	defaults, err := dataStore.CreateSharedSubscriptionGrants(ctx, template, ids[:1])
+	if err != nil || len(defaults) != 1 || defaults[0].Name != "ChatGPT Pro 2.5X" {
+		t.Fatalf("default shared name = %+v, err = %v", defaults, err)
 	}
 }

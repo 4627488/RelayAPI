@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
+import { useCallback, useState, type FormEvent } from "react"
 import { AlertCircleIcon, ChevronDownIcon, UsersIcon } from "lucide-react"
 import {
   api,
@@ -9,7 +9,7 @@ import {
 } from "@/lib/api"
 import { useAsyncResource } from "@/hooks/use-async-resource"
 import { money } from "@/lib/format"
-import { providerLabel } from "@/components/providers/provider-helpers"
+import { defaultSubscriptionName } from "@/lib/subscription-names"
 import { ModelSelector } from "@/components/model-selector"
 import { SearchField } from "@/components/workspace-ui"
 import { LoadErrorView } from "@/components/load-error-view"
@@ -112,7 +112,7 @@ export function AssignUsersDialog({
   const [parentID, setParentID] = useState(fixedParentID ?? "")
   const [mode, setMode] = useState("unmetered")
   const [query, setQuery] = useState("")
-  const [name, setName] = useState("共享订阅")
+  const [customName, setCustomName] = useState<string | null>(null)
   const [shareMode, setShareMode] = useState("each")
   const [share, setShare] = useState("10")
   const [validity, setValidity] = useState("none")
@@ -122,19 +122,10 @@ export function AssignUsersDialog({
   const [pending, setPending] = useState(false)
   const [mutationError, setMutationError] = useState("")
   const [now] = useState(Date.now)
-  const initializedSource = useRef("")
-  useEffect(() => {
-    if (fixedParentID && initializedSource.current !== fixedParentID) {
-      const parent = data.parents.find((view) => view.item.id === fixedParentID)
-      if (parent) {
-        initializedSource.current = fixedParentID
-        setMode(parent.item.capacity_mode)
-        setName(`${providerLabel(parent.item.provider)} 共享订阅`)
-      }
-    }
-  }, [data.parents, fixedParentID])
   const parent = data.parents.find((view) => view.item.id === parentID)
-  const balance = mode === "unmetered"
+  const effectiveMode =
+    fixedParentID && parent ? parent.item.capacity_mode : mode
+  const balance = effectiveMode === "unmetered"
   const existing = data.grants.filter(
     (grant) =>
       grant.parent_subscription_id === parentID &&
@@ -167,6 +158,9 @@ export function AssignUsersDialog({
   const sourceModels = parent?.item.model_allowlist?.length
     ? parent.item.model_allowlist
     : (parent?.item.upstream_model_allowlist ?? [])
+  const name =
+    customName ??
+    (parent ? defaultSubscriptionName(parent.item, allocationPPM) : "共享订阅")
   const canSubmit =
     !loading &&
     !error &&
@@ -178,8 +172,7 @@ export function AssignUsersDialog({
   function changeParent(id: string) {
     setParentID(id)
     setModels([])
-    const view = data.parents.find((view) => view.item.id === id)
-    if (view) setName(`${providerLabel(view.item.provider)} 共享订阅`)
+    setCustomName(null)
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -475,12 +468,13 @@ export function AssignUsersDialog({
                       <ToggleGroup
                         disabled={Boolean(fixedParentID)}
                         variant="outline"
-                        value={[mode]}
+                        value={[effectiveMode]}
                         onValueChange={(value) => {
                           if (value[0]) {
                             setMode(value[0])
                             setParentID("")
                             setModels([])
+                            setCustomName(null)
                           }
                         }}
                         aria-label="结算方式"
@@ -505,7 +499,9 @@ export function AssignUsersDialog({
                         value={parentID || null}
                         onValueChange={(id) => id && changeParent(id)}
                         items={data.parents
-                          .filter((view) => view.item.capacity_mode === mode)
+                          .filter(
+                            (view) => view.item.capacity_mode === effectiveMode
+                          )
                           .map((view) => ({
                             value: view.item.id,
                             label: view.item.name,
@@ -519,7 +515,7 @@ export function AssignUsersDialog({
                             {data.parents
                               .filter(
                                 (view) =>
-                                  view.item.capacity_mode === mode &&
+                                  view.item.capacity_mode === effectiveMode &&
                                   view.item.status !== "missing"
                               )
                               .map((view) => (
@@ -552,11 +548,13 @@ export function AssignUsersDialog({
                           <Input
                             id="assign-subscription-name"
                             value={name}
-                            onChange={(event) => setName(event.target.value)}
+                            onChange={(event) =>
+                              setCustomName(event.target.value)
+                            }
                             required
                           />
                           <FieldDescription>
-                            不使用上游邮箱；之后可按用户编辑订阅名称。
+                            默认按套餐和每人份额命名，可自行修改。
                           </FieldDescription>
                         </Field>
                         <Field>

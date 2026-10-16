@@ -655,8 +655,8 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 	item.Name = strings.TrimSpace(item.Name)
 	item.TenantID = strings.TrimSpace(item.TenantID)
 	item.ParentSubscriptionID = strings.TrimSpace(item.ParentSubscriptionID)
-	if item.Name == "" || item.TenantID == "" || item.ParentSubscriptionID == "" || item.AllocationPPM <= 0 {
-		return ChildSubscription{}, errors.New("name, tenant, parent and positive allocation_ppm are required")
+	if item.TenantID == "" || item.ParentSubscriptionID == "" || item.AllocationPPM <= 0 {
+		return ChildSubscription{}, errors.New("tenant, parent and positive allocation_ppm are required")
 	}
 	if item.StartsAt.IsZero() {
 		item.StartsAt = time.Now()
@@ -671,6 +671,9 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 		}
 		if parent.Status == "missing" {
 			return ErrNotFound
+		}
+		if item.Name == "" {
+			item.Name = DefaultSubscriptionName(parent, item.AllocationPPM)
 		}
 		if parent.CapacityMode == db.ParentCapacityUnmetered {
 			item = canonicalBalanceGrant(parent, item)
@@ -887,7 +890,7 @@ func (s Store) GrantBalanceSubscriptionAccess(ctx context.Context, parentID stri
 
 func canonicalBalanceGrant(parent ParentSubscription, item ChildSubscription) ChildSubscription {
 	item.ParentSubscriptionID = parent.ID
-	item.Name = parent.Name
+	item.Name = DefaultSubscriptionName(parent, 1_000_000)
 	item.AllocationPPM = 1_000_000
 	item.Priority = 100
 	item.ModelAllowlist = pq.StringArray{}
