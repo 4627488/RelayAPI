@@ -32,6 +32,7 @@ func raiAdapterNames() []string {
 }
 
 func (a *App) createRAIAuthorization(w http.ResponseWriter, r *http.Request) {
+	setSensitiveNoStore(w)
 	var input struct {
 		store.RAIDeviceMetadata
 		DeviceName          string `json:"device_name"`
@@ -48,11 +49,37 @@ func (a *App) createRAIAuthorization(w http.ResponseWriter, r *http.Request) {
 	}
 	base := strings.TrimRight(a.cfg.PublicURL, "/")
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"authorization_id": item.ID,
-		"verification_uri": base + raiAuthorizePath + item.ID,
-		"expires_in":       int(time.Until(item.ExpiresAt).Seconds()),
-		"interval":         interval,
+		"user_code":               item.UserCode,
+		"device_verification_uri": base + "/rai/authorize",
+		"authorization_id":        item.ID,
+		"verification_uri":        base + raiAuthorizePath + item.ID,
+		"expires_in":              int(time.Until(item.ExpiresAt).Seconds()),
+		"interval":                interval,
 	})
+}
+
+func (a *App) resolveRAIDeviceCode(w http.ResponseWriter, r *http.Request) {
+	setSensitiveNoStore(w)
+	if !a.allowRate("rai-device-code:"+currentSession(r).TenantID, 10) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "尝试次数过多，请一分钟后重试")
+		return
+	}
+	var input struct {
+		UserCode string `json:"user_code"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	id, err := a.store.ResolveRAIUserCode(r.Context(), input.UserCode)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "invalid_code", "验证码无效或已过期，请检查终端中的验证码")
+		} else {
+			writeError(w, 500, "database_error", "无法读取授权请求，请重试")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"authorization_id": id})
 }
 
 func (a *App) raiToken(w http.ResponseWriter, r *http.Request) {

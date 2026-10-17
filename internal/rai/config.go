@@ -17,6 +17,7 @@ var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 var supportedReasoningEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 
 type Config struct {
+	DefaultServer string             `json:"default_server,omitempty"`
 	Kind          string             `json:"kind"`
 	ActiveProfile string             `json:"active_profile"`
 	Profiles      map[string]Profile `json:"profiles"`

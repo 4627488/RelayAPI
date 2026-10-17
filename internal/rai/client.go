@@ -32,10 +32,12 @@ type Discovery struct {
 }
 
 type Authorization struct {
-	ID              string
-	VerificationURI string
-	ExpiresIn       int
-	Interval        int
+	UserCode              string
+	DeviceVerificationURI string
+	ID                    string
+	VerificationURI       string
+	ExpiresIn             int
+	Interval              int
 }
 
 type TokenResult struct {
@@ -258,10 +260,12 @@ func (g Gateway) StartAuthorization(ctx context.Context, apiBase, deviceName, ch
 		return Authorization{}, fmt.Errorf("authorization %s: %s", resp.Status, redact(string(body)))
 	}
 	var document struct {
-		AuthorizationID string `json:"authorization_id"`
-		VerificationURI string `json:"verification_uri"`
-		ExpiresIn       int    `json:"expires_in"`
-		Interval        int    `json:"interval"`
+		AuthorizationID       string `json:"authorization_id"`
+		UserCode              string `json:"user_code"`
+		DeviceVerificationURI string `json:"device_verification_uri"`
+		VerificationURI       string `json:"verification_uri"`
+		ExpiresIn             int    `json:"expires_in"`
+		Interval              int    `json:"interval"`
 	}
 	if err := json.Unmarshal(body, &document); err != nil {
 		return Authorization{}, fmt.Errorf("parse authorization: %w", err)
@@ -273,10 +277,12 @@ func (g Gateway) StartAuthorization(ctx context.Context, apiBase, deviceName, ch
 		document.Interval = 3
 	}
 	return Authorization{
-		ID:              document.AuthorizationID,
-		VerificationURI: document.VerificationURI,
-		ExpiresIn:       document.ExpiresIn,
-		Interval:        document.Interval,
+		UserCode:              document.UserCode,
+		DeviceVerificationURI: document.DeviceVerificationURI,
+		ID:                    document.AuthorizationID,
+		VerificationURI:       document.VerificationURI,
+		ExpiresIn:             document.ExpiresIn,
+		Interval:              document.Interval,
 	}, nil
 }
 

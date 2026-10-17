@@ -371,6 +371,8 @@ func (a *App) routes() {
 	a.mux.HandleFunc("HEAD /rai/download/{target}", a.raiDownload)
 	a.mux.HandleFunc("GET /api/rai/authorizations/{id}", a.raiAuthorization)
 	a.mux.HandleFunc("GET /rai/authorize/{id}", a.frontend)
+	a.mux.HandleFunc("GET /rai/authorize", a.frontend)
+	a.mux.Handle("POST /api/rai/device/resolve", a.withTenant(http.HandlerFunc(a.resolveRAIDeviceCode)))
 	a.mux.Handle("POST /api/rai/authorizations/{id}/approve", a.withTenant(http.HandlerFunc(a.raiAuthorizeApprove)))
 	a.mux.Handle("POST /api/rai/authorizations/{id}/deny", a.withTenant(http.HandlerFunc(a.raiAuthorizeDeny)))
 	a.mux.HandleFunc("GET /setup/{token}/install.sh", a.agentSetupScript)

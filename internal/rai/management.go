@@ -107,14 +107,12 @@ func (a *App) accountLogin(ctx context.Context, profileName string, args []strin
 	if f.NArg() != 0 {
 		return errors.New("usage: rai account login --server <url> [--no-browser]")
 	}
-	base, err := managementServer(*server)
+	resolved, profileName, err := a.loginTarget(*server, profileName, true)
 	if err != nil {
 		return err
 	}
-	if profileName == "" {
-		profileName = "default"
-	}
-	if err := validateProfileName(profileName); err != nil {
+	base, err := managementServer(resolved)
+	if err != nil {
 		return err
 	}
 	s, err := a.accountStore()
@@ -148,6 +146,12 @@ func (a *App) accountLogin(ctx context.Context, profileName string, args []strin
 		return err
 	}
 	fmt.Fprintf(a.Stderr, "Approve account management (Keys, quota, usage and devices):\n%s\n", grant.VerificationURI)
+	if grant.UserCode != "" && grant.DeviceVerificationURI != "" {
+		if err := validateVerificationURL(base, grant.DeviceVerificationURI); err != nil {
+			return err
+		}
+		fmt.Fprintf(a.Stderr, "Or on another device, open:\n%s\nEnter code: %s\n", grant.DeviceVerificationURI, grant.UserCode)
+	}
 	if !*noBrowser {
 		if err := a.OpenURL(grant.VerificationURI); err != nil {
 			fmt.Fprintln(a.Stderr, "Open the URL above in your browser.")

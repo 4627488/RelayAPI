@@ -17,6 +17,9 @@ func TestRAIInstallScriptBakesServerAndLogin(t *testing.T) {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 	body := recorder.Body.String()
+	if !strings.Contains(body, `"$dir/rai" server set "$SERVER"`) || strings.Index(body, `server set`) > strings.Index(body, `RAI_SKIP_LOGIN`) {
+		t.Fatal("installer must save the site before optionally skipping login")
+	}
 	if !strings.Contains(body, "SERVER='https://relay.example'") {
 		t.Fatalf("missing server: %s", body)
 	}
@@ -42,6 +45,9 @@ func TestRAIInstallPowerShellBakesServer(t *testing.T) {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 	body := recorder.Body.String()
+	if !strings.Contains(body, `& $dest server set $Server`) || strings.Index(body, `server set`) > strings.Index(body, `RAI_SKIP_LOGIN`) {
+		t.Fatal("installer must save the site before optionally skipping login")
+	}
 	if !strings.Contains(body, "$Server = 'https://relay.example'") {
 		t.Fatalf("missing server: %s", body)
 	}

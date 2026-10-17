@@ -1,6 +1,7 @@
 import { lazy } from "react"
 
 import { PageHeader } from "@/components/workspace-ui"
+import { Button } from "@/components/ui/button"
 
 const ConnectionGuide = lazy(() =>
   import("@/components/connection-guide").then((module) => ({
@@ -14,6 +15,11 @@ export function UserGuide() {
       <PageHeader
         title="接入指南"
         description="选择客户端并复制配置，使用 API Key 调用已授权模型。"
+        actions={
+          <Button nativeButton={false} render={<a href="/rai/authorize" />}>
+            设备验证码登录
+          </Button>
+        }
       />
       <ConnectionGuide />
     </div>

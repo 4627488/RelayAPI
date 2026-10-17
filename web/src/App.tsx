@@ -4,6 +4,7 @@ import { toast } from "@/components/ui/toast"
 import { AppShell } from "@/components/app-shell"
 import { AuthPage } from "@/components/auth-page"
 import { RAIAuthorizePage } from "@/components/rai-authorize-page"
+import { RAIDevicePage } from "@/components/rai-device-page"
 import { ForcePasswordChange } from "@/components/force-password-change"
 import { LoadingView } from "@/components/loading-view"
 import { api, type Session } from "@/lib/api"
@@ -24,6 +25,9 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [checking, setChecking] = useState(true)
   const route = useAppRoute()
+  const deviceAuthorization = /^\/rai\/authorize\/?$/.test(
+    window.location.pathname
+  )
   const authorizationID = window.location.pathname.match(
     /^\/rai\/authorize\/([^/]+)\/?$/
   )?.[1]
@@ -36,7 +40,7 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    if (checking || !session || authorizationID) return
+    if (checking || !session || authorizationID || deviceAuthorization) return
     if (!route.valid || (route.workspace === "admin" && !session.is_admin)) {
       navigateTo(
         route.workspace === "admin" && session.is_admin
@@ -49,7 +53,7 @@ export function App() {
         { replace: true }
       )
     }
-  }, [checking, route, session, authorizationID])
+  }, [checking, route, session, authorizationID, deviceAuthorization])
 
   async function logout() {
     try {
@@ -84,6 +88,10 @@ export function App() {
         <LoadingView />
       </main>
     )
+  }
+
+  if (deviceAuthorization && !session?.tenant.must_change_password) {
+    return <RAIDevicePage session={session} onAuthenticated={setSession} />
   }
 
   if (authorizationID && !session?.tenant.must_change_password) {

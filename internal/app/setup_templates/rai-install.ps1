@@ -23,8 +23,10 @@ if (($userPath -split ';') -notcontains $Prefix) {
     }
 }
 if (($env:Path -split ';') -notcontains $Prefix) { $env:Path = "$Prefix;$env:Path" }
+& $dest server set $Server
+if ($LASTEXITCODE -ne 0) { throw "Could not save the rai default server." }
 if ($env:RAI_SKIP_LOGIN -eq "1") {
-    Write-Host "next: rai login --server $Server"
+    Write-Host "next: rai login"
     return
 }
 & $dest login --server $Server

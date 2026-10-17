@@ -45,8 +45,9 @@ case ":$PATH:" in
     ;;
 esac
 export PATH="$dir:$PATH"
+"$dir/rai" server set "$SERVER"
 if [ "${RAI_SKIP_LOGIN:-}" = "1" ]; then
-  echo "next: rai login --server $SERVER"
+  echo "next: rai login"
   exit 0
 fi
 exec "$dir/rai" login --server "$SERVER"

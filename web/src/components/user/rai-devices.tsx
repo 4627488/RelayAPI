@@ -91,9 +91,14 @@ export function RAIDevices() {
         title="rai 已登录设备"
         description="管理通过浏览器授权的 rai 设备。撤销登录后，该凭据将无法发起新的请求，设备需要重新登录。"
         actions={
-          <Button variant="outline" onClick={() => void reload(true)}>
-            刷新
-          </Button>
+          <>
+            <Button nativeButton={false} render={<a href="/rai/authorize" />}>
+              设备验证码登录
+            </Button>
+            <Button variant="outline" onClick={() => void reload(true)}>
+              刷新
+            </Button>
+          </>
         }
       />
       {devices.length === 0 ? (
@@ -101,9 +106,9 @@ export function RAIDevices() {
           <EmptyHeader>
             <EmptyTitle>还没有 rai 登录设备</EmptyTitle>
             <EmptyDescription>
-              在终端运行 rai login
-              并完成浏览器授权后，设备会显示在这里。通过已有 API Key
-              登录的客户端仍在 API 密钥中管理。
+              在服务器终端运行 rai login --server 站点地址 --no-browser，
+              点击「设备验证码登录」并输入终端显示的验证码，批准后设备会显示在这里。通过已有
+              API Key 登录的客户端仍在 API 密钥中管理。
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>

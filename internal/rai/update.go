@@ -2,11 +2,9 @@ package rai
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -53,18 +51,8 @@ func (a *App) update(ctx context.Context) error {
 }
 
 func (a *App) updateServer() (string, error) {
-	if server := strings.TrimSpace(os.Getenv(envServer)); server != "" {
-		return normalizeServerURL(server)
-	}
-	store, err := a.store()
-	if err != nil {
-		return "", err
-	}
-	profile, err := store.ResolveProfile("")
-	if err != nil {
-		return "", errors.New("rai update needs a logged-in profile or RAI_SERVER")
-	}
-	return normalizeServerURL(profile.ServerURL)
+	server, _, err := a.loginTarget("", "", false)
+	return server, err
 }
 
 func raiDownloadURL(server, download, goos, goarch string) string {

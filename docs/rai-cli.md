@@ -4,6 +4,10 @@
 
 ## 自动接入
 
+从站点的一键安装脚本安装时，会把该部署的公开地址保存为默认服务器；即使设置 `RAI_SKIP_LOGIN=1` 跳过登录也会保存。CLI 没有内置任何私人服务器地址。安装后可以直接执行 `rai login --no-browser`、`rai account login --no-browser`、`rai configure codex` 和 `rai update`。
+
+登录时按 `--server`、`RAI_SERVER`、当前或指定 profile、另一类授权中同名 profile、安装时保存的默认服务器的顺序选择地址。模型登录和账户管理各自保留独立凭据；已有 profile 的服务器优先于安装默认值。未指定 profile 时复用当前 profile。没有任何地址时才提示指定服务器。也可用 `rai server set https://relay.example` 保存默认地址，此操作保留现有 profile 和凭据。
+
 ```sh
 rai configure codex --server https://relay.example
 rai codex
@@ -18,7 +22,15 @@ rai codex
 rai logout
 ```
 
-`--no-browser` 只打印授权链接，适用于远程终端；批准操作仍在用户浏览器中完成。`--profile work` 可以区分多个站点。`rai configure codex --server ...` 明确重新授权指定站点；已配置的 profile 不必每次传入地址。
+`--no-browser` 适用于远程服务器，不自动打开浏览器：
+
+```sh
+rai login --server https://relay.example --no-browser
+```
+
+终端会显示授权链接，以及固定入口 `https://relay.example/rai/authorize` 和形如 `ABCD-EFGH` 的短验证码。在手机或电脑浏览器打开固定入口，登录本站账户，输入验证码，核对设备信息后点击「批准授权」，服务器上的 rai 即完成登录。验证码有效期为 10 分钟；过期后重新执行登录命令。也可以直接打开终端中的授权链接。`rai account login --no-browser` 同样支持短验证码，但需要单独确认账户管理权限。旧版服务器未提供验证码时仍显示授权链接。
+
+`--profile work` 可以区分多个站点。`rai configure codex --server ...` 明确重新授权指定站点；已配置的 profile 不必每次传入地址。
 
 设备授权使用 PKCE S256、一次性交换、15 分钟 access token 和默认 6 个自然月的 refresh 会话。会话期限从批准授权时起计算，刷新不会延长该期限。每次刷新轮换 refresh token；新旧 access token 在各自有效期内可以并存，避免刷新使运行中的客户端缓存立即失效。refresh token 只保存哈希，待交换的凭据在数据库中加密，交换后清除。
 

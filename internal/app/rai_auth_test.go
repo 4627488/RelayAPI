@@ -43,7 +43,12 @@ func TestRAIAuthorizationRoutes(t *testing.T) {
 	if page.Code != http.StatusOK || page.Body.String() != shell {
 		t.Fatalf("authorization page did not serve frontend: status=%d body=%q", page.Code, page.Body.String())
 	}
-	for _, path := range []string{"/api/rai/authorizations/id/approve", "/api/rai/authorizations/id/deny"} {
+	devicePage := httptest.NewRecorder()
+	app.mux.ServeHTTP(devicePage, httptest.NewRequest(http.MethodGet, "/rai/authorize", nil))
+	if devicePage.Code != http.StatusOK || devicePage.Body.String() != shell {
+		t.Fatalf("device entry = %d %q", devicePage.Code, devicePage.Body.String())
+	}
+	for _, path := range []string{"/api/rai/device/resolve", "/api/rai/authorizations/id/approve", "/api/rai/authorizations/id/deny"} {
 		recorder := httptest.NewRecorder()
 		app.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}")))
 		if recorder.Code != http.StatusUnauthorized {

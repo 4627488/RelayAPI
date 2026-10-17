@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,11 +44,30 @@ func TestRAIAuthorizationApproveAndConsume(t *testing.T) {
 	if interval < 1 || item.Status != RAIAuthorizationPending {
 		t.Fatalf("item = %#v interval=%d", item, interval)
 	}
+	if len(item.UserCode) != 9 || item.UserCode[4] != '-' {
+		t.Fatalf("invalid user code: %q", item.UserCode)
+	}
+	if id, err := dataStore.ResolveRAIUserCode(ctx, strings.ToLower(strings.ReplaceAll(item.UserCode, "-", ""))); err != nil || id != item.ID {
+		t.Fatalf("resolve code = %q, %v", id, err)
+	}
+	if _, err := dataStore.ResolveRAIUserCode(ctx, "invalid"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("invalid code = %v", err)
+	}
+	expired, _, err := dataStore.CreateRAIAuthorization(ctx, "expired", PKCEChallengeS256(verifier), "S256", time.Now().Add(-11*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dataStore.ResolveRAIUserCode(ctx, expired.UserCode); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired code = %v", err)
+	}
 	if _, err := dataStore.ConsumeRAIAuthorization(ctx, item.ID, verifier); err != ErrAuthorizationPending {
 		t.Fatalf("pending consume = %v", err)
 	}
 	if err := dataStore.ApproveRAIAuthorization(ctx, item.ID, tenant.ID); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := dataStore.ResolveRAIUserCode(ctx, item.UserCode); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("approved code still resolves: %v", err)
 	}
 	plain, err := dataStore.ConsumeRAIAuthorization(ctx, item.ID, verifier)
 	if err != nil || plain == "" {

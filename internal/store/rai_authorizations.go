@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -33,6 +35,7 @@ var (
 )
 
 type RAIAuthorization struct {
+	UserCode   string
 	Purpose    string
 	ID         string
 	DeviceName string
@@ -80,9 +83,16 @@ func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge
 	if err := normalizeRAIDeviceMetadata(&device); err != nil {
 		return RAIAuthorization{}, 0, err
 	}
+	codeBytes := make([]byte, 5)
+	if _, err := rand.Read(codeBytes); err != nil {
+		return RAIAuthorization{}, 0, err
+	}
+	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(codeBytes)
+	codeHash := raiUserCodeHash(code)
 	item := db.RAIAuthorization{
-		Purpose:  device.Purpose,
-		DeviceOS: device.DeviceOS, DeviceArch: device.DeviceArch, RAIVersion: device.RAIVersion,
+		UserCodeHash: &codeHash,
+		Purpose:      device.Purpose,
+		DeviceOS:     device.DeviceOS, DeviceArch: device.DeviceArch, RAIVersion: device.RAIVersion,
 		ID:                  identity.NewID(),
 		DeviceName:          deviceName,
 		CodeChallenge:       challenge,
@@ -95,6 +105,7 @@ func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge
 		return RAIAuthorization{}, 0, err
 	}
 	return RAIAuthorization{
+		UserCode: code[:4] + "-" + code[4:],
 		Purpose:  item.Purpose,
 		DeviceOS: item.DeviceOS, DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
 		ID:         item.ID,
@@ -103,6 +114,26 @@ func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge
 		ExpiresAt:  item.ExpiresAt,
 		CreatedAt:  item.CreatedAt,
 	}, raiAuthorizationInterval, nil
+}
+
+func raiUserCodeHash(code string) string {
+	hash := sha256.Sum256([]byte(code))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
+}
+
+// ResolveRAIUserCode only resolves live pending grants. Approval still requires
+// an authenticated browser session; token exchange still requires PKCE.
+func (s Store) ResolveRAIUserCode(ctx context.Context, code string) (string, error) {
+	code = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(code), "-", ""))
+	if len(code) != 8 {
+		return "", ErrNotFound
+	}
+	if _, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(code); err != nil {
+		return "", ErrNotFound
+	}
+	var item db.RAIAuthorization
+	err := scoped(ctx, s.DB).Where("user_code_hash = ? AND status = ? AND expires_at > ?", raiUserCodeHash(code), RAIAuthorizationPending, time.Now()).First(&item).Error
+	return item.ID, notFound(err)
 }
 
 func (s Store) RAIAuthorization(ctx context.Context, id string) (RAIAuthorization, error) {

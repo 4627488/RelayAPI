@@ -15,6 +15,8 @@ import (
 
 func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 	t.Setenv(envDisableKey, "1")
+	t.Setenv(envServer, "")
+	t.Setenv(envProfile, "")
 	pending := 2
 	mux := http.NewServeMux()
 	var serverURL string
@@ -34,7 +36,7 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 			t.Fatalf("missing device metadata: %#v", input)
 		}
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"authorization_id": "auth-1", "verification_uri": serverURL + "/rai/authorize/auth-1", "expires_in": 600, "interval": 1})
+		json.NewEncoder(w).Encode(map[string]any{"authorization_id": "auth-1", "verification_uri": serverURL + "/rai/authorize/auth-1", "user_code": "ABCD-EFGH", "device_verification_uri": serverURL + "/rai/authorize", "expires_in": 600, "interval": 1})
 	})
 	mux.HandleFunc("POST /api/rai/token", func(w http.ResponseWriter, _ *http.Request) {
 		if pending > 0 {
@@ -59,7 +61,7 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 	var opened string
 	stdout := &bytes.Buffer{}
 	app := App{
-		Args:    []string{"login", "--server", server.URL, "--profile", "work", "--no-browser"},
+		Args:    []string{"login", "--profile", "work", "--no-browser"},
 		Home:    t.TempDir(),
 		Stdout:  stdout,
 		Stderr:  &bytes.Buffer{},
@@ -67,6 +69,13 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 		Now:     func() time.Time { return time.Date(2026, 8, 26, 3, 0, 0, 0, time.UTC) },
 		OpenURL: func(rawURL string) error { opened = rawURL; return nil },
 		Sleep:   func(context.Context, time.Duration) error { return nil },
+	}
+	store, err := app.store()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(Config{DefaultServer: server.URL}); err != nil {
+		t.Fatal(err)
 	}
 	if err := app.Execute(context.Background()); err != nil {
 		t.Fatal(err)
@@ -79,6 +88,9 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 	}
 	if pending != 0 {
 		t.Fatalf("pending polls left = %d", pending)
+	}
+	if !strings.Contains(stdout.String(), "Enter code: ABCD-EFGH") || !strings.Contains(stdout.String(), server.URL+"/rai/authorize\n") {
+		t.Fatalf("missing device login instructions: %s", stdout.String())
 	}
 }
 

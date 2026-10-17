@@ -61,6 +61,8 @@ func (a *App) Execute(ctx context.Context) error {
 		return a.usage()
 	}
 	switch args[0] {
+	case "server":
+		return a.serverCommand(args[1:])
 	case "help", "-h", "--help":
 		return a.usage()
 	case "version", "--version":
@@ -161,7 +163,7 @@ func (a *App) usage() error {
 	help := `rai — RelayAPI CLI
 
 Usage:
-  rai account login --server <url> [--no-browser]   Authorize account management
+  rai account login [--server <url>] [--no-browser]   Authorize account management
   rai account status | rai account quota | rai account logout
   rai keys list | rai keys create --name <name> [--show-secret]
   rai keys update <id> [--name <name>] [--enabled=true|false]
@@ -169,8 +171,9 @@ Usage:
   rai usage [--days 30]
   rai devices list | rai devices revoke <id> --yes
   Management commands return JSON; credentials are separate from agent login.
-  rai login --server <url> [--no-browser] [--profile name] [--model id]
-  rai login --server <url> --api-key-stdin
+  rai login [--server <url>] [--no-browser] [--profile name] [--model id]
+  rai login [--server <url>] --api-key-stdin
+  rai server set <url>  Save a default server without logging in
   rai logout [--profile name]
   rai status
   rai models
@@ -242,17 +245,7 @@ func (a *App) login(ctx context.Context, profileName string, args []string) erro
 	if profileName == "" {
 		profileName = flags.Profile
 	}
-	if profileName == "" {
-		profileName = "default"
-	}
-	if err := validateProfileName(profileName); err != nil {
-		return err
-	}
-	server := flags.Server
-	if server == "" {
-		server = strings.TrimSpace(os.Getenv(envServer))
-	}
-	server, err = normalizeServerURL(server)
+	server, profileName, err := a.loginTarget(flags.Server, profileName, false)
 	if err != nil {
 		return err
 	}
@@ -289,6 +282,12 @@ func (a *App) loginWithBrowser(ctx context.Context, server string, noBrowser boo
 		return "", err
 	}
 	fmt.Fprintf(a.Stdout, "Open this URL to approve rai:\n%s\n", auth.VerificationURI)
+	if auth.UserCode != "" && auth.DeviceVerificationURI != "" {
+		if err := validateVerificationURL(server, auth.DeviceVerificationURI); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(a.Stdout, "Or on another device, open:\n%s\nEnter code: %s\n", auth.DeviceVerificationURI, auth.UserCode)
+	}
 	if !noBrowser {
 		if err := a.OpenURL(auth.VerificationURI); err != nil {
 			a.terminal(a.Stderr).message("warning", "browser: %s", redact(err.Error()))
@@ -507,9 +506,6 @@ func parseLoginFlags(args []string) (loginFlags, error) {
 		default:
 			return flags, fmt.Errorf("unknown login flag %q", arg)
 		}
-	}
-	if flags.Server == "" && strings.TrimSpace(os.Getenv(envServer)) == "" {
-		return flags, errors.New("login requires --server or RAI_SERVER")
 	}
 	return flags, nil
 }
@@ -774,18 +770,7 @@ func (a *App) doctor(ctx context.Context, profileName string) error {
 }
 
 func (a *App) ensureLogin(ctx context.Context, profileName string, noBrowser ...bool) error {
-	server := strings.TrimSpace(os.Getenv(envServer))
-	if server == "" {
-		if account, err := a.accountStore(); err == nil {
-			if profile, err := account.ResolveProfile(profileName); err == nil {
-				server = profile.ServerURL
-			}
-		}
-	}
-	if server == "" {
-		return errors.New("no rai profile is configured; run rai login --server <url>")
-	}
-	args := []string{"--server", server}
+	args := []string{}
 	if len(noBrowser) > 0 && noBrowser[0] {
 		args = append(args, "--no-browser")
 	}

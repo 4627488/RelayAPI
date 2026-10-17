@@ -116,6 +116,8 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 `rai login` 打开浏览器，用 PKCE 设备授权取得短期 access token 和可轮换的 refresh token，写入系统钥匙串（无钥匙串时回退到 `~/.config/rai/credentials.json`，权限 0600）。自动接入不签发长期 API Key；`rai configure codex --server <url>` 可以直接完成首次登录和配置。无图形界面时加 `--no-browser`，把打印的 URL 贴到浏览器。CI 或用户明确接入静态 Key 时用 `--api-key-stdin`。`rai credential print` 供 Codex 的 command-based auth 按需续期，只输出 access token。发布镜像在构建时交叉编译各平台 `rai`，由本站 `GET /rai/download/{os}-{arch}` 下发；`rai update` 向当前登录站点拉取同一路径。
 
+服务器上可执行 `rai login --server <url> --no-browser`，在另一台设备打开终端显示的 `/rai/authorize` 入口，输入短验证码并核对设备后批准登录。验证码 10 分钟内有效，也可继续使用完整授权链接。
+
 `rai account login --server <url>` 另行授权用户自助管理，可使用 `rai keys list/create/update/delete`、`rai account quota`、`rai usage`、`rai devices list/revoke`。管理授权与模型调用隔离，默认不输出 Key 明文；新建静态 Key 时显式添加 `--show-secret`。详细命令、安全边界和升级说明见 [rai 用户 CLI 与设备授权](docs/rai-cli.md)。
 
 `rai quota` 显示当前配置与 API Key 可访问的订阅额度窗口，包括已用（含预占）、剩余和重置时间；可用 `rai --profile <名称> quota` 切换配置。查询使用只读 `GET /api/rai/quota`，按 Key 的租户和模型权限过滤；按余额结算的模型没有周期额度窗口。Codex CLI 0.154.0 起的 `/status` 自定义 provider 额度显示回归不影响此命令或实际准入与计费。

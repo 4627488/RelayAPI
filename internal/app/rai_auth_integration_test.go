@@ -66,6 +66,10 @@ func TestRAIAuthorizationHTTPFlow(t *testing.T) {
 	if id == "" || !strings.Contains(created["verification_uri"].(string), id) {
 		t.Fatalf("created = %#v", created)
 	}
+	code, _ := created["user_code"].(string)
+	if len(code) != 9 || created["device_verification_uri"] != "https://relay.example/rai/authorize" {
+		t.Fatalf("device instructions = %#v", created)
+	}
 
 	page := httptest.NewRecorder()
 	app.mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/api/rai/authorizations/"+id, nil))
@@ -82,6 +86,14 @@ func TestRAIAuthorizationHTTPFlow(t *testing.T) {
 		t.Fatalf("login = %d %s", login.Code, login.Body)
 	}
 	cookie := login.Result().Header.Get("Set-Cookie")
+	resolve := httptest.NewRecorder()
+	resolveBody, _ := json.Marshal(map[string]string{"user_code": code})
+	resolveReq := httptest.NewRequest(http.MethodPost, "/api/rai/device/resolve", bytes.NewReader(resolveBody))
+	resolveReq.Header.Set("Cookie", cookie)
+	app.mux.ServeHTTP(resolve, resolveReq)
+	if resolve.Code != http.StatusOK || !strings.Contains(resolve.Body.String(), id) {
+		t.Fatalf("resolve = %d %s", resolve.Code, resolve.Body)
+	}
 	if cookie == "" {
 		t.Fatal("missing session cookie")
 	}

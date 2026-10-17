@@ -329,6 +329,7 @@ type AgentSetup struct {
 // APIKeyCiphertext is the legacy column name for the encrypted OAuth token
 // response, present only between approval and the one-time token exchange.
 type RAIAuthorization struct {
+	UserCodeHash        *string    `gorm:"uniqueIndex" json:"-"`
 	Purpose             string     `gorm:"not null;default:'inference'" json:"purpose"`
 	DeviceOS            string     `gorm:"not null;default:''" json:"device_os"`
 	DeviceArch          string     `gorm:"not null;default:''" json:"device_arch"`
