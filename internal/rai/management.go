@@ -163,6 +163,8 @@ func (a *App) accountLogin(ctx context.Context, profileName string, args []strin
 	if interval < time.Second || interval > 30*time.Second {
 		interval = 3 * time.Second
 	}
+	waiting := a.terminal(a.Stderr).progress("Waiting for browser approval")
+	defer waiting.clear()
 	for {
 		result, err := g.ExchangeToken(pollCtx, base, grant.ID, verifier, "account")
 		if err == nil {
@@ -185,6 +187,7 @@ func (a *App) accountLogin(ctx context.Context, profileName string, args []strin
 				_ = g.revokeOAuth(ctx, saved)
 				return saveErr
 			}
+			waiting.clear()
 			return a.printManagementJSON(session)
 		}
 		var pending tokenError

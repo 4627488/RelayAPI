@@ -26,7 +26,7 @@ func (a *App) update(ctx context.Context) error {
 	if latest != "" {
 		fmt.Fprintf(a.Stdout, "site:      %s\n", latest)
 		if latest == Version || latest == "v"+Version {
-			fmt.Fprintln(a.Stdout, "rai matches this site")
+			a.terminal(a.Stdout).message("success", "rai matches this site")
 			return nil
 		}
 	}
@@ -39,13 +39,16 @@ func (a *App) update(ctx context.Context) error {
 		}
 	}
 	fmt.Fprintf(a.Stdout, "downloading %s\n", rawURL)
-	if err := replaceExecutable(ctx, a.Gateway.HTTP, rawURL, target); err != nil {
+	progress := a.terminal(a.Stderr).progress("Downloading rai")
+	defer progress.clear()
+	if err := replaceExecutable(ctx, a.Gateway.HTTP, rawURL, target, progress.update); err != nil {
 		return err
 	}
+	progress.clear()
 	if latest == "" {
 		latest = "site build"
 	}
-	fmt.Fprintf(a.Stdout, "updated %s to %s\n", target, latest)
+	a.terminal(a.Stdout).message("success", "updated %s to %s", target, latest)
 	return nil
 }
 
@@ -76,7 +79,7 @@ func raiDownloadURL(server, download, goos, goarch string) string {
 	return strings.TrimRight(server, "/") + "/" + strings.Trim(download, "/") + "/" + target
 }
 
-func replaceExecutable(ctx context.Context, client *http.Client, rawURL, target string) error {
+func replaceExecutable(ctx context.Context, client *http.Client, rawURL, target string, report func(int64, int64)) error {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute}
 	} else {
@@ -99,12 +102,31 @@ func replaceExecutable(ctx context.Context, client *http.Client, rawURL, target 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download %s", resp.Status)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	reader := &downloadProgressReader{Reader: resp.Body, total: resp.ContentLength, report: report}
+	data, err := io.ReadAll(io.LimitReader(reader, (64<<20)+1))
 	if err != nil {
 		return err
 	}
 	if len(data) == 0 {
 		return fmt.Errorf("downloaded empty binary")
 	}
+	if len(data) > 64<<20 {
+		return fmt.Errorf("download exceeds 64 MiB")
+	}
 	return writeFileAtomicWithReplace(target, data, 0o755, replaceExecutableFile)
+}
+
+type downloadProgressReader struct {
+	io.Reader
+	done, total int64
+	report      func(int64, int64)
+}
+
+func (r *downloadProgressReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.done += int64(n)
+	if r.report != nil && n > 0 {
+		r.report(r.done, r.total)
+	}
+	return n, err
 }

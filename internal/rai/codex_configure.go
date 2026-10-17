@@ -169,7 +169,8 @@ func (a *App) configureCodexMode(ctx context.Context, profileName string, args [
 	if err := saveCodexManaged(path, original, updated, temporary); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "Saved %s. Restart Codex Desktop and create a new chat to use this provider.\nExisting chats may keep their provider; rai unconfigure codex restores managed settings.\n", path)
+	a.terminal(a.Stdout).message("success", "Saved %s. Restart Codex Desktop and create a new chat to use this provider.", path)
+	fmt.Fprintln(a.Stdout, "Existing chats may keep their provider; rai unconfigure codex restores managed settings.")
 	return nil
 }
 

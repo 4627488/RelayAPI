@@ -66,6 +66,14 @@ rai login --server https://relay.example --api-key-stdin
 
 静态 Key 通过 stdin 输入，不放在命令行参数中。退出此类 profile 只删除本地凭据；需要停用静态 Key 时使用 Key 管理命令。
 
+## 终端显示
+
+交互终端默认使用少量彩色状态标记：`✓` 表示成功，`!` 表示需要注意，`×` 表示错误。`rai status` 和 `rai doctor` 对齐字段；`rai models` 标出默认模型。`rai quota` 用短进度条展示各窗口使用率，70% 起显示黄色，90% 起显示红色，并保留实际金额和重置时间。
+
+`rai update` 在 stderr 显示实际下载进度；服务端未提供文件大小时只显示已下载字节，不生成百分比。浏览器授权期间显示单行等待提示。没有全屏界面或后台动画线程，结束时清除临时进度行。
+
+重定向或管道中的人类可读输出保持原有纯文本格式；管理命令仍输出 JSON，`rai credential print` 仍只输出凭据，启动的客户端输出也不受影响。`NO_COLOR=1` 关闭颜色；`TERM=dumb` 关闭终端装饰与动态进度。
+
 ## 权限与撤销
 
 - 所有自动授权、刷新与管理请求要求 HTTPS，仅允许 loopback 使用 HTTP。本机代理也只监听 loopback，并要求随机凭据。

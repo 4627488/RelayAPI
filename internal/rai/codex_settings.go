@@ -96,7 +96,7 @@ func (a *App) syncCodex(ctx context.Context, profileName string) error {
 	if err := store.PutProfile(profile); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "Saved Codex preferences to rai profile %s: %s\n", profile.Name, modelLabel(profile.DefaultModel))
+	a.terminal(a.Stdout).message("success", "Saved Codex preferences to rai profile %s: %s", profile.Name, modelLabel(profile.DefaultModel))
 	return nil
 }
 

@@ -45,7 +45,7 @@ func Main() int {
 		if errors.As(err, &exit) {
 			return exit.Code
 		}
-		fmt.Fprintf(os.Stderr, "rai: %s\n", redact(err.Error()))
+		app.terminal(app.Stderr).message("error", "rai: %s", redact(err.Error()))
 		return 1
 	}
 	return 0
@@ -158,7 +158,7 @@ func (a *App) store() (Store, error) {
 }
 
 func (a *App) usage() error {
-	fmt.Fprint(a.Stdout, `rai — RelayAPI CLI
+	help := `rai — RelayAPI CLI
 
 Usage:
   rai account login --server <url> [--no-browser]   Authorize account management
@@ -193,7 +193,14 @@ Usage:
 
 Global flags:
   --profile name    Select a named deployment profile
-`)
+`
+	ui := a.terminal(a.Stdout)
+	if ui.rich {
+		for _, title := range []string{"rai — RelayAPI CLI", "Usage:", "Global flags:"} {
+			help = strings.Replace(help, title, ui.paint("1;36", title), 1)
+		}
+	}
+	fmt.Fprint(a.Stdout, help)
 	return nil
 }
 
@@ -284,9 +291,11 @@ func (a *App) loginWithBrowser(ctx context.Context, server string, noBrowser boo
 	fmt.Fprintf(a.Stdout, "Open this URL to approve rai:\n%s\n", auth.VerificationURI)
 	if !noBrowser {
 		if err := a.OpenURL(auth.VerificationURI); err != nil {
-			fmt.Fprintf(a.Stderr, "browser: %s\n", err.Error())
+			a.terminal(a.Stderr).message("warning", "browser: %s", redact(err.Error()))
 		}
 	}
+	waiting := a.terminal(a.Stderr).progress("Waiting for browser approval")
+	defer waiting.clear()
 	deadline := a.Now().Add(time.Duration(auth.ExpiresIn) * time.Second)
 	if auth.ExpiresIn <= 0 {
 		deadline = a.Now().Add(10 * time.Minute)
@@ -427,8 +436,8 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 	} else {
 		_ = store.DeleteCredential("oauth/" + profile.Name)
 	}
-	fmt.Fprintf(a.Stdout, "Signed in to %s as profile %s\n", apiBase, profileName)
-	fmt.Fprintf(a.Stdout, "Default model: %s\n", modelLabel(profile.DefaultModel))
+	a.terminal(a.Stdout).message("success", "Signed in to %s as profile %s", apiBase, profileName)
+	a.terminal(a.Stdout).field("Default model", modelLabel(profile.DefaultModel))
 	fmt.Fprintf(a.Stdout, "Credential store: %s\n", backend)
 	fmt.Fprintln(a.Stdout, "Next: rai codex | rai models | rai doctor")
 	a.checkPath(a.Stderr)
@@ -556,7 +565,7 @@ func (a *App) logout(ctx context.Context, profileName string, args []string) err
 	if err := store.DeleteProfile(profileName); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "Logged out profile %s\n", profileName)
+	a.terminal(a.Stdout).message("success", "Logged out profile %s", profileName)
 	return nil
 }
 
@@ -573,34 +582,35 @@ func (a *App) status(ctx context.Context, profileName string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "Profile: %s\n", profile.Name)
-	fmt.Fprintf(a.Stdout, "Server: %s\n", profile.ServerURL)
-	fmt.Fprintf(a.Stdout, "Display name: %s\n", profile.DisplayName)
+	ui := a.terminal(a.Stdout)
+	ui.field("Profile", profile.Name)
+	ui.field("Server", profile.ServerURL)
+	ui.field("Display name", profile.DisplayName)
 	if profile.AuthMethod == "oauth" {
-		fmt.Fprintln(a.Stdout, "Authentication: OAuth device session")
+		ui.field("Authentication", "OAuth device session")
 	} else {
-		fmt.Fprintln(a.Stdout, "Authentication: static API Key")
+		ui.field("Authentication", "static API Key")
 	}
 	if profile.FollowSiteDefault {
-		fmt.Fprintln(a.Stdout, "Default model: automatic (site preference)")
+		ui.field("Default model", "automatic (site preference)")
 	} else {
-		fmt.Fprintf(a.Stdout, "Default model: %s\n", modelLabel(profile.DefaultModel))
+		ui.field("Default model", modelLabel(profile.DefaultModel))
 	}
 	if profile.ReasoningEffort != "" {
-		fmt.Fprintf(a.Stdout, "Reasoning effort: %s\n", profile.ReasoningEffort)
+		ui.field("Reasoning effort", profile.ReasoningEffort)
 	}
-	fmt.Fprintf(a.Stdout, "Credential: %s (%s)\n", keyPrefix(secret), profile.CredentialBackend)
+	ui.field("Credential", fmt.Sprintf("%s (%s)", keyPrefix(secret), profile.CredentialBackend))
 	if !profile.LastRefresh.IsZero() {
-		fmt.Fprintf(a.Stdout, "Last refresh: %s\n", profile.LastRefresh.Format(time.RFC3339))
+		ui.field("Last refresh", profile.LastRefresh.Format(time.RFC3339))
 	}
 	session, err := a.Gateway.Session(ctx, profile.ServerURL, secret)
 	if err != nil {
-		fmt.Fprintf(a.Stderr, "session: %s\n", redact(err.Error()))
+		a.terminal(a.Stderr).message("warning", "session: %s", redact(err.Error()))
 		return nil
 	}
-	fmt.Fprintf(a.Stdout, "Available models: %d\n", len(session.Models))
+	ui.field("Available models", fmt.Sprint(len(session.Models)))
 	if profile.DefaultModel == "" {
-		fmt.Fprintf(a.Stdout, "Site default: %s\n", session.DefaultModel)
+		ui.field("Site default", session.DefaultModel)
 	}
 	return nil
 }
@@ -623,12 +633,21 @@ func (a *App) models(ctx context.Context, profileName string) error {
 		return err
 	}
 	defaultModel, _ := resolveLaunchModel(profile, "", session.Models, session.DefaultModel)
+	ui := a.terminal(a.Stdout)
 	for _, model := range session.Models {
 		mark := " "
 		if model == defaultModel {
 			mark = "*"
 		}
-		fmt.Fprintf(a.Stdout, "%s %s\n", mark, model)
+		if ui.rich {
+			if model == defaultModel {
+				fmt.Fprintf(a.Stdout, "%s %s %s\n", ui.paint("32", "›"), ui.paint("1", terminalText(model)), ui.paint("2", "(default)"))
+			} else {
+				fmt.Fprintf(a.Stdout, "  %s\n", terminalText(model))
+			}
+		} else {
+			fmt.Fprintf(a.Stdout, "%s %s\n", mark, model)
+		}
 	}
 	return nil
 }
@@ -658,9 +677,9 @@ func (a *App) use(profileName string, args []string) error {
 		return err
 	}
 	if profile.FollowSiteDefault {
-		fmt.Fprintln(a.Stdout, "Default model now follows the site preference")
+		a.terminal(a.Stdout).message("success", "Default model now follows the site preference")
 	} else {
-		fmt.Fprintf(a.Stdout, "Default model is now %s\n", modelLabel(profile.DefaultModel))
+		a.terminal(a.Stdout).message("success", "Default model is now %s", modelLabel(profile.DefaultModel))
 	}
 	return nil
 }
@@ -717,38 +736,39 @@ func (a *App) doctor(ctx context.Context, profileName string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Stdout, "rai %s\n", Version)
-	fmt.Fprintf(a.Stdout, "home: %s\n", store.Home)
+	ui := a.terminal(a.Stdout)
+	ui.heading("rai " + Version)
+	ui.field("home", store.Home)
 	a.checkPath(a.Stdout)
 	profile, err := store.ResolveProfile(profileName)
 	if err != nil {
-		fmt.Fprintf(a.Stdout, "profile: %s\n", err.Error())
+		ui.message("warning", "profile: %s", redact(err.Error()))
 		return nil
 	}
-	fmt.Fprintf(a.Stdout, "profile: %s\n", profile.Name)
-	fmt.Fprintf(a.Stdout, "server: %s\n", profile.ServerURL)
+	ui.field("profile", profile.Name)
+	ui.field("server", profile.ServerURL)
 	secret, err := a.profileCredential(ctx, store, profile)
 	if err != nil {
-		fmt.Fprintf(a.Stdout, "credential: %s\n", err.Error())
+		ui.message("warning", "credential: %s", redact(err.Error()))
 	} else {
-		fmt.Fprintf(a.Stdout, "credential: %s (%s)\n", keyPrefix(secret), profile.CredentialBackend)
+		ui.field("credential", fmt.Sprintf("%s (%s)", keyPrefix(secret), profile.CredentialBackend))
 		session, sessErr := a.Gateway.Session(ctx, profile.ServerURL, secret)
 		if sessErr != nil {
-			fmt.Fprintf(a.Stdout, "session: %s\n", redact(sessErr.Error()))
+			ui.message("warning", "session: %s", redact(sessErr.Error()))
 		} else {
-			fmt.Fprintf(a.Stdout, "session: %d models, default %s\n", len(session.Models), session.DefaultModel)
+			ui.message("success", "session: %d models, default %s", len(session.Models), session.DefaultModel)
 		}
 	}
 	for _, adapter := range Adapters() {
 		path, version, probeErr := adapter.Probe()
 		if probeErr != nil {
-			fmt.Fprintf(a.Stdout, "%s: %s\n", adapter.Name(), probeErr.Error())
+			ui.message("warning", "%s: %s", adapter.Name(), redact(probeErr.Error()))
 			continue
 		}
 		if version == "" {
 			version = filepath.Base(path)
 		}
-		fmt.Fprintf(a.Stdout, "%s: %s\n", adapter.Name(), version)
+		ui.message("success", "%s: %s", adapter.Name(), version)
 	}
 	return nil
 }
@@ -879,9 +899,9 @@ func (a *App) checkPath(w io.Writer) {
 		return
 	}
 	if path, err := a.Look("rai"); err == nil {
-		fmt.Fprintf(w, "PATH: %s\n", path)
+		a.terminal(w).field("PATH", path)
 	} else {
-		fmt.Fprintf(w, "rai is not on PATH. Add %s to your user PATH, then open a new terminal.\n", filepath.Dir(a.Self))
+		a.terminal(w).message("warning", "rai is not on PATH. Add %s to your user PATH, then open a new terminal.", filepath.Dir(a.Self))
 	}
 }
 

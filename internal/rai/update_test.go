@@ -3,6 +3,7 @@ package rai
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,45 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestDownloadProgressMeasuresActualBytesAndFailedReadPreservesExecutable(t *testing.T) {
+	for _, truncated := range []bool{false, true} {
+		t.Run(fmt.Sprint("truncated=", truncated), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if truncated {
+					w.Header().Set("Content-Length", "100")
+				}
+				io.WriteString(w, "binary")
+			}))
+			defer server.Close()
+			target := filepath.Join(t.TempDir(), "rai")
+			if err := os.WriteFile(target, []byte("original"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var received, length int64
+			err := replaceExecutable(t.Context(), server.Client(), server.URL, target, func(done, total int64) {
+				if done < received {
+					t.Fatal("download progress moved backward")
+				}
+				received, length = done, total
+			})
+			if received != 6 || length != map[bool]int64{false: 6, true: 100}[truncated] {
+				t.Fatalf("reported bytes=%d length=%d", received, length)
+			}
+			if (err != nil) != truncated {
+				t.Fatalf("truncated=%v err=%v", truncated, err)
+			}
+			data, readErr := os.ReadFile(target)
+			want := "binary"
+			if truncated {
+				want = "original"
+			}
+			if readErr != nil || string(data) != want {
+				t.Fatalf("executable=%q want=%q err=%v", data, want, readErr)
+			}
+		})
+	}
+}
 
 func TestUpdateDownloadsFromLoggedInSite(t *testing.T) {
 	t.Setenv(envDisableKey, "1")

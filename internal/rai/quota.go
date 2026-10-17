@@ -77,9 +77,11 @@ func (a *App) quota(ctx context.Context, profileName string) error {
 		fmt.Fprintln(a.Stdout, "当前 API Key 没有可用的订阅额度窗口；按余额结算的模型不显示周期额度。")
 		return nil
 	}
-	fmt.Fprintf(a.Stdout, "订阅额度（%s）\n", profile.Name)
+	ui := a.terminal(a.Stdout)
+	ui.heading(fmt.Sprintf("订阅额度（%s）", profile.Name))
 	for _, item := range items {
-		fmt.Fprintf(a.Stdout, "\n%s (%s)\n", item.Name, item.Provider)
+		fmt.Fprintln(a.Stdout)
+		ui.heading(fmt.Sprintf("%s (%s)", item.Name, item.Provider))
 		if len(item.Windows) == 0 {
 			fmt.Fprintln(a.Stdout, "  暂无额度窗口")
 			continue
@@ -87,6 +89,18 @@ func (a *App) quota(ctx context.Context, profileName string) error {
 		for _, window := range item.Windows {
 			used := window.SettledNanoUSD + window.ReservedNanoUSD
 			remaining := max(0, window.LimitNanoUSD-used)
+			if ui.rich && window.LimitNanoUSD > 0 {
+				bar, percent := quotaBar(used, window.LimitNanoUSD)
+				color := "32"
+				if percent >= 90 {
+					color = "31"
+				} else if percent >= 70 {
+					color = "33"
+				}
+				fmt.Fprintf(a.Stdout, "  %-6s %s %3d%% used\n", terminalText(window.Kind), ui.paint(color, bar), percent)
+				fmt.Fprintf(a.Stdout, "         已用 $%.4f / $%.4f  剩余 $%.4f\n         重置 %s\n", float64(used)/1e9, float64(window.LimitNanoUSD)/1e9, float64(remaining)/1e9, window.ResetsAt.Local().Format("2006-01-02 15:04 MST"))
+				continue
+			}
 			fmt.Fprintf(a.Stdout, "  %s  已用 $%.4f / $%.4f  剩余 $%.4f  重置 %s\n",
 				window.Kind, float64(used)/1e9, float64(window.LimitNanoUSD)/1e9,
 				float64(remaining)/1e9, window.ResetsAt.Local().Format("2006-01-02 15:04 MST"))

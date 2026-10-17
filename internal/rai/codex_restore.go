@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -274,6 +273,6 @@ func (a *App) unconfigureCodex(args []string) error {
 		}
 		return err
 	}
-	fmt.Fprintln(a.Stdout, "Restored rai-managed Codex settings; later user edits were preserved. Restart Codex to apply.")
+	a.terminal(a.Stdout).message("success", "Restored rai-managed Codex settings; later user edits were preserved. Restart Codex to apply.")
 	return nil
 }
