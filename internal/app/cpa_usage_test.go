@@ -27,7 +27,7 @@ func TestCPANonGenerationKeepsIdentityAndNeverBecomesMissingUsage(t *testing.T) 
 	if !got.NonGenerated() || got.Found || got.RequestID != "resp_warm" || got.Model != "model" || got.Usage != (store.Usage{}) {
 		t.Fatalf("prewarm outcome lost: %+v", got)
 	}
-	if assessment := billing.Assess(got, nil, 10_000_000); !assessment.Complete || assessment.CostNanoUSD != 0 {
+	if assessment := billing.Assess(got, nil); !assessment.Complete || assessment.CostNanoUSD != 0 {
 		t.Fatalf("prewarm charged: %+v", assessment)
 	}
 }
@@ -70,7 +70,7 @@ func TestCPATokenCountsAreCompleteZeroCostOutcomes(t *testing.T) {
 	for _, path := range []string{"/v1/messages/count_tokens", "/v1beta/models/gemini-2.5-flash:countTokens"} {
 		got := (&App{}).cpaBillingUsage(t.Context(), "count", "", path, requestMeta{Model: "test"},
 			billing.Result{Found: true, Usage: store.Usage{Prompt: 100, Total: 100}})
-		assessment := billing.Assess(got, nil, 10_000_000)
+		assessment := billing.Assess(got, nil)
 		if !got.NonGenerated() || got.Usage != (store.Usage{}) || !assessment.Complete || assessment.CostNanoUSD != 0 {
 			t.Fatalf("token estimate was charged: %+v %+v", got, assessment)
 		}

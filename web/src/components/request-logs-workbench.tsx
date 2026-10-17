@@ -74,7 +74,6 @@ import {
   type RequestLog,
   type RequestLogDetail,
   type RequestLogPage,
-  type WebSocketTurn,
 } from "@/lib/api"
 import {
   bytes,
@@ -118,7 +117,6 @@ const emptyPage: RequestLogPage = {
 type SelectedLog = {
   log: RequestLog
   detail: RequestLogDetail | null
-  turns?: WebSocketTurn[]
 }
 
 export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
@@ -656,7 +654,6 @@ function LogDetailPage({
 }) {
   const log = value.log
   const detail = value.detail ?? null
-  const turns = value.turns ?? []
   const requestVisible = Boolean(
     detail &&
     (hasJSONObject(detail.request_headers) ||
@@ -736,7 +733,6 @@ function LogDetailPage({
               <LogOverview
                 log={log}
                 detail={detail}
-                turns={turns}
                 loading={loading}
                 admin={admin}
               />
@@ -761,7 +757,6 @@ function LogDetailPage({
           <LogOverview
             log={log}
             detail={detail}
-            turns={turns}
             loading={loading}
             admin={admin}
           />
@@ -774,13 +769,11 @@ function LogDetailPage({
 function LogOverview({
   log,
   detail,
-  turns,
   loading,
   admin,
 }: {
   log: RequestLog
   detail: RequestLogDetail | null
-  turns: WebSocketTurn[]
   loading: boolean
   admin: boolean
 }) {
@@ -971,49 +964,6 @@ function LogOverview({
         </p>
       </DetailGroup>
 
-      {turns.length ? (
-        <DetailGroup
-          title={
-            log.log_unit !== "legacy_session"
-              ? "计费块账本"
-              : `历史会话轮次 · ${turns.length}`
-          }
-        >
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>轮次</TableHead>
-                <TableHead>模型</TableHead>
-                <TableHead className="text-right">Token</TableHead>
-                <TableHead className="text-right">耗时</TableHead>
-                <TableHead className="text-right">费用</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {turns.map((turn) => (
-                <TableRow key={turn.turn_id}>
-                  <TableCell className="max-w-40 truncate font-mono text-xs">
-                    {turn.turn_id}
-                  </TableCell>
-                  <TableCell className="max-w-32 truncate text-xs">
-                    {turn.model || "—"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {compactTokens(turn.total_tokens)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {turn.latency_ms} ms
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {money(turn.cost_nano_usd)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </DetailGroup>
-      ) : null}
-
       <RequestLatencyTimeline
         value={latencyTrace}
         totalMS={log.latency_ms}
@@ -1046,6 +996,14 @@ function LogOverview({
                   .join(" · "),
               ],
               ["计价模型", log.price_model],
+              [
+                "扣费来源",
+                log.billing_source === "balance"
+                  ? "余额"
+                  : log.billing_source === "subscription"
+                    ? "订阅额度"
+                    : "未记录",
+              ],
               [
                 "倍率",
                 log.price_multiplier != null ? `${log.price_multiplier}×` : "",

@@ -21,8 +21,4 @@ func TestBillingStepLogCannotInheritSessionTotals(t *testing.T) {
 	if log.ID == webSocketStepLog(input, started, started).ID {
 		t.Fatal("response ids collided between sessions")
 	}
-	input.PricingComplete = false
-	if got := webSocketStepLog(input, started, started); got.CostNanoUSD == nil || *got.CostNanoUSD != 12 || got.PricingComplete {
-		t.Fatalf("estimated debit hidden or reported as exact: %+v", got)
-	}
 }

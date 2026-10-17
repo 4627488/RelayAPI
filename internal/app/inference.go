@@ -266,30 +266,19 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			}
 		}
 		actual := int64(0)
-		settled := !call.billable
-		var cost *int64
+		complete := false
 		if call.billable && status < http.StatusBadRequest {
 			var effectivePrice *store.ResolvedPrice
 			if call.priceConfigured {
 				effectivePrice = &price
 			}
-			assessment := billing.Assess(parsed, effectivePrice, max64(call.admission.BalanceReservedNanoUSD, call.admission.QuotaReservedNanoUSD))
-			actual = assessment.CostNanoUSD
-			if assessment.Complete {
-				cost = &actual
+			assessment := billing.Assess(parsed, effectivePrice)
+			actual, complete = assessment.CostNanoUSD, assessment.Complete
+			if !complete {
+				slog.Warn("uncharged http usage", "request_id", call.requestID, "usage_quality", parsed.UsageQuality, "priced", effectivePrice != nil)
 			}
-			settleErr := a.store.SettleRequestReservation(finalizeCtx, call.requestID, actual, assessment.Complete)
-			a.observePersistence("http_settlement", settleErr)
-			if err := settleErr; err == nil {
-				settled = true
-			} else {
-				slog.Error("settle request", "request_id", call.requestID, "error", err)
-			}
-		} else if call.billable {
-			a.releaseReservation(call.requestID, true)
-			settled = true
 		}
-		settledAt := time.Now()
+		assessedAt := time.Now()
 		errorMessage := ""
 		rawResponse, responseTruncated, responseBytes := capture.Info()
 		if writeErr != nil {
@@ -317,7 +306,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		}
 		call.timeline.Span(runtimeStarted, responseReadAt, "runtime", "运行时执行", "runtime", "进入运行时到返回，包含上游等待与向客户端写响应")
 		call.timeline.Span(responseReadAt, finalizeStarted, "finalizer_wait", "计费调度等待", "billing", "响应结束到计费处理开始，不计入响应总耗时")
-		call.timeline.Span(finalizeStarted, settledAt, "settlement", "计费处理", "billing", "解析用量、解析价格与结算；不含日志写入，不计入响应总耗时")
+		call.timeline.Span(finalizeStarted, assessedAt, "pricing", "用量与价格处理", "billing", "解析用量与计算确认费用；不含后续计费事务，不计入响应总耗时")
 		// Settlement and durable logging now run after the response boundary and
 		// must not inflate the latency reported to users.
 		call.timeline.Mark(responseReadAt, "complete", "响应完成")
@@ -329,7 +318,21 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			logContext.ensureDetail().StageTimings = stageTimings
 		}
 		logContext.stageTimings = stageTimings
-		a.writeRequestLog(call.key, call.requestID, call.admission, call.meta, r, status, call.started, &parsed, cost != nil, settled, actual, errorMessage, logContext)
+		input := requestLogInput(call.key, call.requestID, call.admission, call.meta, r, status, call.started, &parsed, complete, true, actual, errorMessage, logContext)
+		if !retainDetail {
+			input.Detail = nil
+		}
+		if status >= http.StatusBadRequest || writeErr != nil {
+			slog.Warn("http inference error", "request_id", call.requestID, "status", status, "code", logContext.errorCode, "message", boundedErrorText(errorMessage))
+		}
+		a.observeInference(input)
+		if call.billable {
+			err := a.store.SettleRequestWithLog(finalizeCtx, call.requestID, input)
+			a.observePersistence("http_settlement", err)
+			if err != nil {
+				slog.Error("settle http billing detail", "request_id", call.requestID, "error", err)
+			}
+		}
 		a.store.TouchKey(finalizeCtx, call.key.ID)
 	})
 }

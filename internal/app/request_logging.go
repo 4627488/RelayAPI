@@ -2,7 +2,6 @@ package app
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"hash/fnv"
 	"log/slog"
@@ -260,22 +259,10 @@ func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, ad
 		requestBytes = detail.RequestBodyBytes
 		stageTimings = detail.StageTimings
 	}
-	a.writeRequestLog(key, requestID, admission, meta, r, status, started, nil, false, true, 0,
-		boundedErrorText(message), requestLogContext{detail: detail, errorCode: code, requestBytes: requestBytes, stageTimings: stageTimings})
-}
-
-func (a *App) writeRequestLog(key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, r *http.Request, status int,
-	started time.Time, parsed *billing.Result, pricingComplete, settled bool, cost int64, errorMessage string, logContext requestLogContext) {
-	input := requestLogInput(key, requestID, admission, meta, r, status, started, parsed, pricingComplete, settled, cost, errorMessage, logContext)
-	if !shouldRetainRequestDetail(requestID, status, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
-		input.Detail = nil
-	}
+	input := requestLogInput(key, requestID, admission, meta, r, status, started, nil, false, false, 0,
+		boundedErrorText(message), requestLogContext{errorCode: code, requestBytes: requestBytes, stageTimings: stageTimings})
 	a.observeInference(input)
-	err := a.store.WriteLog(context.WithoutCancel(r.Context()), input)
-	a.observePersistence("request_log", err)
-	if err != nil {
-		slog.Error("write request log", "request_id", requestID, "error", err)
-	}
+	slog.Warn("request rejected without charge", "request_id", requestID, "status", status, "code", code, "message", boundedErrorText(message))
 }
 
 func (a *App) finalizeResponse(task func()) {
@@ -319,7 +306,7 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		actualModel = parsed.Model
 	}
 	var costPointer *int64
-	if pricingComplete || (settled && cost > 0) {
+	if pricingComplete {
 		costPointer = &cost
 	}
 	quality := ""
@@ -357,7 +344,7 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		ChildSubscriptionID: admission.ChildSubscriptionID,
 		Method:              r.Method, Path: r.URL.Path, StatusCode: status, Stream: meta.Stream, Usage: usage,
 		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
-		ReservedNanoUSD: max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD), LatencyMS: completedAt.Sub(started).Milliseconds(),
+		ReservedNanoUSD: 0, LatencyMS: completedAt.Sub(started).Milliseconds(),
 		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
 		TTFTMS: logContext.ttftMS, FirstTokenMS: logContext.firstTokenMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
 		StageTimings: logContext.stageTimings,

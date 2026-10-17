@@ -13,13 +13,13 @@ import (
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
-func TestRequestLogPreservesEstimatedDebitAndPrewarmOutcome(t *testing.T) {
+func TestRequestLogNeverExposesUnconfirmedCharge(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	missing := billing.Result{UsageQuality: "missing"}
 	input := requestLogInput(store.KeyContext{}, "request", store.Admission{}, requestMeta{}, r,
 		200, time.Now(), &missing, false, true, 10_000_000, "", requestLogContext{})
-	if input.CostNanoUSD == nil || *input.CostNanoUSD != 10_000_000 || input.PricingComplete || input.UsageQuality != "missing" {
-		t.Fatalf("estimated debit lost: %+v", input)
+	if input.CostNanoUSD != nil || input.PricingComplete || input.UsageQuality != "missing" {
+		t.Fatalf("unconfirmed charge exposed: %+v", input)
 	}
 	warm := billing.Result{UsageQuality: "not_generated"}
 	input = requestLogInput(store.KeyContext{}, "warm", store.Admission{}, requestMeta{}, r,

@@ -65,7 +65,7 @@ func TestEmbeddedCPASyntheticPrewarmHasCompleteZeroSettlement(t *testing.T) {
 		}
 	}
 	entry := <-turns
-	assessment := billing.Assess(entry.Result, nil, 10_000_000)
+	assessment := billing.Assess(entry.Result, nil)
 	if !entry.Meta.Prewarm || !entry.Result.NonGenerated() || !assessment.Complete || assessment.CostNanoUSD != 0 {
 		t.Fatalf("synthetic prewarm charged or classified as missing: %+v / %+v", entry.Result, assessment)
 	}

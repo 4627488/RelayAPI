@@ -33,10 +33,7 @@ export function requestTokenRateLabel(log: RequestLog) {
 }
 
 export function requestLogCost(log: RequestLog) {
-  const amount = money(log.cost_nano_usd)
-  return log.cost_nano_usd != null && !log.pricing_complete
-    ? `估算 ${amount}`
-    : amount
+  return log.pricing_complete && log.settled ? money(log.cost_nano_usd) : "—"
 }
 
 export function requestLogTier(log: RequestLog) {

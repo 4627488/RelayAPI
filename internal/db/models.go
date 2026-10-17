@@ -222,6 +222,7 @@ type RequestLog struct {
 	ImageOutputTokens            int64     `gorm:"not null;default:0" json:"image_output_tokens"`
 	TotalTokens                  int64     `gorm:"not null;default:0" json:"total_tokens"`
 	CostNanoUSD                  *int64    `json:"cost_nano_usd"`
+	BillingSource                string    `gorm:"not null;default:''" json:"billing_source,omitempty"`
 	PriceModel                   string    `gorm:"not null;default:''" json:"price_model"`
 	PriceSource                  string    `gorm:"not null;default:''" json:"price_source"`
 	PriceVersion                 string    `gorm:"not null;default:''" json:"price_version"`

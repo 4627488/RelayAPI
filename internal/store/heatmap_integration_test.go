@@ -33,7 +33,7 @@ func TestHeatmapSurvivesRetentionAcrossTimezones(t *testing.T) {
 	}
 	tenantID, keyID := identity.NewID(), identity.NewID()
 	now := time.Date(2026, 9, 26, 1, 0, 0, 0, time.UTC)
-	log := db.RequestLog{ID: identity.NewID(), TenantID: tenantID, APIKeyID: keyID, Model: "model-a", TotalTokens: 200,
+	log := db.RequestLog{ID: identity.NewID(), TenantID: tenantID, APIKeyID: keyID, Model: "model-a", TotalTokens: 200, LogUnit: LogUnitStep, Settled: true, PricingComplete: true, CostNanoUSD: int64Pointer(1),
 		StartedAt: time.Date(2026, 8, 1, 23, 59, 0, 0, time.UTC), CompletedAt: time.Date(2026, 8, 2, 0, 1, 0, 0, time.UTC), StatusCode: 200}
 	if err := tx.Create(&log).Error; err != nil {
 		t.Fatal(err)

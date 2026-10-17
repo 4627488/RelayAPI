@@ -123,6 +123,7 @@ export interface RequestLog {
   image_output_tokens: number
   total_tokens: number
   cost_nano_usd: number | null
+  billing_source?: "balance" | "subscription" | ""
   price_model?: string
   price_source?: string
   price_version?: string
@@ -145,22 +146,6 @@ export interface RequestLog {
   error_message?: string
   started_at: string
   completed_at: string
-}
-
-export interface WebSocketTurn {
-  request_id: string
-  turn_id: string
-  model?: string
-  prompt_tokens: number
-  completion_tokens: number
-  cached_tokens: number
-  total_tokens: number
-  cost_nano_usd: number
-  request_body_bytes: number
-  response_body_bytes: number
-  latency_ms: number
-  started_at?: string
-  completed_at?: string
 }
 
 export interface RequestLogDetail {

@@ -24,12 +24,13 @@ the native runtime owns protocol translation, retries, and routing.
    invented for upstream-derived quota.
 7. Monetary amounts are signed 64-bit integer nano-USD. Price information used
    by a request is snapshotted with the reservation and request log.
-8. Missing terminal usage on a successful upstream response never becomes free
-   quota. Relay settles the conservative reservation and marks the request as
-   pricing-incomplete for later reconciliation. Rejected upstream requests
-   release their reservations. Explicit runtime non-generation is a complete
-   zero-cost result, and never consumes the conservative reservation. Logs retain
-   the actual accrued estimate when generation usage is unknown.
+8. Only complete usage with a confirmed price may be charged. Missing or
+   unreliable usage or prices result in zero charge and release of the hold;
+   runtime logs record the uncharged outcome. Price updates never retroactively
+   charge these requests. Zero-cost outcomes do not create billing details.
+   Actual charges and their single billing detail commit atomically. Each detail
+   snapshots its balance/subscription funding source from admission, independent
+   of later parent configuration edits.
 9. Tenants see child names, shares, usage, and reset times, but never parent
    credential IDs, account emails, tokens, or provider-private metadata.
 
@@ -239,7 +240,7 @@ Rollout order:
 3. verify native quota observations and reset generations;
 4. enable enforcement after model and quota validation;
 5. remove the external native runtime service and legacy watchdog;
-6. reconcile and monitor incomplete-pricing requests before global enablement.
+6. monitor uncharged usage through runtime logs before global enablement.
 
 The legacy Next.js implementation is a behavioral reference, not a storage or
 provider abstraction to copy. This design replaces its floating-point shares,

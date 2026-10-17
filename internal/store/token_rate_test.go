@@ -43,7 +43,7 @@ func TestLast24HoursTokenRateIntegration(t *testing.T) {
 		t.Fatal(tx.Error)
 	}
 	defer tx.Rollback()
-	if err := tx.Exec(`CREATE TEMP TABLE request_logs (completed_at timestamptz, log_unit text, completion_tokens bigint, total_tokens bigint) ON COMMIT DROP`).Error; err != nil {
+	if err := tx.Exec(`CREATE TEMP TABLE request_logs (completed_at timestamptz, log_unit text, completion_tokens bigint, total_tokens bigint, settled boolean DEFAULT true, pricing_complete boolean DEFAULT true, cost_nano_usd bigint DEFAULT 1) ON COMMIT DROP`).Error; err != nil {
 		t.Fatal(err)
 	}
 	start := time.Date(2026, 10, 12, 0, 0, 30, 0, time.FixedZone("test", 8*3600))
@@ -62,7 +62,7 @@ func TestLast24HoursTokenRateIntegration(t *testing.T) {
 		{now.Add(time.Second), "step", 9999},
 	} {
 		// Input-heavy totals must not inflate output speed.
-		if err := tx.Exec("INSERT INTO request_logs VALUES (?, ?, ?, ?)", row.at, row.unit, row.tokens, row.tokens+100000).Error; err != nil {
+		if err := tx.Exec("INSERT INTO request_logs (completed_at, log_unit, completion_tokens, total_tokens) VALUES (?, ?, ?, ?)", row.at, row.unit, row.tokens, row.tokens+100000).Error; err != nil {
 			t.Fatal(err)
 		}
 	}

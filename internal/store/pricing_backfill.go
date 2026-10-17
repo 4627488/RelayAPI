@@ -3,23 +3,11 @@ package store
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/pricing"
-	"gorm.io/gorm"
 )
-
-// Only runtime-complete usage or positive legacy token evidence can be repriced.
-// Empty legacy usage and explicit CPA accounting failures remain conservative.
-const repriceableLogSQL = "usage_quality = 'complete' OR (usage_quality = '' AND (total_tokens > 0 OR image_input_tokens > 0 OR image_output_tokens > 0))"
-
-type PendingPriceModel struct {
-	Model           string `json:"model"`
-	RequestCount    int64  `json:"request_count"`
-	LatestStartedAt string `json:"latest_started_at"`
-}
 
 type HistoricalModelPrice struct {
 	Model                           string    `json:"model"`
@@ -128,97 +116,4 @@ func (s *Store) HistoricalModelPrices(ctx context.Context) ([]HistoricalModelPri
 		result[index].PriceMultiplier = resolved.PriceMultiplier
 	}
 	return result, nil
-}
-
-func (s *Store) PendingPricing(ctx context.Context) ([]PendingPriceModel, error) {
-	result := make([]PendingPriceModel, 0)
-	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).
-		Select("model, count(*) AS request_count, max(started_at)::text AS latest_started_at").
-		Where(generationLogSQL).Where(repriceableLogSQL).
-		Where("pricing_complete = ? AND model <> '' AND status_code >= 200 AND status_code < 400", false).
-		Group("model").Order("request_count DESC, model").Scan(&result).Error
-	return result, err
-}
-
-func (s *Store) backfillPendingPricing(ctx context.Context) (int, error) {
-	if s.pricingCatalog == nil || s.pricingCatalog.Snapshot() == nil {
-		return 0, nil
-	}
-	var logs []db.RequestLog
-	if err := scoped(ctx, s.DB).
-		Where(generationLogSQL).Where(repriceableLogSQL).
-		Where("pricing_complete = ? AND model <> '' AND status_code >= 200 AND status_code < 400", false).
-		Find(&logs).Error; err != nil {
-		return 0, err
-	}
-	updated := 0
-	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
-		for _, item := range logs {
-			price, ok := s.pricingCatalog.Snapshot().Resolve(pricing.Dimensions{
-				APIGroupKey: item.APIKeyID, Model: item.Model, ModelAlias: item.ModelAlias,
-				AuthIndex: item.AuthIndex, ServiceTier: item.ServiceTier,
-				ResponseServiceTier: item.ResponseServiceTier, ReasoningEffort: item.ReasoningEffort,
-				Endpoint: item.Path, ExecutorType: item.ExecutorType, PromptTokens: item.PromptTokens,
-			})
-			if !ok {
-				continue
-			}
-			imageOutput := item.ImageOutputTokens
-			if imageOutput == 0 && strings.HasPrefix(item.Path, "/v1/images/") && price.ImageOutputNanoUSDPerToken > 0 {
-				// Logs written before modality-aware accounting only retained the
-				// aggregate completion count. Images API completion tokens are image
-				// output tokens, so they can still be reconciled without estimation.
-				imageOutput = item.CompletionTokens
-			}
-			cost := pricing.CostNanoUSD(price, pricing.Usage{
-				Prompt: item.PromptTokens, Completion: item.CompletionTokens, Cached: item.CachedTokens,
-				CacheWrite: item.CacheWriteTokens, Reasoning: item.ReasoningTokens, Total: item.TotalTokens,
-				ImageInput: item.ImageInputTokens, CachedImageInput: item.CachedImageInputTokens, ImageOutput: imageOutput,
-			})
-			if err := tx.Model(&db.RequestLog{}).Where("id = ? AND pricing_complete = ?", item.ID, false).
-				Updates(map[string]any{
-					"cost_nano_usd": cost, "price_model": price.PricedModel,
-					"price_source": price.Source, "price_version": price.Version,
-					"input_price_nano_usd":              price.InputNanoUSDPerToken,
-					"output_price_nano_usd":             price.OutputNanoUSDPerToken,
-					"cached_price_nano_usd":             price.CachedInputNanoUSDPerToken,
-					"cache_write_price_nano_usd":        price.CacheWriteNanoUSDPerToken,
-					"reasoning_price_nano_usd":          price.ReasoningNanoUSDPerToken,
-					"image_input_price_nano_usd":        price.ImageInputNanoUSDPerToken,
-					"cached_image_input_price_nano_usd": price.CachedImageInputNanoUSDPerToken,
-					"image_output_price_nano_usd":       price.ImageOutputNanoUSDPerToken,
-					"image_output_tokens":               imageOutput,
-					"price_multiplier":                  price.PriceMultiplier, "pricing_complete": true,
-				}).Error; err != nil {
-				return err
-			}
-			if item.ReservationRequestID == nil {
-				if err := reconcileSettledReservation(tx, item.ID, cost); err != nil {
-					return err
-				}
-			} else {
-				var pending int64
-				if err := tx.Model(&db.RequestLog{}).
-					Where("reservation_request_id = ? AND pricing_complete = ?", *item.ReservationRequestID, false).
-					Count(&pending).Error; err != nil {
-					return err
-				}
-				if pending == 0 {
-					var aggregate int64
-					if err := tx.Model(&db.RequestLog{}).
-						Select("COALESCE(sum(cost_nano_usd), 0)").
-						Where("reservation_request_id = ?", *item.ReservationRequestID).
-						Scan(&aggregate).Error; err != nil {
-						return err
-					}
-					if err := reconcileSettledReservation(tx, *item.ReservationRequestID, aggregate); err != nil {
-						return err
-					}
-				}
-			}
-			updated++
-		}
-		return nil
-	})
-	return updated, err
 }

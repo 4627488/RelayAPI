@@ -96,165 +96,31 @@ var errRAIWebSocketAuthorization = errors.New("device authorization expired or w
 
 func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext, timeline *latencyTimeline) {
-	sessionID := requestID
 	accounting := nativeWebSocketAccounting{admission: admission, price: logContext.price, billable: billable}
 	accounting.persistTurn = func(entry nativeWebSocketBillingEntry, cumulative billing.Result) (bool, error) {
 		return a.persistNativeWebSocketTurn(context.WithoutCancel(r.Context()), r, key, requestID,
 			logContext, &accounting, entry, cumulative)
 	}
-	session, resolvedMeta, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
-	sessionObservedAt := time.Now()
-	if resolvedMeta.Model != "" {
-		meta = resolvedMeta
-	}
-	admission = accounting.admission
-	billable = accounting.billable
-	logContext.price = accounting.price
-	statusCode := http.StatusSwitchingProtocols
-	if accounting.errorHTTP != 0 {
-		statusCode = accounting.errorHTTP
-		logContext.errorCode = accounting.errorCode
-		if logContext.errorCode == "" {
-			logContext.errorCode = "websocket_proxy_error"
-		}
-	} else if err != nil && !session.established {
-		statusCode = http.StatusBadGateway
-		logContext.errorCode = firstNonEmptyString(accounting.errorCode, "websocket_proxy_error")
-	} else if !session.upgraded {
-		statusCode = http.StatusBadGateway
-		logContext.errorCode = "websocket_proxy_error"
-	}
-	if accounting.turnsSeen == 0 && accounting.price != nil && accounting.result.ResponseServiceTier != "" {
-		if resolved, resolveErr := a.store.ResolvePrice(context.Background(), pricing.Dimensions{
-			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(admission),
-			ServiceTier: meta.ServiceTier, ResponseServiceTier: accounting.result.ResponseServiceTier,
-			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-		}); resolveErr == nil {
-			accounting.price = &resolved
-			logContext.price = &resolved
-			_ = a.store.UpdateReservationPriceSnapshot(context.Background(), requestID, store.EncodePriceSnapshot(resolved))
-		}
-	}
-	pricingComplete := billable && accounting.turnsSeen > 0 && accounting.pricingComplete
-	actual := max64(admission.BalanceReservedNanoUSD, admission.QuotaReservedNanoUSD)
-	if accounting.turnsSeen > 0 {
-		actual = accounting.accruedNanoUSD
-	}
-	settled := !billable
-	if billable {
+	session, _, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
+	if accounting.billable {
+		// Only durable per-step charges survive session close. Unknown or
+		// interrupted usage never consumes the connection's admission hold.
 		var settleErr error
 		if session.established {
-			settleErr = a.store.SettleRequestReservation(context.Background(), requestID, actual, pricingComplete)
+			settleErr = a.store.SettleRequestReservation(context.WithoutCancel(r.Context()), requestID, accounting.accruedNanoUSD, true)
 		} else {
-			actual = 0
-			settleErr = a.store.ReleaseRequestReservation(context.Background(), requestID)
+			settleErr = a.store.ReleaseRequestReservation(context.WithoutCancel(r.Context()), requestID)
 		}
 		a.observePersistence("websocket_settlement", settleErr)
-		if settleErr == nil {
-			settled = true
-		} else {
+		if settleErr != nil {
 			slog.Error("settle native websocket request", "request_id", requestID, "error", settleErr)
 		}
 	}
 	if err != nil && !normalWebSocketClose(err) {
 		slog.Warn("native websocket proxy", "request_id", requestID, "error", err)
-		if session.established {
-			logContext.errorCode = "websocket_session_error"
-		}
-		detail := logContext.ensureDetail()
-		detail.ErrorName = logContext.errorCode
-		detail.ErrorMessage = boundedErrorText(err.Error())
 	}
-	// Completed steps are already durable. Closing the transport must never
-	// create an additional cumulative charge/log or overwrite a completed step.
-	if accounting.turnsSeen > 0 && !accounting.currentActive {
-		a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
-		return
-	}
-	if accounting.currentActive {
-		// An interrupted later step has no terminal usage. Preserve it separately
-		// without copying the already charged session totals.
-		requestID = store.WebSocketStepID(requestID, fmt.Sprintf("interrupted:%d", accounting.turnsSeen+1))
-		started = accounting.currentStarted
-		if !accounting.currentFirstToken.IsZero() {
-			elapsed := accounting.currentFirstToken.Sub(started).Milliseconds()
-			logContext.firstTokenMS = &elapsed
-		}
-		accounting.result = billing.Result{}
-		pricingComplete = false
-		actual = 0
-		logContext.detail = baseRequestDetail(r, accounting.currentBody)
-		logContext.detail.RequestBodyBytes = accounting.currentRequest
-		logContext.detail.RequestBodyTruncated = accounting.currentRequest > int64(len(accounting.currentBody))
-		accounting.requestBytes = accounting.currentRequest
-		accounting.forwardedBytes = accounting.currentForwarded
-		accounting.responseBytes = accounting.currentResponse
-		timeline = newLatencyTimeline(started)
-		if statusCode < http.StatusBadRequest {
-			statusCode = 499
-			logContext.errorCode = "step_interrupted"
-		}
-	}
-	completed := sessionObservedAt
-	if !accounting.currentStarted.IsZero() {
-		started = accounting.currentStarted
-		timeline = newLatencyTimeline(started)
-	}
-	if !accounting.currentActive && accounting.turnsSeen == 0 {
-		logContext.logUnit = store.LogUnitConnection
-		pricingComplete, actual = true, 0
-		timeline.Step(completed, "connection_closed", "连接结束", "runtime", "未收到生成请求，不产生计费块")
-	} else {
-		timeline.Step(completed, "step_interrupted", "未完成的计费块", "runtime", "从收到请求到连接结束，未观测到终止用量")
-	}
-	logContext.completedAt = completed
-	logContext.requestBytes = accounting.requestBytes
-	logContext.forwardedBytes = accounting.forwardedBytes
-	logContext.responseBytes = accounting.responseBytes
-	stageTimings := timeline.JSON(completed)
-	if logContext.detail != nil {
-		logContext.detail.StageTimings = stageTimings
-	}
-	logContext.stageTimings = stageTimings
-	input := requestLogInput(key, requestID, admission, meta, r, statusCode, started, &accounting.result,
-		pricingComplete, settled, actual, errorString(err), logContext)
-	input.ReservationRequestID = sessionID
-	if accounting.turnsSeen > 0 {
-		input.ReservedNanoUSD = 0
-	}
-	input.Stream = true
-	if !shouldRetainRequestDetail(requestID, statusCode, logContext.errorCode, a.cfg.RequestSuccessSamplePPM) {
-		input.Detail = nil
-	}
-	// Completed turns were already observed at durable accrual. Only observe an
-	// interrupted active turn here, avoiding connection-summary double counting.
-	if accounting.currentActive || accounting.turnsSeen == 0 {
-		a.observeInference(input)
-	}
-	logErr := a.store.UpsertLog(context.WithoutCancel(r.Context()), input)
-	a.observePersistence("websocket_summary", logErr)
-	if logErr != nil {
-		slog.Error("upsert native websocket request log", "request_id", requestID, "error", logErr)
-	}
-	for index, pending := range accounting.pending {
-		id := store.WebSocketStepID(sessionID, fmt.Sprintf("interrupted:%d", accounting.turnsSeen+2+int64(index)))
-		trace := newLatencyTimeline(pending.StartedAt)
-		trace.Step(completed, "step_interrupted", "计费块中断", "runtime", "已接收请求，连接结束前未收到对应终止事件")
-		detail := baseRequestDetail(r, pending.RequestBody)
-		detail.RequestBodyBytes = pending.RequestBytes
-		detail.RequestBodyTruncated = pending.RequestBytes > int64(len(pending.RequestBody))
-		detail.StageTimings = trace.JSON(completed)
-		input := requestLogInput(key, id, admission, pending.Meta, r, 499, pending.StartedAt, nil, false, settled, 0,
-			"The connection closed before final usage was received.", requestLogContext{detail: detail, completedAt: completed, errorCode: "step_interrupted", stageTimings: detail.StageTimings,
-				requestBytes: pending.RequestBytes, forwardedBytes: pending.ForwardedBytes})
-		input.ReservationRequestID = sessionID
-		input.ReservedNanoUSD = 0
-		a.observeInference(input)
-		logErr := a.store.WriteLog(context.WithoutCancel(r.Context()), input)
-		a.observePersistence("websocket_interrupted", logErr)
-		if logErr != nil {
-			slog.Error("write interrupted step", "step_id", id, "error", logErr)
-		}
+	if accounting.currentActive || len(accounting.pending) > 0 {
+		slog.Warn("uncharged interrupted websocket usage", "request_id", requestID, "pending", len(accounting.pending))
 	}
 	a.store.TouchKey(context.WithoutCancel(r.Context()), key.ID)
 }
@@ -290,7 +156,7 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	turnComplete := turn.NonGenerated()
 	turnCost := int64(0)
 	if accounting.billable {
-		assessment := billing.Assess(turn, turnPrice, max64(accounting.admission.BalanceReservedNanoUSD, accounting.admission.QuotaReservedNanoUSD))
+		assessment := billing.Assess(turn, turnPrice)
 		turnCost, turnComplete = assessment.CostNanoUSD, assessment.Complete
 	}
 	// A terminal upstream error is never billable. Some providers include
@@ -299,6 +165,9 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	if failed {
 		turnCost = 0
 		turnComplete = true
+	}
+	if accounting.billable && !turnComplete {
+		slog.Warn("uncharged websocket usage", "request_id", requestID, "response_id", turn.RequestID, "usage_quality", turn.UsageQuality, "priced", turnPrice != nil)
 	}
 	aggregateComplete := turnComplete
 	if accounting.turnsSeen > 0 {

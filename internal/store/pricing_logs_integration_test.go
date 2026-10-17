@@ -142,12 +142,9 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	var backfilled db.RequestLog
-	if err := database.First(&backfilled, "id = ?", pendingID).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !backfilled.PricingComplete || backfilled.CostNanoUSD == nil || *backfilled.CostNanoUSD != 40 {
-		t.Fatalf("pending price was not backfilled: %+v", backfilled)
+	var uncharged int64
+	if err := database.Model(&db.RequestLog{}).Where("id = ?", pendingID).Count(&uncharged).Error; err != nil || uncharged != 0 {
+		t.Fatalf("unpriced request became a bill after price update: count=%d err=%v", uncharged, err)
 	}
 	report, err := dataStore.UsageReport(ctx, tenantID, 30)
 	if err != nil {
@@ -170,7 +167,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err := json.Unmarshal(rawKeyUsage, &keyUsage); err != nil {
 		t.Fatal(err)
 	}
-	if len(keyUsage) != 1 || keyUsage[0].APIKeyID != keyID || keyUsage[0].Requests != 2 || keyUsage[0].Tokens != 15 {
+	if len(keyUsage) != 1 || keyUsage[0].APIKeyID != keyID || keyUsage[0].Requests != 1 || keyUsage[0].Tokens != 12 {
 		t.Fatalf("API key usage = %#v", report["api_keys"])
 	}
 	if keyUsage[0].APIKeyName != keyName || keyUsage[0].APIKeyPrefix != keyPrefix {
@@ -191,8 +188,8 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err := json.Unmarshal(rawSummary, &usageSummary); err != nil {
 		t.Fatal(err)
 	}
-	if usageSummary.Requests != 2 || usageSummary.Tokens != 15 || usageSummary.PromptTokens != 12 ||
-		usageSummary.CompletionTokens != 3 || usageSummary.CachedTokens != 4 || usageSummary.ReasoningTokens != 1 {
+	if usageSummary.Requests != 1 || usageSummary.Tokens != 12 || usageSummary.PromptTokens != 10 ||
+		usageSummary.CompletionTokens != 2 || usageSummary.CachedTokens != 4 || usageSummary.ReasoningTokens != 1 {
 		t.Fatalf("usage summary = %+v", usageSummary)
 	}
 	adminReport, err := dataStore.UsageReport(ctx, "", 30)
@@ -211,14 +208,14 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if err := json.Unmarshal(rawUsers, &userUsage); err != nil {
 		t.Fatal(err)
 	}
-	if len(userUsage) != 1 || userUsage[0].TenantID != tenantID || userUsage[0].Requests != 2 || userUsage[0].Tokens != 15 {
+	if len(userUsage) != 1 || userUsage[0].TenantID != tenantID || userUsage[0].Requests != 1 || userUsage[0].Tokens != 12 {
 		t.Fatalf("user usage = %#v", adminReport["users"])
 	}
 	history, err := dataStore.HistoricalModelPrices(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history) != 2 {
+	if len(history) != 1 {
 		t.Fatalf("historical model prices = %+v", history)
 	}
 	historyByModel := make(map[string]HistoricalModelPrice, len(history))
@@ -228,10 +225,6 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	if item := historyByModel["alias-model"]; !item.Priced || item.PricedModel != "admin-model" ||
 		item.InputNanoUSDPerToken != 20 || item.RequestCount != 1 {
 		t.Fatalf("alias historical price = %+v", item)
-	}
-	if item := historyByModel["pending-model"]; !item.Priced ||
-		item.InputNanoUSDPerToken != 10 || item.RequestCount != 1 {
-		t.Fatalf("pending historical price = %+v", item)
 	}
 
 	for _, item := range []struct {
@@ -245,7 +238,7 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 			TenantName: tenantName, APIKeyName: keyName, APIKeyPrefix: keyPrefix,
 			Method: "GET", Path: "/v1/responses/ws", RequestType: "responses.websocket",
 			StatusCode: 101, Stream: true, ErrorCode: item.errorCode, CostNanoUSD: int64Pointer(1),
-			Settled: true, StartedAt: started, CompletedAt: time.Now(),
+			PricingComplete: true, Settled: true, StartedAt: started, CompletedAt: time.Now(),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -299,11 +292,12 @@ func TestRetentionDeletesSuccessfulUnpricedDetails(t *testing.T) {
 		{id: identity.NewID(), status: 200},
 		{id: identity.NewID(), status: 502, errorCode: "upstream_http_error"},
 	} {
-		if err := dataStore.WriteLog(ctx, LogInput{ID: item.id, TenantID: tenantID, APIKeyID: keyID,
-			Method: "GET", Path: "/v1/models", RequestType: "v1/models", StatusCode: item.status,
-			PricingComplete: false, Settled: true, ErrorCode: item.errorCode, StartedAt: completed, CompletedAt: completed,
-			Detail: &LogDetailInput{RequestHeaders: `{}`, UpstreamHeaders: `{}`, UpstreamBody: `{"data":[]}`,
-				StageTimings: `{}`}}); err != nil {
+		if err := database.Create(&db.RequestLog{ID: item.id, TenantID: tenantID, APIKeyID: keyID,
+			LogUnit: LogUnitStep, Method: "GET", Path: "/v1/models", RequestType: "v1/models", StatusCode: item.status,
+			PricingComplete: false, Settled: true, ErrorCode: item.errorCode, StageTimings: "{}", StartedAt: completed, CompletedAt: completed}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Create(&db.RequestLogDetail{RequestLogID: item.id, RequestHeaders: "{}", UpstreamHeaders: "{}", UpstreamBody: `{"data":[]}`, StageTimings: "{}"}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -453,15 +447,15 @@ func TestQueryLogsCountsEveryBillingStep(t *testing.T) {
 	}
 
 	detail, err := dataStore.RequestLogDetail(ctx, sessionID, tenantID)
-	if err != nil || len(detail.Turns) != 2 || detail.Turns[0].TurnID != "resp_1" || detail.Turns[1].Model != "ws-model-2" {
-		t.Fatalf("session turns = %+v, err=%v", detail.Turns, err)
+	if err != nil || detail.Log.ID != sessionID {
+		t.Fatalf("billing detail = %+v, err=%v", detail, err)
 	}
 
 	overview, err := dataStore.Dashboard(ctx, tenantID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dashboardInt64(overview["requests_30d"]) != 4 || dashboardInt64(overview["tokens_30d"]) != 42 {
+	if dashboardInt64(overview["requests_30d"]) != 3 || dashboardInt64(overview["tokens_30d"]) != 42 {
 		t.Fatalf("dashboard unit = %#v", overview)
 	}
 	report, err := dataStore.UsageReport(ctx, tenantID, 30)
@@ -480,7 +474,7 @@ func TestQueryLogsCountsEveryBillingStep(t *testing.T) {
 	if err := json.Unmarshal(rawSummary, &usageSummary); err != nil {
 		t.Fatal(err)
 	}
-	if usageSummary.Requests != 4 || usageSummary.Tokens != 42 || usageSummary.Cost != 35 {
+	if usageSummary.Requests != 3 || usageSummary.Tokens != 42 || usageSummary.Cost != 35 {
 		t.Fatalf("usage summary = %+v", usageSummary)
 	}
 }
@@ -515,7 +509,7 @@ func TestPostgresStringArrayPreservesEmptyArray(t *testing.T) {
 	}
 }
 
-func TestBackfillRequiresKnownUsageAndLeavesEstimatesIntact(t *testing.T) {
+func TestPricingRefreshDoesNotRepriceHistoricalEstimates(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("TEST_DATABASE_URL is not configured")
@@ -549,7 +543,7 @@ func TestBackfillRequiresKnownUsageAndLeavesEstimatesIntact(t *testing.T) {
 		{"missing", LogUnitStep, 0, false}, {"", LogUnitStep, 0, false},
 		{"inconsistent", LogUnitStep, 10, false}, {"unclassified", LogUnitStep, 10, false},
 		{"not_generated", LogUnitPrewarm, 0, false},
-		{"complete", LogUnitStep, 10, true}, {"", LogUnitStep, 10, true},
+		{"complete", LogUnitStep, 10, false}, {"", LogUnitStep, 10, false},
 	} {
 		id := identity.NewID()
 		cost := int64(100)
@@ -560,12 +554,8 @@ func TestBackfillRequiresKnownUsageAndLeavesEstimatesIntact(t *testing.T) {
 		if err := tx.Create(&row).Error; err != nil {
 			t.Fatal(err)
 		}
-		count, err := dataStore.backfillPendingPricing(t.Context())
-		if err != nil {
+		if err := dataStore.RefreshPricing(t.Context()); err != nil {
 			t.Fatal(err)
-		}
-		if tc.want && count != 1 || !tc.want && count != 0 {
-			t.Fatalf("quality=%q unit=%q backfilled=%d", tc.quality, tc.unit, count)
 		}
 		if err := tx.First(&row, "id = ?", id).Error; err != nil {
 			t.Fatal(err)

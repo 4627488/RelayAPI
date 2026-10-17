@@ -53,6 +53,8 @@ func TestHeatmapPrivacyAndSharingIntegration(t *testing.T) {
 		{ID: identity.NewID(), TenantID: tenant.ID, APIKeyID: key.ID, Model: "claude-test", TotalTokens: 25, StartedAt: day.Add(2 * time.Minute), CompletedAt: now, StatusCode: 200},
 		{ID: identity.NewID(), TenantID: other.ID, APIKeyID: key.ID, Model: "other-private-model", TotalTokens: 9000, StartedAt: day, CompletedAt: now, StatusCode: 200},
 	} {
+		cost := int64(1)
+		log.LogUnit, log.Settled, log.PricingComplete, log.CostNanoUSD = store.LogUnitStep, true, true, &cost
 		if err := database.Create(&log).Error; err != nil {
 			t.Fatal(err)
 		}

@@ -56,7 +56,7 @@ func TestUsageObservabilityIntegration(t *testing.T) {
 		{"b", "step", 8000, 5000, 6000, 503, "other_tenant", now},
 		{"a", "step", 8888, 888, 888, 500, "expired", now.Add(-48 * time.Hour)},
 	} {
-		if err = tx.Exec(`INSERT INTO request_logs VALUES (?, ?, ?, ?, ?, ?, true, false, 'model', ?, ?, 'provider', 10, 100)`, row.tenant, row.at, row.unit, row.latency, row.first, row.ttft, row.status, row.code).Error; err != nil {
+		if err = tx.Exec(`INSERT INTO request_logs VALUES (?, ?, ?, ?, ?, ?, true, true, 'model', ?, ?, 'provider', 10, 100)`, row.tenant, row.at, row.unit, row.latency, row.first, row.ttft, row.status, row.code).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -65,7 +65,7 @@ func TestUsageObservabilityIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RetainedRequests != 3 || got.StepSamples != 2 || got.FirstTokenSamples != 1 || got.TTFTSamples != 1 {
+	if got.RetainedRequests != 2 || got.StepSamples != 2 || got.FirstTokenSamples != 1 || got.TTFTSamples != 1 {
 		t.Fatalf("wrong sample coverage: %+v", got)
 	}
 	if got.LatencyP50 == nil || *got.LatencyP50 != 200 || got.LatencyP95 == nil || *got.LatencyP95 != 290 {
@@ -77,7 +77,7 @@ func TestUsageObservabilityIntegration(t *testing.T) {
 	if len(got.Failures) != 1 || got.Failures[0].ErrorCode != "upstream_error" || len(got.Providers) != 0 {
 		t.Fatalf("tenant isolation failed: %+v", got)
 	}
-	if got.UnsettledRequests != 3 || got.UnpricedRequests != 0 {
+	if got.UnsettledRequests != 0 || got.UnpricedRequests != 0 {
 		t.Fatalf("wrong billing state: %+v", got)
 	}
 	empty, err := store.usageObservability(context.Background(), "empty", now.Add(-time.Hour))
@@ -91,7 +91,7 @@ func TestUsageObservabilityIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(global.Providers) != 1 || global.Providers[0].Requests != 4 || global.Providers[0].Errors != 2 {
+	if len(global.Providers) != 1 || global.Providers[0].Requests != 3 || global.Providers[0].Errors != 2 {
 		t.Fatalf("wrong global attribution: %+v", global)
 	}
 }

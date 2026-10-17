@@ -254,27 +254,24 @@ it("does not show zero-priced rates when pricing is incomplete", async () => {
     .not.toBeInTheDocument()
 })
 
-it("shows the estimated amount already accrued to quota", async () => {
-  const estimated = {
-    ...log,
-    pricing_complete: false,
-    cost_nano_usd: 10_000_000,
-    usage_quality: "missing",
-  }
-  const screen = await render(<RequestLogList logs={[estimated]} />)
-  await expect
-    .element(screen.getByText("估算 US$0.01", { exact: true }).first())
-    .toBeVisible()
-  await screen.getByRole("button", { name: "查看计费详情" }).first().click()
+it("does not present unconfirmed usage as a charge", async () => {
+  const screen = await render(
+    <RequestLogInsight
+      log={{
+        ...log,
+        pricing_complete: false,
+        cost_nano_usd: 10_000_000,
+        usage_quality: "missing",
+      }}
+      section="billing"
+    >
+      Details
+    </RequestLogInsight>
+  )
+  await screen.getByRole("button", { name: "查看计费详情" }).click()
   const popup = screen.getByRole("dialog", { name: "请求观测详情" })
   await expect
-    .element(popup.getByText("用量缺失", { exact: true }))
-    .toBeVisible()
-  await expect
-    .element(
-      popup.getByText(
-        "此金额已用于余额或套餐额度结算；用量或价格未确认，按预留金额保守估算。"
-      )
-    )
-    .toBeVisible()
+    .element(popup.getByText("US$0.01", { exact: true }))
+    .not.toBeInTheDocument()
+  await expect.element(popup.getByText(/保守估算/)).not.toBeInTheDocument()
 })

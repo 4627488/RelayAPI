@@ -66,7 +66,7 @@ func TestResolveKeyJoinTouchDebounceAndDailyTokenCounters(t *testing.T) {
 	if err := dataStore.WriteLog(ctx, LogInput{
 		ID: identity.NewID(), TenantID: tenantID, APIKeyID: keyID, Model: "actual-model",
 		Method: "POST", Path: "/v1/responses", StatusCode: 200,
-		Usage: Usage{Prompt: 10, Completion: 5, Total: 15}, Settled: true,
+		Usage: Usage{Prompt: 10, Completion: 5, Total: 15}, CostNanoUSD: int64Pointer(1), PricingComplete: true, Settled: true,
 		StartedAt: started, CompletedAt: time.Now(),
 	}); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestResolveKeyJoinTouchDebounceAndDailyTokenCounters(t *testing.T) {
 	if err := dataStore.UpsertLog(ctx, LogInput{
 		ID: upsertID, TenantID: tenantID, APIKeyID: keyID, Model: "actual-model",
 		Method: "GET", Path: "/v1/responses/ws", StatusCode: 101,
-		Usage: Usage{Prompt: 2, Completion: 1, Total: 3}, Settled: true,
+		Usage: Usage{Prompt: 2, Completion: 1, Total: 3}, CostNanoUSD: int64Pointer(1), PricingComplete: true, Settled: true,
 		StartedAt: started, CompletedAt: time.Now(),
 	}); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestResolveKeyJoinTouchDebounceAndDailyTokenCounters(t *testing.T) {
 	if err := dataStore.UpsertLog(ctx, LogInput{
 		ID: upsertID, TenantID: tenantID, APIKeyID: keyID, Model: "actual-model",
 		Method: "GET", Path: "/v1/responses/ws", StatusCode: 101,
-		Usage: Usage{Prompt: 4, Completion: 6, Total: 10}, Settled: true,
+		Usage: Usage{Prompt: 4, Completion: 6, Total: 10}, CostNanoUSD: int64Pointer(1), PricingComplete: true, Settled: true,
 		StartedAt: started, CompletedAt: time.Now(),
 	}); err != nil {
 		t.Fatal(err)

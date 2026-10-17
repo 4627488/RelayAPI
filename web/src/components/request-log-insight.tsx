@@ -177,6 +177,14 @@ export function RequestLogInsight({
                 ["定价完成", state(log.pricing_complete)],
                 ["已结算", state(log.settled)],
                 ["计价模型", log.price_model],
+                [
+                  "扣费来源",
+                  log.billing_source === "balance"
+                    ? "余额"
+                    : log.billing_source === "subscription"
+                      ? "订阅额度"
+                      : "未记录",
+                ],
                 ["请求服务档位", log.service_tier || "未指定"],
                 ["实际服务档位", log.response_service_tier || "未返回"],
                 ["价格来源", log.price_source],
@@ -211,11 +219,6 @@ export function RequestLogInsight({
                   : []),
               ]}
             />
-            {!log.pricing_complete && log.cost_nano_usd != null ? (
-              <p className="mt-3 text-xs text-muted-foreground">
-                此金额已用于余额或套餐额度结算；用量或价格未确认，按预留金额保守估算。
-              </p>
-            ) : null}
           </TabsContent>
           <TabsContent value="route">
             <Facts

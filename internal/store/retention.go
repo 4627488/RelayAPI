@@ -227,10 +227,10 @@ func (s Store) compactRequestLogs(ctx context.Context, cutoff time.Time, batch i
 			COALESCE(sum(l.image_output_tokens),0) AS image_output_tokens,
 			COALESCE(sum(l.total_tokens),0) AS total_tokens,
 			COALESCE(sum(l.cost_nano_usd),0) AS cost_nano_usd,
-			COALESCE(sum(CASE WHEN p.capacity_mode = 'observed' THEN l.cost_nano_usd ELSE 0 END),0) AS subscription_covered_nano_usd,
-			COALESCE(sum(CASE WHEN p.capacity_mode = 'observed' THEN 0 ELSE l.cost_nano_usd END),0) AS balance_charged_nano_usd
-			FROM request_logs l LEFT JOIN parent_subscriptions p ON p.id = l.parent_subscription_id
-			WHERE l.id IN ? AND l.log_unit NOT IN ('prewarm', 'connection') GROUP BY 1, l.tenant_id, l.model`, ids).Scan(&rollups).Error; err != nil {
+			COALESCE(sum(CASE WHEN l.billing_source = 'subscription' THEN l.cost_nano_usd ELSE 0 END),0) AS subscription_covered_nano_usd,
+			COALESCE(sum(CASE WHEN l.billing_source = 'balance' OR (l.billing_source = '' AND l.parent_subscription_id IS NULL) THEN l.cost_nano_usd ELSE 0 END),0) AS balance_charged_nano_usd
+			FROM request_logs l
+			WHERE l.id IN ? AND l.log_unit = 'step' AND l.pricing_complete = true AND l.settled = true AND l.cost_nano_usd > 0 GROUP BY 1, l.tenant_id, l.model`, ids).Scan(&rollups).Error; err != nil {
 			return 0, err
 		}
 		for index := range rollups {

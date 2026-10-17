@@ -822,14 +822,23 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 	quotaInput.RequestID = quotaRequestID
 	quotaInput.TurnID = "resp_quota"
 	quotaInput.Log = quotaLog
+	// An administrator changes the parent while the request is in flight.
+	// Settlement must still use the subscription source captured by admission.
+	if err := database.Model(&db.ParentSubscription{}).Where("id = ?", parent.ID).Update("capacity_mode", db.ParentCapacityUnmetered).Error; err != nil {
+		t.Fatal(err)
+	}
 	prewarm := quotaInput
 	prewarm.TurnID, prewarm.CostNanoUSD, prewarm.Usage = "resp_prewarm", 0, Usage{}
 	prewarm.Log.LogUnit, prewarm.Log.UsageQuality = LogUnitPrewarm, "not_generated"
 	if inserted, err := store.AccrueWebSocketTurn(ctx, prewarm); err != nil || !inserted {
 		t.Fatalf("prewarm inserted=%v err=%v", inserted, err)
 	}
-	if inserted, err := store.AccrueWebSocketTurn(ctx, prewarm); err != nil || inserted {
+	if inserted, err := store.AccrueWebSocketTurn(ctx, prewarm); err != nil || !inserted {
 		t.Fatalf("prewarm replay inserted=%v err=%v", inserted, err)
+	}
+	var warmBills int64
+	if err := database.Model(&db.RequestLog{}).Where("id = ?", WebSocketStepID(quotaRequestID, prewarm.TurnID)).Count(&warmBills).Error; err != nil || warmBills != 0 {
+		t.Fatalf("prewarm wrote a bill: count=%d err=%v", warmBills, err)
 	}
 	var warmWindow db.ChildQuotaWindow
 	if err := database.First(&warmWindow, "child_subscription_id = ? AND kind = ?", child.ID, "daily").Error; err != nil {
@@ -858,6 +867,14 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 	if window.ReservedNanoUSD != 0 || window.SettledNanoUSD != 25 {
 		t.Fatalf("quota finalization double-counted a durable turn: %+v", window)
 	}
+	if err := database.First(&tenant, "id = ?", tenantID).Error; err != nil || tenant.BalanceNanoUSD != 68 {
+		t.Fatalf("parent edit redirected quota charge to balance: balance=%d err=%v", tenant.BalanceNanoUSD, err)
+	}
+	bill, err := store.RequestLogDetail(ctx, WebSocketStepID(quotaRequestID, quotaInput.TurnID), tenantID)
+	if err != nil || bill.Log.BillingSource != "subscription" {
+		t.Fatalf("funding source changed with parent: bill=%+v err=%v", bill.Log, err)
+	}
+
 }
 
 func int64Pointer(value int64) *int64 { return &value }

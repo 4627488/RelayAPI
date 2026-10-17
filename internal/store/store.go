@@ -78,6 +78,7 @@ type Usage struct {
 }
 
 type LogInput struct {
+	BillingSource                                                                                                                                        string
 	UsageQuality                                                                                                                                         string
 	LogUnit                                                                                                                                              string
 	FirstTokenMS                                                                                                                                         *int64
@@ -761,8 +762,7 @@ func (s *Store) RefreshPricing(ctx context.Context) error {
 		return err
 	}
 	s.pricingCatalog.Replace(snapshot)
-	_, err = s.backfillPendingPricing(ctx)
-	return err
+	return nil
 }
 
 func EncodePriceSnapshot(price ResolvedPrice) []byte {
@@ -800,7 +800,8 @@ func requestLogItem(l LogInput) db.RequestLog {
 		CachedTokens: l.Usage.Cached, CacheWriteTokens: l.Usage.CacheWrite, ReasoningTokens: l.Usage.Reasoning,
 		ImageInputTokens: l.Usage.ImageInput, CachedImageInputTokens: l.Usage.CachedImageInput,
 		ImageOutputTokens: l.Usage.ImageOutput, TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,
-		Settled: l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS, FirstTokenMS: l.FirstTokenMS,
+		BillingSource: l.BillingSource,
+		Settled:       l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS, FirstTokenMS: l.FirstTokenMS,
 		ErrorCode: l.ErrorCode, ErrorMessage: l.ErrorMessage, StageTimings: stageTimings, StartedAt: l.StartedAt, CompletedAt: l.CompletedAt,
 	}
 	if item.LogUnit == "" {
@@ -827,8 +828,7 @@ func (s Store) WriteLog(ctx context.Context, l LogInput) error {
 	return s.writeLog(ctx, l, false)
 }
 
-// UpsertLog supports updating rejected or interrupted request logs.
-// Completed WebSocket billing steps use the accrual transaction instead.
+// UpsertLog is retained for importing confirmed billing details.
 func (s Store) UpsertLog(ctx context.Context, l LogInput) error {
 	return s.writeLog(ctx, l, true)
 }
@@ -840,6 +840,9 @@ func (s Store) writeLog(ctx context.Context, l LogInput, upsert bool) error {
 }
 
 func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
+	if !isBillingDetail(l) {
+		return nil
+	}
 	item := requestLogItem(l)
 	previousTokens := int64(0)
 	if upsert {
@@ -889,7 +892,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 				"output_price_nano_usd", "cached_price_nano_usd", "cache_write_price_nano_usd",
 				"reasoning_price_nano_usd", "image_input_price_nano_usd",
 				"cached_image_input_price_nano_usd", "image_output_price_nano_usd", "price_multiplier",
-				"pricing_complete", "settled", "reserved_nano_usd", "latency_ms", "ttftms", "first_token_ms",
+				"billing_source", "pricing_complete", "settled", "reserved_nano_usd", "latency_ms", "ttftms", "first_token_ms",
 				"error_code", "error_message", "stage_timings", "completed_at",
 			}),
 		})
@@ -1011,9 +1014,8 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	if input.PageSize < 1 || input.PageSize > 200 {
 		input.PageSize = 50
 	}
-	// The product list is a charge ledger. Trace-only and zero-cost events remain
-	// addressable by ID for diagnostics, but do not inflate its rows or summary.
-	query := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).Where("settled = true AND cost_nano_usd > 0")
+	// The product list is a charge ledger of confirmed, paid steps.
+	query := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL)
 	if input.TenantID != "" {
 		query = query.Where("tenant_id = ?", input.TenantID)
 	}
@@ -1088,12 +1090,11 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 type LogWithDetail struct {
 	Log    db.RequestLog        `json:"log"`
 	Detail *db.RequestLogDetail `json:"detail"`
-	Turns  []db.WebSocketTurn   `json:"turns,omitempty"`
 }
 
 func (s Store) RequestLogDetail(ctx context.Context, id, tenantID string) (LogWithDetail, error) {
 	var item db.RequestLog
-	query := scoped(ctx, s.DB).Where("id = ?", id)
+	query := scoped(ctx, s.DB).Where("id = ?", id).Where(generationLogSQL)
 	if tenantID != "" {
 		query = query.Where("tenant_id = ?", tenantID)
 	}
@@ -1101,17 +1102,6 @@ func (s Store) RequestLogDetail(ctx context.Context, id, tenantID string) (LogWi
 		return LogWithDetail{}, notFound(err)
 	}
 	result := LogWithDetail{Log: item}
-	if item.ReservationRequestID != nil && item.ID != *item.ReservationRequestID {
-		if item.UpstreamRequestID != "" {
-			if err := scoped(ctx, s.DB).Where("request_id = ? AND turn_id = ?", *item.ReservationRequestID, item.UpstreamRequestID).Find(&result.Turns).Error; err != nil {
-				return LogWithDetail{}, err
-			}
-		}
-	} else if turns, err := s.listWebSocketTurns(ctx, requestLogSessionID(item)); err != nil {
-		return LogWithDetail{}, err
-	} else {
-		result.Turns = turns
-	}
 
 	var detail db.RequestLogDetail
 	err := scoped(ctx, s.DB).First(&detail, "request_log_id = ?", id).Error
@@ -1123,22 +1113,6 @@ func (s Store) RequestLogDetail(ctx context.Context, id, tenantID string) (LogWi
 	}
 	result.Detail = &detail
 	return result, nil
-}
-
-func requestLogSessionID(item db.RequestLog) string {
-	if item.ReservationRequestID != nil && strings.TrimSpace(*item.ReservationRequestID) != "" {
-		return *item.ReservationRequestID
-	}
-	return item.ID
-}
-
-func (s Store) listWebSocketTurns(ctx context.Context, requestID string) ([]db.WebSocketTurn, error) {
-	if strings.TrimSpace(requestID) == "" {
-		return nil, nil
-	}
-	var turns []db.WebSocketTurn
-	err := scoped(ctx, s.DB).Where("request_id = ?", requestID).Order("created_at ASC, turn_id ASC").Find(&turns).Error
-	return turns, err
 }
 
 func (s Store) CreateInvitation(ctx context.Context, email string, expiresAt time.Time) (Invitation, string, error) {
@@ -1290,7 +1264,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		BalanceCharged         int64 `json:"balance_charged_nano_usd"`
 	}
 	var total summary
-	if err := base.Joins("LEFT JOIN parent_subscriptions ON parent_subscriptions.id = request_logs.parent_subscription_id").Select(
+	if err := base.Select(
 		"count(*) AS requests, " +
 			requestLogUnitErrorSQLOn("request_logs") + " AS errors, " +
 			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, " +
@@ -1298,8 +1272,8 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 			"COALESCE(sum(reasoning_tokens),0) AS reasoning_tokens, COALESCE(sum(image_input_tokens),0) AS image_input_tokens, " +
 			"COALESCE(sum(cached_image_input_tokens),0) AS cached_image_input_tokens, COALESCE(sum(image_output_tokens),0) AS image_output_tokens, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
-			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode = 'observed' THEN cost_nano_usd ELSE 0 END),0) AS subscription_covered, " +
-			"COALESCE(sum(CASE WHEN parent_subscriptions.capacity_mode = 'observed' THEN 0 ELSE cost_nano_usd END),0) AS balance_charged",
+			"COALESCE(sum(CASE WHEN billing_source = 'subscription' THEN cost_nano_usd ELSE 0 END),0) AS subscription_covered, " +
+			"COALESCE(sum(CASE WHEN billing_source = 'balance' OR (billing_source = '' AND parent_subscription_id IS NULL) THEN cost_nano_usd ELSE 0 END),0) AS balance_charged",
 	).Scan(&total).Error; err != nil {
 		return nil, err
 	}
