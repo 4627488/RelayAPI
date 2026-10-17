@@ -352,7 +352,17 @@ func (a *App) adminChildSubscriptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(input.TenantIDs) > 0 {
-		items, err := a.store.GrantBalanceSubscriptionAccess(r.Context(), input.ParentSubscriptionID, input.TenantIDs)
+		parent, err := a.store.GetParentSubscription(r.Context(), input.ParentSubscriptionID)
+		if err != nil {
+			writeSubscriptionError(w, err)
+			return
+		}
+		var items []store.ChildSubscription
+		if parent.CapacityMode == db.ParentCapacityUnmetered {
+			items, err = a.store.GrantBalanceSubscriptionAccess(r.Context(), input.ParentSubscriptionID, input.TenantIDs)
+		} else {
+			items, err = a.store.CreateSharedSubscriptionGrants(r.Context(), childFromInput("", input), input.TenantIDs)
+		}
 		if err != nil {
 			writeSubscriptionError(w, err)
 			return
@@ -426,28 +436,7 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 				resets = append(resets, tenantQuotaReset{Kind: reset.Kind, ResetAt: reset.ResetAt})
 			}
 		}
-		models, modelSource := effectiveSubscriptionModels(parent, item)
-		available, availabilityMessage := tenantSubscriptionAvailability(parent, item, now)
-		if available && parent.CapacityMode == db.ParentCapacityObserved && len(parentWindows) == 0 && parent.QuotaProbeStatus == "unsupported" {
-			available = false
-			availabilityMessage = "父订阅无法读取额度，请联系管理员"
-		}
-		billingMode := "balance"
-		if parent.CapacityMode != db.ParentCapacityUnmetered && len(parentWindows) > 0 {
-			billingMode = "quota"
-		}
-		result = append(result, map[string]any{
-			"id": item.ID, "name": item.Name, "allocation_ppm": item.AllocationPPM,
-			"priority": item.Priority, "enabled": item.Enabled, "model_allowlist": item.ModelAllowlist,
-			"starts_at": item.StartsAt, "expires_at": item.ExpiresAt, "capacity_mode": parent.CapacityMode, "windows": windows,
-			"parent_name": parent.Name, "parent_plan_type": parent.PlanType,
-			"available": available, "availability_message": availabilityMessage,
-			"billing_mode": billingMode, "parent_quota_probe_status": parent.QuotaProbeStatus,
-			"parent_quota_observed_at":  parent.QuotaObservedAt,
-			"effective_model_allowlist": models, "model_source": modelSource,
-			"entitlement_windows": projectTenantEntitlements(parentWindows, item, windows),
-			"reset_history":       resets,
-		})
+		result = append(result, projectTenantSubscription(parent, item, parentWindows, windows, resets, now))
 	}
 	writeJSON(w, 200, map[string]any{"items": result})
 }
@@ -460,15 +449,17 @@ type tenantQuotaReset struct {
 func tenantSubscriptionAvailability(parent store.ParentSubscription, child store.ChildSubscription, now time.Time) (bool, string) {
 	switch {
 	case !child.Enabled:
-		return false, "子订阅已停用"
+		return false, "订阅已停用"
 	case child.StartsAt.After(now):
-		return false, "子订阅尚未开始"
+		return false, "订阅尚未生效"
 	case child.ExpiresAt != nil && !child.ExpiresAt.After(now):
-		return false, "子订阅已过期"
+		return false, "订阅已到期"
 	case !parent.Enabled:
-		return false, "父订阅已停用"
+		return false, "订阅暂不可用，请联系管理员"
+	case parent.Status == "missing":
+		return false, "订阅暂不可用，请联系管理员"
 	case parent.UpstreamUnavailable:
-		return false, "上游账户当前不可用"
+		return false, "服务暂不可用，请稍后重试"
 	default:
 		return true, ""
 	}

@@ -1,4 +1,3 @@
-import { AccountHealthPanel } from "@/components/account-health-panel"
 import {
   lazy,
   Suspense,
@@ -13,6 +12,7 @@ import {
   KeyRoundIcon,
   PlusIcon,
   RefreshCwIcon,
+  UsersIcon,
 } from "lucide-react"
 import { dateTime } from "@/lib/format"
 import { toast } from "@/components/ui/toast"
@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/select"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Spinner } from "@/components/ui/spinner"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
   Table,
   TableBody,
@@ -74,7 +75,21 @@ import {
   type OutboundProxy,
   type ProviderAccount,
   type ProviderAccountTestResult,
+  type ParentSubscriptionView,
+  type ChildSubscription,
 } from "@/lib/api"
+
+const AssignUsersDialog = lazy(() =>
+  import("@/components/admin/assign-users-dialog").then((module) => ({
+    default: module.AssignUsersDialog,
+  }))
+)
+
+const AccountAccessPanel = lazy(() =>
+  import("@/components/admin-subscriptions-view").then((module) => ({
+    default: module.AdminSubscriptionsView,
+  }))
+)
 
 const ConnectAccountDialog = lazy(() =>
   import("@/components/providers/connect-account-dialog").then((module) => ({
@@ -123,10 +138,16 @@ export function ProvidersView() {
   const [provider, setProvider] = useState("all")
   const [statusFilter, setStatusFilter] = useState("all")
   const [authFilter, setAuthFilter] = useState("all")
+  const [assignmentOpen, setAssignmentOpen] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
   const [reauthenticating, setReauthenticating] =
     useState<ProviderAccount | null>(null)
   const [selected, setSelected] = useState<ProviderAccount | null>(null)
+  const [detailTab, setDetailTab] = useState("status")
+  const [pageTab, setPageTab] = useState("accounts")
+  const [parents, setParents] = useState<ParentSubscriptionView[]>([])
+  const [grants, setGrants] = useState<ChildSubscription[]>([])
+  const [accessError, setAccessError] = useState<string | null>(null)
   const [testing, setTesting] = useState<ProviderAccount | null>(null)
   const [testResults, setTestResults] = useState<
     Record<string, ProviderAccountTestResult>
@@ -157,6 +178,32 @@ export function ProvidersView() {
   useEffect(() => {
     void load()
   }, [load])
+  const loadAccess = useCallback(async () => {
+    try {
+      const [parentResult, childResult] = await Promise.all([
+        api<{ items: ParentSubscriptionView[] }>(
+          "/api/admin/subscriptions/parents"
+        ),
+        api<{ items: ChildSubscription[] }>(
+          "/api/admin/subscriptions/children"
+        ),
+      ])
+      setParents(parentResult.items ?? [])
+      setGrants(childResult.items ?? [])
+      setAccessError(null)
+    } catch (cause) {
+      setAccessError(
+        cause instanceof Error ? cause.message : "无法读取用户授权"
+      )
+    }
+  }, [])
+  useEffect(() => {
+    void loadAccess()
+  }, [loadAccess])
+  function openAccount(account: ProviderAccount, tab = "status") {
+    setDetailTab(tab)
+    setSelected(account)
+  }
   const providerOptions = useMemo(
     () => [...new Set(accounts.map((item) => item.provider))].sort(),
     [accounts]
@@ -212,6 +259,7 @@ export function ProvidersView() {
       })
       setSelected(null)
       await load()
+      await loadAccess()
     } catch (cause) {
       toast.add({
         title: cause instanceof Error ? cause.message : "更新失败",
@@ -242,6 +290,7 @@ export function ProvidersView() {
         type: "success",
       })
       await load()
+      await loadAccess()
     } catch (cause) {
       toast.add({
         title: cause instanceof Error ? cause.message : "额度刷新失败",
@@ -277,6 +326,7 @@ export function ProvidersView() {
           : current
       )
       await load()
+      await loadAccess()
     } catch (cause) {
       toast.add({
         title: cause instanceof Error ? cause.message : "保存失败",
@@ -299,6 +349,7 @@ export function ProvidersView() {
       setDeleting(null)
       setSelected(null)
       await load()
+      await loadAccess()
     } catch (cause) {
       toast.add({
         title: cause instanceof Error ? cause.message : "删除失败",
@@ -320,8 +371,13 @@ export function ProvidersView() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="模型账户"
+        description="连接上游账户，管理模型、额度和用户授权。"
         actions={
           <>
+            <Button variant="outline" onClick={() => setAssignmentOpen(true)}>
+              <UsersIcon data-icon="inline-start" />
+              分配给用户
+            </Button>
             <Button
               variant="outline"
               disabled={syncingQuota}
@@ -364,281 +420,353 @@ export function ProvidersView() {
         </Alert>
       ) : null}
 
-      {(!loadError || accounts.length > 0) && (
-        <AccountHealthPanel accounts={accounts} showAccounts={false} />
-      )}
-      <ToggleGroup
-        value={[statusFilter]}
-        onValueChange={(value) => value[0] && setStatusFilter(value[0])}
-        variant="outline"
-        aria-label="账户状态"
-        className="flex-wrap"
+      <Tabs
+        value={pageTab}
+        onValueChange={(value) => setPageTab(String(value))}
       >
-        {[
-          ["全部", counts.total, "all"],
-          ["可调度", counts.available, "available"],
-          ["停用", counts.disabled, "disabled"],
-          ["冷却", counts.cooldown, "cooldown"],
-          ["暂不可用", counts.unavailable, "unavailable"],
-          ["未发布", counts.unpublished, "unpublished"],
-        ].map(([label, count, key]) => (
-          <ToggleGroupItem key={key} value={String(key)}>
-            {label} ({count})
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <SearchField
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          onClear={() => setSearch("")}
-          placeholder="搜索名称、邮箱、模型或 Base URL"
-          className="flex-1"
-        />
-        <Select
-          items={[
-            { value: "all", label: "全部提供商" },
-            ...providerOptions.map((item) => ({
-              value: item,
-              label: providerLabel(item),
-            })),
-          ]}
-          value={provider}
-          onValueChange={(next) => {
-            if (next) setProvider(next)
-          }}
-        >
-          <SelectTrigger aria-label="提供商" className="w-full sm:w-52">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="all">全部提供商</SelectItem>
-              {providerOptions.map((item) => (
-                <SelectItem key={item} value={item}>
-                  {providerLabel(item)}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-
-        <Select
-          items={[
-            { value: "all", label: "全部认证" },
-            { value: "oauth", label: "OAuth" },
-            { value: "api_key", label: "API Key" },
-            { value: "import", label: "导入" },
-          ]}
-          value={authFilter}
-          onValueChange={(next) => next && setAuthFilter(next)}
-        >
-          <SelectTrigger aria-label="认证方式" className="w-full sm:w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {[
-                ["all", "全部认证"],
-                ["oauth", "OAuth"],
-                ["api_key", "API Key"],
-                ["import", "导入"],
-              ].map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </div>
-
-      {filtered.length ? (
-        <>
-          <div className="min-w-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>账户</TableHead>
-                  <TableHead>提供商</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>公开模型</TableHead>
-                  <TableHead>端点 / 代理</TableHead>
-                  <TableHead>额度 / 请求</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((account) => {
-                  const status = accountStatus(account)
-                  const models = modelSummary(account)
-                  const lastTest = testResults[accountKey(account)]
-                  const proxyName = account.proxy_configured
-                    ? (proxies.find((item) => item.id === account.proxy_id)
-                        ?.name ?? "独立代理")
-                    : "直连"
-                  return (
-                    <TableRow key={accountKey(account)}>
-                      <TableCell className="max-w-56 whitespace-normal">
-                        <p className="truncate font-medium">
-                          {displayName(account)}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {[account.email, proxyName]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </p>
-                      </TableCell>
-                      <TableCell className="whitespace-normal">
-                        <p>{providerLabel(account.provider)}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {sourceLabel(account)}
-                          {account.plan_type ? ` · ${account.plan_type}` : ""}
-                        </p>
-                      </TableCell>
-                      <TableCell className="whitespace-normal">
-                        <Badge
-                          title={account.status_message}
-                          variant={status.variant}
-                        >
-                          {status.label}
-                        </Badge>
-                        {lastTest ? (
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            测试 {lastTest.ok ? "通过" : "失败"} ·{" "}
-                            {lastTest.latency_ms} ms
-                          </p>
-                        ) : null}
-                        {account.status_message || account.next_retry_after ? (
-                          <p className="mt-1 max-w-44 text-xs text-muted-foreground">
-                            {account.status_message ||
-                              `重试时间：${dateTime(account.next_retry_after)}`}
-                          </p>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="max-w-64 whitespace-normal">
-                        <p
-                          className={
-                            publishedModels(account).length
-                              ? "truncate font-mono text-xs"
-                              : "text-xs text-muted-foreground"
-                          }
-                          title={publishedModels(account).join("\n")}
-                        >
-                          {models.primary}
-                        </p>
-                        {models.extra ? (
-                          <p className="text-xs text-muted-foreground">
-                            {models.extra}
-                          </p>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="max-w-56 text-xs whitespace-normal">
-                        <p className="truncate">
-                          {account.base_url || "默认端点"}
-                        </p>
-                        <p className="text-muted-foreground">{proxyName}</p>
-                      </TableCell>
-                      <TableCell className="max-w-48 text-xs whitespace-normal text-muted-foreground">
-                        <p>{quotaSummary(account)}</p>
-                        {account.success !== undefined ||
-                        account.failed !== undefined ? (
-                          <p className="mt-1">
-                            运行时累计：{account.success ?? "—"} 成功 /{" "}
-                            {account.failed ?? "—"} 失败
-                          </p>
-                        ) : null}
-                        {account.quota_observed_at ? (
-                          <p className="mt-1">
-                            观测于 {dateTime(account.quota_observed_at)}
-                          </p>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className="inline-flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={
-                              account.disabled ||
-                              !publishedModels(account).length
-                            }
-                            title={
-                              account.disabled
-                                ? "启用后才能测试"
-                                : publishedModels(account).length
-                                  ? undefined
-                                  : "先发布至少一个模型"
-                            }
-                            onClick={() => setTesting(account)}
-                          >
-                            <ActivityIcon data-icon="inline-start" />
-                            测试
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={account.can_inspect === false}
-                            onClick={() => setSelected(account)}
-                          >
-                            配置
-                          </Button>
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </>
-      ) : loadError ? null : (
-        <>
-          <div className="min-w-0">
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <KeyRoundIcon />
-                </EmptyMedia>
-                <EmptyTitle>
-                  {accounts.length ? "没有匹配的账户" : "还没有模型账户"}
-                </EmptyTitle>
-                <EmptyDescription>
-                  {accounts.length
-                    ? "调整搜索或提供商筛选。"
-                    : "连接 OAuth 账户或 API Key 后即可开始路由。"}
-                </EmptyDescription>
-              </EmptyHeader>
-              {accounts.length ? (
+        <TabsList variant="line">
+          <TabsTrigger value="accounts">账户 {accounts.length}</TabsTrigger>
+          <TabsTrigger value="history">历史授权</TabsTrigger>
+        </TabsList>
+        <TabsContent value="history">
+          {pageTab === "history" ? (
+            <Suspense fallback={<Spinner />}>
+              <AccountAccessPanel
+                historicalOnly
+                onChanged={() => void loadAccess()}
+              />
+            </Suspense>
+          ) : null}
+        </TabsContent>
+        <TabsContent value="accounts" className="flex flex-col gap-4">
+          {accessError ? (
+            <Alert variant="destructive">
+              <AlertCircleIcon />
+              <AlertTitle>授权摘要读取失败</AlertTitle>
+              <AlertDescription>
+                {accessError}
                 <Button
+                  size="sm"
                   variant="outline"
-                  onClick={() => {
-                    setSearch("")
-                    setProvider("all")
-                    setStatusFilter("all")
-                    setAuthFilter("all")
-                  }}
+                  onClick={() => void loadAccess()}
                 >
-                  清除筛选
+                  重试授权摘要
                 </Button>
-              ) : (
-                <Button
-                  onClick={() => {
-                    setReauthenticating(null)
-                    setConnectOpen(true)
-                  }}
-                >
-                  <PlusIcon />
-                  连接账户
-                </Button>
-              )}
-            </Empty>
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          <ToggleGroup
+            value={[statusFilter]}
+            onValueChange={(value) => value[0] && setStatusFilter(value[0])}
+            variant="outline"
+            aria-label="账户状态"
+            className="flex-wrap"
+          >
+            {[
+              ["全部", counts.total, "all"],
+              ["可调度", counts.available, "available"],
+              ["停用", counts.disabled, "disabled"],
+              ["冷却", counts.cooldown, "cooldown"],
+              ["暂不可用", counts.unavailable, "unavailable"],
+              ["未发布", counts.unpublished, "unpublished"],
+            ].map(([label, count, key]) => (
+              <ToggleGroupItem key={key} value={String(key)}>
+                {label} ({count})
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <SearchField
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              onClear={() => setSearch("")}
+              placeholder="搜索名称、邮箱、模型或 Base URL"
+              className="flex-1"
+            />
+            <Select
+              items={[
+                { value: "all", label: "全部提供商" },
+                ...providerOptions.map((item) => ({
+                  value: item,
+                  label: providerLabel(item),
+                })),
+              ]}
+              value={provider}
+              onValueChange={(next) => {
+                if (next) setProvider(next)
+              }}
+            >
+              <SelectTrigger aria-label="提供商" className="w-full sm:w-52">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="all">全部提供商</SelectItem>
+                  {providerOptions.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {providerLabel(item)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+
+            <Select
+              items={[
+                { value: "all", label: "全部认证" },
+                { value: "oauth", label: "OAuth" },
+                { value: "api_key", label: "API Key" },
+                { value: "import", label: "导入" },
+              ]}
+              value={authFilter}
+              onValueChange={(next) => next && setAuthFilter(next)}
+            >
+              <SelectTrigger aria-label="认证方式" className="w-full sm:w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {[
+                    ["all", "全部认证"],
+                    ["oauth", "OAuth"],
+                    ["api_key", "API Key"],
+                    ["import", "导入"],
+                  ].map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </div>
-        </>
-      )}
+
+          {filtered.length ? (
+            <>
+              <div className="min-w-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>账户</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead className="hidden md:table-cell">
+                        模型
+                      </TableHead>
+                      <TableHead className="hidden lg:table-cell">
+                        上游额度
+                      </TableHead>
+                      <TableHead>用户授权</TableHead>
+                      <TableHead className="text-right">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((account) => {
+                      const status = accountStatus(account)
+                      const models = modelSummary(account)
+                      const lastTest = testResults[accountKey(account)]
+                      const parent = parents.find(
+                        (view) =>
+                          view.item.upstream_credential_id ===
+                          (account.id || account.name)
+                      )
+                      const accountGrants = parent
+                        ? grants.filter(
+                            (grant) =>
+                              grant.parent_subscription_id === parent.item.id
+                          )
+                        : []
+                      const userCount = new Set(
+                        accountGrants
+                          .filter((grant) => grant.enabled)
+                          .map((grant) => grant.tenant_id)
+                      ).size
+                      return (
+                        <TableRow key={accountKey(account)}>
+                          <TableCell className="max-w-56 whitespace-normal">
+                            <Button
+                              variant="link"
+                              className="h-auto max-w-full justify-start p-0"
+                              disabled={account.can_inspect === false}
+                              onClick={() => openAccount(account)}
+                            >
+                              {displayName(account)}
+                            </Button>
+                            {account.email &&
+                            account.email !== displayName(account) ? (
+                              <p className="truncate text-xs text-muted-foreground">
+                                {account.email}
+                              </p>
+                            ) : null}
+                            <p className="text-xs text-muted-foreground">
+                              {providerLabel(account.provider)} ·{" "}
+                              {sourceLabel(account)}
+                              {account.plan_type
+                                ? ` · ${account.plan_type}`
+                                : ""}
+                            </p>
+                          </TableCell>
+                          <TableCell className="whitespace-normal">
+                            <Badge
+                              title={account.status_message}
+                              variant={status.variant}
+                            >
+                              {status.label}
+                            </Badge>
+                            {lastTest ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                测试 {lastTest.ok ? "通过" : "失败"} ·{" "}
+                                {lastTest.latency_ms} ms
+                              </p>
+                            ) : null}
+                            {account.status_message ||
+                            account.next_retry_after ? (
+                              <p className="mt-1 max-w-44 text-xs text-muted-foreground">
+                                {account.status_message ||
+                                  `重试时间：${dateTime(account.next_retry_after)}`}
+                              </p>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="hidden max-w-64 whitespace-normal md:table-cell">
+                            <p
+                              className={
+                                publishedModels(account).length
+                                  ? "truncate font-mono text-xs"
+                                  : "text-xs text-muted-foreground"
+                              }
+                              title={publishedModels(account).join("\n")}
+                            >
+                              {models.primary}
+                            </p>
+                            {models.extra ? (
+                              <p className="text-xs text-muted-foreground">
+                                {models.extra}
+                              </p>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="hidden max-w-48 text-xs whitespace-normal text-muted-foreground lg:table-cell">
+                            <p>{quotaSummary(account)}</p>
+                            {account.quota_observed_at ? (
+                              <p className="mt-1">
+                                观测于 {dateTime(account.quota_observed_at)}
+                              </p>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-xs whitespace-normal">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={account.can_inspect === false}
+                              onClick={() => openAccount(account, "access")}
+                            >
+                              <UsersIcon data-icon="inline-start" />
+                              {accessError
+                                ? "查看授权"
+                                : parent
+                                  ? `${userCount} 位用户`
+                                  : "设置授权"}
+                            </Button>
+                            {parent ? (
+                              <p className="text-muted-foreground">
+                                {parent.item.capacity_mode === "observed"
+                                  ? `共享额度 · ${Math.round(parent.allocated_ppm / 10000)}% 已分配`
+                                  : "余额结算"}
+                                {!parent.item.enabled ? " · 授权已关闭" : ""}
+                              </p>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <span className="inline-flex justify-end gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={
+                                  account.disabled ||
+                                  !publishedModels(account).length
+                                }
+                                title={
+                                  account.disabled
+                                    ? "启用后才能测试"
+                                    : publishedModels(account).length
+                                      ? undefined
+                                      : "先发布至少一个模型"
+                                }
+                                onClick={() => setTesting(account)}
+                              >
+                                <ActivityIcon data-icon="inline-start" />
+                                测试
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={account.can_inspect === false}
+                                onClick={() => openAccount(account)}
+                              >
+                                管理
+                              </Button>
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          ) : loadError ? null : (
+            <>
+              <div className="min-w-0">
+                <Empty>
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <KeyRoundIcon />
+                    </EmptyMedia>
+                    <EmptyTitle>
+                      {accounts.length ? "没有匹配的账户" : "还没有模型账户"}
+                    </EmptyTitle>
+                    <EmptyDescription>
+                      {accounts.length
+                        ? "调整搜索或提供商筛选。"
+                        : "连接 OAuth 账户或 API Key 后即可开始路由。"}
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  {accounts.length ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setSearch("")
+                        setProvider("all")
+                        setStatusFilter("all")
+                        setAuthFilter("all")
+                      }}
+                    >
+                      清除筛选
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => {
+                        setReauthenticating(null)
+                        setConnectOpen(true)
+                      }}
+                    >
+                      <PlusIcon />
+                      连接账户
+                    </Button>
+                  )}
+                </Empty>
+              </div>
+            </>
+          )}
+        </TabsContent>
+      </Tabs>
 
       <Suspense fallback={null}>
+        {assignmentOpen ? (
+          <AssignUsersDialog
+            onOpenChange={setAssignmentOpen}
+            onSaved={loadAccess}
+          />
+        ) : null}
         {connectOpen || reauthenticating ? (
           <ConnectAccountDialog
             open={connectOpen || Boolean(reauthenticating)}
@@ -647,13 +775,26 @@ export function ProvidersView() {
               setConnectOpen(open)
               if (!open) setReauthenticating(null)
             }}
-            onSaved={load}
+            onSaved={async () => {
+              await load()
+              await loadAccess()
+            }}
             proxies={proxies}
           />
         ) : null}
         {selected ? (
           <ManageAccountDialog
+            key={accountKey(selected)}
             account={selected}
+            initialTab={detailTab}
+            accessPanel={
+              <Suspense fallback={<Spinner />}>
+                <AccountAccessPanel
+                  accountID={selected.id || selected.name}
+                  onChanged={() => void loadAccess()}
+                />
+              </Suspense>
+            }
             pending={pending}
             onOpenChange={(open) => {
               if (!open) setSelected(null)

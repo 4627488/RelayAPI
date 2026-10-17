@@ -23,23 +23,86 @@ const maxModelCatalogBytes int64 = 256 << 20
 const codexCatalogRevisionToken = "codex-modelinfo-v4"
 
 func isNativeModelCatalogRequest(r *http.Request) bool {
-	if r == nil || r.Method != http.MethodGet {
-		return false
+	_, _, ok := modelMetadataRequest(r)
+	return ok
+}
+
+func modelMetadataRequest(r *http.Request) (collection, model string, ok bool) {
+	if r == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return "", "", false
 	}
 	path := strings.TrimRight(r.URL.Path, "/")
-	return path == "/v1/models" || path == "/v1beta/models"
+	for _, prefix := range []string{"/v1/models", "/openai/v1/models", "/backend-api/codex/models", "/v1beta/models"} {
+		collection := "/v1/models"
+		if prefix == "/v1beta/models" {
+			collection = prefix
+		}
+		if path == prefix {
+			return collection, "", true
+		}
+		if strings.HasPrefix(path, prefix+"/") {
+			model := strings.TrimPrefix(path, prefix+"/")
+			if prefix == "/v1beta/models" && strings.Contains(model, ":") {
+				return "", "", false
+			}
+			return collection, model, true
+		}
+	}
+	return "", "", false
+}
+
+// Client IDs resolve through the same one-hop alias rule as inference. A stale
+// alias cannot reveal a denied target or a native slug that it shadows.
+func visibleClientModels(key store.KeyContext, runtimeModels []string) []string {
+	canonical := make(map[string]struct{}, len(runtimeModels))
+	for _, model := range runtimeModels {
+		canonical[strings.ToLower(strings.TrimSpace(model))] = struct{}{}
+	}
+	candidates := append([]string(nil), runtimeModels...)
+	for _, alias := range key.ModelAliases {
+		candidates = append(candidates, alias.Alias)
+	}
+	visible := make([]string, 0, len(candidates))
+	for _, clientModel := range candidates {
+		target := resolveAPIKeyModel(clientModel, key.ModelAliases).Model
+		if _, exists := canonical[strings.ToLower(target)]; exists && key.AllowsModel(target) {
+			visible = append(visible, clientModel)
+		}
+	}
+	return normalizedModels(visible)
+}
+
+func authorizedModelAliases(key store.KeyContext) []store.APIKeyModelAlias {
+	aliases := make([]store.APIKeyModelAlias, 0, len(key.ModelAliases))
+	for _, alias := range key.ModelAliases {
+		if key.AllowsModel(alias.Model) {
+			aliases = append(aliases, alias)
+		}
+	}
+	return aliases
 }
 
 // serveModelCatalog preserves the standard OpenAI and rich Codex catalog
 // formats, then applies Relay's tenant and key policy.
 func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key store.KeyContext) {
+	collection, requestedModel, _ := modelMetadataRequest(r)
+	if requestedModel != "" && !key.AllowsModel(resolveAPIKeyModel(requestedModel, key.ModelAliases).Model) {
+		writeError(w, http.StatusForbidden, "model_not_allowed", "This API key does not have access to the requested model.")
+		return
+	}
 	if a.nativeRuntime == nil {
 		writeError(w, http.StatusServiceUnavailable, "model_catalog_error", "模型运行时不可用")
 		return
 	}
 	prepareRuntimeHeaders(r.Header, "", "")
 	recorder := httptest.NewRecorder()
-	a.nativeRuntime.ServeModels(recorder, r)
+	catalogRequest := r.Clone(r.Context())
+	catalogRequest.Method = http.MethodGet
+	catalogRequest.URL.Path, catalogRequest.URL.RawPath = collection, ""
+	// Conditional responses belong to the filtered per-key representation.
+	catalogRequest.Header.Del("If-None-Match")
+	catalogRequest.Header.Del("If-Modified-Since")
+	a.nativeRuntime.ServeModels(recorder, catalogRequest)
 	response := recorder.Result()
 	defer response.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maxModelCatalogBytes))
@@ -57,6 +120,7 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 			}
 		}
 		_, codexCatalog := r.URL.Query()["client_version"]
+		aliases := authorizedModelAliases(key)
 		if filtered, filterErr := filterModelCatalogForClient(payload, allowedModels, codexCatalog); filterErr == nil {
 			payload = filtered
 		} else {
@@ -70,7 +134,7 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 				return
 			}
 			payload = promoted
-			if expanded, expandErr := addCodexModelAliases(payload, key.ModelAliases); expandErr == nil {
+			if expanded, expandErr := addCodexModelAliases(payload, aliases); expandErr == nil {
 				payload = expanded
 			} else {
 				writeError(w, http.StatusBadGateway, "model_catalog_error", fmt.Sprintf("Codex 模型列表格式无效: %v", expandErr))
@@ -85,9 +149,34 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 				payload = disabled
 			}
 		} else {
-			payload, err = addProtocolModelAliases(payload, key.ModelAliases)
+			payload, err = addProtocolModelAliases(payload, aliases)
 			if err != nil {
 				writeError(w, http.StatusBadGateway, "model_catalog_error", "无法生成客户端模型别名")
+				return
+			}
+		}
+		clientModels := visibleClientModels(key, runtimeModels)
+		payload, err = filterModelCatalogForClient(payload, clientModels, codexCatalog)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "model_catalog_error", "无法过滤模型列表")
+			return
+		}
+		if requestedModel != "" {
+			visible := false
+			for _, model := range clientModels {
+				if strings.EqualFold(model, requestedModel) {
+					visible = true
+					break
+				}
+			}
+			if !visible {
+				writeError(w, http.StatusNotFound, "model_not_found", "The requested model is not available to this API key.")
+				return
+			}
+			var found bool
+			payload, found = modelMetadataFromCatalog(payload, requestedModel)
+			if !found {
+				writeError(w, http.StatusNotFound, "model_not_found", "The requested model is not available to this API key.")
 				return
 			}
 		}
@@ -95,8 +184,13 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 	copyHeaders(w.Header(), response.Header)
 	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Add("Vary", "Authorization, X-Api-Key, X-Goog-Api-Key")
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		etag := modelCatalogRevision(key, runtimeModels, a.codexCatalogRevisionToken())
+		if requestedModel != "" {
+			etag = modelCatalogETag(payload)
+		}
 		w.Header().Set("ETag", etag)
 		if etagMatches(r.Header.Get("If-None-Match"), etag) {
 			w.WriteHeader(http.StatusNotModified)
@@ -104,7 +198,27 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 		}
 	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, bytes.NewReader(payload))
+	if r.Method != http.MethodHead {
+		_, _ = io.Copy(w, bytes.NewReader(payload))
+	}
+}
+
+func modelMetadataFromCatalog(payload []byte, requested string) ([]byte, bool) {
+	var document map[string]any
+	if json.Unmarshal(payload, &document) != nil {
+		return nil, false
+	}
+	for _, field := range []string{"data", "models"} {
+		items, _ := document[field].([]any)
+		for _, raw := range items {
+			item, ok := raw.(map[string]any)
+			if ok && strings.EqualFold(strings.TrimPrefix(catalogModelID(item), "models/"), requested) {
+				encoded, err := json.Marshal(item)
+				return encoded, err == nil
+			}
+		}
+	}
+	return nil, false
 }
 
 // Aliases inherit only the target metadata left after policy filtering. This
@@ -577,12 +691,7 @@ func modelCatalogRevision(key store.KeyContext, models []string, upstreamETag st
 		Name  string `json:"name"`
 		Model string `json:"model"`
 	}
-	visible := make([]string, 0, len(models))
-	for _, model := range models {
-		if key.AllowsModel(model) {
-			visible = append(visible, strings.ToLower(strings.TrimSpace(model)))
-		}
-	}
+	visible := visibleClientModels(key, models)
 	sort.Strings(visible)
 	aliases := make([]alias, 0, len(key.ModelAliases))
 	for _, item := range key.ModelAliases {

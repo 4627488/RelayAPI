@@ -33,6 +33,8 @@ the native runtime owns protocol translation, retries, and routing.
 9. Tenants see child names, shares, usage, and reset times, but never parent
    credential IDs, account emails, tokens, or provider-private metadata.
 
+The personal subscription page shows only observed/shared subscriptions, using the administrator-editable child name. The tenant response omits parent names and plan metadata and anonymizes legacy names copied from credential identities. The separate personal model catalog (`GET /api/models`, `/app/models`) combines balance access into model IDs and links quota settlement options to the corresponding personal subscription section. It respects active grant and model policies, merges balance options without account identities, and never advertises ordinary balance fallback for a model claimed by a subscription. Exhausted or unavailable grants remain discoverable as temporarily unavailable, with links to inspect quota. Subscription expiration and quota reset are separate dates; a reset after subscription expiry is not presented as an upcoming renewal.
+
 ## Data model
 
 ### Parent subscriptions
@@ -127,6 +129,8 @@ but its assigned parent is unavailable or its child quota is exhausted, Relay
 rejects the request instead of silently bypassing the configured subscription.
 
 ## Capacity modes
+
+API-key model permissions are the intersection of the key's optional model restriction and the user's balance-model permissions plus active subscription grants. An empty key model restriction inherits future entitlement changes; it is not a snapshot of today's catalog and does not grant tenant permissions by itself. Runtime model publication remains authoritative for discovery. Standard, Gemini and Codex-compatible model metadata lists and per-model GET/HEAD requests, rai discovery and setup scripts use the same resolved-target policy as inference. Key aliases cannot expose denied targets or leave a shadowed native model visible. Metadata reads do not consume quota or silently change settlement policy; exhaustion affects admission rather than removing the model entitlement. Conditional metadata requests recheck authorization before returning 304. Codex lists retain hidden tombstones to prevent bundled denied models from reappearing.
 
 - `unmetered`: routing is pinned but no child quota is reserved. Balance billing
   and tenant/key limits still apply. This is the normal mode for pay-as-you-go
@@ -241,3 +245,11 @@ The legacy Next.js implementation is a behavioral reference, not a storage or
 provider abstraction to copy. This design replaces its floating-point shares,
 SQLite concurrency, in-memory calibration tasks, and Codex/Grok registry with
 PostgreSQL row locking and native runtime-native identity/routing.
+
+## User assignment workflow
+
+Administrators can select users in the existing user list and assign models in one batch, or start from a model account with its source pinned. Both entries use the same form. Balance access grants model access charged to each user's balance. Shared subscriptions apply an editable public name, a per-user allocation and an optional common expiry. Fixed per-user percentages and even division of the nominal unallocated percentage are supported; the preview shows the resulting total, including oversubscription warnings.
+
+`POST /api/admin/subscriptions/children` accepts `tenant_ids` for either mode. Shared batches validate all selected users and reuse single-child validation within one transaction. Existing enabled, unexpired grants for the selected source are skipped by the assignment UI, including scheduled grants; editing existing grants remains available in account details.
+
+Default names describe the product and the user's allocated share. A complete ChatGPT Pro is named `ChatGPT Pro 20X`, so 12.5% is `ChatGPT Pro 2.5X`. A complete Claude is `Claude 5X`, so 25% is `Claude 1.25X`. Grok Heavy uses reduced fractions, such as `Grok SuperHeavy 1/4` for 25%. The form updates this default as the share changes until the administrator edits it; explicit shared names are preserved. Shared API creation without a name uses the same convention. Balance grants use a safe product name followed by `余额付费`. Credential names and upstream email addresses are never used to generate these defaults.

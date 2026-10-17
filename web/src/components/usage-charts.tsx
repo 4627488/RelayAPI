@@ -109,7 +109,9 @@ export function Last24HoursTokenRate({ report }: { report: UsageReport }) {
           <Empty className="h-72">
             <EmptyHeader>
               <EmptyTitle>暂无速率数据</EmptyTitle>
-              <EmptyDescription>刷新以读取过去24小时的全站速率。</EmptyDescription>
+              <EmptyDescription>
+                刷新以读取过去24小时的全站速率。
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         )}

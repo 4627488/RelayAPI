@@ -655,8 +655,8 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 	item.Name = strings.TrimSpace(item.Name)
 	item.TenantID = strings.TrimSpace(item.TenantID)
 	item.ParentSubscriptionID = strings.TrimSpace(item.ParentSubscriptionID)
-	if item.Name == "" || item.TenantID == "" || item.ParentSubscriptionID == "" || item.AllocationPPM <= 0 {
-		return ChildSubscription{}, errors.New("name, tenant, parent and positive allocation_ppm are required")
+	if item.TenantID == "" || item.ParentSubscriptionID == "" || item.AllocationPPM <= 0 {
+		return ChildSubscription{}, errors.New("tenant, parent and positive allocation_ppm are required")
 	}
 	if item.StartsAt.IsZero() {
 		item.StartsAt = time.Now()
@@ -672,6 +672,9 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 		if parent.Status == "missing" {
 			return ErrNotFound
 		}
+		if item.Name == "" {
+			item.Name = DefaultSubscriptionName(parent, item.AllocationPPM)
+		}
 		if parent.CapacityMode == db.ParentCapacityUnmetered {
 			item = canonicalBalanceGrant(parent, item)
 		}
@@ -685,6 +688,56 @@ func (s Store) CreateChildSubscription(ctx context.Context, item ChildSubscripti
 		return tx.Create(&item).Error
 	})
 	return item, err
+}
+
+// CreateSharedSubscriptionGrants applies a common share and lifecycle to a
+// selection of users atomically, preserving single-grant validation.
+func (s Store) CreateSharedSubscriptionGrants(ctx context.Context, template ChildSubscription, tenantIDs []string) ([]ChildSubscription, error) {
+	ids := make([]string, 0, len(tenantIDs))
+	seen := make(map[string]bool, len(tenantIDs))
+	for _, id := range tenantIDs {
+		id = strings.TrimSpace(id)
+		if id != "" && !seen[id] {
+			ids = append(ids, id)
+			seen[id] = true
+		}
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("at least one user is required")
+	}
+	items := make([]ChildSubscription, 0, len(ids))
+	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		var parent ParentSubscription
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&parent, "id = ?", template.ParentSubscriptionID).Error; err != nil {
+			return notFound(err)
+		}
+		if parent.CapacityMode != db.ParentCapacityObserved {
+			return errors.New("shared allocation requires a shared-quota account")
+		}
+		var enabledUsers int64
+		if err := tx.Model(&Tenant{}).Where("id IN ? AND enabled = ?", ids, true).Count(&enabledUsers).Error; err != nil {
+			return err
+		}
+		if enabledUsers != int64(len(ids)) {
+			return errors.New("one or more selected users are missing or disabled")
+		}
+		batchStore := s
+		batchStore.DB = tx
+		for _, id := range ids {
+			item := template
+			item.ID, item.TenantID = "", id
+			created, err := batchStore.CreateChildSubscription(ctx, item)
+			if err != nil {
+				return err
+			}
+			items = append(items, created)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (s Store) UpdateChildSubscription(ctx context.Context, item ChildSubscription) (ChildSubscription, error) {
@@ -837,7 +890,7 @@ func (s Store) GrantBalanceSubscriptionAccess(ctx context.Context, parentID stri
 
 func canonicalBalanceGrant(parent ParentSubscription, item ChildSubscription) ChildSubscription {
 	item.ParentSubscriptionID = parent.ID
-	item.Name = parent.Name
+	item.Name = DefaultSubscriptionName(parent, 1_000_000)
 	item.AllocationPPM = 1_000_000
 	item.Priority = 100
 	item.ModelAllowlist = pq.StringArray{}
@@ -883,11 +936,11 @@ func (grant SubscriptionModelGrant) AllowsModel(model string) bool {
 // tenant's available model pool. A non-empty API-key allowlist remains the
 // final per-key switch, including for subscription models.
 func (key KeyContext) AllowsModel(model string) bool {
-	if modelAllowed(model, key.ModelAllowlist, key.TenantModels) {
-		return true
-	}
 	if !modelAllowed(model, key.ModelAllowlist) {
 		return false
+	}
+	if modelAllowed(model, key.TenantModels) {
+		return true
 	}
 	for _, grant := range key.SubscriptionModelGrants {
 		if grant.AllowsModel(model) {

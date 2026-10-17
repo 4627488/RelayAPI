@@ -248,40 +248,13 @@ func (a *App) agentSetupModels(ctx context.Context, tenantID, plain string) ([]s
 	if err != nil {
 		return nil, err
 	}
-	children, err := a.store.ListChildSubscriptions(ctx, tenantID)
-	if err != nil {
-		return nil, err
+	if key.TenantID != tenantID || !key.Enabled || !key.TenantEnabled || expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
+		return nil, store.ErrNotFound
 	}
-	now := time.Now()
-	inherited := make([]string, 0)
-	for _, child := range children {
-		if !child.Enabled || child.StartsAt.After(now) || child.ExpiresAt != nil && !child.ExpiresAt.After(now) {
-			continue
-		}
-		parent, err := a.store.GetParentSubscription(ctx, child.ParentSubscriptionID)
-		if err != nil {
-			return nil, err
-		}
-		models, _ := effectiveSubscriptionModels(parent, child)
-		inherited = append(inherited, models...)
+	if a.nativeRuntime == nil {
+		return nil, errors.New("model runtime unavailable")
 	}
-	models := append(append([]string(nil), key.TenantModels...), inherited...)
-	if len(key.ModelAllowlist) > 0 {
-		models = append(models, key.ModelAllowlist...)
-	}
-	models = normalizedModels(models)
-	allowedModels := make([]string, 0, len(models)+len(key.ModelAliases))
-	for _, model := range models {
-		if key.AllowsModel(model) {
-			allowedModels = append(allowedModels, model)
-		}
-	}
-	for _, alias := range key.ModelAliases {
-		if key.AllowsModel(alias.Model) {
-			allowedModels = append(allowedModels, alias.Alias)
-		}
-	}
-	return normalizedModels(allowedModels), nil
+	return visibleClientModels(key, a.nativeRuntime.Models()), nil
 }
 
 func buildAgentSetupTemplateData(endpoint, apiKey string, input agentSetupInput, platform string) (agentSetupTemplateData, error) {

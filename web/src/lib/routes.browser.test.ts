@@ -7,6 +7,35 @@ function location(pathname: string, hash = "") {
 }
 
 describe("application routes", () => {
+  it("supports the personal model catalog and subscription section links", () => {
+    expect(routeHref({ workspace: "user", page: "models" })).toBe("/app/models")
+    expect(parseAppRoute(location("/app/models"))).toMatchObject({
+      workspace: "user",
+      page: "models",
+      valid: true,
+    })
+    expect(
+      parseAppRoute(location("/app/subscriptions", "#subscription-shared"))
+    ).toMatchObject({ page: "subscriptions", valid: true })
+    expect(parseAppRoute(location("/admin/models"))).toMatchObject({
+      page: "overview",
+      valid: false,
+    })
+  })
+  it("canonicalizes admin allocations into accounts while keeping user subscriptions", () => {
+    expect(parseAppRoute(location("/admin/subscriptions"))).toMatchObject({
+      workspace: "admin",
+      page: "providers",
+      valid: false,
+    })
+    expect(routeHref({ workspace: "admin", page: "subscriptions" })).toBe(
+      "/admin/providers"
+    )
+    expect(parseAppRoute(location("/app/subscriptions"))).toMatchObject({
+      page: "subscriptions",
+      valid: true,
+    })
+  })
   it("parses canonical user and admin pages", () => {
     expect(parseAppRoute(location("/app/usage"))).toMatchObject({
       workspace: "user",

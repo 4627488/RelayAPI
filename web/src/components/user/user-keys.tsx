@@ -2,7 +2,6 @@ import {
   Fragment,
   useCallback,
   useEffect,
-  useRef,
   useState,
   type FormEvent,
 } from "react"
@@ -86,13 +85,13 @@ import {
   deleteRequest,
   postJSON,
   type ApiKey,
-  type ChildSubscription,
+  type TenantModel,
 } from "@/lib/api"
 import { copyText } from "@/lib/clipboard"
 import { dateTime } from "@/lib/format"
 import { useAsyncResource } from "@/hooks/use-async-resource"
 
-export function UserKeys({ tenantModels }: { tenantModels: string[] }) {
+export function UserKeys() {
   const loadKeys = useCallback(async () => {
     const value = await api<{ items: ApiKey[] }>("/api/keys")
     return value.items ?? []
@@ -115,22 +114,14 @@ export function UserKeys({ tenantModels }: { tenantModels: string[] }) {
       <LoadErrorView message={loadError} onRetry={() => void reload(true)} />
     )
   }
-  return (
-    <KeysView
-      keys={keys}
-      tenantModels={tenantModels}
-      onChanged={() => reload()}
-    />
-  )
+  return <KeysView keys={keys} onChanged={() => reload()} />
 }
 
 function KeysView({
   keys,
-  tenantModels,
   onChanged,
 }: {
   keys: ApiKey[]
-  tenantModels: string[]
   onChanged: () => Promise<void>
 }) {
   const [createOpen, setCreateOpen] = useState(false)
@@ -138,34 +129,19 @@ function KeysView({
   const [pending, setPending] = useState(false)
   const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({})
   const [revealingKeyID, setRevealingKeyID] = useState("")
-  const [modelOptions, setModelOptions] = useState<string[]>(tenantModels)
-  const [selectedModels, setSelectedModels] = useState<string[]>(() => [
-    ...tenantModels,
-  ])
+  const [modelOptions, setModelOptions] = useState<string[]>([])
+  const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [modelAliases, setModelAliases] = useState<ModelAliasDraft[]>([])
   const [query, setQuery] = useState("")
   const [status, setStatus] = useState("all")
   const [deletingKey, setDeletingKey] = useState<ApiKey | null>(null)
-  const modelSelectionTouched = useRef(false)
 
   useEffect(() => {
     let active = true
-    void api<{ items: ChildSubscription[] }>("/api/subscriptions")
+    void api<{ items: TenantModel[] }>("/api/models")
       .then((value) => {
         if (!active) return
-        const now = Date.now()
-        const subscriptionModels = (value.items ?? [])
-          .filter(
-            (item) =>
-              item.enabled &&
-              Date.parse(item.starts_at) <= now &&
-              (!item.expires_at || Date.parse(item.expires_at) > now)
-          )
-          .flatMap(
-            (item) =>
-              item.effective_model_allowlist ?? item.model_allowlist ?? []
-          )
-        const source = [...tenantModels, ...subscriptionModels]
+        const source = (value.items ?? []).map((item) => item.id)
         setModelOptions(
           Array.from(
             new Set(source.map((model) => model.trim()).filter(Boolean))
@@ -176,23 +152,16 @@ function KeysView({
     return () => {
       active = false
     }
-  }, [tenantModels])
-
-  useEffect(() => {
-    if (createOpen && !modelSelectionTouched.current)
-      setSelectedModels([...modelOptions])
-  }, [createOpen, modelOptions])
+  }, [])
 
   function openCreateDialog() {
-    modelSelectionTouched.current = false
     setEditingKey(null)
-    setSelectedModels([...modelOptions])
+    setSelectedModels([])
     setModelAliases([])
     setCreateOpen(true)
   }
 
   function openEditDialog(key: ApiKey) {
-    modelSelectionTouched.current = true
     setEditingKey(key)
     setSelectedModels(key.model_allowlist ?? [])
     setModelAliases(
@@ -205,7 +174,6 @@ function KeysView({
   }
 
   function changeSelectedModels(models: string[]) {
-    modelSelectionTouched.current = true
     setSelectedModels(models)
   }
 
@@ -248,14 +216,17 @@ function KeysView({
     const presetAliases = new Set(
       preset.aliases.map((alias) => alias.toLowerCase())
     )
-    modelSelectionTouched.current = true
     setSelectedModels((current) =>
-      Array.from(
-        new Set([
-          ...current.filter((model) => !presetAliases.has(model.toLowerCase())),
-          preset.target,
-        ])
-      )
+      current.length === 0
+        ? []
+        : Array.from(
+            new Set([
+              ...current.filter(
+                (model) => !presetAliases.has(model.toLowerCase())
+              ),
+              preset.target,
+            ])
+          )
     )
     setModelAliases((current) => [
       ...current.filter(
@@ -625,7 +596,7 @@ function KeysView({
                   allLabel="全部可用模型"
                 />
                 <FieldDescription>
-                  选择“全部可用模型”表示继承账户权限；选择具体模型后仅允许这些模型。
+                  默认继承你有权限的全部模型，包括以后新增的余额模型和订阅模型。选择具体模型后，仅允许指定的模型。
                 </FieldDescription>
               </Field>
               <ApiKeyModelAliasEditor

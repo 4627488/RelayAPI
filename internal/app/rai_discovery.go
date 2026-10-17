@@ -2,7 +2,6 @@ package app
 
 import (
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/rai"
@@ -40,7 +39,7 @@ func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "API Key 无效或已停用")
 		return
 	}
-	models := a.raiSessionModels(r, key)
+	models := a.raiSessionModels(key)
 	defaultModel := rai.SelectDefaultModel(models, a.currentNativeSettings().RAIDefaultModels)
 	setSensitiveNoStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -96,21 +95,9 @@ func (a *App) raiQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": result})
 }
 
-func (a *App) raiSessionModels(r *http.Request, key store.KeyContext) []string {
-	models, err := a.agentSetupModels(r.Context(), key.TenantID, bearer(r))
-	if err == nil && len(models) > 0 {
-		sort.Strings(models)
-		return models
-	}
+func (a *App) raiSessionModels(key store.KeyContext) []string {
 	if a.nativeRuntime == nil {
 		return nil
 	}
-	out := make([]string, 0)
-	for _, model := range a.nativeRuntime.Models() {
-		if key.AllowsModel(model) {
-			out = append(out, model)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return visibleClientModels(key, a.nativeRuntime.Models())
 }

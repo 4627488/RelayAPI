@@ -128,6 +128,42 @@
     @apply font-sans;
   }
 }
+
+/* Subscription quota colors are scoped to data, leaving the workspace theme intact. */
+.subscription-meter,
+.subscription-signal {
+  --subscription-healthy: #15744d;
+  --subscription-warning: #a0500b;
+  --subscription-critical: #c23736;
+  --subscription-tone: var(--muted-foreground);
+}
+.dark .subscription-meter,
+.dark .subscription-signal {
+  --subscription-healthy: #7bddb4;
+  --subscription-warning: #f5bf70;
+  --subscription-critical: #ff9b96;
+}
+.subscription-meter[data-tone="healthy"],
+.subscription-signal[data-tone="healthy"] {
+  --subscription-tone: var(--subscription-healthy);
+}
+.subscription-meter[data-tone="warning"],
+.subscription-signal[data-tone="warning"] {
+  --subscription-tone: var(--subscription-warning);
+}
+.subscription-meter[data-tone="critical"],
+.subscription-signal[data-tone="critical"] {
+  --subscription-tone: var(--subscription-critical);
+}
+.subscription-signal {
+  color: var(--subscription-tone);
+}
+.subscription-meter [data-slot="progress-track"] {
+  height: 0.75rem;
+}
+.subscription-meter [data-slot="progress-indicator"] {
+  background-color: var(--subscription-tone);
+}
 /* Calendar geometry is shared across light and dark themes; model hues are data. */
 .heatmap-calendar {
   display: grid;

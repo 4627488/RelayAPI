@@ -1,12 +1,38 @@
 package app
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/store"
 )
+
+func TestTenantSubscriptionProjectionHidesCredentialIdentity(t *testing.T) {
+	parent := store.ParentSubscription{ID: "private-parent", Name: "upstream@example.test", UpstreamCredentialID: "private-credential", UpstreamCredentialName: "private-auth-file", PlanType: "private-plan", Enabled: true}
+	child := store.ChildSubscription{ID: "child", Name: "研发月度订阅", Enabled: true}
+	view := projectTenantSubscription(parent, child, nil, nil, nil, time.Now())
+	if view["name"] != child.Name {
+		t.Fatalf("editable name lost: %v", view)
+	}
+	payload, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{parent.ID, parent.Name, parent.UpstreamCredentialID, parent.UpstreamCredentialName, parent.PlanType, "parent_name", "parent_plan_type"} {
+		if strings.Contains(string(payload), secret) {
+			t.Fatalf("tenant response exposes %q: %s", secret, payload)
+		}
+	}
+	for _, legacyName := range []string{parent.Name, parent.UpstreamCredentialName, parent.UpstreamCredentialID, "legacy@private.test", ""} {
+		child.Name = legacyName
+		if got := tenantSubscriptionName(parent, child); got != "模型订阅" {
+			t.Fatalf("unsafe legacy name %q became %q", legacyName, got)
+		}
+	}
+}
 
 func TestCapacityModesExcludeLegacyManualWindows(t *testing.T) {
 	if !validCapacityMode("unmetered") || !validCapacityMode("observed") {

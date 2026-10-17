@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { lazy, Suspense, useCallback, useState, type FormEvent } from "react"
 import {
   BanIcon,
   CircleCheckIcon,
@@ -23,13 +23,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -74,9 +67,24 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { api, deleteRequest, postJSON, type User } from "@/lib/api"
+import { Checkbox } from "@/components/ui/checkbox"
+import { SearchField } from "@/components/workspace-ui"
+import { useAsyncResource } from "@/hooks/use-async-resource"
+import {
+  api,
+  deleteRequest,
+  postJSON,
+  type ChildSubscription,
+  type User,
+} from "@/lib/api"
 import { dateTime, money } from "@/lib/format"
 import { copyText } from "@/lib/clipboard"
+
+const AssignUsersDialog = lazy(() =>
+  import("./assign-users-dialog").then((module) => ({
+    default: module.AssignUsersDialog,
+  }))
+)
 
 export function UsersView({
   users,
@@ -87,6 +95,36 @@ export function UsersView({
   currentUserId: string
   onChanged: () => Promise<void>
 }) {
+  const [query, setQuery] = useState("")
+  const [selectedIDs, setSelectedIDs] = useState<string[]>([])
+  const [assignmentIDs, setAssignmentIDs] = useState<string[] | null>(null)
+  const loadGrants = useCallback(
+    async () =>
+      (
+        await api<{ items: (ChildSubscription & { capacity_mode: string })[] }>(
+          "/api/admin/subscriptions/children"
+        )
+      ).items ?? [],
+    []
+  )
+  const {
+    data: grants,
+    error: grantsError,
+    loading: grantsLoading,
+    reload: reloadGrants,
+  } = useAsyncResource(loadGrants, {
+    initialData: [],
+    errorMessage: "无法读取授权",
+  })
+  const visibleUsers = users.filter((user) =>
+    `${user.name} ${user.owner_email}`
+      .toLowerCase()
+      .includes(query.trim().toLowerCase())
+  )
+  const selectable = visibleUsers.filter((user) => user.enabled)
+  const selected = users.filter(
+    (user) => user.enabled && selectedIDs.includes(user.id)
+  )
   const [creditUser, setCreditUser] = useState<User | null>(null)
   const [resetUser, setResetUser] = useState<User | null>(null)
   const [deleteUser, setDeleteUser] = useState<User | null>(null)
@@ -208,130 +246,254 @@ export function UsersView({
 
   return (
     <div className="flex flex-col gap-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>全部用户</CardTitle>
-          <CardDescription>{users.length} 个账户</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {users.length ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>用户</TableHead>
-                  <TableHead>邮箱</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead className="text-right">余额</TableHead>
-                  <TableHead className="text-right">注册时间</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {users.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="font-medium">
-                      <span className="inline-flex items-center gap-2">
-                        {user.name}
-                        {user.is_admin ? (
-                          <Badge variant="outline">管理员</Badge>
-                        ) : null}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
+      <section className="flex min-w-0 flex-col gap-4" aria-label="全部用户">
+        <div className="flex flex-wrap items-center gap-3">
+          <SearchField
+            className="w-full sm:max-w-xs"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onClear={() => setQuery("")}
+            placeholder="搜索用户或邮箱"
+          />
+          <span className="text-sm text-muted-foreground">
+            {selected.length
+              ? `已选 ${selected.length} 人`
+              : `${users.length} 个账户`}
+          </span>
+          {selected.length ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIDs([])}
+            >
+              清空选择
+            </Button>
+          ) : null}
+          <Button
+            className="sm:ml-auto"
+            onClick={() => setAssignmentIDs(selected.map((user) => user.id))}
+          >
+            <UsersIcon data-icon="inline-start" />
+            {selected.length ? `分配给 ${selected.length} 人` : "分配模型"}
+          </Button>
+        </div>
+        {visibleUsers.length ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    aria-label="选择当前用户"
+                    checked={
+                      selectable.length > 0 &&
+                      selectable.every((user) => selectedIDs.includes(user.id))
+                    }
+                    indeterminate={
+                      selectable.some((user) =>
+                        selectedIDs.includes(user.id)
+                      ) &&
+                      !selectable.every((user) => selectedIDs.includes(user.id))
+                    }
+                    onCheckedChange={(checked) =>
+                      setSelectedIDs((ids) =>
+                        checked
+                          ? [
+                              ...new Set([
+                                ...ids,
+                                ...selectable.map((user) => user.id),
+                              ]),
+                            ]
+                          : ids.filter(
+                              (id) => !selectable.some((user) => user.id === id)
+                            )
+                      )
+                    }
+                  />
+                </TableHead>
+                <TableHead>用户</TableHead>
+                <TableHead>模型授权</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead className="text-right">余额</TableHead>
+                <TableHead className="text-right">注册时间</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visibleUsers.map((user) => (
+                <TableRow
+                  key={user.id}
+                  data-state={
+                    selectedIDs.includes(user.id) ? "selected" : undefined
+                  }
+                >
+                  <TableCell>
+                    <Checkbox
+                      aria-label={`选择 ${user.name}`}
+                      checked={selectedIDs.includes(user.id)}
+                      disabled={!user.enabled}
+                      onCheckedChange={(checked) =>
+                        setSelectedIDs((ids) =>
+                          checked
+                            ? [...new Set([...ids, user.id])]
+                            : ids.filter((id) => id !== user.id)
+                        )
+                      }
+                    />
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <span className="inline-flex items-center gap-2">
+                      {user.name}
+                      {user.is_admin ? (
+                        <Badge variant="outline">管理员</Badge>
+                      ) : null}
+                    </span>
+                    <p className="text-xs text-muted-foreground">
                       {user.owner_email}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={user.enabled ? "secondary" : "destructive"}
-                      >
-                        {user.enabled ? "正常" : "停用"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {money(user.balance_nano_usd)}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      {dateTime(user.created_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className="inline-flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setCreditUser(user)}
-                        >
-                          <CircleDollarSignIcon data-icon="inline-start" />
-                          充值
-                        </Button>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <Button
-                                size="icon-sm"
-                                variant="ghost"
-                                aria-label={`管理 ${user.name}`}
-                              />
-                            }
+                    </p>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {(() => {
+                      if (grantsLoading) return "读取中…"
+                      if (grantsError)
+                        return (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void reloadGrants()}
                           >
-                            <MoreHorizontalIcon />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuGroup>
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  setResetUser(user)
-                                  setTemporaryPassword("")
-                                }}
-                              >
-                                <KeyRoundIcon />
-                                重置密码
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                disabled={pending || user.id === currentUserId}
-                                onClick={() => void toggleUser(user)}
-                              >
-                                {user.enabled ? (
-                                  <BanIcon />
-                                ) : (
-                                  <CircleCheckIcon />
-                                )}
-                                {user.enabled ? "停用" : "启用"}
-                              </DropdownMenuItem>
-                            </DropdownMenuGroup>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuGroup>
-                              <DropdownMenuItem
-                                variant="destructive"
-                                disabled={pending || user.id === currentUserId}
-                                onClick={() => setDeleteUser(user)}
-                              >
-                                <Trash2Icon />
-                                删除
-                              </DropdownMenuItem>
-                            </DropdownMenuGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <Empty>
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <UsersIcon />
-                </EmptyMedia>
-                <EmptyTitle>还没有用户</EmptyTitle>
-                <EmptyDescription>
-                  生成邀请链接来添加第一个用户。
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
-        </CardContent>
-      </Card>
+                            重试读取授权
+                          </Button>
+                        )
+                      const active = grants.filter(
+                        (grant) =>
+                          grant.tenant_id === user.id &&
+                          grant.enabled &&
+                          (!grant.expires_at ||
+                            Date.parse(grant.expires_at) > Date.now())
+                      )
+                      const shared = active.filter(
+                        (grant) => grant.capacity_mode === "observed"
+                      ).length
+                      const balance = active.length - shared
+                      return active.length
+                        ? [
+                            shared ? `${shared} 项共享订阅` : "",
+                            balance ? `${balance} 项余额授权` : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")
+                        : "尚无独立授权"
+                    })()}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={user.enabled ? "secondary" : "destructive"}>
+                      {user.enabled ? "正常" : "停用"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(user.balance_nano_usd)}
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
+                    {dateTime(user.created_at)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <span className="inline-flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!user.enabled}
+                        aria-label={`分配给 ${user.name}`}
+                        onClick={() => setAssignmentIDs([user.id])}
+                      >
+                        分配
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setCreditUser(user)}
+                      >
+                        <CircleDollarSignIcon data-icon="inline-start" />
+                        充值
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              size="icon-sm"
+                              variant="ghost"
+                              aria-label={`管理 ${user.name}`}
+                            />
+                          }
+                        >
+                          <MoreHorizontalIcon />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuGroup>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setResetUser(user)
+                                setTemporaryPassword("")
+                              }}
+                            >
+                              <KeyRoundIcon />
+                              重置密码
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              disabled={pending || user.id === currentUserId}
+                              onClick={() => void toggleUser(user)}
+                            >
+                              {user.enabled ? <BanIcon /> : <CircleCheckIcon />}
+                              {user.enabled ? "停用" : "启用"}
+                            </DropdownMenuItem>
+                          </DropdownMenuGroup>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuGroup>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              disabled={pending || user.id === currentUserId}
+                              onClick={() => setDeleteUser(user)}
+                            >
+                              <Trash2Icon />
+                              删除
+                            </DropdownMenuItem>
+                          </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </span>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <UsersIcon />
+              </EmptyMedia>
+              <EmptyTitle>{query ? "没有匹配的用户" : "还没有用户"}</EmptyTitle>
+              <EmptyDescription>
+                生成邀请链接来添加第一个用户。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
+      </section>
+      {assignmentIDs ? (
+        <Suspense fallback={null}>
+          <AssignUsersDialog
+            initialUserIDs={assignmentIDs}
+            onOpenChange={(open) => {
+              if (!open) setAssignmentIDs(null)
+            }}
+            onSaved={async () => {
+              setSelectedIDs([])
+              await reloadGrants()
+              await onChanged()
+            }}
+          />
+        </Suspense>
+      ) : null}
       <Dialog
         open={Boolean(creditUser)}
         onOpenChange={(open) => {

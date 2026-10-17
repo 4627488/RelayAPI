@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { render } from "vitest-browser-react"
+import { page } from "vitest/browser"
+import { expectNoA11yViolations } from "@/test/a11y"
 
 import { ProvidersView } from "@/components/providers-view"
 import type { ProviderAccount } from "@/lib/api"
@@ -58,6 +60,93 @@ function setup(value: ProviderAccount[] = accounts) {
 }
 
 describe("providers view", () => {
+  it.each([390, 1280])(
+    "opens only the chosen account's grants at %s",
+    async (width) => {
+      await page.viewport(width, 900)
+      const parents = accounts.map((account, index) => ({
+        item: {
+          id: `parent-${index}`,
+          upstream_credential_id: account.id,
+          name: account.name,
+          provider: account.provider,
+          status: "active",
+          enabled: true,
+          capacity_mode: "unmetered",
+          model_allowlist: [],
+          upstream_model_allowlist: account.models,
+          quota_probe_status: "unsupported",
+        },
+        allocated_ppm: 0,
+        windows: [],
+      }))
+      apiMock.mockImplementation(async (path: string) => {
+        if (path.endsWith("/accounts")) return { files: accounts }
+        if (path.endsWith("/parents")) return { items: parents }
+        if (path.endsWith("/children"))
+          return {
+            items: [
+              {
+                id: "grant-1",
+                parent_subscription_id: "parent-0",
+                tenant_id: "tenant-1",
+                enabled: true,
+                name: "Alice 授权",
+                model_allowlist: [],
+                billing_mode: "balance",
+                entitlement_windows: [],
+              },
+            ],
+          }
+        if (path.endsWith("/tenants"))
+          return {
+            items: [
+              {
+                id: "tenant-1",
+                name: "研发用户",
+                owner_email: "dev@example.com",
+                enabled: true,
+              },
+            ],
+          }
+        return { items: [] }
+      })
+      const screen = await render(
+        <main className="p-4">
+          <ProvidersView />
+        </main>
+      )
+      await screen
+        .getByRole("button", { name: "1 位用户", exact: true })
+        .click()
+      await expect
+        .element(screen.getByRole("tab", { name: "用户授权", selected: true }))
+        .toBeVisible()
+      await expect
+        .element(screen.getByText("研发用户", { exact: true }).first())
+        .toBeVisible()
+      await expect
+        .element(screen.getByRole("button", { name: "Kimi 冷却" }))
+        .not.toBeInTheDocument()
+      await expect
+        .element(screen.getByRole("button", { name: "结算与额度规则" }))
+        .toBeVisible()
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width)
+      await expectNoA11yViolations(document.querySelector('[role="dialog"]')!)
+      await screen
+        .getByRole("button", { name: "添加用户", exact: true })
+        .click()
+      await expect
+        .element(screen.getByRole("dialog", { name: "分配给用户" }))
+        .toBeVisible()
+      await expect
+        .element(screen.getByRole("combobox", { name: "模型来源" }))
+        .toBeDisabled()
+      await screen.getByRole("button", { name: "取消", exact: true }).click()
+      await screen.getByRole("button", { name: "关闭", exact: true }).click()
+      await page.viewport(1280, 800)
+    }
+  )
   it("searches account identity, model, and endpoint", async () => {
     setup()
     const screen = await render(<ProvidersView />)

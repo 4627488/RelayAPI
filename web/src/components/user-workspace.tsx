@@ -50,20 +50,25 @@ interface UserWorkspaceProps {
   session: Session
   onPageChange: (page: Page) => void
 }
+const UserModels = lazy(() =>
+  import("@/components/user/user-models").then((module) => ({
+    default: module.UserModels,
+  }))
+)
 
 export function UserWorkspace({
   page,
   session,
   onPageChange,
 }: UserWorkspaceProps) {
-  const tenantModels = session.tenant?.model_allowlist ?? []
-
   return (
     <Suspense fallback={<LoadingView />}>
-      {page === "account" ? (
+      {page === "models" ? (
+        <UserModels />
+      ) : page === "account" ? (
         <AccountSettings />
       ) : page === "keys" ? (
-        <UserKeys tenantModels={tenantModels} />
+        <UserKeys />
       ) : page === "rai-devices" ? (
         <RAIDevices />
       ) : page === "logs" ? (
