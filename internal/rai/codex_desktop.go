@@ -2,6 +2,7 @@ package rai
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,7 +11,7 @@ import (
 
 // Desktop is a singleton; the CLI launcher's lifetime is not the app lifetime.
 // Use explicit handoff/return rather than guessing when a window has closed.
-func (a *App) temporaryCodex(profileName string, args []string) error {
+func (a *App) temporaryCodex(ctx context.Context, profileName string, args []string) error {
 	if len(args) != 0 {
 		return errors.New("usage: rai codex --desktop")
 	}
@@ -35,7 +36,7 @@ func (a *App) temporaryCodex(profileName string, args []string) error {
 	if strings.TrimSpace(scanner.Text()) != "ready" {
 		return nil
 	}
-	if err := a.configureCodexMode(profileName, []string{"codex", "-y"}, true); err != nil {
+	if err := a.configureCodexMode(ctx, profileName, []string{"codex", "-y"}, true); err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Stdout, "Open Codex Desktop from your usual shortcut and start a new chat. Keep this terminal open.")

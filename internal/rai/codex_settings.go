@@ -82,7 +82,7 @@ func (a *App) syncCodex(ctx context.Context, profileName string) error {
 	if err != nil {
 		return fmt.Errorf("read Codex settings: %w", err)
 	}
-	key, err := store.Credential(profile.Name)
+	key, err := a.profileCredential(ctx, store, profile)
 	if err != nil {
 		return err
 	}

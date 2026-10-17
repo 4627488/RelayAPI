@@ -356,8 +356,12 @@ func (a *App) routes() {
 	a.mux.HandleFunc("GET /.well-known/rai.json", a.raiDiscovery)
 	a.mux.HandleFunc("HEAD /.well-known/rai.json", a.raiDiscovery)
 	a.mux.HandleFunc("GET /api/rai/session", a.raiSession)
+	a.raiManagementRoutes()
 	a.mux.HandleFunc("GET /api/rai/quota", a.raiQuota)
 	a.mux.HandleFunc("POST /api/rai/authorizations", a.createRAIAuthorization)
+	a.mux.HandleFunc("POST /api/rai/revoke", a.revokeRAIOAuth)
+	// Do not allow unknown management paths to fall through to the public landing page.
+	a.mux.HandleFunc("/api/rai/manage/", http.NotFound)
 	a.mux.HandleFunc("POST /api/rai/token", a.raiToken)
 	a.mux.HandleFunc("GET /rai/install.sh", a.raiInstallScript)
 	a.mux.HandleFunc("HEAD /rai/install.sh", a.raiInstallScript)

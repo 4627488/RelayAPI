@@ -32,7 +32,7 @@ afterEach(async () => {
   await page.viewport(1280, 800)
 })
 
-function mockFlow(loggedIn = true, status = "pending") {
+function mockFlow(loggedIn = true, status = "pending", purpose = "inference") {
   window.history.replaceState(null, "", path)
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
@@ -47,13 +47,33 @@ function mockFlow(loggedIn = true, status = "pending") {
       return Response.json({ ...authorization, status: "denied" })
     if (status === "invalid")
       return Response.json({ error: { message: "授权无效" } }, { status: 404 })
-    return Response.json({ ...authorization, status })
+    return Response.json({ ...authorization, status, purpose })
   })
   vi.stubGlobal("fetch", fetchMock)
   return fetchMock
 }
 
 describe("rai authorization", () => {
+  it("requires explicit consent for account management and describes its permissions", async () => {
+    const fetchMock = mockFlow(true, "pending", "account")
+    const screen = await render(<App />)
+    await expect
+      .element(
+        screen.getByRole("heading", { name: "允许这台设备管理你的账户？" })
+      )
+      .toBeVisible()
+    await expect
+      .element(
+        screen.getByText(
+          "设备将能创建、修改和删除你的 API Key，并撤销你已授权的设备。仅批准你本人发起的请求；可在「rai 已登录设备」中撤销管理授权。"
+        )
+      )
+      .toBeVisible()
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).endsWith("/approve"))
+    ).toBe(false)
+    await expectNoA11yViolations()
+  })
   it("keeps the authorization URL through login and explicit approval", async () => {
     const fetchMock = mockFlow(false)
     const screen = await render(<App />)

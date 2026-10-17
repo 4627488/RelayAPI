@@ -92,6 +92,8 @@ func isRealtimeWebSocketPath(path string) bool {
 
 const nativeWebSocketHeartbeatInterval = 30 * time.Second
 
+var errRAIWebSocketAuthorization = errors.New("device authorization expired or was revoked; reconnect with a renewed access token")
+
 func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext, timeline *latencyTimeline) {
 	sessionID := requestID
@@ -539,6 +541,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			forwarded, nextMeta, startsTurn, prepareErr := a.prepareNativeWebSocketRequest(payload, r, key, accounting)
 			if prepareErr != nil {
 				accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "invalid_request"
+				if errors.Is(prepareErr, errRAIWebSocketAuthorization) {
+					accounting.errorHTTP, accounting.errorCode = http.StatusUnauthorized, "invalid_api_key"
+				}
 				rejected := nativeWebSocketBillingEntry{Meta: nextMeta, StartedAt: receivedAt,
 					RequestBody: append([]byte(nil), payload[:min(len(payload), requestLogDetailLimit)]...), RequestBytes: int64(len(payload))}
 				if accounting.currentActive {
@@ -673,6 +678,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	}()
 
 	first := <-results
+	if errors.Is(first.err, errRAIWebSocketAuthorization) {
+		forwardWebSocketClose(downstream, &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: errRAIWebSocketAuthorization.Error()})
+	}
 	if first.source == "upstream" {
 		forwardWebSocketClose(downstream, normalizedUpstreamWebSocketClose(first.err, accounting.terminalSeen))
 	} else {
@@ -835,6 +843,15 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 	}
 	if event.Type != "response.create" {
 		return payload, accounting.currentMeta, false, nil
+	}
+	// A socket may outlive a short-lived OAuth access token. Revalidate each
+	// new generation, while allowing an already accepted stream to finish.
+	if request != nil && strings.HasPrefix(bearer(request), "rai_at_") {
+		current, err := a.store.ResolveKey(request.Context(), bearer(request))
+		if err != nil || !current.Enabled || !current.TenantEnabled || expired(current.ExpiresAt) || expired(current.TenantExpiresAt) {
+			return nil, accounting.currentMeta, true, errRAIWebSocketAuthorization
+		}
+		key = current
 	}
 	frameMeta := readRequestMeta(payload, "")
 	nextMeta := accounting.currentMeta

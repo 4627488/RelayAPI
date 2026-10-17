@@ -3,6 +3,7 @@ package rai
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -46,19 +47,30 @@ func codexRuntimeProvider(environ []string) (string, error) {
 	}
 }
 
-func (a *App) configureCodex(profileName string, args []string) error {
-	return a.configureCodexMode(profileName, args, false)
+func (a *App) configureCodex(ctx context.Context, profileName string, args []string) error {
+	return a.configureCodexMode(ctx, profileName, args, false)
 }
 
-func (a *App) configureCodexMode(profileName string, args []string, temporary bool) error {
+func (a *App) configureCodexMode(ctx context.Context, profileName string, args []string, temporary bool) error {
 	if len(args) == 0 || args[0] != "codex" {
 		return errors.New("usage: rai configure codex [-y|--yes]")
 	}
 	yes := false
-	for _, arg := range args[1:] {
+	server := ""
+	noBrowser := false
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "-y", "--yes":
 			yes = true
+		case "--server":
+			if i+1 >= len(args) {
+				return errors.New("--server requires a URL")
+			}
+			i++
+			server = args[i]
+		case "--no-browser":
+			noBrowser = true
 		default:
 			return fmt.Errorf("unknown configure argument %q", arg)
 		}
@@ -68,12 +80,38 @@ func (a *App) configureCodexMode(profileName string, args []string, temporary bo
 		return err
 	}
 	profile, err := store.ResolveProfile(profileName)
+	if err != nil || server != "" {
+		if server == "" {
+			err = a.ensureLogin(ctx, profileName, noBrowser)
+		} else {
+			loginArgs := []string{"--server", server}
+			if noBrowser {
+				loginArgs = append(loginArgs, "--no-browser")
+			}
+			err = a.login(ctx, profileName, loginArgs)
+		}
+		if err == nil {
+			profile, err = store.ResolveProfile(profileName)
+		}
+	}
 	if err != nil {
 		return err
 	}
-	_, err = store.Credential(profile.Name)
+	secret, err := a.profileCredential(ctx, store, profile)
+	if errors.Is(err, errOAuthLoginRequired) {
+		profile, secret, err = a.reauthorizeProfile(ctx, store, profile, noBrowser)
+	}
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(secret, "rai_at_") {
+		_, err = a.Gateway.Session(ctx, profile.ServerURL, secret)
+		if errors.Is(err, errOAuthLoginRequired) {
+			profile, _, err = a.reauthorizeProfile(ctx, store, profile, noBrowser)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	path, err := codexConfigPath(a.Environ)
 	if err != nil {

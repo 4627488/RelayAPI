@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -24,6 +25,9 @@ type QuotaItem struct {
 }
 
 func (g Gateway) Quota(ctx context.Context, apiBase, apiKey string) ([]QuotaItem, error) {
+	if strings.HasPrefix(apiKey, "rai_at_") {
+		g = g.managementGateway()
+	}
 	apiBase, err := normalizeServerURL(apiBase)
 	if err != nil {
 		return nil, err
@@ -61,7 +65,7 @@ func (a *App) quota(ctx context.Context, profileName string) error {
 	if err != nil {
 		return err
 	}
-	secret, err := store.Credential(profile.Name)
+	secret, err := a.profileCredential(ctx, store, profile)
 	if err != nil {
 		return err
 	}

@@ -324,9 +324,11 @@ type AgentSetup struct {
 	CreatedAt         time.Time `gorm:"not null" json:"-"`
 }
 
-// RAIAuthorization is a PKCE device grant for the rai launcher.
-// The API key ciphertext is present only between approval and the one-time token exchange.
+// RAIAuthorization is a PKCE device grant for rai.
+// APIKeyCiphertext is the legacy column name for the encrypted OAuth token
+// response, present only between approval and the one-time token exchange.
 type RAIAuthorization struct {
+	Purpose             string     `gorm:"not null;default:'inference'" json:"purpose"`
 	DeviceOS            string     `gorm:"not null;default:''" json:"device_os"`
 	DeviceArch          string     `gorm:"not null;default:''" json:"device_arch"`
 	RAIVersion          string     `gorm:"not null;default:''" json:"rai_version"`
@@ -343,3 +345,21 @@ type RAIAuthorization struct {
 	ApprovedAt          *time.Time `json:"approved_at,omitempty"`
 	ConsumedAt          *time.Time `json:"consumed_at,omitempty"`
 }
+
+// RAIOAuthSession is a revocable device grant. Only hashes of refresh tokens persist.
+type RAIOAuthSession struct {
+	ID               string    `gorm:"type:uuid;primaryKey" json:"id"`
+	TenantID         string    `gorm:"type:uuid;index;not null" json:"-"`
+	Purpose          string    `gorm:"not null" json:"purpose"`
+	APIKeyID         *string   `gorm:"type:uuid;index" json:"-"`
+	RefreshTokenHash []byte    `gorm:"uniqueIndex;not null" json:"-"`
+	PasswordVersion  int64     `gorm:"not null" json:"-"`
+	DeviceName       string    `json:"device_name"`
+	DeviceOS         string    `json:"device_os"`
+	DeviceArch       string    `json:"device_arch"`
+	RAIVersion       string    `json:"rai_version"`
+	CreatedAt        time.Time `json:"created_at"`
+	ExpiresAt        time.Time `gorm:"index;not null" json:"expires_at"`
+}
+
+func (RAIOAuthSession) TableName() string { return "rai_oauth_sessions" }

@@ -121,6 +121,7 @@ export function RAIDevices() {
           <TableHeader>
             <TableRow>
               <TableHead>设备</TableHead>
+              <TableHead>用途</TableHead>
               <TableHead>系统 / 架构</TableHead>
               <TableHead>rai 版本</TableHead>
               <TableHead>授权时间</TableHead>
@@ -135,6 +136,9 @@ export function RAIDevices() {
                 <TableRow key={device.id}>
                   <TableCell className="max-w-60 font-medium break-words whitespace-normal">
                     {device.device_name || "未命名设备"}
+                  </TableCell>
+                  <TableCell>
+                    {device.purpose === "account" ? "账户管理" : "调用模型"}
                   </TableCell>
                   <TableCell>
                     {systems[device.device_os] ??
@@ -177,7 +181,7 @@ export function RAIDevices() {
       )}
       <p className="text-xs text-muted-foreground">
         系统、架构和版本由 rai
-        在登录时上报；最近使用表示该凭据最近一次模型调用，不代表设备当前在线。旧版未上报的信息会留空，更新
+        在登录时上报；最近使用表示模型凭据最近一次调用，不代表设备当前在线。账户管理授权不记录模型调用。旧版未上报的信息会留空，更新
         rai 后重新登录即可补充。
       </p>
       <AlertDialog
@@ -191,7 +195,10 @@ export function RAIDevices() {
             <AlertDialogTitle>撤销设备登录？</AlertDialogTitle>
             <AlertDialogDescription>
               将撤销「{selected?.device_name || "未命名设备"}」的 rai
-              凭据。该设备需要重新运行 rai login
+              凭据。该设备需要重新运行{" "}
+              {selected?.purpose === "account"
+                ? "rai account login"
+                : "rai login"}
               并授权才能继续使用，其他设备不受影响。
             </AlertDialogDescription>
           </AlertDialogHeader>

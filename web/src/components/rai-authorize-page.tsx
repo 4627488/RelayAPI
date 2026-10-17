@@ -9,6 +9,7 @@ import { api, ApiError, postJSON, type Session } from "@/lib/api"
 import { useAsyncResource } from "@/hooks/use-async-resource"
 
 interface Authorization {
+  purpose?: "inference" | "account"
   id: string
   device_name: string
   device_os: string
@@ -57,6 +58,7 @@ export function RAIAuthorizePage({
   const [error, setError] = useState("")
   const current = result ?? request
   const status = current?.status
+  const managesAccount = current?.purpose === "account"
   const finished = status === "approved" || status === "consumed"
 
   useEffect(() => {
@@ -117,19 +119,25 @@ export function RAIAuthorizePage({
             : status === "expired"
               ? "授权已过期"
               : session
-                ? "允许这台设备使用 rai？"
+                ? managesAccount
+                  ? "允许这台设备管理你的账户？"
+                  : "允许这台设备使用 rai？"
                 : "登录以授权 rai"
   const description = loading
     ? "正在获取设备信息。"
     : loadError
       ? "请检查网络连接后重试。"
       : !current || status === "expired"
-        ? "请回到终端重新运行 rai login，使用新的链接继续。"
+        ? managesAccount
+          ? "请回到终端重新运行 rai account login，使用新的链接继续。"
+          : "请回到终端重新运行 rai login，使用新的链接继续。"
         : finished
           ? "回到终端即可继续使用。你可以关闭此页面。"
           : status === "denied"
             ? "这次授权已取消，设备不会获得访问权限。"
-            : "确认设备信息后，允许 rai 使用你的账户调用模型。"
+            : managesAccount
+              ? "此授权允许管理你自己的 API Key、查看额度和用量，以及撤销设备登录，设备会话默认有效期 6 个月，可随时撤销。"
+              : "确认设备信息后，允许 rai 使用你的账户调用模型。"
 
   return (
     <AuthFrame
@@ -169,6 +177,8 @@ export function RAIAuthorizePage({
             <dd className="min-w-0 break-words">
               {current.device_name || "未命名设备"}
             </dd>
+            <dt className="text-muted-foreground">授权用途</dt>
+            <dd>{managesAccount ? "账户管理" : "调用模型"}</dd>
             <dt className="text-muted-foreground">操作系统</dt>
             <dd>
               {systems[current.device_os] ?? (current.device_os || "未上报")}
@@ -196,8 +206,9 @@ export function RAIAuthorizePage({
                   </span>
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  设备会使用你的模型权限和配额。之后可在「rai
-                  已登录设备」中撤销登录。
+                  {managesAccount
+                    ? "设备将能创建、修改和删除你的 API Key，并撤销你已授权的设备。仅批准你本人发起的请求；可在「rai 已登录设备」中撤销管理授权。"
+                    : "设备会使用你的模型权限和配额。之后可在「rai 已登录设备」中撤销登录。"}
                 </p>
                 <div className="flex gap-2">
                   <Button

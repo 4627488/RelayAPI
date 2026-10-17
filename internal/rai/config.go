@@ -23,6 +23,7 @@ type Config struct {
 }
 
 type Profile struct {
+	AuthMethod        string    `json:"auth_method,omitempty"`
 	Name              string    `json:"name"`
 	ServerURL         string    `json:"server_url"`
 	DisplayName       string    `json:"display_name,omitempty"`
@@ -166,6 +167,9 @@ func validateProfileName(name string) error {
 }
 
 func validateProfile(profile Profile) error {
+	if profile.AuthMethod != "" && profile.AuthMethod != "oauth" && profile.AuthMethod != "api_key" {
+		return errors.New("unsupported authentication method")
+	}
 	if err := validateProfileName(profile.Name); err != nil {
 		return err
 	}

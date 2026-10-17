@@ -42,6 +42,7 @@ export interface ApiKey {
 }
 
 export interface RAIDevice {
+  purpose?: "inference" | "account"
   id: string
   device_name: string
   device_os: string

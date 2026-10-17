@@ -6,11 +6,13 @@ import (
 )
 
 var (
-	relayKeyPattern = regexp.MustCompile(`relay_[A-Za-z0-9_-]+`)
-	bearerPattern   = regexp.MustCompile(`(?i)(authorization:\s*bearer\s+)(\S+)`)
+	relayKeyPattern        = regexp.MustCompile(`relay_[A-Za-z0-9_-]+`)
+	managementTokenPattern = regexp.MustCompile(`rai_(?:mgmt|at|rt|local)_[A-Za-z0-9_-]+`)
+	bearerPattern          = regexp.MustCompile(`(?i)(authorization:\s*bearer\s+)(\S+)`)
 )
 
 func redact(value string) string {
+	value = managementTokenPattern.ReplaceAllString(value, "rai_oauth_***")
 	value = relayKeyPattern.ReplaceAllString(value, "relay_***")
 	value = bearerPattern.ReplaceAllString(value, "${1}***")
 	return value

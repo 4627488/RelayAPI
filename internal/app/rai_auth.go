@@ -12,6 +12,21 @@ import (
 
 const raiAuthorizePath = "/rai/authorize/"
 
+func (a *App) revokeRAIOAuth(w http.ResponseWriter, r *http.Request) {
+	setSensitiveNoStore(w)
+	var input struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := a.store.RevokeRAIOAuth(r.Context(), input.Token); err != nil {
+		writeError(w, 500, "revoke_failed", "Could not revoke device authorization.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func raiAdapterNames() []string {
 	return []string{"claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent"}
 }
@@ -44,21 +59,27 @@ func (a *App) raiToken(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		AuthorizationID string `json:"authorization_id"`
 		CodeVerifier    string `json:"code_verifier"`
+		GrantType       string `json:"grant_type"`
+		RefreshToken    string `json:"refresh_token"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	plain, err := a.store.ConsumeRAIAuthorization(r.Context(), input.AuthorizationID, input.CodeVerifier)
+	var tokens store.RAIOAuthTokens
+	var err error
+	if input.GrantType == "refresh_token" {
+		tokens, err = a.store.RefreshRAIOAuth(r.Context(), input.RefreshToken)
+	} else if input.GrantType == "" || input.GrantType == "urn:ietf:params:oauth:grant-type:device_code" {
+		tokens, err = a.store.ConsumeRAIOAuthAuthorization(r.Context(), input.AuthorizationID, input.CodeVerifier)
+	} else {
+		err = store.ErrInvalidGrant
+	}
 	if err != nil {
 		writeRAITokenError(w, err)
 		return
 	}
 	setSensitiveNoStore(w)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"api_key":  plain,
-		"api_base": a.cfg.PublicURL,
-		"name":     "RelayAPI",
-	})
+	writeJSON(w, http.StatusOK, tokens)
 }
 
 func writeRAITokenError(w http.ResponseWriter, err error) {
@@ -92,6 +113,7 @@ func (a *App) raiAuthorization(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": item.ID, "device_name": item.DeviceName, "device_os": item.DeviceOS,
+		"purpose":     item.Purpose,
 		"device_arch": item.DeviceArch, "rai_version": item.RAIVersion,
 		"status": item.Status, "expires_at": item.ExpiresAt,
 	})

@@ -423,8 +423,20 @@ type joinedKey struct {
 }
 
 func (s Store) ResolveKey(ctx context.Context, plain string) (KeyContext, error) {
+	auth := scoped(ctx, s.DB)
+	if strings.HasPrefix(plain, "rai_at_") {
+		session, err := s.RAIOAuthSession(ctx, plain)
+		if err != nil || session.Purpose != "inference" || session.APIKeyID == nil {
+			return KeyContext{}, ErrNotFound
+		}
+		auth = auth.Where("api_keys.id = ?", *session.APIKeyID)
+	} else {
+		// Preserve existing static Keys, including legacy rai device Keys.
+		// New browser grants only issue OAuth credentials.
+		auth = auth.Where("api_keys.key_hash = ?", identity.HashKey(plain))
+	}
 	var row joinedKey
-	if err := scoped(ctx, s.DB).
+	if err := auth.
 		Table("api_keys").
 		Select(`api_keys.*,
 			tenants.name AS tenant_name,
@@ -437,7 +449,6 @@ func (s Store) ResolveKey(ctx context.Context, plain string) (KeyContext, error)
 			tenants.daily_tokens_used AS tenant_daily_tokens,
 			tenants.daily_tokens_day AS tenant_daily_tokens_day`).
 		Joins("JOIN tenants ON tenants.id = api_keys.tenant_id").
-		Where("api_keys.key_hash = ?", identity.HashKey(plain)).
 		Take(&row).Error; err != nil {
 		return KeyContext{}, notFound(err)
 	}

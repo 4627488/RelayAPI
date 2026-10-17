@@ -3,10 +3,13 @@ package store
 import (
 	"context"
 	"time"
+
+	"github.com/4627488/RelayAPI/internal/db"
 )
 
 // RAIDevice exposes login metadata, never the underlying key or its ciphertext.
 type RAIDevice struct {
+	Purpose    string     `json:"purpose"`
 	ID         string     `json:"id"`
 	DeviceName string     `json:"device_name"`
 	DeviceOS   string     `json:"device_os"`
@@ -23,7 +26,23 @@ func (s Store) ListRAIDevices(ctx context.Context, tenantID string) ([]RAIDevice
 	err := scoped(ctx, s.DB).Model(&APIKey{}).
 		Select("id", "device_name", "device_os", "device_arch", "rai_version", "enabled", "expires_at", "last_used_at", "created_at").
 		Where("tenant_id = ? AND source = ?", tenantID, "rai").Order("created_at DESC").Find(&items).Error
-	return items, err
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Purpose = "inference"
+	}
+	var sessions []db.RAIOAuthSession
+	if err := scoped(ctx, s.DB).Where("tenant_id = ? AND purpose = ? AND expires_at > ?", tenantID, "account", time.Now()).Order("created_at DESC").Find(&sessions).Error; err != nil {
+		return nil, err
+	}
+	for _, session := range sessions {
+		expires := session.ExpiresAt
+		items = append(items, RAIDevice{ID: session.ID, Purpose: "account", DeviceName: session.DeviceName,
+			DeviceOS: session.DeviceOS, DeviceArch: session.DeviceArch, RAIVersion: session.RAIVersion,
+			Enabled: true, CreatedAt: session.CreatedAt, ExpiresAt: &expires})
+	}
+	return items, nil
 }
 
 func (s Store) RevokeRAIDevice(ctx context.Context, tenantID, id string) error {
@@ -31,9 +50,16 @@ func (s Store) RevokeRAIDevice(ctx context.Context, tenantID, id string) error {
 		Where("tenant_id = ? AND id = ? AND source = ?", tenantID, id, "rai").
 		Updates(map[string]any{"enabled": false, "key_ciphertext": []byte(nil)})
 	if result.Error == nil && result.RowsAffected == 0 {
-		return ErrNotFound
+		return s.RevokeRAIOAuthSession(ctx, tenantID, id)
 	}
 	return result.Error
+}
+
+// Keep device credentials separate from manual Key CRUD.
+func (s Store) IsManualKey(ctx context.Context, tenantID, id string) error {
+	var key APIKey
+	err := scoped(ctx, s.DB).Select("id").Where("tenant_id = ? AND id = ? AND source = ?", tenantID, id, "manual").First(&key).Error
+	return notFound(err)
 }
 
 func (s Store) ListManualKeys(ctx context.Context, tenantID string) ([]APIKey, error) {

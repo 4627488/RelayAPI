@@ -23,8 +23,10 @@ func (a *App) raiDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"install":          "/rai/install.sh",
 		"download":         "/rai/download",
 		"adapters":         raiAdapterNames(),
-		"contract_version": "1",
-		"min_rai_version":  "0.1.0",
+		"contract_version": "2",
+		"min_rai_version":  "0.3.0",
+		"revocation":       "/api/rai/revoke",
+		"auth_methods":     []string{"device_pkce", "refresh_token", "api_key"},
 	}
 	if version := a.raiBundledVersion(); version != "" {
 		document["rai_version"] = version
@@ -42,7 +44,7 @@ func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 	defaultModel := rai.SelectDefaultModel(models, a.currentNativeSettings().RAIDefaultModels)
 	setSensitiveNoStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"contract_version": "1",
+		"contract_version": "2",
 		"name":             "RelayAPI",
 		"api_base":         a.cfg.PublicURL,
 		"models":           models,

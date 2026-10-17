@@ -69,7 +69,9 @@ func (a *App) Execute(ctx context.Context) error {
 	case "login":
 		return a.login(ctx, profileName, args[1:])
 	case "logout":
-		return a.logout(profileName, args[1:])
+		return a.logout(ctx, profileName, args[1:])
+	case "account", "keys", "usage", "devices":
+		return a.manage(ctx, profileName, args)
 	case "status":
 		return a.status(ctx, profileName)
 	case "models":
@@ -87,18 +89,18 @@ func (a *App) Execute(ctx context.Context) error {
 		}
 		return a.syncCodex(ctx, profileName)
 	case "configure":
-		return a.configureCodex(profileName, args[1:])
+		return a.configureCodex(ctx, profileName, args[1:])
 	case "unconfigure":
 		return a.unconfigureCodex(args[1:])
 	case "credential":
-		return a.credential(profileName, args[1:])
+		return a.credential(ctx, profileName, args[1:])
 	case "doctor":
 		return a.doctor(ctx, profileName)
 	case "update":
 		return a.update(ctx)
 	case "claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent":
 		if args[0] == "codex" && len(args) > 1 && args[1] == "--desktop" {
-			return a.temporaryCodex(profileName, args[2:])
+			return a.temporaryCodex(ctx, profileName, args[2:])
 		}
 		return a.launch(ctx, profileName, args[0], args[1:])
 	default:
@@ -156,9 +158,17 @@ func (a *App) store() (Store, error) {
 }
 
 func (a *App) usage() error {
-	fmt.Fprint(a.Stdout, `rai — RelayAPI agent launcher
+	fmt.Fprint(a.Stdout, `rai — RelayAPI CLI
 
 Usage:
+  rai account login --server <url> [--no-browser]   Authorize account management
+  rai account status | rai account quota | rai account logout
+  rai keys list | rai keys create --name <name> [--show-secret]
+  rai keys update <id> [--name <name>] [--enabled=true|false]
+  rai keys delete <id> --yes
+  rai usage [--days 30]
+  rai devices list | rai devices revoke <id> --yes
+  Management commands return JSON; credentials are separate from agent login.
   rai login --server <url> [--no-browser] [--profile name] [--model id]
   rai login --server <url> --api-key-stdin
   rai logout [--profile name]
@@ -167,7 +177,7 @@ Usage:
   rai quota             Show subscription allowances for the current API Key
   rai use <model|default|--auto>    Save a model, follow the agent, or follow the site
   rai sync codex            Import saved Codex model and reasoning settings
-  rai configure codex [-y]  Connect Codex using the rai credential helper
+  rai configure codex [--server <url>] [--no-browser] [-y]  Sign in and connect Codex
   rai unconfigure codex    Restore rai-managed Codex settings
   rai codex --desktop      Temporarily connect Desktop with explicit restoration
   rai credential print
@@ -255,12 +265,20 @@ func (a *App) login(ctx context.Context, profileName string, args []string) erro
 }
 
 func (a *App) loginWithBrowser(ctx context.Context, server string, noBrowser bool) (string, error) {
+	server, err := managementServer(server)
+	if err != nil {
+		return "", err
+	}
 	verifier, err := newPKCEVerifier()
 	if err != nil {
 		return "", err
 	}
-	auth, err := a.Gateway.StartAuthorization(ctx, server, deviceName(), pkceChallengeS256(verifier))
+	g := a.Gateway.managementGateway()
+	auth, err := g.StartAuthorization(ctx, server, deviceName(), pkceChallengeS256(verifier))
 	if err != nil {
+		return "", err
+	}
+	if err := validateVerificationURL(server, auth.VerificationURI); err != nil {
 		return "", err
 	}
 	fmt.Fprintf(a.Stdout, "Open this URL to approve rai:\n%s\n", auth.VerificationURI)
@@ -281,9 +299,9 @@ func (a *App) loginWithBrowser(ctx context.Context, server string, noBrowser boo
 		if !a.Now().Before(deadline) {
 			return "", errors.New("authorization expired")
 		}
-		token, err := a.Gateway.ExchangeToken(ctx, server, auth.ID, verifier)
+		token, err := g.ExchangeToken(ctx, server, auth.ID, verifier)
 		if err == nil {
-			return token.APIKey, nil
+			return encodeOAuthCredential(server, token, a.Now()), nil
 		}
 		var tokenErr tokenError
 		if errors.As(err, &tokenErr) && tokenErr.Code == "authorization_pending" {
@@ -297,15 +315,34 @@ func (a *App) loginWithBrowser(ctx context.Context, server string, noBrowser boo
 }
 
 func (a *App) finishLogin(ctx context.Context, profileName, server, key string, flags loginFlags) error {
-	discovery, err := a.Gateway.Discover(ctx, server)
+	savedOAuth, isOAuth, err := decodeOAuthCredential(key)
 	if err != nil {
 		return err
+	}
+	committed := false
+	if isOAuth {
+		defer func() {
+			if !committed {
+				_ = a.Gateway.revokeOAuth(ctx, savedOAuth)
+			}
+		}()
+	}
+	discovery := Discovery{APIBase: server, Name: "RelayAPI"}
+	if !isOAuth {
+		discovery, err = a.Gateway.Discover(ctx, server)
+		if err != nil {
+			return err
+		}
 	}
 	apiBase := discovery.APIBase
 	if apiBase == "" {
 		apiBase = server
 	}
-	session, err := a.Gateway.Session(ctx, apiBase, key)
+	access := key
+	if isOAuth {
+		access = savedOAuth.AccessToken
+	}
+	session, err := a.Gateway.Session(ctx, apiBase, access)
 	if err != nil {
 		return err
 	}
@@ -336,6 +373,10 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 		OpenCodeProtocol: flags.OpenCodeProtocol,
 		LastRefresh:      a.Now().UTC(),
 	}
+	profile.AuthMethod = "api_key"
+	if isOAuth {
+		profile.AuthMethod = "oauth"
+	}
 	// Renewing authorization must not discard the user's last selections.
 	if previous, resolveErr := store.ResolveProfile(profileName); resolveErr == nil && previous.ServerURL == apiBase {
 		if flags.Model == "" {
@@ -355,7 +396,21 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 	if err := validateProfile(profile); err != nil {
 		return err
 	}
-	backend, err := store.PutCredential(profileName, key)
+	if oldProfile, err := store.ResolveProfile(profileName); err == nil {
+		previous, err := store.Credential(profileCredentialName(oldProfile))
+		if err == nil {
+			old, oauth, err := decodeOAuthCredential(previous)
+			if err != nil {
+				return err
+			}
+			if oauth && old.RefreshToken != savedOAuth.RefreshToken {
+				if err := a.Gateway.revokeOAuth(ctx, old); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	backend, err := store.PutCredential(profileCredentialName(profile), key)
 	if err != nil {
 		return err
 	}
@@ -365,6 +420,12 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 	}
 	if err := store.SetActive(profileName); err != nil {
 		return err
+	}
+	committed = true
+	if isOAuth {
+		_ = store.DeleteCredential(profile.Name)
+	} else {
+		_ = store.DeleteCredential("oauth/" + profile.Name)
 	}
 	fmt.Fprintf(a.Stdout, "Signed in to %s as profile %s\n", apiBase, profileName)
 	fmt.Fprintf(a.Stdout, "Default model: %s\n", modelLabel(profile.DefaultModel))
@@ -463,7 +524,7 @@ func (a *App) readAPIKey(fromStdin bool) (string, error) {
 	return key, nil
 }
 
-func (a *App) logout(profileName string, args []string) error {
+func (a *App) logout(ctx context.Context, profileName string, args []string) error {
 	if extra := flagsWithoutValues(args); len(extra) > 0 {
 		return fmt.Errorf("unknown logout argument %q", extra[0])
 	}
@@ -481,7 +542,17 @@ func (a *App) logout(profileName string, args []string) error {
 	if profileName == "" {
 		return errors.New("no active profile to log out")
 	}
-	_ = store.DeleteCredential(profileName)
+	profile, err := store.ResolveProfile(profileName)
+	if err != nil {
+		return err
+	}
+	credentialName := profileCredentialName(profile)
+	if err := a.revokeSavedCredential(ctx, store, credentialName); err != nil {
+		return err
+	}
+	if err := store.DeleteCredential(credentialName); err != nil {
+		return err
+	}
 	if err := store.DeleteProfile(profileName); err != nil {
 		return err
 	}
@@ -498,13 +569,18 @@ func (a *App) status(ctx context.Context, profileName string) error {
 	if err != nil {
 		return err
 	}
-	secret, err := store.Credential(profile.Name)
+	secret, err := a.profileCredential(ctx, store, profile)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(a.Stdout, "Profile: %s\n", profile.Name)
 	fmt.Fprintf(a.Stdout, "Server: %s\n", profile.ServerURL)
 	fmt.Fprintf(a.Stdout, "Display name: %s\n", profile.DisplayName)
+	if profile.AuthMethod == "oauth" {
+		fmt.Fprintln(a.Stdout, "Authentication: OAuth device session")
+	} else {
+		fmt.Fprintln(a.Stdout, "Authentication: static API Key")
+	}
 	if profile.FollowSiteDefault {
 		fmt.Fprintln(a.Stdout, "Default model: automatic (site preference)")
 	} else {
@@ -538,7 +614,7 @@ func (a *App) models(ctx context.Context, profileName string) error {
 	if err != nil {
 		return err
 	}
-	secret, err := store.Credential(profile.Name)
+	secret, err := a.profileCredential(ctx, store, profile)
 	if err != nil {
 		return err
 	}
@@ -589,7 +665,7 @@ func (a *App) use(profileName string, args []string) error {
 	return nil
 }
 
-func (a *App) credential(profileName string, args []string) error {
+func (a *App) credential(ctx context.Context, profileName string, args []string) error {
 	if len(args) == 0 || args[0] != "print" {
 		return errors.New("usage: rai credential print [--home <directory>] [--server <url>]")
 	}
@@ -628,7 +704,7 @@ func (a *App) credential(profileName string, args []string) error {
 			return errors.New("rai profile now belongs to a different server; configure Codex again")
 		}
 	}
-	secret, err := store.Credential(profile.Name)
+	secret, err := a.profileCredential(ctx, store, profile)
 	if err != nil {
 		return err
 	}
@@ -651,7 +727,7 @@ func (a *App) doctor(ctx context.Context, profileName string) error {
 	}
 	fmt.Fprintf(a.Stdout, "profile: %s\n", profile.Name)
 	fmt.Fprintf(a.Stdout, "server: %s\n", profile.ServerURL)
-	secret, err := store.Credential(profile.Name)
+	secret, err := a.profileCredential(ctx, store, profile)
 	if err != nil {
 		fmt.Fprintf(a.Stdout, "credential: %s\n", err.Error())
 	} else {
@@ -677,12 +753,22 @@ func (a *App) doctor(ctx context.Context, profileName string) error {
 	return nil
 }
 
-func (a *App) ensureLogin(ctx context.Context, profileName string) error {
+func (a *App) ensureLogin(ctx context.Context, profileName string, noBrowser ...bool) error {
 	server := strings.TrimSpace(os.Getenv(envServer))
+	if server == "" {
+		if account, err := a.accountStore(); err == nil {
+			if profile, err := account.ResolveProfile(profileName); err == nil {
+				server = profile.ServerURL
+			}
+		}
+	}
 	if server == "" {
 		return errors.New("no rai profile is configured; run rai login --server <url>")
 	}
 	args := []string{"--server", server}
+	if len(noBrowser) > 0 && noBrowser[0] {
+		args = append(args, "--no-browser")
+	}
 	if profileName != "" {
 		args = append(args, "--profile", profileName)
 	}
@@ -708,11 +794,20 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 			return err
 		}
 	}
-	secret, err := store.Credential(profile.Name)
+	secret, err := a.profileCredential(ctx, store, profile)
+	if errors.Is(err, errOAuthLoginRequired) {
+		profile, secret, err = a.reauthorizeProfile(ctx, store, profile)
+	}
 	if err != nil {
 		return err
 	}
 	session, err := a.Gateway.Session(ctx, profile.ServerURL, secret)
+	if errors.Is(err, errOAuthLoginRequired) {
+		profile, secret, err = a.reauthorizeProfile(ctx, store, profile)
+		if err == nil {
+			session, err = a.Gateway.Session(ctx, profile.ServerURL, secret)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -736,9 +831,18 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 	if err != nil {
 		return err
 	}
+	apiBase := session.APIBase
+	if strings.HasPrefix(secret, "rai_at_") && agent != "codex" {
+		var closeProxy func()
+		apiBase, secret, closeProxy, err = a.startOAuthProxy(ctx, store, profile)
+		if err != nil {
+			return err
+		}
+		defer closeProxy()
+	}
 	command, err := adapter.Prepare(LaunchContext{
 		Profile:    profile,
-		APIBase:    session.APIBase,
+		APIBase:    apiBase,
 		APIKey:     secret,
 		Model:      model,
 		Models:     session.Models,

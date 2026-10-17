@@ -17,6 +17,7 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 	t.Setenv(envDisableKey, "1")
 	pending := 2
 	mux := http.NewServeMux()
+	var serverURL string
 	mux.HandleFunc("GET /.well-known/rai.json", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"name":"RelayAPI","kind":"rai.dev/v1","authorization":"/api/rai/authorizations","token":"/api/rai/token"}`)
 	})
@@ -33,7 +34,7 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 			t.Fatalf("missing device metadata: %#v", input)
 		}
 		w.WriteHeader(http.StatusCreated)
-		io.WriteString(w, `{"authorization_id":"auth-1","verification_uri":"http://relay.example/rai/authorize/auth-1","expires_in":600,"interval":1}`)
+		json.NewEncoder(w).Encode(map[string]any{"authorization_id": "auth-1", "verification_uri": serverURL + "/rai/authorize/auth-1", "expires_in": 600, "interval": 1})
 	})
 	mux.HandleFunc("POST /api/rai/token", func(w http.ResponseWriter, _ *http.Request) {
 		if pending > 0 {
@@ -42,16 +43,17 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 			io.WriteString(w, `{"error":{"code":"authorization_pending","message":"wait"}}`)
 			return
 		}
-		io.WriteString(w, `{"api_key":"relay_browser","name":"RelayAPI"}`)
+		io.WriteString(w, `{"access_token":"rai_at_browser","refresh_token":"rai_rt_browser","purpose":"inference","expires_in":900}`)
 	})
 	mux.HandleFunc("GET /api/rai/session", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer relay_browser" {
+		if r.Header.Get("Authorization") != "Bearer rai_at_browser" {
 			http.Error(w, "no", http.StatusUnauthorized)
 			return
 		}
 		io.WriteString(w, `{"name":"RelayAPI","models":["gpt-test"],"default_model":"gpt-test"}`)
 	})
 	server := httptest.NewServer(mux)
+	serverURL = server.URL
 	t.Cleanup(server.Close)
 
 	var opened string
@@ -83,20 +85,22 @@ func TestLoginBrowserPollsUntilApproved(t *testing.T) {
 func TestLoginOpensBrowserByDefault(t *testing.T) {
 	t.Setenv(envDisableKey, "1")
 	mux := http.NewServeMux()
+	var serverURL string
 	mux.HandleFunc("GET /.well-known/rai.json", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"name":"RelayAPI","kind":"rai.dev/v1"}`)
 	})
 	mux.HandleFunc("POST /api/rai/authorizations", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		io.WriteString(w, `{"authorization_id":"auth-2","verification_uri":"http://relay.example/rai/authorize/auth-2","expires_in":60,"interval":1}`)
+		json.NewEncoder(w).Encode(map[string]any{"authorization_id": "auth-2", "verification_uri": serverURL + "/rai/authorize/auth-2", "expires_in": 60, "interval": 1})
 	})
 	mux.HandleFunc("POST /api/rai/token", func(w http.ResponseWriter, _ *http.Request) {
-		io.WriteString(w, `{"api_key":"relay_opened"}`)
+		io.WriteString(w, `{"access_token":"rai_at_opened","refresh_token":"rai_rt_opened","purpose":"inference","expires_in":900}`)
 	})
 	mux.HandleFunc("GET /api/rai/session", func(w http.ResponseWriter, _ *http.Request) {
 		io.WriteString(w, `{"models":["m"],"default_model":"m"}`)
 	})
 	server := httptest.NewServer(mux)
+	serverURL = server.URL
 	t.Cleanup(server.Close)
 	var opened string
 	app := App{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ var (
 )
 
 type RAIAuthorization struct {
+	Purpose    string
 	ID         string
 	DeviceName string
 	DeviceOS   string
@@ -47,6 +49,7 @@ func raiAuthorizationAssociatedData(id string) string {
 }
 
 type RAIDeviceMetadata struct {
+	Purpose    string `json:"purpose,omitempty"`
 	DeviceOS   string `json:"device_os"`
 	DeviceArch string `json:"device_arch"`
 	RAIVersion string `json:"rai_version"`
@@ -78,6 +81,7 @@ func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge
 		return RAIAuthorization{}, 0, err
 	}
 	item := db.RAIAuthorization{
+		Purpose:  device.Purpose,
 		DeviceOS: device.DeviceOS, DeviceArch: device.DeviceArch, RAIVersion: device.RAIVersion,
 		ID:                  identity.NewID(),
 		DeviceName:          deviceName,
@@ -91,6 +95,7 @@ func (s Store) CreateRAIAuthorization(ctx context.Context, deviceName, challenge
 		return RAIAuthorization{}, 0, err
 	}
 	return RAIAuthorization{
+		Purpose:  item.Purpose,
 		DeviceOS: item.DeviceOS, DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
 		ID:         item.ID,
 		DeviceName: item.DeviceName,
@@ -110,6 +115,7 @@ func (s Store) RAIAuthorization(ctx context.Context, id string) (RAIAuthorizatio
 		status = "expired"
 	}
 	return RAIAuthorization{
+		Purpose:  item.Purpose,
 		DeviceOS: item.DeviceOS, DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
 		ID:         item.ID,
 		DeviceName: item.DeviceName,
@@ -136,17 +142,44 @@ func (s Store) ApproveRAIAuthorization(ctx context.Context, id, tenantID string)
 		if item.Status != RAIAuthorizationPending {
 			return ErrInvalidGrant
 		}
-		plain, prefix, hash := identity.NewAPIKey()
-		key := APIKey{
-			ID: identity.NewID(), TenantID: tenantID, Name: item.DeviceName,
-			Source: "rai", DeviceName: item.DeviceName, DeviceOS: item.DeviceOS,
-			DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
-			KeyHash: hash, Prefix: prefix, Enabled: true,
-		}
-		if err := tx.Create(&key).Error; err != nil {
+		var tenant db.Tenant
+		if err := tx.First(&tenant, "id = ?", tenantID).Error; err != nil {
 			return err
 		}
-		sealed, err := s.secretBox.Seal([]byte(plain), raiAuthorizationAssociatedData(item.ID))
+		if !tenant.Enabled || tenant.MustChangePassword || (tenant.ExpiresAt != nil && !tenant.ExpiresAt.After(time.Now())) {
+			return ErrInvalidGrant
+		}
+		_, _, hash := identity.NewAPIKey()
+		var keyID *string
+		expires := time.Now().AddDate(0, raiRefreshMonths, 0)
+		if item.Purpose == "inference" {
+			key := APIKey{
+				ID: identity.NewID(), TenantID: tenantID, Name: item.DeviceName,
+				Source: "rai", DeviceName: item.DeviceName, DeviceOS: item.DeviceOS,
+				DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
+				KeyHash: hash, Prefix: "oauth", Enabled: true, ExpiresAt: &expires,
+			}
+			if err := tx.Create(&key).Error; err != nil {
+				return err
+			}
+			keyID = &key.ID
+		}
+		session := db.RAIOAuthSession{
+			ID: identity.NewID(), TenantID: tenantID, Purpose: item.Purpose, APIKeyID: keyID,
+			PasswordVersion: tenant.PasswordVersion, DeviceName: item.DeviceName,
+			DeviceOS: item.DeviceOS, DeviceArch: item.DeviceArch, RAIVersion: item.RAIVersion,
+			CreatedAt: time.Now(), ExpiresAt: expires,
+		}
+		tokens, err := s.issueRAIOAuthTokens(session)
+		if err != nil {
+			return err
+		}
+		session.RefreshTokenHash = identity.HashKey(tokens.RefreshToken)
+		if err := tx.Create(&session).Error; err != nil {
+			return err
+		}
+		plain, _ := json.Marshal(tokens)
+		sealed, err := s.secretBox.Seal(plain, raiAuthorizationAssociatedData(item.ID))
 		if err != nil {
 			return err
 		}
@@ -154,7 +187,7 @@ func (s Store) ApproveRAIAuthorization(ctx context.Context, id, tenantID string)
 		return tx.Model(&item).Updates(map[string]any{
 			"tenant_id":          tenantID,
 			"status":             RAIAuthorizationApproved,
-			"api_key_id":         key.ID,
+			"api_key_id":         keyID,
 			"api_key_ciphertext": sealed,
 			"approved_at":        now,
 		}).Error
@@ -184,12 +217,17 @@ func (s Store) DenyRAIAuthorization(ctx context.Context, id, tenantID string) er
 }
 
 func (s Store) ConsumeRAIAuthorization(ctx context.Context, id, verifier string) (string, error) {
+	tokens, err := s.ConsumeRAIOAuthAuthorization(ctx, id, verifier)
+	return tokens.AccessToken, err
+}
+
+func (s Store) ConsumeRAIOAuthAuthorization(ctx context.Context, id, verifier string) (RAIOAuthTokens, error) {
 	id = strings.TrimSpace(id)
 	verifier = strings.TrimSpace(verifier)
 	if id == "" || verifier == "" {
-		return "", ErrInvalidGrant
+		return RAIOAuthTokens{}, ErrInvalidGrant
 	}
-	var plain string
+	var tokens RAIOAuthTokens
 	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
 		var item db.RAIAuthorization
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, "id = ?", id).Error; err != nil {
@@ -224,13 +262,23 @@ func (s Store) ConsumeRAIAuthorization(ctx context.Context, id, verifier string)
 		}).Error; err != nil {
 			return err
 		}
-		plain = string(opened)
+		if err := json.Unmarshal(opened, &tokens); err != nil {
+			return err
+		}
+		if item.ApprovedAt != nil {
+			elapsed := int(time.Since(*item.ApprovedAt).Seconds())
+			tokens.ExpiresIn -= elapsed
+			tokens.RefreshExpiresIn -= elapsed
+		}
 		return nil
 	})
-	return plain, err
+	return tokens, err
 }
 
 func (s Store) DeleteExpiredRAIAuthorizations(ctx context.Context, now time.Time) (int64, error) {
+	if err := scoped(ctx, s.DB).Where("expires_at <= ?", now).Delete(&db.RAIOAuthSession{}).Error; err != nil {
+		return 0, err
+	}
 	result := scoped(ctx, s.DB).Where("expires_at <= ?", now).Delete(&db.RAIAuthorization{})
 	return result.RowsAffected, result.Error
 }
@@ -245,6 +293,12 @@ func (s Store) loadRAIAuthorization(ctx context.Context, id string) (db.RAIAutho
 }
 
 func normalizeRAIDeviceMetadata(device *RAIDeviceMetadata) error {
+	if device.Purpose == "" {
+		device.Purpose = "inference"
+	}
+	if device.Purpose != "inference" && device.Purpose != "account" {
+		return errors.New("purpose must be inference or account")
+	}
 	for _, field := range []*string{&device.DeviceOS, &device.DeviceArch, &device.RAIVersion} {
 		*field = strings.TrimSpace(*field)
 		if len(*field) > 64 {

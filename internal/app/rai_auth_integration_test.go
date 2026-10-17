@@ -104,8 +104,8 @@ func TestRAIAuthorizationHTTPFlow(t *testing.T) {
 	if err := json.Unmarshal(token.Body.Bytes(), &issued); err != nil {
 		t.Fatal(err)
 	}
-	key, _ := issued["api_key"].(string)
-	if !strings.HasPrefix(key, "relay_") {
+	key, _ := issued["access_token"].(string)
+	if !strings.HasPrefix(key, "rai_at_") {
 		t.Fatalf("issued = %#v", issued)
 	}
 	list := httptest.NewRecorder()

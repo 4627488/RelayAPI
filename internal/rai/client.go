@@ -39,9 +39,10 @@ type Authorization struct {
 }
 
 type TokenResult struct {
-	APIKey  string
-	APIBase string
-	Name    string
+	AccessToken  string
+	RefreshToken string
+	Purpose      string
+	ExpiresIn    int
 }
 
 type tokenError struct {
@@ -128,13 +129,19 @@ func (g Gateway) getDiscovery(ctx context.Context, rawURL string) (Discovery, er
 }
 
 func (g Gateway) Session(ctx context.Context, apiBase, apiKey string) (Session, error) {
+	if strings.HasPrefix(apiKey, "rai_at_") {
+		g = g.managementGateway()
+	}
 	apiBase, err := normalizeServerURL(apiBase)
 	if err != nil {
 		return Session{}, err
 	}
 	session, err := g.getJSONSession(ctx, apiBase+"/api/rai/session", apiKey)
+	if err == errOAuthLoginRequired {
+		return Session{}, err
+	}
 	if err == nil && len(session.Models) > 0 {
-		if session.APIBase == "" {
+		if session.APIBase == "" || strings.HasPrefix(apiKey, "rai_at_") {
 			session.APIBase = apiBase
 		}
 		return session, nil
@@ -170,6 +177,9 @@ func (g Gateway) getJSONSession(ctx context.Context, rawURL, apiKey string) (Ses
 		return Session{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized && strings.HasPrefix(apiKey, "rai_at_") {
+		return Session{}, errOAuthLoginRequired
+	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode != http.StatusOK {
 		return Session{}, fmt.Errorf("session %s: %s", resp.Status, redact(string(body)))
@@ -182,6 +192,9 @@ func (g Gateway) getJSONSession(ctx context.Context, rawURL, apiKey string) (Ses
 }
 
 func (g Gateway) ListModels(ctx context.Context, apiBase, apiKey string) ([]string, error) {
+	if strings.HasPrefix(apiKey, "rai_at_") {
+		g = g.managementGateway()
+	}
 	apiBase, err := normalizeServerURL(apiBase)
 	if err != nil {
 		return nil, err
@@ -198,6 +211,9 @@ func (g Gateway) ListModels(ctx context.Context, apiBase, apiKey string) ([]stri
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized && strings.HasPrefix(apiKey, "rai_at_") {
+		return nil, errOAuthLoginRequired
+	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("models %s: %s", resp.Status, redact(string(body)))
@@ -205,19 +221,23 @@ func (g Gateway) ListModels(ctx context.Context, apiBase, apiKey string) ([]stri
 	return parseModelIDs(body)
 }
 
-func (g Gateway) StartAuthorization(ctx context.Context, apiBase, deviceName, challenge string) (Authorization, error) {
+func (g Gateway) StartAuthorization(ctx context.Context, apiBase, deviceName, challenge string, purpose ...string) (Authorization, error) {
 	apiBase, err := normalizeServerURL(apiBase)
 	if err != nil {
 		return Authorization{}, err
 	}
-	payload, err := json.Marshal(map[string]string{
+	input := map[string]string{
 		"device_name":           deviceName,
 		"device_os":             runtime.GOOS,
 		"device_arch":           runtime.GOARCH,
 		"rai_version":           Version,
 		"code_challenge":        challenge,
 		"code_challenge_method": "S256",
-	})
+	}
+	if len(purpose) > 0 {
+		input["purpose"] = purpose[0]
+	}
+	payload, err := json.Marshal(input)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -260,7 +280,7 @@ func (g Gateway) StartAuthorization(ctx context.Context, apiBase, deviceName, ch
 	}, nil
 }
 
-func (g Gateway) ExchangeToken(ctx context.Context, apiBase, authorizationID, verifier string) (TokenResult, error) {
+func (g Gateway) ExchangeToken(ctx context.Context, apiBase, authorizationID, verifier string, purpose ...string) (TokenResult, error) {
 	apiBase, err := normalizeServerURL(apiBase)
 	if err != nil {
 		return TokenResult{}, err
@@ -289,17 +309,23 @@ func (g Gateway) ExchangeToken(ctx context.Context, apiBase, authorizationID, ve
 		return TokenResult{}, tokenResponseError(body)
 	}
 	var document struct {
-		APIKey  string `json:"api_key"`
-		APIBase string `json:"api_base"`
-		Name    string `json:"name"`
+		AccessToken  string `json:"access_token"`
+		Purpose      string `json:"purpose"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		APIKey       string `json:"api_key"`
 	}
 	if err := json.Unmarshal(body, &document); err != nil {
 		return TokenResult{}, fmt.Errorf("parse token: %w", err)
 	}
-	if strings.TrimSpace(document.APIKey) == "" {
-		return TokenResult{}, fmt.Errorf("token response missing api_key")
+	wanted := "inference"
+	if len(purpose) > 0 {
+		wanted = purpose[0]
 	}
-	return TokenResult{APIKey: document.APIKey, APIBase: document.APIBase, Name: document.Name}, nil
+	if document.Purpose != wanted || !strings.HasPrefix(document.AccessToken, "rai_at_") || !strings.HasPrefix(document.RefreshToken, "rai_rt_") || document.ExpiresIn <= 0 || document.ExpiresIn > 900 || document.APIKey != "" {
+		return TokenResult{}, fmt.Errorf("server did not grant renewable %s authorization; update the server or use an explicitly supplied API Key", wanted)
+	}
+	return TokenResult{AccessToken: document.AccessToken, RefreshToken: document.RefreshToken, Purpose: document.Purpose, ExpiresIn: document.ExpiresIn}, nil
 }
 
 func tokenResponseError(body []byte) error {
