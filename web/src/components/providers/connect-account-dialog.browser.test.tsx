@@ -86,4 +86,29 @@ describe("connect account dialog", () => {
       .element(document)
       .toHaveValue('{\n  "type": "kimi",\n  "access_token": "edited"\n}')
   })
+
+  it("connects Cursor with only its API key and no gateway address", async () => {
+    apiMock.mockResolvedValue({})
+    const screen = await render(<ConnectAccountDialog open {...props} />)
+    await screen.getByRole("tab", { name: /API Key/ }).click()
+    await screen.getByRole("combobox").nth(0).click()
+    await screen.getByRole("option", { name: "Cursor", exact: true }).click()
+    await screen.getByLabelText("账户名称").fill("Cursor account")
+    await screen.getByPlaceholder("crsr_…").fill("crsr_test")
+    await expect
+      .element(screen.getByLabelText("接口地址（可选）"))
+      .not.toBeInTheDocument()
+    await screen.getByRole("button", { name: "添加账户", exact: true }).click()
+    await expect
+      .poll(() =>
+        apiMock.mock.calls.some(
+          ([url, options]) =>
+            url === "/api/admin/providers/accounts" &&
+            JSON.parse(options.body).provider === "cursor" &&
+            JSON.parse(options.body).api_key === "crsr_test" &&
+            JSON.parse(options.body).base_url === ""
+        )
+      )
+      .toBe(true)
+  })
 })

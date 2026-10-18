@@ -5,3 +5,11 @@ cliproxyapi
 **/dist
 *.exe
 /.tmp-*
+/.cache
+/.worktrees
+/.claude
+/.cursor
+/.agents
+/.devcontainer
+.env.*
+!.env.example

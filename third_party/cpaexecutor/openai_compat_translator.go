@@ -3,6 +3,7 @@ package relaybridge
 import (
 	"context"
 
+	codexclaude "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/claude"
 	codexchat "github.com/router-for-me/CLIProxyAPI/v8/internal/translator/codex/openai/chat-completions"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/translator/builtin"
@@ -22,6 +23,46 @@ func init() {
 			NonStream: convertOpenAIResponsesResponseToOpenAIChatCompletionsNonStream,
 		},
 	)
+	builtin.Registry().Register(
+		sdktranslator.FormatClaude,
+		sdktranslator.FormatOpenAIResponse,
+		convertClaudeRequestToOpenAIResponses,
+		sdktranslator.ResponseTransform{
+			Stream:    codexclaude.ConvertCodexResponseToClaude,
+			NonStream: convertOpenAIResponsesResponseToClaudeNonStream,
+		},
+	)
+}
+
+func convertClaudeRequestToOpenAIResponses(model string, body []byte, stream bool) ([]byte, error) {
+	out, err := codexclaude.ConvertClaudeRequestToCodex(model, body, stream)
+	if err != nil {
+		return nil, err
+	}
+	out, _ = sjson.DeleteBytes(out, "include")
+	out, _ = sjson.SetBytes(out, "stream", stream)
+	root := gjson.ParseBytes(body)
+	if !root.Get("thinking").Exists() && !root.Get("output_config.effort").Exists() {
+		out, _ = sjson.DeleteBytes(out, "reasoning")
+	}
+	if limit := root.Get("max_tokens"); limit.Exists() {
+		out, _ = sjson.SetBytes(out, "max_output_tokens", limit.Value())
+	}
+	for _, field := range []string{"temperature", "top_p"} {
+		if value := root.Get(field); value.Exists() {
+			out, _ = sjson.SetBytes(out, field, value.Value())
+		}
+	}
+	return out, nil
+}
+
+func convertOpenAIResponsesResponseToClaudeNonStream(ctx context.Context, model string, original, request, response []byte, param *any) []byte {
+	if gjson.GetBytes(response, "type").String() != "response.completed" && gjson.GetBytes(response, "type").String() != "response.incomplete" {
+		wrapped := []byte(`{"type":"response.completed","response":{}}`)
+		wrapped, _ = sjson.SetRawBytes(wrapped, "response", response)
+		response = wrapped
+	}
+	return codexclaude.ConvertCodexResponseToClaudeNonStream(ctx, model, original, request, response, param)
 }
 
 func convertOpenAIChatCompletionsRequestToOpenAIResponses(modelName string, inputRawJSON []byte, stream bool) ([]byte, error) {

@@ -12,6 +12,7 @@ export const oauthProviders = [
 ]
 
 export const apiKeyProviders = [
+  { value: "cursor", label: "Cursor" },
   { value: "openai", label: "OpenAI" },
   { value: "claude", label: "Claude / Anthropic" },
   { value: "gemini", label: "Google Gemini" },

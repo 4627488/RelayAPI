@@ -7,7 +7,7 @@ import "strings"
 // OpenAI-compatible executors.
 func NormalizeProvider(value string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "codex", "claude", "gemini", "gemini-interactions", "vertex", "aistudio", "antigravity", "kimi", "xai", "devin", "meta", "openai", "openai-compatibility":
+	case "codex", "cursor", "claude", "gemini", "gemini-interactions", "vertex", "aistudio", "antigravity", "kimi", "xai", "devin", "meta", "openai", "openai-compatibility":
 		return strings.ToLower(strings.TrimSpace(value)), true
 	case "anthropic":
 		return "claude", true

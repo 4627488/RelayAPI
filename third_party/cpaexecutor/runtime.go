@@ -113,6 +113,7 @@ type CredentialStatus struct {
 // The management surface is not exposed publicly; when OAuth is enabled, Relay
 // calls a password-protected in-process subset through the broker in oauth.go.
 type Runtime struct {
+	cursor           cursorRuntimePool
 	mu               sync.RWMutex
 	modelUpdateMu    sync.Mutex
 	cfg              *config.Config
@@ -288,6 +289,7 @@ func (r *Runtime) registerBaselineExecutors() {
 		executor.NewMetaExecutor(r.cfg),
 		newOpenAICompatExecutor("openai", r.cfg),
 		newOpenAICompatExecutor("openai-compatibility", r.cfg),
+		newCursorExecutor(r.cfg, &r.cursor),
 	} {
 		r.manager.RegisterExecutor(observeExecutor(exec, r.traces))
 	}
@@ -606,7 +608,7 @@ func isOpenAICompatibleAuth(auth *coreauth.Auth) bool {
 		return false
 	}
 	provider := normalizeProvider(auth.Provider)
-	if provider == "openai" || provider == "openai-compatibility" {
+	if provider == "openai" || provider == "openai-compatibility" || provider == "cursor" {
 		return true
 	}
 	compatName := strings.ToLower(strings.TrimSpace(auth.Attributes["compat_name"]))
@@ -670,6 +672,7 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 		models []*cliproxy.ModelInfo
 	}
 	compiled := make([]compiledCredential, 0, len(credentials))
+	cursorProxies := make(map[string]bool)
 	for _, item := range credentials {
 		if !item.Enabled {
 			continue
@@ -679,6 +682,9 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 			return err
 		}
 		compiled = append(compiled, compiledCredential{auth: auth, route: route, models: models})
+		if auth.Provider == "cursor" {
+			cursorProxies[auth.ProxyURL] = true
+		}
 	}
 
 	r.mu.Lock()
@@ -726,6 +732,7 @@ func (r *Runtime) ReplaceCredentials(ctx context.Context, credentials []Credenti
 		cliproxy.GlobalModelRegistry().UnregisterClient(item.auth.ID)
 		cliproxy.GlobalModelRegistry().RegisterClient(item.auth.ID, provider, item.models)
 	}
+	r.cursor.retain(cursorProxies)
 	return nil
 }
 
@@ -841,6 +848,17 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	if provider == "openai" || provider == "openai-compatibility" {
 		attrs["compat_name"] = provider
 		attrs["provider_key"] = provider
+	}
+	if provider == "cursor" {
+		if attrs["api_key"] == "" {
+			return nil, credentialRoute{}, nil, fmt.Errorf("Cursor credential requires an API key")
+		}
+		if attrs["base_url"] != "" {
+			return nil, credentialRoute{}, nil, fmt.Errorf("Cursor manages its endpoint; base_url must be empty")
+		}
+		attrs["base_url"] = "http://cursor.internal/v1"
+		attrs["upstream_api"] = "responses"
+		attrs["session_affinity"] = "true"
 	}
 	if credentialProvider == "aliyun-bailian" {
 		attrs["vendor"] = "aliyun-bailian"
@@ -1141,6 +1159,7 @@ func (r *Runtime) Close(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	r.stopModelCatalogUpdates()
+	r.cursor.close()
 	r.manager.StopAutoRefresh()
 	r.mu.Lock()
 	for id := range r.authIDs {

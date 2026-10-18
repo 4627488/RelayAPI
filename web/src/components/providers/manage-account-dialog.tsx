@@ -489,24 +489,28 @@ function AccountDetails({
                       />
                     </FieldContent>
                   </Field>
-                  <Field orientation="responsive">
-                    <FieldLabel htmlFor="manage-base-url">接口地址</FieldLabel>
-                    <FieldContent>
-                      <Input
-                        id="manage-base-url"
-                        type="url"
-                        value={baseURL}
-                        onChange={(event) => setBaseURL(event.target.value)}
-                        disabled={oauth}
-                        placeholder="提供商默认地址"
-                      />
-                      <FieldDescription>
-                        {oauth
-                          ? "OAuth 使用提供商固定端点。"
-                          : "填写兼容接口的基础地址；留空使用提供商默认值。"}
-                      </FieldDescription>
-                    </FieldContent>
-                  </Field>
+                  {account.provider !== "cursor" ? (
+                    <Field orientation="responsive">
+                      <FieldLabel htmlFor="manage-base-url">
+                        接口地址
+                      </FieldLabel>
+                      <FieldContent>
+                        <Input
+                          id="manage-base-url"
+                          type="url"
+                          value={baseURL}
+                          onChange={(event) => setBaseURL(event.target.value)}
+                          disabled={oauth}
+                          placeholder="提供商默认地址"
+                        />
+                        <FieldDescription>
+                          {oauth
+                            ? "OAuth 使用提供商固定端点。"
+                            : "填写兼容接口的基础地址；留空使用提供商默认值。"}
+                        </FieldDescription>
+                      </FieldContent>
+                    </Field>
+                  ) : null}
                   <Field orientation="responsive">
                     <FieldLabel htmlFor="manage-proxy">账户代理</FieldLabel>
                     <FieldContent>

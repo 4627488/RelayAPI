@@ -720,27 +720,35 @@ function CredentialFields({
               type="password"
               autoComplete="off"
               required
-              placeholder="sk-…"
+              placeholder={provider === "cursor" ? "crsr_…" : "sk-…"}
             />
+            {provider === "cursor" ? (
+              <FieldDescription>
+                填写 Cursor Dashboard 创建的 API Key；Relay
+                自动连接并读取账户可用模型。
+              </FieldDescription>
+            ) : null}
           </Field>
-          <Field>
-            <FieldLabel htmlFor="base-url">接口地址（可选）</FieldLabel>
-            <Input
-              id="base-url"
-              name="base_url"
-              type="url"
-              placeholder={
-                provider === "aliyun-bailian"
-                  ? "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-                  : "https://api.example.com/v1"
-              }
-            />
-            <FieldDescription>
-              {provider === "aliyun-bailian"
-                ? "留空使用百炼北京公共端点；其他地域、业务空间或 Token Plan 请填写对应 Base URL。"
-                : "OpenAI 可留空；兼容服务填写其 Base URL。"}
-            </FieldDescription>
-          </Field>
+          {provider !== "cursor" ? (
+            <Field>
+              <FieldLabel htmlFor="base-url">接口地址（可选）</FieldLabel>
+              <Input
+                id="base-url"
+                name="base_url"
+                type="url"
+                placeholder={
+                  provider === "aliyun-bailian"
+                    ? "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+                    : "https://api.example.com/v1"
+                }
+              />
+              <FieldDescription>
+                {provider === "aliyun-bailian"
+                  ? "留空使用百炼北京公共端点；其他地域、业务空间或 Token Plan 请填写对应 Base URL。"
+                  : "OpenAI 可留空；兼容服务填写其 Base URL。"}
+              </FieldDescription>
+            </Field>
+          ) : null}
           <Field>
             <FieldLabel>账户代理</FieldLabel>
             <Select

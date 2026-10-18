@@ -1,7 +1,8 @@
 # RelayAPI
 
-RelayAPI 是 Codex 优先的 Go 多租户模型网关。原生数据平面在同一进程内完成协议兼容、
-凭据路由、额度、计费和审计，不需要单独运行代理服务或第三方执行器。
+RelayAPI 是 Codex 优先的 Go 多租户模型网关。统一入口负责协议兼容、
+凭据路由、额度、计费和审计。Cursor 所需的 SDK 运行时随镜像内置并自动管理，
+无需单独部署代理服务。
 
 详细设计见 [docs/architecture.md](docs/architecture.md)，生图计费与生产费率见
 [docs/image-billing.md](docs/image-billing.md)，父/子订阅与严格凭据路由见
@@ -73,6 +74,10 @@ Codex/xAI WebSocket 支持连接内多轮 `response.create`。收到一轮终态
 提高并发或请求体上限时，请同步提高主机内存预算。
 
 ## 客户端兼容
+
+Cursor 上游支持直接在模型账户中填写 Cursor API Key；镜像内置并自动管理 SDK 运行时，
+不需要额外部署服务。支持模型发现、Responses、Chat Completions、Messages 和工具回传，
+部署与能力边界见 [Cursor 上游](docs/cursor-upstream.md)。
 
 Relay 的上下游接入以当前内嵌 CPA 的内置执行器和协议路由为准，覆盖 OpenAI Responses、
 Chat Completions、Claude Messages、Gemini 原生协议及图片、视频和 Realtime 入口。

@@ -82,6 +82,19 @@ jobs:
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/relayapi ./cmd/rai
 
+      - name: Set up Node.js for Cursor SDK
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Build and smoke test managed Cursor SDK
+        run: |
+          node scripts/setup-cursor-runtime.mjs
+          export RELAY_CURSOR_RUNTIME_DIR="$PWD/.cache/cursor-runtime"
+          export RELAY_CURSOR_SMOKE=1
+          cd third_party/cpaexecutor
+          go test -race -count=1 -run TestCursorBundledRuntimeStarts ./...
+
   rai-windows:
     name: RAI Windows
     runs-on: windows-latest

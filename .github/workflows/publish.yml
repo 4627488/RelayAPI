@@ -9,6 +9,8 @@ on:
     paths:
       - "cmd/**"
       - "internal/**"
+      - "third_party/**"
+      - "scripts/setup-cursor-runtime.mjs"
       - "web/**"
       - "go.mod"
       - "go.sum"

@@ -29,6 +29,16 @@ func validateSupportedCredentialDocument(provider string, document []byte) error
 	if err := json.Unmarshal(document, &value); err != nil {
 		return fmt.Errorf("凭据 JSON 无效")
 	}
+	if provider == "cursor" {
+		key, _ := value["api_key"].(string)
+		baseURL, _ := value["base_url"].(string)
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("Cursor API Key 必填")
+		}
+		if strings.TrimSpace(baseURL) != "" {
+			return fmt.Errorf("Cursor 接口由 Relay 管理，无需填写接口地址")
+		}
+	}
 	rawType, _ := value["type"].(string)
 	if strings.TrimSpace(rawType) == "" {
 		return nil

@@ -7,3 +7,4 @@ cliproxyapi/auths/
 web/node_modules/
 web/dist/
 /.tmp-*
+/.cache/

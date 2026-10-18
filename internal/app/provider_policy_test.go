@@ -5,6 +5,7 @@ import "testing"
 func TestNormalizeSupportedProviderMatchesCPABuiltins(t *testing.T) {
 	for input, want := range map[string]string{
 		"codex": "codex", "kimi": "kimi", "grok": "xai", "x.ai": "xai",
+		"cursor":            "cursor",
 		"openai-compatible": "openai-compatibility", "百炼": "aliyun-bailian",
 		"anthropic": "claude", "claude": "claude", "gemini": "gemini",
 		"antigravity": "antigravity", "vertex": "vertex", "aistudio": "aistudio",
@@ -28,6 +29,7 @@ func TestValidateSupportedCredentialDocumentRejectsExecutorEscape(t *testing.T) 
 		document string
 	}{
 		{"codex", `{"type":"codex"}`},
+		{"cursor", `{"type":"cursor","api_key":"crsr_test"}`},
 		{"aliyun-bailian", `{"type":"openai-compatibility"}`},
 		{"aliyun-bailian", `{"type":"aliyun-bailian"}`},
 		{"openai", `{"type":"openai-compatibility"}`},
@@ -47,6 +49,8 @@ func TestValidateSupportedCredentialDocumentRejectsExecutorEscape(t *testing.T) 
 		{"codex", `{"type":"claude"}`},
 		{"xai", `{"type":"gemini"}`},
 		{"kimi", `{"type":"codex"}`},
+		{"cursor", `{"type":"cursor"}`},
+		{"cursor", `{"type":"cursor","api_key":"crsr_test","base_url":"https://example.com/v1"}`},
 	} {
 		if err := validateSupportedCredentialDocument(test.provider, []byte(test.document)); err == nil {
 			t.Fatalf("executor escape %s/%s was accepted", test.provider, test.document)

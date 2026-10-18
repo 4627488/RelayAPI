@@ -7,6 +7,7 @@ Relay 使用根模块与 `third_party/cpaexecutor` 共同锁定的 CPA 版本。
 | 提供商标识 | API Key | OAuth | CPA 凭据 JSON 导入 |
 | --- | --- | --- | --- |
 | `codex` | 是 | 是 | 是 |
+| `cursor` | 是 | — | 是，使用 Relay 内置的 Cursor SDK 运行时 |
 | `claude` / `anthropic` | 是 | 是 | 是 |
 | `gemini` | 是 | — | 是 |
 | `gemini-interactions` | 是 | — | 是 |
@@ -34,6 +35,9 @@ AI Studio 的浏览器执行通道使用管理员登录后的 `GET /api/admin/pr
 Claude 查询请求及响应形状依据 Claude Code 仓库中的实际调用记录：[OAuth usage 请求与限流报告](https://github.com/anthropics/claude-code/issues/30930)、[原始 utilization 百分比响应](https://github.com/anthropics/claude-code/issues/91406)、[模型专属及额外用量字段](https://github.com/anthropics/claude-code/issues/82656)。这些是调用记录，不是稳定 API 契约。
 
 ## 下游
+
+Cursor 使用账户实时模型目录、Responses 原生链路及 Relay 管理的私有 SDK 子进程，
+支持 Chat Completions / Messages 转换。配置、代理及能力边界见 [Cursor 上游](cursor-upstream.md)。
 
 | 协议 | CPA 入口 |
 | --- | --- |

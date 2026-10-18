@@ -1,5 +1,11 @@
 # CPA embedding boundary
 
+Cursor is a Relay-owned executor registered alongside CPA's built-in providers.
+It uses the existing Responses adapter and Relay-managed, loopback-only
+cursor2response SDK processes. The pinned runtime is built into the Relay image;
+operators only supply their Cursor API key. See [Cursor upstream](../../docs/cursor-upstream.md)
+for lifecycle, proxy, protocol and development requirements.
+
 Relay owns admission, database credential IDs, per-credential grants and
 accounting. CPA owns provider execution, OAuth, credential refresh, protocol
 translation and provider usage interpretation. The bridge adapts these domains;

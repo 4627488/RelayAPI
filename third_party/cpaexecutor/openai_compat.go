@@ -196,6 +196,7 @@ func (e *openaiCompatExecutor) executeResponses(ctx context.Context, auth *clipr
 	}
 	util.ApplyCustomHeadersFromAttrs(httpReq, attrs, opts.Headers)
 	applyOpenAICompatProviderHeaders(httpReq, auth, endpoint)
+	applyCursorHeaders(httpReq, auth, opts.Headers)
 
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -288,6 +289,7 @@ func (e *openaiCompatExecutor) executeResponsesStream(ctx context.Context, auth 
 	}
 	util.ApplyCustomHeadersFromAttrs(httpReq, attrs, opts.Headers)
 	applyOpenAICompatProviderHeaders(httpReq, auth, endpoint)
+	applyCursorHeaders(httpReq, auth, opts.Headers)
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Cache-Control", "no-cache")
 
@@ -380,6 +382,15 @@ func (e *openaiCompatExecutor) executeResponsesStream(ctx context.Context, auth 
 				seenDone = true
 				return true
 			}
+			// Cursor's Responses stream ends at its typed terminal event. Unlike
+			// Chat Completions, it deliberately does not append a [DONE] sentinel.
+			if auth != nil && auth.Provider == "cursor" {
+				switch gjson.GetBytes(dataPayload, "type").String() {
+				case "response.completed", "response.incomplete":
+					seenDone = true
+					return true
+				}
+			}
 			return false
 		}
 
@@ -414,8 +425,13 @@ func (e *openaiCompatExecutor) executeResponsesStream(ctx context.Context, auth 
 			case out <- cliproxyexecutor.StreamChunk{Err: errScan}:
 			case <-ctx.Done():
 			}
-		} else if !seenDone && !streamFailed && !streamAborted && responseFormat == sdktranslator.FormatOpenAIResponse {
-			streamErr := statusError{code: http.StatusBadGateway, msg: "upstream stream closed before [DONE]"}
+		}
+		if !seenDone && !streamFailed && !streamAborted && scanner.Err() == nil && (responseFormat == sdktranslator.FormatOpenAIResponse || (auth != nil && auth.Provider == "cursor")) {
+			message := "upstream stream closed before [DONE]"
+			if auth != nil && auth.Provider == "cursor" {
+				message = "Cursor stream closed before a terminal response event"
+			}
+			streamErr := statusError{code: http.StatusBadGateway, msg: message}
 			helps.RecordAPIResponseError(ctx, e.cfg, streamErr)
 			reporter.PublishFailure(ctx, streamErr)
 			select {
