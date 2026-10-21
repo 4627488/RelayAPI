@@ -43,6 +43,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { isTheme, useTheme, type Theme } from "@/components/theme-provider"
+import { NotificationInbox } from "@/components/notification-inbox"
 import type { Session } from "@/lib/api"
 import {
   adminNavigation,
@@ -345,21 +346,28 @@ export function AppShell({
               <span className="truncate font-medium">{currentPageLabel}</span>
             </div>
           </div>
-          {session.is_admin ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onWorkspaceChange(admin ? "user" : "admin")}
-              aria-label={workspaceActionLabel}
-            >
-              {admin ? (
-                <UserRoundIcon data-icon="inline-start" />
-              ) : (
-                <ShieldCheckIcon data-icon="inline-start" />
-              )}
-              <span className="hidden sm:inline">{workspaceActionLabel}</span>
-            </Button>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-2">
+            <NotificationInbox
+              key={session.tenant.id}
+              accountId={session.tenant.id}
+              workspace={workspace}
+            />
+            {session.is_admin ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onWorkspaceChange(admin ? "user" : "admin")}
+                aria-label={workspaceActionLabel}
+              >
+                {admin ? (
+                  <UserRoundIcon data-icon="inline-start" />
+                ) : (
+                  <ShieldCheckIcon data-icon="inline-start" />
+                )}
+                <span className="hidden sm:inline">{workspaceActionLabel}</span>
+              </Button>
+            ) : null}
+          </div>
         </header>
         <div className="flex w-full min-w-0 flex-1 flex-col p-4 md:p-6">
           {children}

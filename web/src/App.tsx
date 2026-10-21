@@ -20,6 +20,11 @@ const UserWorkspace = lazy(() =>
     default: module.UserWorkspace,
   }))
 )
+const UpdatesPage = lazy(() =>
+  import("@/components/updates-page").then((module) => ({
+    default: module.UpdatesPage,
+  }))
+)
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -48,6 +53,7 @@ export function App() {
               workspace: "admin",
               page: route.page,
               logId: route.logId,
+              releaseId: route.releaseId,
             }
           : { workspace: "user", page: "overview" },
         { replace: true }
@@ -137,7 +143,13 @@ export function App() {
       onLogout={() => void logout()}
     >
       <Suspense fallback={<LoadingView />}>
-        {route.workspace === "admin" && session.is_admin ? (
+        {route.page === "updates" ? (
+          <UpdatesPage
+            accountId={session.tenant.id}
+            workspace={route.workspace}
+            releaseId={route.releaseId}
+          />
+        ) : route.workspace === "admin" && session.is_admin ? (
           <AdminWorkspace
             page={route.page}
             currentUserId={session.tenant.id}

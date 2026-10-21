@@ -7,6 +7,23 @@ function location(pathname: string, hash = "") {
 }
 
 describe("application routes", () => {
+  it.each(["user", "admin"] as const)(
+    "round trips release links in %s",
+    (workspace) => {
+      const route = {
+        workspace,
+        page: "updates" as const,
+        releaseId: "2026-10-21-rai",
+      }
+      expect(parseAppRoute(location(routeHref(route)))).toMatchObject({
+        ...route,
+        valid: true,
+      })
+      expect(parseAppRoute(location(`${routeHref(route)}/extra`)).valid).toBe(
+        false
+      )
+    }
+  )
   it("supports the personal model catalog and subscription section links", () => {
     expect(routeHref({ workspace: "user", page: "models" })).toBe("/app/models")
     expect(parseAppRoute(location("/app/models"))).toMatchObject({

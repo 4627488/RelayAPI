@@ -3,6 +3,91 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+/* Editorial styles for Markdown release notes, shared by both themes. */
+.release-markdown {
+  color: var(--muted-foreground);
+  font-size: 0.9375rem;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+
+.release-markdown > * + * {
+  margin-top: 1.25rem;
+}
+.release-markdown :is(h1, h2, h3, h4) {
+  color: var(--foreground);
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+}
+.release-markdown h3 {
+  font-size: 1.0625rem;
+}
+.release-markdown :is(strong, th) {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.release-markdown :is(ul, ol) {
+  padding-inline-start: 1.4rem;
+}
+.release-markdown ul {
+  list-style-type: disc;
+}
+.release-markdown ol {
+  list-style-type: decimal;
+}
+.release-markdown li + li {
+  margin-top: 0.5rem;
+}
+.release-markdown pre {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+  padding: 1.25rem;
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  line-height: 1.9;
+}
+.release-markdown :not(pre) > code {
+  border-radius: 0.25rem;
+  background: var(--muted);
+  padding: 0.15rem 0.35rem;
+  color: var(--foreground);
+  font-size: 0.85em;
+}
+.release-markdown blockquote {
+  color: var(--foreground);
+  border-radius: var(--radius);
+  background: var(--muted);
+  padding: 1rem 1.25rem;
+  font-size: 0.875rem;
+}
+.release-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.release-markdown :is(td, th) {
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem;
+  text-align: start;
+  vertical-align: top;
+}
+.release-markdown th {
+  background: var(--muted);
+}
+.release-markdown a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.release-markdown img {
+  max-width: 100%;
+  border-radius: var(--radius);
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

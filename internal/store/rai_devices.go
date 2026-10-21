@@ -23,9 +23,10 @@ type RAIDevice struct {
 
 func (s Store) ListRAIDevices(ctx context.Context, tenantID string) ([]RAIDevice, error) {
 	items := make([]RAIDevice, 0)
+	now := time.Now()
 	err := scoped(ctx, s.DB).Model(&APIKey{}).
 		Select("id", "device_name", "device_os", "device_arch", "rai_version", "enabled", "expires_at", "last_used_at", "created_at").
-		Where("tenant_id = ? AND source = ?", tenantID, "rai").Order("created_at DESC").Find(&items).Error
+		Where("tenant_id = ? AND source = ? AND enabled = ? AND (expires_at IS NULL OR expires_at > ?)", tenantID, "rai", true, now).Order("created_at DESC").Find(&items).Error
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +34,7 @@ func (s Store) ListRAIDevices(ctx context.Context, tenantID string) ([]RAIDevice
 		items[i].Purpose = "inference"
 	}
 	var sessions []db.RAIOAuthSession
-	if err := scoped(ctx, s.DB).Where("tenant_id = ? AND purpose = ? AND expires_at > ?", tenantID, "account", time.Now()).Order("created_at DESC").Find(&sessions).Error; err != nil {
+	if err := scoped(ctx, s.DB).Where("tenant_id = ? AND purpose = ? AND expires_at > ?", tenantID, "account", now).Order("created_at DESC").Find(&sessions).Error; err != nil {
 		return nil, err
 	}
 	for _, session := range sessions {

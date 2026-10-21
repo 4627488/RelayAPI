@@ -96,6 +96,15 @@ func TestRAIAuthorizationApproveAndConsume(t *testing.T) {
 	if device.DeviceName != "laptop" || device.DeviceOS != "windows" || device.DeviceArch != "amd64" || device.RAIVersion != "test-version" {
 		t.Fatalf("device=%+v", device)
 	}
+	if err := database.Model(&APIKey{}).Where("id = ?", device.ID).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if active, err := dataStore.ListRAIDevices(ctx, tenant.ID); err != nil || len(active) != 0 {
+		t.Fatalf("expired devices remain visible: %+v, %v", active, err)
+	}
+	if err := database.Model(&APIKey{}).Where("id = ?", device.ID).Update("expires_at", nil).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := dataStore.RevokeRAIDevice(ctx, identity.NewID(), device.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-tenant revocation: %v", err)
 	}
@@ -107,6 +116,9 @@ func TestRAIAuthorizationApproveAndConsume(t *testing.T) {
 	}
 	if err := dataStore.RevokeRAIDevice(ctx, tenant.ID, device.ID); err != nil {
 		t.Fatal(err)
+	}
+	if active, err := dataStore.ListRAIDevices(ctx, tenant.ID); err != nil || len(active) != 0 {
+		t.Fatalf("revoked devices remain visible: %+v, %v", active, err)
 	}
 	resolved, err := dataStore.ResolveKey(ctx, plain)
 	if err != nil || resolved.Enabled {

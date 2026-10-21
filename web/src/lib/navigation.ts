@@ -11,6 +11,8 @@ import {
   SettingsIcon,
   SlidersHorizontalIcon,
   UsersIcon,
+  NewspaperIcon,
+  MonitorSmartphoneIcon,
 } from "lucide-react"
 
 import type { Page, Workspace } from "@/lib/routes"
@@ -29,8 +31,8 @@ export const userNavigation: NavigationItem[] = [
   { id: "keys", label: "API 密钥", icon: KeyRoundIcon, section: "开始使用" },
   {
     id: "rai-devices",
-    label: "rai 已登录设备",
-    icon: PlugIcon,
+    label: "设备",
+    icon: MonitorSmartphoneIcon,
     section: "开始使用",
   },
   { id: "usage", label: "用量", icon: ChartBarBigIcon, section: "运行与观测" },
@@ -42,6 +44,7 @@ export const userNavigation: NavigationItem[] = [
     section: "账户",
   },
   { id: "account", label: "账户设置", icon: SettingsIcon, section: "账户" },
+  { id: "updates", label: "近期更新", icon: NewspaperIcon, section: "关于" },
 ]
 
 export const adminNavigation: NavigationItem[] = [
@@ -62,6 +65,7 @@ export const adminNavigation: NavigationItem[] = [
   },
   { id: "usage", label: "全局用量", icon: ChartBarBigIcon, section: "观测" },
   { id: "logs", label: "请求日志", icon: ListIcon, section: "观测" },
+  { id: "updates", label: "近期更新", icon: NewspaperIcon, section: "关于" },
 ]
 
 export const workspaceLabels: Record<Workspace, string> = {
@@ -71,11 +75,12 @@ export const workspaceLabels: Record<Workspace, string> = {
 
 export const pageLabels: Partial<Record<Page, string>> = {
   models: "模型列表",
+  updates: "近期更新",
   account: "账户设置",
   overview: "总览",
   usage: "用量",
   keys: "API Keys",
-  "rai-devices": "rai 已登录设备",
+  "rai-devices": "设备",
   logs: "请求日志",
   guide: "接入指南",
   users: "用户",

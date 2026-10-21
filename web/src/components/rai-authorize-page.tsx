@@ -207,8 +207,8 @@ export function RAIAuthorizePage({
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {managesAccount
-                    ? "设备将能创建、修改和删除你的 API Key，并撤销你已授权的设备。仅批准你本人发起的请求；可在「rai 已登录设备」中撤销管理授权。"
-                    : "设备会使用你的模型权限和配额。之后可在「rai 已登录设备」中撤销登录。"}
+                    ? "设备将能创建、修改和删除你的 API Key，并撤销你已授权的设备。仅批准你本人发起的请求；可在「设备」中撤销管理授权。"
+                    : "设备会使用你的模型权限和配额。之后可在「设备」中撤销登录。"}
                 </p>
                 <div className="flex gap-2">
                   <Button

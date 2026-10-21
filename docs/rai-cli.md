@@ -128,7 +128,7 @@ rai auth login --server https://relay.example --with-token
 - 授权链接必须与指定站点同源。携带 OAuth 凭据的客户端请求不跟随重定向，刷新地址绑定原服务器。
 - 管理接口使用明确的路由白名单，复用现有用户业务逻辑，以认证用户的 tenant ID 确定范围，不接受调用方指定用户。没有任意 URL、SQL 或管理员 API 透传命令。
 - 每次 OAuth 认证检查会话过期、账户启用状态、账户到期、临时密码状态和密码版本。改密、停用或撤销后，后续请求失效。
-- 网页的「rai 已登录设备」同时显示模型调用与账户管理用途，可撤销任意自己的授权。退出 OAuth profile 会先撤销服务端 refresh 会话再删除本地凭据；撤销失败会保留凭据供重试。
+- 网页的「设备」同时显示模型调用与账户管理用途，可撤销任意自己的授权。退出 OAuth profile 会先撤销服务端 refresh 会话再删除本地凭据；撤销失败会保留凭据供重试。
 - 撤销阻止后续请求，不承诺立即中断已经接纳的流式请求。
 - refresh token 保存在操作系统 keyring；沿用现有 rai 的受限权限文件后备机制。refresh token 不注入客户端环境变量、启动参数或 Codex 配置。
 - OAuth 凭据使用独立命名空间，旧版 rai 的静态 Key 查找路径读取不到新的 token bundle，避免旧 helper 将 refresh token 当作 Key 打印。

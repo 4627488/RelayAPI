@@ -18,17 +18,20 @@ export type Page =
   | "subscriptions"
   | "pricing"
   | "models"
+  | "updates"
 
 export interface AppRoute {
   workspace: Workspace
   page: Page
   logId?: string
+  releaseId?: string
   valid: boolean
 }
 
 type RouteLocation = Pick<Location, "pathname" | "hash">
 
 const userPages = new Set<Page>([
+  "updates",
   "models",
   "account",
   "overview",
@@ -41,6 +44,7 @@ const userPages = new Set<Page>([
 ])
 
 const adminPages = new Set<Page>([
+  "updates",
   "overview",
   "usage",
   "logs",
@@ -111,6 +115,8 @@ export function parseAppRoute(location: RouteLocation): AppRoute {
     workspace,
     page: validPage ? page : ("overview" as Page),
     logId: logId || undefined,
+    releaseId:
+      page === "updates" ? segments[offset + 1] || undefined : undefined,
   }
   return {
     ...candidate,
@@ -137,6 +143,9 @@ export function routeHref(route: Omit<AppRoute, "valid">) {
 
   if (route.page === "logs" && route.logId) {
     path += `/${encodeURIComponent(route.logId)}`
+  }
+  if (route.page === "updates" && route.releaseId) {
+    path += `/${encodeURIComponent(route.releaseId)}`
   }
   return path
 }
