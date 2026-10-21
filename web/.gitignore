@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .vitest-attachments/
+.vitest/
 src/**/__screenshots__/
 src/**/__traces__/
 

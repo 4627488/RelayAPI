@@ -133,7 +133,7 @@ describe("user assignment", () => {
         .element(screen.getByText("每人 10% · 本次共 20%", { exact: true }))
         .toBeVisible()
       await expect
-        .element(page.getByRole("checkbox", { name: "Disabled" }))
+        .element(page.getByRole("checkbox", { name: "选择 Disabled" }))
         .toBeDisabled()
       expect(postMock).not.toHaveBeenCalled()
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width)
@@ -217,7 +217,7 @@ describe("user assignment", () => {
     await submit.click()
     await expect.element(screen.getByText("暂时无法保存")).toBeVisible()
     await expect
-      .element(page.getByRole("checkbox", { name: "Bob", exact: true }))
+      .element(page.getByRole("checkbox", { name: "选择 Bob", exact: true }))
       .toBeChecked()
     await submit.click()
     expect(postMock).toHaveBeenCalledTimes(2)
@@ -242,10 +242,12 @@ describe("user assignment", () => {
       .click()
     const dialog = screen.getByRole("dialog", { name: "分配给用户" })
     await expect
-      .element(dialog.getByRole("checkbox", { name: "Alice", exact: true }))
+      .element(
+        dialog.getByRole("checkbox", { name: "选择 Alice", exact: true })
+      )
       .toBeChecked()
     await expect
-      .element(dialog.getByRole("checkbox", { name: "Bob", exact: true }))
+      .element(dialog.getByRole("checkbox", { name: "选择 Bob", exact: true }))
       .toBeChecked()
   })
 })

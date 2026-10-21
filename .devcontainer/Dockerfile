@@ -1,4 +1,4 @@
-FROM golang:1.26.6-bookworm AS go
+FROM golang:1.27.3-bookworm AS go
 FROM node:24-bookworm-slim
 
 COPY --from=go /usr/local/go /usr/local/go
@@ -14,7 +14,7 @@ RUN apt-get update \
     && echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node \
     && chmod 0440 /etc/sudoers.d/node \
     && corepack enable \
-    && corepack prepare pnpm@11.24.0 --activate
+    && corepack prepare pnpm@12.14.0 --activate
 
 USER node
 WORKDIR /workspaces/RelayAPI

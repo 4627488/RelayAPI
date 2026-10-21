@@ -24,7 +24,7 @@ the Windows checkout and select **Dev Containers: Reopen in Container**. The
 container opens `/workspaces/RelayAPI` from the Linux volume. This driver setting
 applies to all Dev Containers on that local VS Code installation.
 
-Go 1.26.6, Node.js 24, pnpm 11.24.0, a C compiler, PostgreSQL client and Chromium
+Go 1.27.3, Node.js 24, pnpm 12.14.0, a C compiler, PostgreSQL client and Chromium
 are installed. Go modules and browser/dependency caches persist in named volumes.
 Random local credentials are generated in `.devcontainer/.env.local`, which is
 Git-ignored. `relay_dev` is the application database; `relay_test` is used only
@@ -64,3 +64,12 @@ regenerating its password does not change an existing database's password.
 
 References: [Microsoft's WSLC tutorial](https://learn.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers),
 [WSLC Dev Containers support](https://github.com/devcontainers/cli/pull/1249).
+
+## Dependency compatibility
+
+The web app keeps TypeScript 6.0.3 until typescript-eslint supports TypeScript 7
+(currently its peer range is `<6.1.0`). Node type definitions stay on the latest
+24.x release to match the Node.js 24 runtime used by CI and the images. Other
+application dependencies are updated through the Go modules and pnpm lockfile;
+keep the root and bridge CPA replacements aligned as described in
+[credential refresh](credential-refresh.md).

@@ -182,7 +182,7 @@ describe("providers view", () => {
       .element(screen.getByText("Alice OpenAI", { exact: true }))
       .not.toBeInTheDocument()
 
-    await screen.getByRole("button", { name: "冷却" }).click()
+    await screen.getByRole("button", { name: "冷却 (1)" }).click()
     await expect
       .element(screen.getByText("bob@example.com", { exact: true }))
       .toBeVisible()

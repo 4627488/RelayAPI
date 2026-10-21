@@ -1,7 +1,7 @@
 FROM node:24-alpine AS web-build
 WORKDIR /web
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
+RUN corepack enable && corepack prepare pnpm@12.14.0 --activate
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
@@ -17,7 +17,7 @@ FROM cursor-base AS cursor-build
 COPY scripts/setup-cursor-runtime.mjs /setup-cursor-runtime.mjs
 RUN node /setup-cursor-runtime.mjs /opt/relay-cursor
 
-FROM golang:1.26.6-alpine AS build
+FROM golang:1.27.3-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY third_party/cpaexecutor/go.mod third_party/cpaexecutor/go.sum ./third_party/cpaexecutor/

@@ -25,7 +25,7 @@ func (e *refreshTestExecutor) Refresh(_ context.Context, auth *coreauth.Auth) (*
 	}
 	auth.Metadata["access_token"] = "new-access"
 	auth.Metadata["refresh_token"] = "new-refresh"
-	auth.Metadata["expired"] = time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339)
+	auth.Metadata["expired"] = time.Now().Add(7 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	return auth, nil
 }
 
@@ -37,7 +37,7 @@ func TestRefreshCredentialUsesCPALifecycle(t *testing.T) {
 			exec := &refreshTestExecutor{provider: provider}
 			manager.RegisterExecutor(exec)
 			_, err := manager.Register(t.Context(), &coreauth.Auth{ID: "credential", Provider: provider, Status: coreauth.StatusActive, Metadata: map[string]any{
-				"type": provider, "access_token": "old-access", "refresh_token": "old-refresh", "expired": time.Now().Add(48 * time.Hour).Format(time.RFC3339),
+				"type": provider, "access_token": "old-access", "refresh_token": "old-refresh", "expired": time.Now().Add(7 * 24 * time.Hour).Format(time.RFC3339),
 			}})
 			if err != nil {
 				t.Fatal(err)
@@ -73,5 +73,36 @@ func TestRefreshCredentialUsesCPALifecycle(t *testing.T) {
 				t.Fatal("missing credential accepted")
 			}
 		})
+	}
+}
+
+// CPA v8.0.38 refreshes Codex credentials 96 hours before expiry. Quota
+// probes must follow that policy even when the access token is still valid.
+func TestRefreshCredentialFollowsCodexRefreshLead(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, runtimeAuthHook{})
+	exec := &refreshTestExecutor{provider: "codex"}
+	manager.RegisterExecutor(exec)
+	_, err := manager.Register(t.Context(), &coreauth.Auth{
+		ID: "codex-due", Provider: "codex", Status: coreauth.StatusActive,
+		Metadata: map[string]any{
+			"type": "codex", "access_token": "old-access", "refresh_token": "old-refresh",
+			"expired": time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &Runtime{manager: manager}
+	document, refreshed, err := runtime.RefreshCredential(t.Context(), "codex-due", false)
+	if err != nil || !refreshed || exec.calls != 1 {
+		t.Fatalf("due refresh: refreshed=%v calls=%d err=%v", refreshed, exec.calls, err)
+	}
+	var updated map[string]any
+	if err := json.Unmarshal(document, &updated); err != nil || updated["access_token"] != "new-access" {
+		t.Fatalf("refreshed document missing rotated token: %v", err)
+	}
+	_, refreshed, err = runtime.RefreshCredential(t.Context(), "codex-due", false)
+	if err != nil || refreshed || exec.calls != 1 {
+		t.Fatalf("fresh token refreshed again: refreshed=%v calls=%d err=%v", refreshed, exec.calls, err)
 	}
 }
