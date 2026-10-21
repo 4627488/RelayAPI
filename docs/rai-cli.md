@@ -2,9 +2,45 @@
 
 本轮实现普通用户管理自己的 API Key、订阅额度、用量和授权设备。管理员全站操作不在本轮范围。rai 0.3.0 使用认证契约 2；服务端和 rai 需要一起更新。
 
+## gh 风格的命令与权限
+
+主入口采用 `rai <资源> <操作>`：认证集中在 `auth`，模型使用 `model list/set`，Key 和设备使用 `key`、`device`。`rai --help`、`rai help auth`、`rai auth login --help` 和 `rai key create --help` 无需登录即可查看。旧入口 `login/logout/status/models/use/keys/devices/credential print` 以及 `account login/logout` 继续兼容，安装脚本和已生成的 Codex helper 不必迁移。
+
+```sh
+rai auth login --server https://relay.example
+rai auth status
+rai auth switch --profile work
+rai auth refresh --no-browser
+rai model list
+rai model set model-a
+rai auth login --scope account
+rai auth status --scope account --json
+rai key list
+rai key list --json
+rai model list --json
+rai auth logout --scope account
+```
+
+`--scope` 选择服务端已有的授权用途，单次只支持一种：
+
+| 权限 | 授权能力 | 默认选择 |
+| --- | --- | --- |
+| `inference` | 在账户允许的模型、额度和速率范围内调用模型 | 是 |
+| `account` | 管理自己的 Key、订阅额度、用量和授权设备 | 否，必须单独批准 |
+
+两种权限各自保存凭据和当前 profile；`auth switch --profile work --scope account` 只切换管理身份。不会因为执行管理命令自动申请或扩大权限。这里的 scope 对应现有 OAuth purpose，并未新增细粒度的 `keys:write` 等权限，`account` 仍是完整的用户自助管理授权。
+
+`auth status` 默认检查所选 scope 的所有已保存 profile，传 `--profile` 可只检查一个。显示服务器、当前 profile、认证方式、权限、凭据存储与有效性，不显示 token；`--json` 返回同样的信息。任一授权检查失败时返回非零退出码，适合脚本检查。网络不可用也会使检查失败。
+
+`key/device list` 默认输出表格，包括 Key 限制或设备授权用途；创建、更新、撤销显示简洁的操作结果。加 `--json` 返回原有 JSON 结构；`model list --json` 返回 `models` 和 `default_model`。新资源命令在管道中仍保持文本输出，需要 JSON 时显式选择。旧 `keys/devices` 命令继续默认输出 JSON；`account status/quota` 和 `usage` 的 JSON 契约保持不变。`auth login/logout --scope account` 使用简洁提示，不打印管理会话对象。终端表格只显示已知字段，并清除远端名称中的终端控制字符。
+
+`auth refresh` 使用浏览器重新授权当前 profile，保留原有权限；短期 access token 在正常使用时自动轮换，不需要手动 refresh。账户管理重新授权被拒绝时，原有登录继续保留。静态 Key 无法通过此命令续期，需重新登录或管理 Key。
+
+`auth login --with-token` 从 stdin 读取静态模型 Key；不支持导入管理 token。`auth token` 只向 stdout 输出当前模型 access token 或静态 Key，供显式调用的 helper 使用，不输出 refresh token，也不导出管理 token。`auth logout` 先撤销 OAuth 会话再清理本地凭据；静态 Key 仅清理本地副本。
+
 ## 自动接入
 
-从站点的一键安装脚本安装时，会把该部署的公开地址保存为默认服务器；即使设置 `RAI_SKIP_LOGIN=1` 跳过登录也会保存。CLI 没有内置任何私人服务器地址。安装后可以直接执行 `rai login --no-browser`、`rai account login --no-browser`、`rai configure codex` 和 `rai update`。
+从站点的一键安装脚本安装时，会把该部署的公开地址保存为默认服务器；即使设置 `RAI_SKIP_LOGIN=1` 跳过登录也会保存。CLI 没有内置任何私人服务器地址。安装后可以直接执行 `rai auth login --no-browser`、`rai auth login --scope account --no-browser`、`rai configure codex` 和 `rai update`。
 
 登录时按 `--server`、`RAI_SERVER`、当前或指定 profile、另一类授权中同名 profile、安装时保存的默认服务器的顺序选择地址。模型登录和账户管理各自保留独立凭据；已有 profile 的服务器优先于安装默认值。未指定 profile 时复用当前 profile。没有任何地址时才提示指定服务器。也可用 `rai server set https://relay.example` 保存默认地址，此操作保留现有 profile 和凭据。
 
@@ -16,19 +52,19 @@ rai codex
 首次配置打开浏览器，让用户登录站点并明确批准设备授权。后续 `rai codex` 复用设备会话，无需创建、复制或保存静态 API Key。没有配置时，也可以设置 `RAI_SERVER` 后直接执行 `rai codex`，或复用已有账户管理 profile 的服务器地址进行设备登录。
 
 ```sh
-rai login --server https://relay.example
+rai auth login --server https://relay.example
 rai configure codex
 rai codex
-rai logout
+rai auth logout
 ```
 
 `--no-browser` 适用于远程服务器，不自动打开浏览器：
 
 ```sh
-rai login --server https://relay.example --no-browser
+rai auth login --server https://relay.example --no-browser
 ```
 
-终端会显示授权链接，以及固定入口 `https://relay.example/rai/authorize` 和形如 `ABCD-EFGH` 的短验证码。在手机或电脑浏览器打开固定入口，登录本站账户，输入验证码，核对设备信息后点击「批准授权」，服务器上的 rai 即完成登录。验证码有效期为 10 分钟；过期后重新执行登录命令。也可以直接打开终端中的授权链接。`rai account login --no-browser` 同样支持短验证码，但需要单独确认账户管理权限。旧版服务器未提供验证码时仍显示授权链接。
+终端会显示授权链接，以及固定入口 `https://relay.example/rai/authorize` 和形如 `ABCD-EFGH` 的短验证码。在手机或电脑浏览器打开固定入口，登录本站账户，输入验证码，核对设备信息后点击「批准授权」，服务器上的 rai 即完成登录。验证码有效期为 10 分钟；过期后重新执行登录命令。也可以直接打开终端中的授权链接。`rai auth login --scope account --no-browser` 同样支持短验证码，但需要单独确认账户管理权限。旧版服务器未提供验证码时仍显示授权链接。
 
 `--profile work` 可以区分多个站点。`rai configure codex --server ...` 明确重新授权指定站点；已配置的 profile 不必每次传入地址。
 
@@ -45,46 +81,46 @@ Responses WebSocket 在每个新的 `response.create` 前重新检查 OAuth 授�
 模型调用和账户管理使用不同的授权用途、独立的凭据存储和 keyring 名称。账户管理也通过浏览器设备授权登录；模型调用凭据不能创建 Key，管理凭据不能直接调用模型。即使账户本身是管理员，管理凭据也不能访问管理员接口。
 
 ```sh
-rai account login --server https://relay.example
+rai auth login --scope account --server https://relay.example
 rai account status
 rai account quota
 rai usage --days 30
-rai devices list
-rai account logout
+rai device list
+rai auth logout --scope account
 ```
 
-管理命令返回 JSON。`rai account quota` 查看账户自己的订阅与窗口；原有 `rai quota` 查看当前模型调用凭据授权范围内的额度。账户余额由 `rai account status` 返回。
+`rai key/device` 默认返回可读文本，添加 `--json` 输出 JSON；账户详情、账户额度和用量仍返回 JSON。`rai account quota` 查看账户自己的订阅与窗口；原有 `rai quota` 查看当前模型调用凭据授权范围内的额度。账户余额由 `rai account status` 返回。
 
 ```sh
-rai keys list
-rai keys create --name ci --rpm 20 --daily-tokens 100000 --models model-a
-rai keys create --name manual-client --show-secret
-rai keys update <id> --name new-name --enabled=false
-rai keys update <id> --rpm 0 --daily-tokens 0 --models "" --aliases ""
-rai keys update <id> --aliases fast=model-a
-rai keys delete <id> --yes
-rai devices revoke <id> --yes
+rai key list
+rai key create --name ci --rpm 20 --daily-tokens 100000 --models model-a
+rai key create --name manual-client --show-secret
+rai key update <id> --name new-name --enabled=false
+rai key update <id> --rpm 0 --daily-tokens 0 --models "" --aliases ""
+rai key update <id> --aliases fast=model-a
+rai key delete <id> --yes
+rai device revoke <id> --yes
 ```
 
 Key 的 `update` 只改变指定选项，保留其余额度、模型限制和别名。`--rpm 0`、`--daily-tokens 0` 清除 Key 级限制，仍受账户限制约束；空模型列表继承账户模型权限。更改模型列表时，别名目标也必须满足新的限制。
 
-只有显式创建的普通 Key 是静态 Key。创建结果默认不含明文；`--show-secret` 显式允许将新 Key 明文写入 stdout，适用于用户自己接入其他客户端。列表、用量、设备和错误输出不包含管理凭据。CLI 不提供读取已有 Key 明文的管理端点。
+只有显式创建的普通 Key 是静态 Key。创建结果默认不含明文；`--show-secret` 显式允许将新 Key 明文写入 stdout（文本和 JSON 均适用），适用于用户自己接入其他客户端。列表、用量、设备和错误输出不包含管理凭据。CLI 不提供读取已有 Key 明文的管理端点。
 
 用户明确希望用静态 Key 接入 rai 时，仍可使用：
 
 ```sh
-rai login --server https://relay.example --api-key-stdin
+rai auth login --server https://relay.example --with-token
 ```
 
 静态 Key 通过 stdin 输入，不放在命令行参数中。退出此类 profile 只删除本地凭据；需要停用静态 Key 时使用 Key 管理命令。
 
 ## 终端显示
 
-交互终端默认使用少量彩色状态标记：`✓` 表示成功，`!` 表示需要注意，`×` 表示错误。`rai status` 和 `rai doctor` 对齐字段；`rai models` 标出默认模型。`rai quota` 用短进度条展示各窗口使用率，70% 起显示黄色，90% 起显示红色，并保留实际金额和重置时间。
+交互终端默认使用少量彩色状态标记：`✓` 表示成功，`!` 表示需要注意，`×` 表示错误。`rai auth status` 和 `rai doctor` 对齐字段；`rai model list` 标出默认模型。`rai quota` 用短进度条展示各窗口使用率，70% 起显示黄色，90% 起显示红色，并保留实际金额和重置时间。
 
 `rai update` 在 stderr 显示实际下载进度；服务端未提供文件大小时只显示已下载字节，不生成百分比。浏览器授权期间显示单行等待提示。没有全屏界面或后台动画线程，结束时清除临时进度行。
 
-重定向或管道中的人类可读输出保持原有纯文本格式；管理命令仍输出 JSON，`rai credential print` 仍只输出凭据，启动的客户端输出也不受影响。`NO_COLOR=1` 关闭颜色；`TERM=dumb` 关闭终端装饰与动态进度。
+重定向或管道中的人类可读输出保持纯文本格式；`key/device/model list` 用 `--json` 切换 JSON，旧复数管理命令及账户、用量命令仍输出 JSON，`rai credential print` 仍只输出凭据，启动的客户端输出也不受影响。`NO_COLOR=1` 关闭颜色；`TERM=dumb` 关闭终端装饰与动态进度。
 
 ## 权限与撤销
 

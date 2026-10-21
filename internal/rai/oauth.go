@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-var errOAuthLoginRequired = errors.New("device authorization expired or was revoked; run rai login --server <url>")
+var errOAuthLoginRequired = errors.New("device authorization expired or was revoked; run rai auth login --server <url>")
 
 func validateVerificationURL(server, verificationURI string) error {
 	link, err := url.Parse(verificationURI)

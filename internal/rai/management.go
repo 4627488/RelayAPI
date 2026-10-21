@@ -72,7 +72,7 @@ func (g Gateway) managementRequest(ctx context.Context, server, token, method, p
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 401 {
-		return errors.New("account authorization expired or was revoked; run rai account login")
+		return errors.New("account authorization expired or was revoked; run rai auth login --scope account")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Bodies may contain secrets or untrusted terminal control sequences.
@@ -97,6 +97,10 @@ func (a *App) accountStore() (Store, error) {
 func managementCredentialName(profile string) string { return "account/" + profile }
 
 func (a *App) accountLogin(ctx context.Context, profileName string, args []string) error {
+	return a.accountLoginWithOutput(ctx, profileName, args, a.printManagementJSON)
+}
+
+func (a *App) accountLoginWithOutput(ctx context.Context, profileName string, args []string, print func(any) error) error {
 	f := flag.NewFlagSet("rai account login", flag.ContinueOnError)
 	f.SetOutput(a.Stderr)
 	server := f.String("server", "", "RelayAPI HTTPS URL")
@@ -119,7 +123,8 @@ func (a *App) accountLogin(ctx context.Context, profileName string, args []strin
 	if err != nil {
 		return err
 	}
-	// Replacing a live login would orphan the old device's authorization.
+	// Keep the current authorization usable until its replacement is approved.
+	var previous *oauthCredential
 	if _, err := s.ResolveProfile(profileName); err == nil {
 		if raw, err := s.Credential(managementCredentialName(profileName)); err == nil {
 			saved, oauth, decodeErr := decodeOAuthCredential(raw)
@@ -127,9 +132,7 @@ func (a *App) accountLogin(ctx context.Context, profileName string, args []strin
 				return decodeErr
 			}
 			if oauth {
-				if err := a.Gateway.revokeOAuth(ctx, saved); err != nil {
-					return fmt.Errorf("revoke previous account login before replacing it: %w", err)
-				}
+				previous = &saved
 			}
 		}
 	}
@@ -178,6 +181,12 @@ func (a *App) accountLogin(ctx context.Context, profileName string, args []strin
 				_ = g.revokeOAuth(ctx, saved)
 				return err
 			}
+			if previous != nil && previous.RefreshToken != saved.RefreshToken {
+				if err := g.revokeOAuth(ctx, *previous); err != nil {
+					_ = g.revokeOAuth(ctx, saved)
+					return fmt.Errorf("revoke previous account login before replacing it: %w", err)
+				}
+			}
 			profile := Profile{Name: profileName, ServerURL: base}
 			backend, saveErr := s.PutCredential(managementCredentialName(profileName), encodeOAuthCredential(base, result, a.Now()))
 			profile.CredentialBackend = backend
@@ -192,7 +201,7 @@ func (a *App) accountLogin(ctx context.Context, profileName string, args []strin
 				return saveErr
 			}
 			waiting.clear()
-			return a.printManagementJSON(session)
+			return print(session)
 		}
 		var pending tokenError
 		if !errors.As(err, &pending) || pending.Code != "authorization_pending" {
@@ -212,8 +221,12 @@ func (a *App) printManagementJSON(value any) error {
 }
 
 func (a *App) manage(ctx context.Context, profileName string, args []string) error {
+	return a.manageWithOutput(ctx, profileName, args, a.printManagementJSON)
+}
+
+func (a *App) manageWithOutput(ctx context.Context, profileName string, args []string, print func(any) error) error {
 	if len(args) > 1 && args[0] == "account" && args[1] == "login" {
-		return a.accountLogin(ctx, profileName, args[2:])
+		return a.accountLoginWithOutput(ctx, profileName, args[2:], print)
 	}
 	method, path := http.MethodGet, ""
 	var input any
@@ -225,7 +238,7 @@ func (a *App) manage(ctx context.Context, profileName string, args []string) err
 	}
 	profile, err := s.ResolveProfile(profileName)
 	if err != nil {
-		return errors.New("no account management profile; run rai account login --server <url>")
+		return errors.New("no account management profile; run rai auth login --scope account --server <url>")
 	}
 	if len(args) == 2 && args[0] == "account" && args[1] == "logout" {
 		if err := a.revokeSavedCredential(ctx, s, managementCredentialName(profile.Name)); err != nil {
@@ -237,11 +250,11 @@ func (a *App) manage(ctx context.Context, profileName string, args []string) err
 		if err := s.DeleteProfile(profile.Name); err != nil {
 			return err
 		}
-		return a.printManagementJSON(map[string]bool{"logged_out": true})
+		return print(map[string]bool{"logged_out": true})
 	}
 	token, err := a.oauthAccessToken(ctx, s, profile, managementCredentialName(profile.Name), "account")
 	if err != nil {
-		return fmt.Errorf("account authorization unavailable; run rai account login --server <url>: %w", err)
+		return fmt.Errorf("account authorization unavailable; run rai auth login --scope account --server <url>: %w", err)
 	}
 	switch args[0] {
 	case "account":
@@ -276,7 +289,7 @@ func (a *App) manage(ctx context.Context, profileName string, args []string) err
 			}
 			method, path = http.MethodDelete, "devices/"+args[2]
 		} else {
-			return errors.New("usage: rai devices list | rai devices revoke <id> --yes")
+			return errors.New("usage: rai device list | rai device revoke <id> --yes")
 		}
 	case "keys":
 		method, path, input, showSecret, err = a.keyManagementCommand(ctx, profile, token, args[1:])
@@ -301,7 +314,7 @@ func (a *App) manage(ctx context.Context, profileName string, args []string) err
 	if obj, ok := result.(map[string]any); ok && !showSecret {
 		delete(obj, "key")
 	}
-	return a.printManagementJSON(result)
+	return print(result)
 }
 
 func validateManagementID(id string) error {
@@ -341,14 +354,14 @@ type managedKeyAlias struct {
 func (a *App) keyManagementCommand(ctx context.Context, profile Profile, token string, args []string) (string, string, any, bool, error) {
 	fail := func(err error) (string, string, any, bool, error) { return "", "", nil, false, err }
 	if len(args) == 0 {
-		return fail(errors.New("usage: rai keys <list|create|update|delete>"))
+		return fail(errors.New("usage: rai key <list|create|update|delete>"))
 	}
 	if len(args) == 1 && args[0] == "list" {
 		return http.MethodGet, "keys", nil, false, nil
 	}
 	if args[0] == "delete" {
 		if len(args) != 3 || args[2] != "--yes" {
-			return fail(errors.New("usage: rai keys delete <id> --yes"))
+			return fail(errors.New("usage: rai key delete <id> --yes"))
 		}
 		if err := validateManagementID(args[1]); err != nil {
 			return fail(err)
@@ -357,19 +370,19 @@ func (a *App) keyManagementCommand(ctx context.Context, profile Profile, token s
 	}
 	operation, id := args[0], ""
 	if operation != "create" && operation != "update" {
-		return fail(errors.New("usage: rai keys <list|create|update|delete>"))
+		return fail(errors.New("usage: rai key <list|create|update|delete>"))
 	}
 	args = args[1:]
 	if operation == "update" {
 		if len(args) == 0 {
-			return fail(errors.New("usage: rai keys update <id> [flags]"))
+			return fail(errors.New("usage: rai key update <id> [flags]"))
 		}
 		id, args = args[0], args[1:]
 		if err := validateManagementID(id); err != nil {
 			return fail(err)
 		}
 	}
-	f := flag.NewFlagSet("rai keys "+operation, flag.ContinueOnError)
+	f := flag.NewFlagSet("rai key "+operation, flag.ContinueOnError)
 	f.SetOutput(a.Stderr)
 	name := f.String("name", "", "Key name")
 	enabled := f.Bool("enabled", true, "enable or disable (update only)")

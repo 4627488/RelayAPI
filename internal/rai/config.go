@@ -151,7 +151,7 @@ func (s Store) ResolveProfile(explicit string) (Profile, error) {
 		name = cfg.ActiveProfile
 	}
 	if name == "" {
-		return Profile{}, errors.New("no rai profile is configured; run rai login --server <url> --api-key-stdin")
+		return Profile{}, errors.New("no rai profile is configured; run rai auth login --server <url>")
 	}
 	profile, ok := cfg.Profiles[name]
 	if !ok {

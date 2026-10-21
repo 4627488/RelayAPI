@@ -61,9 +61,23 @@ func (a *App) Execute(ctx context.Context) error {
 		return a.usage()
 	}
 	switch args[0] {
+	case "auth":
+		return a.authCommand(ctx, profileName, args[1:])
+	case "model":
+		return a.modelCommand(ctx, profileName, args[1:])
+	case "key", "device":
+		return a.resourceCommand(ctx, profileName, args)
 	case "server":
+		if len(args) == 1 || hasHelp(args[1:]) {
+			return a.resourceHelp("server")
+		}
 		return a.serverCommand(args[1:])
-	case "help", "-h", "--help":
+	case "help":
+		if len(args) > 1 {
+			return a.executeHelp(args[1:])
+		}
+		return a.usage()
+	case "-h", "--help":
 		return a.usage()
 	case "version", "--version":
 		fmt.Fprintln(a.Stdout, "rai "+Version)
@@ -73,6 +87,9 @@ func (a *App) Execute(ctx context.Context) error {
 	case "logout":
 		return a.logout(ctx, profileName, args[1:])
 	case "account", "keys", "usage", "devices":
+		if (args[0] == "account" && len(args) == 1) || hasHelp(args[1:]) {
+			return a.resourceHelp(strings.TrimSuffix(args[0], "s"))
+		}
 		return a.manage(ctx, profileName, args)
 	case "status":
 		return a.status(ctx, profileName)
@@ -160,46 +177,55 @@ func (a *App) store() (Store, error) {
 }
 
 func (a *App) usage() error {
-	help := `rai — RelayAPI CLI
+	help := `Work with RelayAPI from your terminal.
 
-Usage:
-  rai account login [--server <url>] [--no-browser]   Authorize account management
-  rai account status | rai account quota | rai account logout
-  rai keys list | rai keys create --name <name> [--show-secret]
-  rai keys update <id> [--name <name>] [--enabled=true|false]
-  rai keys delete <id> --yes
-  rai usage [--days 30]
-  rai devices list | rai devices revoke <id> --yes
-  Management commands return JSON; credentials are separate from agent login.
-  rai login [--server <url>] [--no-browser] [--profile name] [--model id]
-  rai login [--server <url>] --api-key-stdin
-  rai server set <url>  Save a default server without logging in
-  rai logout [--profile name]
-  rai status
-  rai models
-  rai quota             Show subscription allowances for the current API Key
-  rai use <model|default|--auto>    Save a model, follow the agent, or follow the site
-  rai sync codex            Import saved Codex model and reasoning settings
-  rai configure codex [--server <url>] [--no-browser] [-y]  Sign in and connect Codex
+USAGE
+  rai <command> <subcommand> [flags]
+
+CORE COMMANDS
+  auth        Log in, inspect permissions, switch profiles and revoke access
+  model       List available models and select a default
+  key         Create and manage your API Keys (account permission)
+  device      List and revoke your devices (account permission)
+  account     View account details and quota
+  usage       View account usage as JSON
+
+AGENT COMMANDS
+  rai claude|codex|grok|hermes|opencode|pi|prime-agent [--model <id>] -- <args>
+  rai configure codex      Sign in and connect Codex
   rai unconfigure codex    Restore rai-managed Codex settings
-  rai codex --desktop      Temporarily connect Desktop with explicit restoration
-  rai credential print
-  rai doctor
-  rai update
-  rai claude [--model id] -- <claude args>
-  rai codex [--model id] -- <codex args>
-  rai grok [--model id] -- <grok args>
-  rai hermes [--model id] -- <hermes args>
-  rai opencode [--model id] -- <opencode args>
-  rai pi [--model id] -- <pi args>
-  rai prime-agent [--model id] -- <prime-agent args>
+  rai codex --desktop      Temporarily connect Codex Desktop
+  rai sync codex           Import saved Codex settings
 
-Global flags:
-  --profile name    Select a named deployment profile
+OTHER COMMANDS
+  server set <url>  Save the default RelayAPI server
+  quota             Show inference subscription allowances
+  doctor            Check local configuration
+  update            Update rai
+  version           Print the installed version
+
+GLOBAL FLAGS
+  --profile <name>  Select a named deployment profile
+  --help            Show help for rai, auth or a resource group
+
+EXAMPLES
+  rai auth login --server https://relay.example
+  rai codex
+  rai auth login --scope account
+  rai key list
+
+LEARN MORE
+  rai help auth
+  rai auth login --help
+  rai help model
+
+COMPATIBILITY
+  login, logout, status, models, use, keys, devices and credential print
+  remain available. Legacy keys/devices and account/usage output JSON.
 `
 	ui := a.terminal(a.Stdout)
 	if ui.rich {
-		for _, title := range []string{"rai — RelayAPI CLI", "Usage:", "Global flags:"} {
+		for _, title := range []string{"USAGE", "CORE COMMANDS", "AGENT COMMANDS", "OTHER COMMANDS", "GLOBAL FLAGS", "EXAMPLES", "LEARN MORE", "COMPATIBILITY"} {
 			help = strings.Replace(help, title, ui.paint("1;36", title), 1)
 		}
 	}
@@ -438,7 +464,7 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 	a.terminal(a.Stdout).message("success", "Signed in to %s as profile %s", apiBase, profileName)
 	a.terminal(a.Stdout).field("Default model", modelLabel(profile.DefaultModel))
 	fmt.Fprintf(a.Stdout, "Credential store: %s\n", backend)
-	fmt.Fprintln(a.Stdout, "Next: rai codex | rai models | rai doctor")
+	fmt.Fprintln(a.Stdout, "Next: rai codex | rai model list | rai doctor")
 	a.checkPath(a.Stderr)
 	return nil
 }
@@ -612,6 +638,10 @@ func (a *App) status(ctx context.Context, profileName string) error {
 }
 
 func (a *App) models(ctx context.Context, profileName string) error {
+	return a.modelsWithOutput(ctx, profileName, false)
+}
+
+func (a *App) modelsWithOutput(ctx context.Context, profileName string, asJSON bool) error {
 	store, err := a.store()
 	if err != nil {
 		return err
@@ -629,6 +659,9 @@ func (a *App) models(ctx context.Context, profileName string) error {
 		return err
 	}
 	defaultModel, _ := resolveLaunchModel(profile, "", session.Models, session.DefaultModel)
+	if asJSON {
+		return a.printManagementJSON(map[string]any{"models": session.Models, "default_model": defaultModel})
+	}
 	ui := a.terminal(a.Stdout)
 	for _, model := range session.Models {
 		mark := " "

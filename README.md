@@ -123,7 +123,7 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 服务器上可执行 `rai login --server <url> --no-browser`，在另一台设备打开终端显示的 `/rai/authorize` 入口，输入短验证码并核对设备后批准登录。验证码 10 分钟内有效，也可继续使用完整授权链接。
 
-`rai account login --server <url>` 另行授权用户自助管理，可使用 `rai keys list/create/update/delete`、`rai account quota`、`rai usage`、`rai devices list/revoke`。管理授权与模型调用隔离，默认不输出 Key 明文；新建静态 Key 时显式添加 `--show-secret`。详细命令、安全边界和升级说明见 [rai 用户 CLI 与设备授权](docs/rai-cli.md)。
+`rai auth login --scope account --server <url>` 另行授权用户自助管理，可使用 `rai key list/create/update/delete`、`rai account quota`、`rai usage`、`rai device list/revoke`。管理授权与模型调用隔离，默认不输出 Key 明文；新建静态 Key 时显式添加 `--show-secret`。认证统一使用 `rai auth login/status/switch/refresh/logout/token`，通过 `--scope inference|account` 显式选择权限；默认仅模型调用权限。`rai auth status --json` 可供脚本检查，授权无效时返回非零退出码。`rai key/device` 默认显示可读文本，可加 `--json` 输出结构化结果；旧复数命令保留 JSON 输出。旧命令继续兼容。详细命令、安全边界和升级说明见 [rai 用户 CLI 与设备授权](docs/rai-cli.md)。
 
 `rai quota` 显示当前配置与 API Key 可访问的订阅额度窗口，包括已用（含预占）、剩余和重置时间；可用 `rai --profile <名称> quota` 切换配置。查询使用只读 `GET /api/rai/quota`，按 Key 的租户和模型权限过滤；按余额结算的模型没有周期额度窗口。Codex CLI 0.154.0 起的 `/status` 自定义 provider 额度显示回归不影响此命令或实际准入与计费。
 
