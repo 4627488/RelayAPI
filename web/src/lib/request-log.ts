@@ -69,3 +69,12 @@ export function requestLogUsageQuality(log: RequestLog) {
   }
   return labels[log.usage_quality || ""] || log.usage_quality || "未记录"
 }
+
+// Display metadata comes from the server; raw IDs remain available for diagnostics.
+export function routedLogModel(log: RequestLog) {
+  return log.canonical_model || log.actual_model || log.model
+}
+
+export function requestedLogModel(log: RequestLog) {
+  return log.canonical_requested_model || log.requested_model || log.model
+}

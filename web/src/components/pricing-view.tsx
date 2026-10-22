@@ -153,7 +153,11 @@ export function PricingView() {
   const filteredModels = useMemo(() => {
     const query = catalogQuery.trim().toLowerCase()
     return prices.available_models.filter(
-      (price) => !query || price.model.toLowerCase().includes(query)
+      (price) =>
+        !query ||
+        [price.model, price.canonical_model].some((name) =>
+          name?.toLowerCase().includes(query)
+        )
     )
   }, [catalogQuery, prices.available_models])
 
@@ -408,7 +412,7 @@ export function PricingView() {
                 {filteredModels.map((price) => (
                   <TableRow key={price.model}>
                     <TableCell className="font-mono text-xs">
-                      {price.model}
+                      {price.canonical_model || price.model}
                       {price.priced && price.priced_model !== price.model ? (
                         <p className="text-xs text-muted-foreground">
                           按 {price.priced_model} 计价
@@ -452,7 +456,7 @@ export function PricingView() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          aria-label={`配置 ${price.model}`}
+                          aria-label={`配置 ${price.canonical_model || price.model}`}
                           onClick={() => setEditingPrice(price)}
                         >
                           <PencilIcon />
@@ -461,7 +465,7 @@ export function PricingView() {
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={`删除 ${price.model} 的管理员价格`}
+                            aria-label={`删除 ${price.canonical_model || price.model} 的管理员价格`}
                             onClick={() => void remove(price.model)}
                           >
                             <Trash2Icon />
@@ -543,7 +547,11 @@ export function PricingView() {
       >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingPrice?.model ?? "模型设置"}</DialogTitle>
+            <DialogTitle>
+              {editingPrice?.canonical_model ||
+                editingPrice?.model ||
+                "模型设置"}
+            </DialogTitle>
           </DialogHeader>
           <form id="price-form" key={editingPrice?.model} onSubmit={savePrice}>
             <FieldGroup>

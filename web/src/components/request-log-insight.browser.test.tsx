@@ -188,11 +188,54 @@ it.each([320, 1280])(
 
 it("omits the model badge when the upstream model matches the routed model", async () => {
   const screen = await render(
-    <RequestLogList logs={[{ ...log, upstream_model: "routed-model" }]} />
+    <RequestLogList
+      logs={[
+        {
+          ...log,
+          model: "gpt-test",
+          actual_model: "gpt-test",
+          upstream_model: "gpt-test",
+          canonical_model: "openai/gpt-test",
+        },
+      ]}
+    />
   )
   await expect
     .element(screen.getByText("上游模型不同", { exact: true }))
     .not.toBeInTheDocument()
+})
+
+it("shows normalized routes alongside the original diagnostic IDs", async () => {
+  const screen = await render(
+    <RequestLogInsight
+      section="latency"
+      log={{
+        ...log,
+        model: "gpt-test",
+        actual_model: "gpt-test",
+        requested_model: "gpt-test",
+        canonical_model: "openai/gpt-test",
+        canonical_requested_model: "openai/gpt-test",
+      }}
+    >
+      <button>Inspect normalized route</button>
+    </RequestLogInsight>
+  )
+  await screen.getByRole("button", { name: "Inspect normalized route" }).click()
+  const popup = screen.getByRole("dialog", { name: "请求观测详情" })
+  await popup.getByRole("tab", { name: "链路", exact: true }).click()
+  expect(
+    popup.getByText("openai/gpt-test", { exact: true }).elements().length
+  ).toBeGreaterThan(0)
+  await expect
+    .element(popup.getByText("原始请求模型", { exact: true }))
+    .toBeVisible()
+  await expect
+    .element(popup.getByText("原始路由模型", { exact: true }))
+    .toBeVisible()
+  expect(
+    popup.getByText("gpt-test", { exact: true }).elements().length
+  ).toBeGreaterThan(0)
 })
 
 it("handles missing and malformed telemetry without fabricating measurements", async () => {

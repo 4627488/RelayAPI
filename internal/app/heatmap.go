@@ -29,6 +29,7 @@ func (a *App) usageHeatmap(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "无法读取消耗热力图")
 		return
 	}
+	a.annotateHeatmapModels(&report)
 	token, err := a.store.HeatmapShare(ctx, id)
 	if err != nil {
 		writeError(w, 500, "database_error", "无法读取分享设置")
@@ -127,6 +128,7 @@ func (a *App) writeHeatmapSVG(w http.ResponseWriter, r *http.Request, tenantID s
 		writeError(w, 503, "unavailable", "热力图暂不可用")
 		return
 	}
+	a.annotateHeatmapModels(&report)
 	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")

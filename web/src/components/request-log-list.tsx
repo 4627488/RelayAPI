@@ -1,3 +1,4 @@
+import { routedLogModel, requestedLogModel } from "@/lib/request-log"
 import { RequestLogInsight } from "@/components/request-log-insight"
 import type { MouseEvent } from "react"
 import { Badge } from "@/components/ui/badge"
@@ -84,9 +85,9 @@ function duration(ms: number) {
 }
 
 function displayedModel(log: RequestLog) {
-  const routed =
-    log.actual_model || log.model || log.requested_model || log.path
-  return log.upstream_model && log.upstream_model !== routed
+  const routed = routedLogModel(log) || requestedLogModel(log) || log.path
+  return log.upstream_model &&
+    log.upstream_model !== (log.actual_model || log.model)
     ? `${routed} → ${log.upstream_model}`
     : routed
 }
@@ -104,7 +105,7 @@ export function RequestLogList({
   function link(log: RequestLog) {
     return {
       href: routeHref({ workspace, page: "logs", logId: log.id }),
-      "aria-label": `查看日志 ${log.model || log.path} ${dateTime(log.started_at)}${log.log_unit === "legacy_session" ? " · 历史会话" : ""}`,
+      "aria-label": `查看日志 ${routedLogModel(log) || log.path} ${dateTime(log.started_at)}${log.log_unit === "legacy_session" ? " · 历史会话" : ""}`,
       onClick: (event: MouseEvent<HTMLAnchorElement>) => {
         if (
           !onOpen ||

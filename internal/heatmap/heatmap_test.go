@@ -84,3 +84,13 @@ func TestSVGIsValidAndEscapesModelContent(t *testing.T) {
 		}
 	}
 }
+
+func TestSVGUsesCanonicalDisplayAndKeepsSourceIDs(t *testing.T) {
+	report := Build(time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC), []Usage{{Day: "2026-10-22", Model: "gpt-test", Tokens: 5}})
+	report.Models[0].CanonicalName = "openai/gpt-test"
+	report.Days[len(report.Days)-1].CanonicalModel = "openai/gpt-test"
+	image := string(SVG(report, "light"))
+	if !strings.Contains(image, "openai/gpt-test") || report.Models[0].Name != "gpt-test" || report.Days[len(report.Days)-1].Model != "gpt-test" {
+		t.Fatal("SVG failed canonical projection or rewrote attribution")
+	}
+}

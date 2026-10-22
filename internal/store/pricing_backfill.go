@@ -29,6 +29,7 @@ type HistoricalModelPrice struct {
 }
 
 type AvailableModelPrice struct {
+	CanonicalModel                  string   `json:"canonical_model,omitempty"`
 	Model                           string   `json:"model"`
 	Priced                          bool     `json:"priced"`
 	PricedModel                     string   `json:"priced_model"`

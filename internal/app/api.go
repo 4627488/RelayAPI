@@ -206,6 +206,7 @@ func (a *App) usage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
 		return
 	}
+	a.annotateUsageModels(value)
 	writeJSON(w, http.StatusOK, value)
 }
 
@@ -227,6 +228,7 @@ func (a *App) adminUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value["token_rate"] = rate
+	a.annotateUsageModels(value)
 	writeJSON(w, http.StatusOK, value)
 }
 
@@ -311,7 +313,7 @@ func (a *App) keyDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) logs(w http.ResponseWriter, r *http.Request) {
-	query := requestLogQuery(r)
+	query := a.modelLogQuery(requestLogQuery(r))
 	query.TenantID = currentSession(r).TenantID
 	query.Public = true
 	page, err := a.store.QueryLogs(r.Context(), query)
@@ -319,18 +321,18 @@ func (a *App) logs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, publicLogPage(page))
+	writeJSON(w, 200, a.logModelPage(publicLogPage(page)))
 }
 
 func (a *App) adminLogs(w http.ResponseWriter, r *http.Request) {
-	query := requestLogQuery(r)
+	query := a.modelLogQuery(requestLogQuery(r))
 	query.TenantID = strings.TrimSpace(r.URL.Query().Get("tenant_id"))
 	page, err := a.store.QueryLogs(r.Context(), query)
 	if err != nil {
 		writeError(w, 500, "database_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, page)
+	writeJSON(w, 200, a.logModelPage(page))
 }
 
 func requestLogQuery(r *http.Request) store.LogQuery {
@@ -364,7 +366,7 @@ func (a *App) logDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "请求日志不存在")
 		return
 	}
-	writeJSON(w, http.StatusOK, publicLogDetail(item))
+	writeJSON(w, http.StatusOK, a.logModelDetail(publicLogDetail(item)))
 }
 
 // Public log responses keep tenant-owned request and response content while
@@ -430,7 +432,7 @@ func (a *App) adminLogDetail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "请求日志不存在")
 		return
 	}
-	writeJSON(w, http.StatusOK, item)
+	writeJSON(w, http.StatusOK, a.logModelDetail(item))
 }
 
 func (a *App) adminTenants(w http.ResponseWriter, r *http.Request) {
@@ -652,6 +654,7 @@ func (a *App) adminPrices(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range available {
 		attachModelCapability(&available[i], a.capabilityIndex())
+		available[i].CanonicalModel = a.displayModelID(available[i].Model)
 	}
 	writeJSON(w, 200, map[string]any{
 		"available_models": available, "available_models_error": availableError,

@@ -61,3 +61,22 @@ func TestTenantModelsRespectLifecycleAndWildcardPolicies(t *testing.T) {
 		t.Fatalf("expired grant exposed models: %+v", got)
 	}
 }
+
+func TestTenantModelDisplayIDsPreservePolicyAndPublishedNames(t *testing.T) {
+	a := modelIDTestApp(t, "gpt-test", "grok-test", "custom", "gpt-collision", "openai/gpt-collision")
+	items := projectTenantModels(a.nativeRuntime.Models(), []string{"gpt-test", "grok-test", "custom", "gpt-collision", "openai/gpt-collision"}, nil, time.Now())
+	a.annotateTenantModelIDs(items)
+	byID := map[string]tenantModelView{}
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	if byID["gpt-test"].CanonicalID != "openai/gpt-test" || byID["grok-test"].CanonicalID != "x-ai/grok-test" {
+		t.Fatalf("web metadata missed canonical IDs: %+v", items)
+	}
+	if byID["gpt-test"].ID != "gpt-test" || len(byID["gpt-test"].Settlements) != 1 {
+		t.Fatal("display projection changed policy ID or settlement")
+	}
+	if byID["custom"].CanonicalID != "" || byID["gpt-collision"].CanonicalID != "" || byID["openai/gpt-collision"].ID != "openai/gpt-collision" {
+		t.Fatalf("display projection renamed unknown/conflicting IDs: %+v", items)
+	}
+}

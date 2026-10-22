@@ -41,10 +41,13 @@ func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 	}
 	models := a.raiSessionModels(key)
 	defaultModel := rai.SelectDefaultModel(models, a.currentNativeSettings().RAIDefaultModels)
+	modelIDs := map[string]string{}
 	for _, alias := range a.modelIDAliases(key) {
+		if key.AllowsModel(alias.Model) {
+			modelIDs[alias.Model] = alias.Alias
+		}
 		if defaultModel == alias.Model {
 			defaultModel = alias.Alias
-			break
 		}
 	}
 	setSensitiveNoStore(w)
@@ -53,6 +56,7 @@ func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 		"name":             "RelayAPI",
 		"api_base":         a.cfg.PublicURL,
 		"models":           models,
+		"model_ids":        modelIDs,
 		"default_model":    defaultModel,
 		"codex":            a.raiCodexCapabilities(key, models),
 		"adapters":         raiAdapterNames(),

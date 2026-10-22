@@ -156,7 +156,11 @@ function SubscriptionRow({
 }) {
   const state = subscriptionState(item, now)
   const windows = item.entitlement_windows ?? []
-  const models = item.effective_model_allowlist ?? item.model_allowlist ?? []
+  const models =
+    item.canonical_model_allowlist ??
+    item.effective_model_allowlist ??
+    item.model_allowlist ??
+    []
   const expires = timestamp(item.expires_at)
   const starts = timestamp(item.starts_at)
   // Older servers may still send upstream identities. Never use them as a title or subtitle.

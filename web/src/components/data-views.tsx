@@ -162,7 +162,7 @@ export function ModelTable({ report }: { report: UsageReport }) {
               {models.map((model) => (
                 <TableRow key={model.model}>
                   <TableCell className="font-mono text-xs">
-                    {model.model || "未识别"}
+                    {model.canonical_model || model.model || "未识别"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {compact(model.requests)}

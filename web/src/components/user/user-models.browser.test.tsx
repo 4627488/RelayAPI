@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from "vitest"
 import { render } from "vitest-browser-react"
 import { UserModels } from "./user-models"
 import { api } from "@/lib/api"
+import { copyText } from "@/lib/clipboard"
 import { expectNoA11yViolations } from "@/test/a11y"
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
   api: vi.fn(),
 }))
+vi.mock("@/lib/clipboard", () => ({ copyText: vi.fn() }))
 
 describe("user model settlement list", () => {
   it("merges model IDs with balance and linked subscriptions and filters by settlement", async () => {
@@ -14,6 +16,7 @@ describe("user model settlement list", () => {
       items: [
         {
           id: "gpt-shared",
+          canonical_id: "openai/gpt-shared",
           settlements: [
             {
               mode: "subscription",
@@ -39,8 +42,22 @@ describe("user model settlement list", () => {
       .element(screen.getByRole("link", { name: "团队订阅" }))
       .toHaveAttribute("href", "/app/subscriptions#subscription-share%2F1")
     await expect
-      .element(screen.getByText("gpt-shared", { exact: true }))
+      .element(screen.getByText("openai/gpt-shared", { exact: true }))
       .toBeVisible()
+    await screen.getByRole("button", { name: "复制 openai/gpt-shared" }).click()
+    expect(copyText).toHaveBeenCalledWith("openai/gpt-shared")
+    await screen.getByPlaceholder("搜索模型 ID").fill("openai/")
+    await expect
+      .element(screen.getByText("openai/gpt-shared", { exact: true }))
+      .toBeVisible()
+    await expect
+      .element(screen.getByText("balance-only", { exact: true }))
+      .not.toBeInTheDocument()
+    await screen.getByPlaceholder("搜索模型 ID").fill("gpt-shared")
+    await expect
+      .element(screen.getByText("openai/gpt-shared", { exact: true }))
+      .toBeVisible()
+    await screen.getByPlaceholder("搜索模型 ID").fill("")
     await screen.getByRole("button", { name: "订阅结算", exact: true }).click()
     await expect
       .element(screen.getByText("balance-only", { exact: true }))

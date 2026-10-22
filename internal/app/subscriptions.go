@@ -436,7 +436,15 @@ func (a *App) tenantSubscriptions(w http.ResponseWriter, r *http.Request) {
 				resets = append(resets, tenantQuotaReset{Kind: reset.Kind, ResetAt: reset.ResetAt})
 			}
 		}
-		result = append(result, projectTenantSubscription(parent, item, parentWindows, windows, resets, now))
+		view := projectTenantSubscription(parent, item, parentWindows, windows, resets, now)
+		if models, ok := view["effective_model_allowlist"].([]string); ok {
+			names := make([]string, len(models))
+			for i, model := range models {
+				names[i] = a.displayModelID(model)
+			}
+			view["canonical_model_allowlist"] = names
+		}
+		result = append(result, view)
 	}
 	writeJSON(w, 200, map[string]any{"items": result})
 }
