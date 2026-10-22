@@ -190,6 +190,8 @@ Only standard `5h` / `7d` / `1d` windows with a future reset are enforceable.
 A credential may instead expose normalized `relay_quota` metadata directly.
 Reports exclude credential fields and raw upstream payloads.
 
+Claude subscription discovery also reads `GET https://api.anthropic.com/api/oauth/profile`. Live plan/tier discovery, partial-success semantics, model-scoped limits and amount-based pools are described in [Claude upstream support](claude-upstream.md).
+
 Claude uses `GET https://api.anthropic.com/api/oauth/usage`. Its usage endpoint
 has a separate rate limit from inference. Manual and background refreshes share
 one schedule per parent: successful Claude observations are cached for at least

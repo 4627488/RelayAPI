@@ -440,9 +440,21 @@ export interface UpstreamQuotaWindow {
   remaining_percent?: number | null
   resets_at?: string | null
   enforceable: boolean
+  used?: number | null
+  enabled?: boolean
   unit?: string
   limit?: number | null
   remaining?: number | null
+}
+
+export interface UpstreamSubscriptionProbe {
+  status: "supported" | "unsupported" | "error"
+  source: string
+  error_code?: string
+  rate_limit_tier?: string
+  subscription_status?: string
+  billing_type?: string
+  extra_usage_enabled?: boolean
 }
 
 export interface UpstreamQuotaReport {
@@ -453,6 +465,7 @@ export interface UpstreamQuotaReport {
   source?: string
   observed_at?: string
   windows: UpstreamQuotaWindow[]
+  subscription?: UpstreamSubscriptionProbe
 }
 
 export interface CodexResetCredits {

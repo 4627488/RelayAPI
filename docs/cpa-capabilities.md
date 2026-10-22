@@ -66,3 +66,5 @@ CPA 支持的协议组合由所选上游模型实际能力决定。路由存在�
 回归覆盖内置执行器及 CPA 目录一致性、Claude 与 Gemini 的原生及 OpenAI 转换、Claude 用量回调、目录权限及别名、Gemini URL 模型解析、零费用计数、Realtime 服务端首帧、临时凭据加密/篡改/过期及会话身份隔离。协议测试使用模拟上游；真实账户、WebRTC 网络条件、SIP 和浏览器执行环境仍需部署环境验收。
 
 已通过 Windows 与 Linux/PostgreSQL 的全量 Go race 回归、桥接模块的全量 race 回归、根模块与桥接模块的 `go vet`，以及前端格式、类型、Lint、91 项测试和生产构建检查。
+
+Claude subscription and quota observation coverage is documented in [Claude upstream support](claude-upstream.md).

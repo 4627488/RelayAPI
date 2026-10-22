@@ -266,3 +266,38 @@ func TestProbeQuotaWithRefreshCoversCodexAndXAI(t *testing.T) {
 		})
 	}
 }
+
+func TestQuotaSubscriptionSnapshotPreservesUsageObservation(t *testing.T) {
+	previous := json.RawMessage(`{"supported":true,"plan_type":"max","observed_at":"2026-10-01T00:00:00Z","windows":[{"kind":"5h","used_percent":100,"resets_at":"2026-10-01T01:00:00Z","enforceable":true}]}`)
+	for _, status := range []string{"supported", "error"} {
+		report := gateway.QuotaReport{PlanType: "pro", Subscription: &gateway.QuotaSubscription{Status: status, Source: "claude-oauth-profile"}}
+		encoded := quotaSubscriptionSnapshot(previous, report)
+		var snapshot gateway.QuotaReport
+		if err := json.Unmarshal(encoded, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Observed.Format(time.RFC3339) != "2026-10-01T00:00:00Z" || len(snapshot.Windows) != 1 || *snapshot.Windows[0].UsedPercent != 100 || !snapshot.Supported {
+			t.Fatalf("usage changed on failed probe: %s", encoded)
+		}
+		wantPlan := "max"
+		if status == "supported" {
+			wantPlan = "pro"
+		}
+		if snapshot.PlanType != wantPlan || snapshot.Subscription.Status != status {
+			t.Fatalf("metadata=%s", encoded)
+		}
+	}
+	if got := quotaSubscriptionSnapshot(previous, gateway.QuotaReport{}); got != nil {
+		t.Fatalf("non-subscription probes must preserve existing behavior: %s", got)
+	}
+	for _, previous := range []json.RawMessage{nil, json.RawMessage(`null`), json.RawMessage(`{}`)} {
+		encoded := quotaSubscriptionSnapshot(previous, gateway.QuotaReport{PlanType: "max", Subscription: &gateway.QuotaSubscription{Status: "supported"}})
+		var snapshot gateway.QuotaReport
+		if err := json.Unmarshal(encoded, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Supported || !snapshot.Observed.IsZero() || len(snapshot.Windows) != 0 || snapshot.PlanType != "max" {
+			t.Fatalf("invented usage: %s", encoded)
+		}
+	}
+}

@@ -570,6 +570,35 @@ func TestObservedSubscriptionLearnsBeforeEnforcingQuota(t *testing.T) {
 	if len(snapshot.Windows) != 1 || snapshot.Windows[0].Kind != "daily" {
 		t.Fatalf("quota snapshot was not retained across a transient error: %s", updated.QuotaSnapshot)
 	}
+
+	// A live profile can change or clear the plan while usage remains in error.
+	var partial map[string]any
+	if err := json.Unmarshal(updated.QuotaSnapshot, &partial); err != nil {
+		t.Fatal(err)
+	}
+	partial["subscription"] = map[string]any{"status": "supported", "source": "claude-oauth-profile"}
+	partial["plan_type"] = ""
+	encoded, err := json.Marshal(partial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousObserved := *updated.QuotaObservedAt
+	if err := store.UpdateParentQuotaProbe(ctx, parent.ID, true, "error", "usage throttled", "", nil, encoded); err != nil {
+		t.Fatal(err)
+	}
+	updated, err = store.GetParentSubscription(ctx, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.PlanType != "" || !updated.QuotaSupported || updated.QuotaProbeStatus != "error" || updated.QuotaObservedAt == nil || !updated.QuotaObservedAt.Equal(previousObserved) {
+		t.Fatalf("partial profile corrupted quota state: %+v", updated)
+	}
+	if err := json.Unmarshal(updated.QuotaSnapshot, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Windows) != 1 || snapshot.Windows[0].Kind != "daily" {
+		t.Fatalf("profile replaced windows: %s", updated.QuotaSnapshot)
+	}
 }
 
 func TestModelWithoutChildAssignmentFallsBackToTenantBalance(t *testing.T) {

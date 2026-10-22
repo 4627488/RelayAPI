@@ -41,9 +41,14 @@ export function QuotaSnapshot({
             ? "已连接，等待额度窗口"
             : "尚未探测"
     return (
-      <span className="text-xs text-muted-foreground" title={error}>
-        {message}
-      </span>
+      <div className="flex flex-col gap-1.5">
+        <SubscriptionProbe report={report} compact={compact} />
+        <span className="text-xs text-muted-foreground" title={error}>
+          {report?.subscription?.error_code === "missing_profile_scope"
+            ? "当前令牌缺少账户查询权限，请重新授权"
+            : message}
+        </span>
+      </div>
     )
   }
 
@@ -55,9 +60,7 @@ export function QuotaSnapshot({
       }
     >
       <div className="flex flex-wrap items-center gap-1.5">
-        {report?.plan_type ? (
-          <Badge variant="secondary">{report.plan_type}</Badge>
-        ) : null}
+        <SubscriptionProbe report={report} compact={compact} />
         {status === "error" ? (
           <Badge variant="destructive" title={error}>
             {report ? "快照可用" : "已有额度可用"} · 刷新失败
@@ -91,6 +94,41 @@ export function QuotaSnapshot({
         </span>
       ) : null}
     </div>
+  )
+}
+
+function SubscriptionProbe({
+  report,
+  compact,
+}: {
+  report: UpstreamQuotaReport | null
+  compact: boolean
+}) {
+  const subscription = report?.subscription
+  return (
+    <>
+      {report?.plan_type ? (
+        <Badge variant="secondary">{report.plan_type}</Badge>
+      ) : null}
+      {subscription?.status === "error" ? (
+        <Badge variant="outline">套餐查询失败 · 信息可能过期</Badge>
+      ) : null}
+      {subscription?.status === "supported" ? (
+        <>
+          {subscription.rate_limit_tier ? (
+            <Badge variant="outline">{subscription.rate_limit_tier}</Badge>
+          ) : null}
+          {subscription.subscription_status ? (
+            <Badge variant="outline">{subscription.subscription_status}</Badge>
+          ) : null}
+          {!compact ? (
+            <span className="text-xs text-muted-foreground">
+              套餐已实时探测
+            </span>
+          ) : null}
+        </>
+      ) : null}
+    </>
   )
 }
 
@@ -173,9 +211,10 @@ function WindowMeta({
   const resetsAt = window.resets_at || configured?.resets_at
   return (
     <p className="w-full text-xs text-muted-foreground">
+      {window.enabled === false ? "未启用 · " : ""}
       {window.enforceable ? "参与父订阅校准" : "仅展示，不参与总容量校准"}
       {resetsAt ? ` · ${dateTime(resetsAt)} 重置` : ""}
-      {window.remaining != null || window.limit != null
+      {window.used != null || window.remaining != null || window.limit != null
         ? ` · ${amount(window)}`
         : ""}
     </p>
@@ -216,7 +255,10 @@ function compactValue(
   used: number | null
 ) {
   const values = []
+  if (window.enabled === false) values.push("未启用")
   if (used != null) values.push(`${formatNumber(used)}%`)
+  if (window.used != null || window.remaining != null || window.limit != null)
+    values.push(amount(window))
   if (configured) {
     const source = configured.source === "manual_conversion" ? "手工" : "推测"
     values.push(`${source} ${money(configured.limit_nano_usd)}`)
@@ -240,6 +282,9 @@ function usedPercent(window: UpstreamQuotaWindow) {
 
 function amount(window: UpstreamQuotaWindow) {
   const unit = window.unit || "units"
+  if (window.used != null && window.limit != null)
+    return `已用 ${formatNumber(window.used)} / ${formatNumber(window.limit)} ${unit}`
+  if (window.used != null) return `已用 ${formatNumber(window.used)} ${unit}`
   if (window.remaining != null && window.limit != null)
     return `剩余 ${formatNumber(window.remaining)} / ${formatNumber(window.limit)} ${unit}`
   if (window.remaining != null)

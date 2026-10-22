@@ -181,9 +181,16 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 	if err != nil {
 		result.Status = "error"
 		result.Error = err.Error()
-		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
+		// Preserve the successful usage clock and windows when only profile succeeds.
+		metadata := quotaSubscriptionSnapshot(parent.QuotaSnapshot, report)
+		plan := ""
+		if report.Subscription != nil && report.Subscription.Status == "supported" {
+			plan = report.PlanType
+		}
+		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, plan, nil, metadata)
 		return result
 	}
+
 	snapshot, err := json.Marshal(report)
 	if err != nil {
 		result.Status = "error"
@@ -309,4 +316,26 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// quotaSubscriptionSnapshot merges product metadata without advancing usage.
+func quotaSubscriptionSnapshot(previous json.RawMessage, report gateway.QuotaReport) json.RawMessage {
+	if report.Subscription == nil {
+		return nil
+	}
+	snapshot := map[string]any{}
+	_ = json.Unmarshal(previous, &snapshot)
+	if snapshot == nil {
+		snapshot = map[string]any{}
+	}
+	snapshot["subscription"] = report.Subscription
+	if report.Subscription.Status == "supported" {
+		snapshot["plan_type"] = report.PlanType
+	}
+	if _, ok := snapshot["windows"]; !ok {
+		snapshot["windows"] = []any{}
+		snapshot["supported"] = false
+	}
+	encoded, _ := json.Marshal(snapshot)
+	return encoded
 }

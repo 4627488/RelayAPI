@@ -25,13 +25,26 @@ type QuotaProbeCredential struct {
 }
 
 type QuotaReport struct {
-	AuthIndex string        `json:"auth_index"`
-	Provider  string        `json:"provider"`
-	PlanType  string        `json:"plan_type"`
-	Supported bool          `json:"supported"`
-	Source    string        `json:"source"`
-	Observed  time.Time     `json:"observed_at"`
-	Windows   []QuotaWindow `json:"windows"`
+	AuthIndex    string             `json:"auth_index"`
+	Provider     string             `json:"provider"`
+	PlanType     string             `json:"plan_type"`
+	Supported    bool               `json:"supported"`
+	Source       string             `json:"source"`
+	Observed     time.Time          `json:"observed_at"`
+	Windows      []QuotaWindow      `json:"windows"`
+	Subscription *QuotaSubscription `json:"subscription,omitempty"`
+}
+
+// QuotaSubscription contains only product metadata, never account identity.
+// Its probe status is independent from quota usage availability.
+type QuotaSubscription struct {
+	Status             string `json:"status"`
+	Source             string `json:"source"`
+	ErrorCode          string `json:"error_code,omitempty"`
+	RateLimitTier      string `json:"rate_limit_tier,omitempty"`
+	SubscriptionStatus string `json:"subscription_status,omitempty"`
+	BillingType        string `json:"billing_type,omitempty"`
+	ExtraUsageEnabled  *bool  `json:"extra_usage_enabled,omitempty"`
 }
 
 type QuotaWindow struct {
@@ -41,6 +54,8 @@ type QuotaWindow struct {
 	RemainingPercent *float64   `json:"remaining_percent"`
 	ResetsAt         *time.Time `json:"resets_at"`
 	Enforceable      bool       `json:"enforceable"`
+	Used             *float64   `json:"used,omitempty"`
+	Enabled          *bool      `json:"enabled,omitempty"`
 	Unit             string     `json:"unit"`
 	Limit            *float64   `json:"limit"`
 	Remaining        *float64   `json:"remaining"`
@@ -48,6 +63,7 @@ type QuotaWindow struct {
 
 type quotaEndpoints struct {
 	claudeUsage       string
+	claudeProfile     string
 	codexUsage        string
 	kimiUsage         string
 	kimiUsageFallback string
@@ -58,6 +74,7 @@ type quotaEndpoints struct {
 
 var productionQuotaEndpoints = quotaEndpoints{
 	claudeUsage:       "https://api.anthropic.com/api/oauth/usage",
+	claudeProfile:     "https://api.anthropic.com/api/oauth/profile",
 	codexUsage:        "https://chatgpt.com/backend-api/wham/usage",
 	kimiUsage:         "https://api.kimi.com/coding/v1/usages",
 	kimiUsageFallback: "https://api.moonshot.ai/v1/usages",
@@ -91,7 +108,7 @@ func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaRepo
 func probeQuotaWithClient(ctx context.Context, client *http.Client, endpoints quotaEndpoints, authIndex, provider string, document map[string]any, now time.Time) (QuotaReport, error) {
 	switch provider {
 	case "claude", "anthropic":
-		return probeClaudeQuota(ctx, client, endpoints.claudeUsage, authIndex, provider, document, now)
+		return probeClaudeAccount(ctx, client, endpoints, authIndex, provider, document, now)
 	case "codex", "codex-oauth", "chatgpt":
 		return probeCodexQuota(ctx, client, endpoints.codexUsage, authIndex, provider, document, now)
 	case "kimi", "kimi-code", "moonshot":
