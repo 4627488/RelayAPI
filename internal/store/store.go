@@ -657,6 +657,11 @@ func (s *Store) ReplacePriceRules(ctx context.Context, rules []db.ModelPriceRule
 
 func (s *Store) ApplyCatalog(ctx context.Context, result pricing.SyncResult) error {
 	err := scoped(ctx, s.DB).Transaction(func(tx *gorm.DB) error {
+		snapshotStore := *s
+		snapshotStore.DB = tx
+		if err := snapshotStore.PutRuntimeSetting(ctx, "models-dev-capabilities", pricing.CapabilitySnapshot{Version: result.Version, Items: result.Capabilities}); err != nil {
+			return err
+		}
 		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&db.ModelCatalogPrice{}).Error; err != nil {
 			return err
 		}

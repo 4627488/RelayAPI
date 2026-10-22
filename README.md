@@ -125,13 +125,15 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 `rai auth login --scope account --server <url>` 另行授权用户自助管理，可使用 `rai key list/create/update/delete`、`rai account quota`、`rai usage`、`rai device list/revoke`。管理授权与模型调用隔离，默认不输出 Key 明文；新建静态 Key 时显式添加 `--show-secret`。认证统一使用 `rai auth login/status/switch/refresh/logout/token`，通过 `--scope inference|account` 显式选择权限；默认仅模型调用权限。`rai auth status --json` 可供脚本检查，授权无效时返回非零退出码。`rai key/device` 默认显示可读文本，可加 `--json` 输出结构化结果；旧复数命令保留 JSON 输出。旧命令继续兼容。详细命令、安全边界和升级说明见 [rai 用户 CLI 与设备授权](docs/rai-cli.md)。
 
-`rai quota` 显示当前配置与 API Key 可访问的订阅额度窗口，包括已用（含预占）、剩余和重置时间；可用 `rai --profile <名称> quota` 切换配置。查询使用只读 `GET /api/rai/quota`，按 Key 的租户和模型权限过滤；按余额结算的模型没有周期额度窗口。Codex CLI 0.154.0 起的 `/status` 自定义 provider 额度显示回归不影响此命令或实际准入与计费。
+`rai quota` 显示当前配置与 API Key 可访问的订阅额度窗口，包括已用（含预占）、剩余和重置时间；可用 `rai --profile <名称> quota` 切换配置。查询使用只读 `GET /api/rai/quota`，按 Key 的租户和模型权限过滤；按余额结算的模型没有周期额度窗口。历史 Codex 0.158.0 的 `/status` 自定义 provider 显示回归不影响此命令或实际准入与计费；当前 0.163.0 的模型目录与额度协议测试已通过，TUI/Desktop 界面仍需单独验收。源码分析和改进分工见 [rai 与 Codex 互操作分析](docs/rai-codex-interoperability.md)。
 
 管理员可在「系统设置 → 运行策略 → RAI 默认模型」配置候选模型及优先顺序，初始为 `gpt-5.6-sol`、`grok-4.6`。通过 `rai use --auto` 启用站点自动模式后，每次启动从用户当前可用模型中选择首个匹配项，全部不可用时要求手动选择，不会回退到模型目录第一项。`--model` 和 `rai use <model>` 可覆盖站点默认；`rai use --auto` 恢复跟随站点配置。旧版已保存的默认模型继续保留，更新 RAI 后执行 `rai use --auto` 即可清除旧值。新登录未指定 `--model` 时，Codex 沿用客户端默认；其他客户端使用站点候选。
 
-`rai codex` 未指定模型时沿用 Codex 自身配置和默认值，不再自动选择目录中的第一个模型。在 Codex 内切换并保存模型、推理强度后，退出时 rai 自动记住变化，下次 `rai codex` 沿用该选择。配置读取遵循 `CODEX_HOME`（默认 `~/.codex`）；同步范围是用户 `config.toml` 中的模型和推理强度，其他设置仍由 Codex 原生保存。可用模型见 `rai models`，固定模型用 `rai use <模型名>`，恢复客户端默认用 `rai use default`，仅本次覆盖用 `rai codex --model <模型名>`。旧版本自动选中了 code-review 时，运行一次 `rai use default` 即可。需要主动导入已有 Codex 偏好时可运行 `rai sync codex`。其他客户端会使用站点默认候选，候选均不可用时需用 `rai use` 或 `--model` 指定模型。
+`rai codex` 未指定模型时沿用 Codex 自身配置和默认值，不再自动选择目录中的第一个模型。在 Codex 内切换并保存模型、推理强度后，退出时 rai 自动记住变化，下次 `rai codex` 沿用该选择。配置读取遵循 `CODEX_HOME`（默认 `~/.codex`）；同步范围是用户 `config.toml` 中的模型和推理强度，其他设置仍由 Codex 原生保存。可用模型见 `rai models`，固定模型用 `rai use <模型名>`，恢复客户端默认用 `rai use default`，仅本次覆盖用 `rai codex --model <模型名>`。需要主动导入已有 Codex 偏好时可运行 `rai sync codex`。其他客户端会使用站点默认候选，候选均不可用时需用 `rai use` 或 `--model` 指定模型。
 
-永久接入 Codex Desktop 或直接运行的 `codex`：执行 `rai configure codex`，确认后在用户全局 `~/.codex/config.toml` 中配置与 `rai codex` 相同的 `auth.command` 凭据助手（设置了 `CODEX_HOME` 时使用该目录），不写入新的静态 Key。助手绑定 rai 配置目录、profile 和站点，超时 5 秒，配置刷新间隔 5 分钟；后续登录更新、退出登录在客户端下次调用助手时生效，不表示已运行会话立即失效。profile 改为其他站点时助手拒绝输出凭据，需要重新配置。请保持 rai 安装路径稳定，移动后重新配置。
+永久接入 Codex Desktop 或直接运行的 `codex`：执行 `rai configure codex`，确认后在用户全局 `~/.codex/config.toml` 中配置与 `rai codex` 相同的 `auth.command` 凭据助手（设置了 `CODEX_HOME` 时使用该目录），不写入新的静态 Key。助手绑定 rai 配置目录、profile 和站点，超时 30 秒，配置刷新间隔 1 分钟；后续登录更新、退出登录在客户端下次调用助手时生效，不表示已运行会话立即失效。profile 改为其他站点时助手拒绝输出凭据，需要重新配置。请保持 rai 安装路径稳定，移动后重新配置。
+
+CLI 可使用原生配置 profile：`rai configure codex --codex-profile relay -y` 写入 `~/.codex/relay.config.toml`，然后执行 `codex --profile relay`，共享历史并保留根配置。`rai sync codex --codex-profile relay` 显式导入模型/推理偏好；`rai unconfigure codex --codex-profile relay` 恢复所选文件。通过 rai 启动时用 `rai --profile work codex -- --profile relay` 区分站点与 Codex profile。Desktop 继续使用全局 configure 流程。
 
 `rai configure codex -y` 或 `--yes` 跳过确认，`--profile <名称>` 选择指定站点。命令合并已有配置，设置 RelayAPI 为默认 provider，保留其他 provider、MCP、项目及权限设置；移除目标 provider 与助手冲突的旧认证字段和 Authorization 请求头。已保存的 rai 模型和推理强度会一并写入，未设置时保留 Codex 原值。应用后完全退出并重新打开 Desktop，新建聊天；已有聊天可能保留原 provider。
 
@@ -144,6 +146,10 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 RelayAPI 内部按当前 Key 权限独立读取多个子订阅额度；向当前 Codex 输出时，只使用本次请求实际选中的子订阅，不合并 Grok、Codex 或同一服务的不同订阅。窗口周期从订阅数据解析（如 `2h`、`7d`、`14d`），按周期从短到长最多展示两个有效窗口。HTTP 使用 `X-Codex-*` 响应头，WebSocket 使用固定 `codex` 组，在连接及每轮用量持久化后更新。切换订阅时整体替换两个槽位；无订阅、失效或读取失败时发送空状态，不保留另一个订阅的额度。余额和没有明确时长的月度窗口不伪装成周期额度，上游共享账号额度消息仍被过滤。
 
 兼容策略依据：Codex 0.156.1 的推理通路只向界面通知一批更新中的最后一组，因此当前不启用多订阅同时输出。内部多订阅能力保留，原生同时展示等待客户端完整支持。WebSocket 会忽略自定义显示名称；额度归属以实际请求路由为准。
+
+对外模型目录优先使用 `作者/模型名`（如 `openai/gpt-5.4`、`x-ai/grok-4.5`），旧 ID 仍可调用和查询。规范化不改写订阅、权限或计费模型；已发布完整 ID、自定义别名和来源不明名称保留。详见 [模型 ID 与兼容规则](docs/model-ids.md)。
+
+Codex 接入按服务器版本化能力契约启用 WebSocket 和远程压缩；嵌入式网关可将 Responses WebSocket、compaction v2 转换到 Chat-only 上游，真实 Codex 0.163.0 已通过 HTTP/WS 压缩及续接测试。models.dev 的输入预算、上下文、工具、推理、模态与 priority 资料参与目录投影，未定价模型也保留能力；不会因资料标记而扩大调用权限。摘要适配的质量、实际 Fast/搜索与 Desktop 展示需针对真实上游验收。
 
 Codex 模型目录按字段合并资料源与「模型设置」：未填写的字段继承已有资料，明确的 `prefer_websockets=false` 会保留，关闭 WebSocket 本身不再连带关闭其他 agent 能力。空推理列表表示继承；只允许无推理时填写 `none`。目录保留明确的能力值、校正推理默认档位，并在模型覆盖内容变更或删除时更新 revision。详见 [额度与 Codex 互操作设计](docs/rai-architecture.md)。
 

@@ -87,6 +87,17 @@ jobs:
         with:
           node-version: 24
 
+      - name: Test real Codex interoperability
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/codex-interop" --no-audit --no-fund @openai/codex@0.163.0
+          export CODEX_INTEROP_BINARY="$RUNNER_TEMP/codex-interop/node_modules/.bin/codex"
+          "$CODEX_INTEROP_BINARY" --version
+          go test -count=1 -v ./internal/rai ./internal/app -run '^TestCodexClient'
+          cd third_party/cpaexecutor
+          go test -count=1 -v -run '^TestCodexClient' ./...
+
       - name: Build and smoke test managed Cursor SDK
         run: |
           node scripts/setup-cursor-runtime.mjs

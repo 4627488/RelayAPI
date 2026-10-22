@@ -832,6 +832,12 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 	if rawType, _ := metadata["type"].(string); strings.TrimSpace(rawType) != "" {
 		provider = normalizeProvider(rawType)
 	}
+	// CPA reserves "openai" in its API-key routing. Relay-owned compatible
+	// credentials must use its compatibility provider so registered custom
+	// models remain selectable for HTTP and WebSocket execution alike.
+	if provider == "openai" {
+		provider = "openai-compatibility"
+	}
 	if provider == "" {
 		return nil, credentialRoute{}, nil, fmt.Errorf("CPA credential %q requires a provider", id)
 	}

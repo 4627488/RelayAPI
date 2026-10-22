@@ -51,6 +51,11 @@ type AvailableModelPrice struct {
 	InputModalities                 []string `json:"input_modalities,omitempty"`
 	PreferWebSockets                *bool    `json:"prefer_websockets,omitempty"`
 	CapabilitySource                string   `json:"capability_source,omitempty"`
+	MaxInputTokens                  int      `json:"max_input_tokens,omitempty"`
+	ToolCall                        *bool    `json:"tool_call,omitempty"`
+	StructuredOutput                *bool    `json:"structured_output,omitempty"`
+	Temperature                     *bool    `json:"temperature,omitempty"`
+	OutputModalities                []string `json:"output_modalities,omitempty"`
 }
 
 func (s *Store) AvailableModelPrices(ctx context.Context, models []string) ([]AvailableModelPrice, error) {

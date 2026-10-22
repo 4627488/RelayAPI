@@ -39,8 +39,12 @@ func codexConfigPath(environ []string) (string, error) {
 	return filepath.Join(home, "config.toml"), nil
 }
 
-func readCodexPreferences(environ []string) (codexPreferences, error) {
-	path, err := codexConfigPath(environ)
+func readCodexPreferences(environ []string, nativeProfile ...string) (codexPreferences, error) {
+	name := ""
+	if len(nativeProfile) > 0 {
+		name = nativeProfile[0]
+	}
+	path, err := codexTargetConfigPath(environ, name)
 	if err != nil {
 		return codexPreferences{}, err
 	}
@@ -69,7 +73,7 @@ func applyCodexPreferences(profile *Profile, preferences codexPreferences, model
 	return validateProfile(*profile)
 }
 
-func (a *App) syncCodex(ctx context.Context, profileName string) error {
+func (a *App) syncCodex(ctx context.Context, profileName string, args ...string) error {
 	store, err := a.store()
 	if err != nil {
 		return err
@@ -78,7 +82,11 @@ func (a *App) syncCodex(ctx context.Context, profileName string) error {
 	if err != nil {
 		return err
 	}
-	preferences, err := readCodexPreferences(a.Environ)
+	nativeProfile, err := parseCodexProfileFlag(args)
+	if err != nil {
+		return err
+	}
+	preferences, err := readCodexPreferences(a.Environ, nativeProfile)
 	if err != nil {
 		return fmt.Errorf("read Codex settings: %w", err)
 	}

@@ -58,3 +58,23 @@ func TestCapabilityFromRawJSONReadsLimitAndReasoning(t *testing.T) {
 		t.Fatalf("persisted catalog overlay = %#v ok=%v version=%q", lookedUp, ok, index.Version())
 	}
 }
+
+func TestCapabilityPreservesModelsDevExplicitFalseAndInputBudget(t *testing.T) {
+	raw := `{"id":"model","tool_call":false,"structured_output":false,"temperature":false,"limit":{"context":100000,"input":80000,"output":20000},"modalities":{"input":["text"],"output":["text"]}}`
+	c, ok := CapabilityFromRawJSON("openai/model", raw)
+	if !ok || c.MaxInput != 80000 || c.ToolCall == nil || *c.ToolCall || c.StructuredOutput == nil || *c.StructuredOutput || c.Temperature == nil || *c.Temperature || len(c.OutputModalities) != 1 {
+		t.Fatalf("lost facts: %+v", c)
+	}
+	idx := NewCapabilityIndex("facts", []Capability{c, {ID: "model", Source: SourceAdmin, Name: "Renamed"}})
+	merged, _ := idx.Lookup("model")
+	if merged.ToolCall == nil || *merged.ToolCall || merged.MaxInput != 80000 {
+		t.Fatalf("partial override erased facts: %+v", merged)
+	}
+}
+
+func TestModelsDevFastModeUsesWhitelistedServiceTier(t *testing.T) {
+	c, ok := CapabilityFromRawJSON("openai/gpt-test", `{"id":"gpt-test","experimental":{"modes":{"fast":{"provider":{"body":{"service_tier":"priority"}}},"unknown":{"provider":{"body":{"service_tier":"unpriced"}}}}}}`)
+	if !ok || len(c.ServiceTiers) != 1 || c.ServiceTiers[0] != "priority" {
+		t.Fatalf("tiers: %+v", c.ServiceTiers)
+	}
+}

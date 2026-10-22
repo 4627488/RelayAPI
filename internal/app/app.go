@@ -148,6 +148,15 @@ func (a *App) loadCapabilitiesFromStore(ctx context.Context) {
 			capabilities = append(capabilities, capability)
 		}
 	}
+	var snapshot pricing.CapabilitySnapshot
+	found, err := a.store.GetRuntimeSetting(ctx, "models-dev-capabilities", &snapshot)
+	if err != nil {
+		return // Do not publish a partial snapshot on a failed read.
+	}
+	if found && (snapshot.Version == version || len(rows) == 0) {
+		version = snapshot.Version
+		capabilities = snapshot.Items
+	}
 	a.setCapabilities(a.mergeCapabilityIndex(ctx, version, capabilities))
 }
 

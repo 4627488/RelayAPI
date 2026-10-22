@@ -24,16 +24,17 @@ type Config struct {
 }
 
 type Profile struct {
-	AuthMethod        string    `json:"auth_method,omitempty"`
-	Name              string    `json:"name"`
-	ServerURL         string    `json:"server_url"`
-	DisplayName       string    `json:"display_name,omitempty"`
-	DefaultModel      string    `json:"default_model,omitempty"`
-	FollowSiteDefault bool      `json:"follow_site_default,omitempty"`
-	ReasoningEffort   string    `json:"reasoning_effort,omitempty"`
-	OpenCodeProtocol  string    `json:"opencode_protocol,omitempty"`
-	CredentialBackend string    `json:"credential_backend,omitempty"`
-	LastRefresh       time.Time `json:"last_refresh,omitempty"`
+	Codex             *CodexCapabilities `json:"codex,omitempty"`
+	AuthMethod        string             `json:"auth_method,omitempty"`
+	Name              string             `json:"name"`
+	ServerURL         string             `json:"server_url"`
+	DisplayName       string             `json:"display_name,omitempty"`
+	DefaultModel      string             `json:"default_model,omitempty"`
+	FollowSiteDefault bool               `json:"follow_site_default,omitempty"`
+	ReasoningEffort   string             `json:"reasoning_effort,omitempty"`
+	OpenCodeProtocol  string             `json:"opencode_protocol,omitempty"`
+	CredentialBackend string             `json:"credential_backend,omitempty"`
+	LastRefresh       time.Time          `json:"last_refresh,omitempty"`
 }
 
 type Store struct {

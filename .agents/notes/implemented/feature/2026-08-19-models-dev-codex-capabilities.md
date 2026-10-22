@@ -31,20 +31,14 @@ Aggregator copies of the same slug disagree (for example qiniu marks
 
 ## Decision
 
-Reuse the models.dev fetch Relay already runs for prices. Parse capabilities
-even when a model has no public price. Prefer first-party providers. Overlay
-onto non-OpenAI slugs after `CompleteCodexCatalogItem`. Keep
-`apply_patch=freeform`. For Moonshot and DeepSeek, set
-`prefer_websockets=false` and drop verbosity / multi-agent. Reasoning mapping:
+Reuse the models.dev fetch Relay already runs for prices. Parse capabilities even when a model has no public price and prefer first-party providers. The [2026-10-22 provider contract decision](../architecture/2026-10-22-versioned-codex-provider-contract.md) extends this to first-party OpenAI facts, input budgets, optional tool flags, modality and priority modes. Complete ModelInfo and old compatibility fields remain; current Codex uses provider capabilities for transport, including WS-to-Chat adaptation. Explicit tool_call=false hides a model from the agent picker. Reasoning mapping:
 
 - effort values are authoritative (so K3 does not invent a fake `none`)
 - toggle only → `none` + `high`
 - reasoning true with empty options → `high` only
 - otherwise → `none` only
 
-Persist priced `RawJSON` as before; rebuild the in-memory index from those
-rows on boot; refresh the full capability set ~3s after start and on admin
-sync. ETag token is `codex-modelinfo-v2|<models.dev version>`.
+Persist original priced RawJSON and an independent full capability snapshot atomically in PostgreSQL. Rebuild unpriced facts on boot as well as refresh. Content revisions include capability facts and administrator overrides.
 
 Do not fetch CPA's `models.json`. Do not embed the 4MB `api.json`.
 
@@ -56,12 +50,8 @@ Moonshot ships K4.
 **Fetch CPA's catalog at runtime.** Couples Relay to another project's
 schema and conservative tool policy.
 
-**Overlay official OpenAI slugs too.** models.dev can disagree with the
-bundled Codex contract the client already has for `gpt-*`.
+**Overlay arbitrary aggregator facts on official slugs.** Rejected; first-party OpenAI facts are accepted as of the 2026-10-22 decision, while aggregator copies cannot replace them.
 
 ## Consequences
 
-Codex pickers show Kimi K3 as 1M / low-high-max and do not offer a
-Responses WebSocket to Chat-only providers. Admin price sync also refreshes
-picker metadata. Request-time thinking wire mapping (K2.5 `thinking.type`
-versus K3 `reasoning_effort`) is still a follow-on.
+Codex pickers reflect sourced context, reasoning and agent capability. Admin price sync refreshes picker metadata without granting model access. Transport is negotiated from the gateway implementation rather than inferred from model metadata. Native model thinking and upstream quality remain separately verified concerns.

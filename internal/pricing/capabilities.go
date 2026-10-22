@@ -12,14 +12,21 @@ import (
 type Capability struct {
 	ID               string
 	Name             string
+	Description      string
 	Provider         string
 	Source           string
 	Context          int
 	MaxOutput        int
+	MaxInput         int
+	ToolCall         *bool
+	StructuredOutput *bool
+	Temperature      *bool
 	Reasoning        bool
 	ReasoningOptions []ReasoningOption
 	DefaultLevel     string
 	InputModalities  []string
+	OutputModalities []string
+	ServiceTiers     []string
 	PreferWebSockets *bool
 }
 
@@ -114,6 +121,27 @@ func mergeCapability(base, override Capability) Capability {
 	if override.Name != "" {
 		base.Name = override.Name
 	}
+	if override.Description != "" {
+		base.Description = override.Description
+	}
+	if override.MaxInput > 0 {
+		base.MaxInput = override.MaxInput
+	}
+	if override.ToolCall != nil {
+		base.ToolCall = override.ToolCall
+	}
+	if override.StructuredOutput != nil {
+		base.StructuredOutput = override.StructuredOutput
+	}
+	if override.Temperature != nil {
+		base.Temperature = override.Temperature
+	}
+	if len(override.OutputModalities) > 0 {
+		base.OutputModalities = override.OutputModalities
+	}
+	if len(override.ServiceTiers) > 0 {
+		base.ServiceTiers = override.ServiceTiers
+	}
 	if override.Provider != "" {
 		base.Provider = override.Provider
 	}
@@ -204,16 +232,32 @@ func capabilityFromModelsDev(providerID, modelID string, model modelsDevModel) C
 		}
 		options = append(options, ReasoningOption{Type: strings.ToLower(strings.TrimSpace(option.Type)), Values: values})
 	}
+	var serviceTiers []string
+	// Read only the protocol value Relay already routes and prices. Never
+	// execute arbitrary experimental provider body patches from a catalog.
+	for _, mode := range model.Experimental.Modes {
+		if mode.Provider.Body.ServiceTier == "priority" {
+			serviceTiers = []string{"priority"}
+			break
+		}
+	}
 	return Capability{
 		ID:               id,
 		Name:             strings.TrimSpace(model.Name),
+		Description:      strings.TrimSpace(model.Description),
 		Provider:         strings.TrimSpace(providerID),
 		Source:           SourceCatalog,
 		Context:          model.Limit.Context,
 		MaxOutput:        model.Limit.Output,
+		MaxInput:         model.Limit.Input,
+		ToolCall:         model.ToolCall,
+		StructuredOutput: model.StructuredOutput,
+		Temperature:      model.Temperature,
 		Reasoning:        model.Reasoning,
 		ReasoningOptions: options,
 		InputModalities:  append([]string(nil), model.Modalities.Input...),
+		OutputModalities: append([]string(nil), model.Modalities.Output...),
+		ServiceTiers:     serviceTiers,
 	}
 }
 
@@ -268,4 +312,11 @@ func bareModelID(value string) string {
 		return strings.TrimSpace(value[slash+1:])
 	}
 	return value
+}
+
+// CapabilitySnapshot persists facts independently of whether a model has a
+// usable price. It shares the existing PostgreSQL catalog transaction.
+type CapabilitySnapshot struct {
+	Version string       `json:"version"`
+	Items   []Capability `json:"items"`
 }

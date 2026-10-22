@@ -68,11 +68,25 @@ rai auth login --server https://relay.example --no-browser
 
 `--profile work` 可以区分多个站点。`rai configure codex --server ...` 明确重新授权指定站点；已配置的 profile 不必每次传入地址。
 
+CLI 可选原生 Codex profile，以共享历史并保留根配置：
+
+```sh
+rai --profile work configure codex --codex-profile relay --yes
+codex --profile relay
+rai --profile work codex -- --profile relay
+rai --profile work sync codex --codex-profile relay
+rai --profile work unconfigure codex --codex-profile relay
+```
+
+这里 `work` 是 rai 站点 profile，`relay` 是 Codex 配置 profile；`--` 后的参数交给 Codex。配置保存在 `$CODEX_HOME/relay.config.toml`（默认 `~/.codex`）。显式 sync 只读取该文件的模型/推理设置；不解析项目配置及所有继承层。带原生 profile 启动时不自动导入根配置偏好。CLI 已通过真实客户端验证；Desktop 继续使用原有全局 configure 和重启流程，`app-server` 不接受原生 `--profile`。
+
+服务器 session 的版本化能力契约决定 WS、compaction v2 和独立搜索的 provider 声明；旧服务器与未知版本使用 HTTP。静态 Key 的持久配置使用登录保存的能力；网关升级或策略变化后，重新登录并 configure 以刷新配置。模型目录资料来自 models.dev 与管理员覆盖，不改变授权。兼容上游的压缩由网关摘要适配完成，详情见 [互操作分析](rai-codex-interoperability.md)。
+
 设备授权使用 PKCE S256、一次性交换、15 分钟 access token 和默认 6 个自然月的 refresh 会话。会话期限从批准授权时起计算，刷新不会延长该期限。每次刷新轮换 refresh token；新旧 access token 在各自有效期内可以并存，避免刷新使运行中的客户端缓存立即失效。refresh token 只保存哈希，待交换的凭据在数据库中加密，交换后清除。
 
-Codex 通过 `rai credential print` 定期取得 access token，配置文件只有绑定 profile、rai 目录和服务器地址的 helper 命令。helper 不打开浏览器、不输出 refresh token；会话到期或被撤销后，需要重新运行登录或启动命令。跨进程文件锁串行化刷新，避免多个 helper 同时消耗同一个 refresh token。刷新响应丢失时可能需要重新授权，不会退回静态 Key。
+Codex 通过 `rai credential print` 每分钟检查 access token，助手超时为三十秒；配置文件只有绑定 profile、rai 目录和服务器地址的 helper 命令。helper 不打开浏览器、不输出 refresh token；会话到期或被撤销后，需要重新运行登录或启动命令。跨进程文件锁串行化刷新，避免多个 helper 同时消耗同一个 refresh token。刷新响应丢失时可能需要重新授权，不会退回静态 Key。
 
-Responses WebSocket 在每个新的 `response.create` 前重新检查 OAuth 授权，已打开的连接不能绕过 token 过期或设备撤销。拒绝后需要客户端重连并取得有效 access token。真实 Codex 长会话的重连与界面行为仍需独立验收，不能仅凭协议与 mock 测试认定所有客户端都能无感恢复。
+Responses WebSocket 在每个新的 `response.create` 前重新检查 OAuth 授权，已打开的连接不能绕过 token 过期或设备撤销。拒绝后需要客户端重连并取得有效 access token。真实 Codex 同进程 HTTP 401 自动续期已验证；WS 到期关闭后的重连与界面行为仍需独立验收。
 
 其他仅支持环境变量凭据的客户端，通过每次启动时创建的 loopback 代理获取持续续期能力。子进程只得到随机的本地临时凭据，代理在每个上游请求前获取有效 access token，客户端退出时关闭。代理只开放 `/v1/` 请求；不提供账户管理能力。
 

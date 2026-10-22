@@ -103,10 +103,10 @@ func (a *App) Execute(ctx context.Context) error {
 	case "use":
 		return a.use(profileName, args[1:])
 	case "sync":
-		if len(args) != 2 || args[1] != "codex" {
+		if len(args) < 2 || args[1] != "codex" {
 			return errors.New("usage: rai sync codex")
 		}
-		return a.syncCodex(ctx, profileName)
+		return a.syncCodex(ctx, profileName, args[2:]...)
 	case "configure":
 		return a.configureCodex(ctx, profileName, args[1:])
 	case "unconfigure":
@@ -192,10 +192,10 @@ CORE COMMANDS
 
 AGENT COMMANDS
   rai claude|codex|grok|hermes|opencode|pi|prime-agent [--model <id>] -- <args>
-  rai configure codex      Sign in and connect Codex
-  rai unconfigure codex    Restore rai-managed Codex settings
+  rai configure codex      Sign in and connect Codex [--codex-profile <name>]
+  rai unconfigure codex    Restore rai-managed Codex settings [--codex-profile <name>]
   rai codex --desktop      Temporarily connect Codex Desktop
-  rai sync codex           Import saved Codex settings
+  rai sync codex           Import saved Codex settings [--codex-profile <name>]
 
 OTHER COMMANDS
   server set <url>  Save the default RelayAPI server
@@ -399,6 +399,7 @@ func (a *App) finishLogin(ctx context.Context, profileName, server, key string, 
 		display = "RelayAPI"
 	}
 	profile := Profile{
+		Codex:            session.Codex,
 		Name:             profileName,
 		ServerURL:        apiBase,
 		DisplayName:      display,
@@ -879,6 +880,7 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 		defer closeProxy()
 	}
 	command, err := adapter.Prepare(LaunchContext{
+		Codex:      session.Codex,
 		Profile:    profile,
 		APIBase:    apiBase,
 		APIKey:     secret,
@@ -895,11 +897,11 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 	}
 	var before codexPreferences
 	var settingsErr error
-	if agent == "codex" {
+	if agent == "codex" && selectedCodexProfile(passthrough) == "" {
 		before, settingsErr = readCodexPreferences(a.Environ)
 	}
 	runErr := a.Run(ctx, command, a.Stdin, a.Stdout, a.Stderr)
-	if agent == "codex" && settingsErr == nil {
+	if agent == "codex" && selectedCodexProfile(passthrough) == "" && settingsErr == nil {
 		a.saveChangedCodexPreferences(store, profile.Name, before, session.Models)
 	}
 	return runErr

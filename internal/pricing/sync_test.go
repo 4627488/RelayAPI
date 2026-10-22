@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -38,7 +39,8 @@ func TestFetchModelsDevDeduplicatesQualifiedModelIDs(t *testing.T) {
 				"models": {
 					"claude-test": {
 						"id": "claude-test",
-						"cost": {"input": 1, "output": 2}
+						"cost": {"input": 1, "output": 2},
+                        "future_capability": {"enabled": true}
 					}
 				}
 			},
@@ -69,7 +71,7 @@ func TestFetchModelsDevDeduplicatesQualifiedModelIDs(t *testing.T) {
 		byModel[entry.Model] = entry
 	}
 	if got := byModel["anthropic/claude-test"]; got.SourceModelID != "anthropic/claude-test" ||
-		got.InputNanoUSDPerToken != 1000 {
+		got.InputNanoUSDPerToken != 1000 || !strings.Contains(got.RawJSON, `"future_capability"`) {
 		t.Fatalf("direct provider was not preferred: %+v", got)
 	}
 	if got := byModel["shared/model"]; got.SourceModelID != "kilo/shared/model" ||

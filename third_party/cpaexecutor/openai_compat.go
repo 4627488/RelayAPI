@@ -53,6 +53,12 @@ func (e *openaiCompatExecutor) Refresh(ctx context.Context, auth *cliproxyauth.A
 }
 
 func (e *openaiCompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	if err := helps.ExpandResponsesCompactionCapsules(&req, &opts, e.Identifier()); err != nil {
+		return cliproxyexecutor.Response{}, statusError{code: http.StatusBadRequest, msg: err.Error()}
+	}
+	if helps.HasResponsesCompactionTriggerRequest(req, opts) {
+		return e.compactResponses(ctx, auth, req, opts)
+	}
 	if !openAICompatUsesResponses(auth, opts) {
 		return e.inner.Execute(ctx, auth, req, opts)
 	}
@@ -60,10 +66,55 @@ func (e *openaiCompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 }
 
 func (e *openaiCompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+	if err := helps.ExpandResponsesCompactionCapsules(&req, &opts, e.Identifier()); err != nil {
+		return nil, statusError{code: http.StatusBadRequest, msg: err.Error()}
+	}
+	if helps.HasResponsesCompactionTriggerRequest(req, opts) {
+		response, err := e.compactResponses(ctx, auth, req, opts)
+		if err != nil {
+			return nil, err
+		}
+		chunks, err := helps.BuildResponsesCompactionStreamChunksFromResponse(req.Model, response.Payload)
+		if err != nil {
+			return nil, statusError{code: http.StatusBadGateway, msg: err.Error()}
+		}
+		out := make(chan cliproxyexecutor.StreamChunk, len(chunks))
+		for _, chunk := range chunks {
+			out <- cliproxyexecutor.StreamChunk{Payload: chunk}
+		}
+		close(out)
+		headers := response.Headers.Clone()
+		if headers == nil {
+			headers = make(http.Header)
+		}
+		headers.Set("Content-Type", "text/event-stream")
+		return &cliproxyexecutor.StreamResult{Headers: headers, Chunks: out}, nil
+	}
 	if !openAICompatUsesResponses(auth, opts) {
 		return e.inner.ExecuteStream(ctx, auth, req, opts)
 	}
 	return e.executeResponsesStream(ctx, auth, req, opts)
+}
+
+// Give Chat-only and Responses-compatible providers the same compaction wire
+// contract as native Codex. Reuse CPA's summary/capsule codec and normal
+// execution path so reasoning, tool translation and actual usage stay intact.
+func (e *openaiCompatExecutor) compactResponses(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	summary := helps.PrepareAntigravityCompactionSummaryPayload(helps.ResponsesCompactionSourcePayload(req, opts), req.Model)
+	summaryReq := cliproxyexecutor.Request{Model: req.Model, Payload: summary, Metadata: req.Metadata}
+	summaryOpts := opts
+	summaryOpts.Alt, summaryOpts.Stream, summaryOpts.OriginalRequest = "", false, nil
+	summaryOpts.SourceFormat, summaryOpts.ResponseFormat = sdktranslator.FormatOpenAIResponse, sdktranslator.FormatOpenAIResponse
+	response, err := e.Execute(ctx, auth, summaryReq, summaryOpts)
+	if err != nil {
+		return response, err
+	}
+	payload, err := helps.BuildResponsesCompactionResponseFromSummary(req.Model, response.Payload)
+	if err != nil {
+		return cliproxyexecutor.Response{}, statusError{code: http.StatusBadGateway, msg: err.Error()}
+	}
+	response.Payload = payload
+	return response, nil
 }
 
 func openAICompatUsesResponses(auth *cliproxyauth.Auth, opts cliproxyexecutor.Options) bool {

@@ -28,7 +28,7 @@ func loadCodexConfig(path string) ([]byte, map[string]any, error) {
 	return raw, document, nil
 }
 
-func codexRuntimeProvider(environ []string) (string, error) {
+func codexRuntimeProvider(environ []string, args ...string) (string, error) {
 	path, err := codexConfigPath(environ)
 	if err != nil {
 		return "", err
@@ -38,9 +38,28 @@ func codexRuntimeProvider(environ []string) (string, error) {
 		return "", err
 	}
 	providers, _ := document["model_providers"].(map[string]any)
+	occupied := map[string]bool{}
+	for name := range providers {
+		occupied[name] = true
+	}
+	if selected := selectedCodexProfile(args); selected != "" {
+		path, err := codexTargetConfigPath(environ, selected)
+		if err != nil {
+			return "", err
+		}
+		_, doc, err := loadCodexConfig(path)
+		if err != nil {
+			return "", err
+		}
+		if extra, ok := doc["model_providers"].(map[string]any); ok {
+			for name := range extra {
+				occupied[name] = true
+			}
+		}
+	}
 	name := "relayapi_rai"
 	for i := 2; ; i++ {
-		if _, exists := providers[name]; !exists {
+		if !occupied[name] {
 			return name, nil
 		}
 		name = fmt.Sprintf("relayapi_rai_%d", i)
@@ -58,6 +77,7 @@ func (a *App) configureCodexMode(ctx context.Context, profileName string, args [
 	yes := false
 	server := ""
 	noBrowser := false
+	nativeProfile := ""
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
@@ -71,6 +91,18 @@ func (a *App) configureCodexMode(ctx context.Context, profileName string, args [
 			server = args[i]
 		case "--no-browser":
 			noBrowser = true
+		case "--codex-profile":
+			if temporary {
+				return errors.New("--codex-profile is not supported for temporary Desktop switching")
+			}
+			if i+1 >= len(args) {
+				return errors.New("--codex-profile requires a name")
+			}
+			i++
+			nativeProfile = args[i]
+			if err := validateProfileName(nativeProfile); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unknown configure argument %q", arg)
 		}
@@ -104,16 +136,23 @@ func (a *App) configureCodexMode(ctx context.Context, profileName string, args [
 	if err != nil {
 		return err
 	}
+	capabilities := profile.Codex
 	if strings.HasPrefix(secret, "rai_at_") {
-		_, err = a.Gateway.Session(ctx, profile.ServerURL, secret)
+		var session Session
+		session, err = a.Gateway.Session(ctx, profile.ServerURL, secret)
+		capabilities = session.Codex
 		if errors.Is(err, errOAuthLoginRequired) {
-			profile, _, err = a.reauthorizeProfile(ctx, store, profile, noBrowser)
+			profile, secret, err = a.reauthorizeProfile(ctx, store, profile, noBrowser)
+			if err == nil {
+				session, err = a.Gateway.Session(ctx, profile.ServerURL, secret)
+				capabilities = session.Codex
+			}
 		}
 		if err != nil {
 			return err
 		}
 	}
-	path, err := codexConfigPath(a.Environ)
+	path, err := codexTargetConfigPath(a.Environ, nativeProfile)
 	if err != nil {
 		return err
 	}
@@ -130,7 +169,14 @@ func (a *App) configureCodexMode(ctx context.Context, profileName string, args [
 	if err != nil {
 		return err
 	}
-	updated, err := mergeCodexConfig(document, profile, auth)
+	id := providerID
+	if nativeProfile != "" {
+		id, err = codexRuntimeProvider(a.Environ)
+		if err != nil {
+			return err
+		}
+	}
+	updated, err := mergeCodexProvider(document, profile, auth, id, capabilities)
 	if err != nil {
 		return err
 	}
@@ -169,17 +215,25 @@ func (a *App) configureCodexMode(ctx context.Context, profileName string, args [
 	if err := saveCodexManaged(path, original, updated, temporary); err != nil {
 		return err
 	}
+	if nativeProfile != "" {
+		a.terminal(a.Stdout).message("success", "Saved %s. Start Codex with: codex --profile %s", path, nativeProfile)
+		return nil
+	}
 	a.terminal(a.Stdout).message("success", "Saved %s. Restart Codex Desktop and create a new chat to use this provider.", path)
 	fmt.Fprintln(a.Stdout, "Existing chats may keep their provider; rai unconfigure codex restores managed settings.")
 	return nil
 }
 
-func mergeCodexConfig(document map[string]any, profile Profile, auth map[string]any) ([]byte, error) {
+func mergeCodexConfig(document map[string]any, profile Profile, auth map[string]any, advertised ...*CodexCapabilities) ([]byte, error) {
+	return mergeCodexProvider(document, profile, auth, providerID, advertised...)
+}
+
+func mergeCodexProvider(document map[string]any, profile Profile, auth map[string]any, id string, advertised ...*CodexCapabilities) ([]byte, error) {
 	providers, err := codexTable(document, "model_providers")
 	if err != nil {
 		return nil, err
 	}
-	provider, err := codexTable(providers, providerID)
+	provider, err := codexTable(providers, id)
 	if err != nil {
 		return nil, err
 	}
@@ -200,10 +254,27 @@ func mergeCodexConfig(document map[string]any, profile Profile, auth map[string]
 	provider["name"] = "RelayAPI"
 	provider["base_url"] = strings.TrimRight(profile.ServerURL, "/") + "/v1"
 	provider["wire_api"] = "responses"
-	provider["supports_websockets"] = true
-	provider["supports_standalone_web_search"] = true
+	var capabilities *CodexCapabilities
+	if len(advertised) > 0 {
+		capabilities = advertised[0]
+	}
+	effective := effectiveCodexCapabilities(capabilities)
+	provider["supports_websockets"] = effective.WebSockets
+	provider["supports_standalone_web_search"] = effective.StandaloneWebSearch
+	overrides, err := codexTable(provider, "capabilities")
+	if err != nil {
+		return nil, err
+	}
+	if effective.RemoteCompaction {
+		overrides["remote_compaction"] = "v2"
+	} else {
+		delete(overrides, "remote_compaction")
+	}
+	if len(overrides) == 0 {
+		delete(provider, "capabilities")
+	}
 	provider["auth"] = auth
-	document["model_provider"] = providerID
+	document["model_provider"] = id
 	if profile.DefaultModel != "" {
 		document["model"] = profile.DefaultModel
 	}

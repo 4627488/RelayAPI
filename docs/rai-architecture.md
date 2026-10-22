@@ -1,175 +1,70 @@
-# rai 额度与 Codex 互操作设计
+# rai 与 Codex 当前互操作架构
 
-2026-10-17 更新：rai 现已增加普通用户自助管理 CLI，并将自动接入改为可续期的 OAuth 式设备授权。当前认证、Key 管理与设备撤销规则见 [rai 用户 CLI 与设备授权](rai-cli.md)。本文后续记录 2026-09-28 的额度与 Codex 互操作设计；其中“不增加管理授权/管理 CLI”的历史边界已由上述用户范围扩展取代，全站管理员 CLI 仍不在本轮范围。
+2026-10-22 更新。本文描述已实现的职责与约束；源码对照、过时字段和后续改进见 [rai 与 Codex 源码互操作分析](rai-codex-interoperability.md)。认证和管理命令见 [rai 使用文档](rai-cli.md)。
 
-状态：核心功能已实施（2026-09-28），下文保留设计边界；已验证 Codex CLI 0.156.1 的 HTTP / WebSocket 额度状态读取，桌面端具体面板尚未验收。
+## 职责
 
-本文替代此前的 rai 扩展架构设计。范围仅保留用户额度提供和 Codex 互操作，重点是模型元数据。取消通用管理 CLI、独立管理授权、管理 API、MCP 管理工具、插件框架及独立 TUI 的建设计划。
+rai 管理站点 profile、浏览器 PKCE 设备授权、凭据存储与续期，配置或启动真实客户端。Codex 管理会话、本地工具、模型选择和用户安全策略。RelayAPI 管理模型授权、目录投影、协议适配、准入和计费；PostgreSQL 是配额与结算的事实来源。
 
-## 1. 目标与边界
+模型调用和账户管理分别使用 `inference`、`account` OAuth purpose，具有独立凭据与当前 profile。普通用户自助管理已实现；“不提供管理 CLI 或独立管理授权”属于被替代的历史设计。账户管理凭据不注入 Codex，模型凭据不能管理 Key，也不因用户具有管理员身份而获得全站管理能力。
 
-用户继续通过 `rai codex` 使用 Codex。RelayAPI 提供准确的模型目录与用户配额，rai 负责现有登录、provider 配置和客户端启动，Codex 负责原生交互。
+## Codex 接入与恢复
 
-本设计只解决：
+`rai codex` 使用单次运行 provider 和命令行配置；`rai configure codex` 合并用户配置，绑定 rai 凭据助手。助手绑定 rai 目录、profile 与服务器，只输出 access token 或明确导入的静态 Key；不输出 refresh token。助手每分钟检查、超时三十秒；子进程不额外携带 rai bearer 环境变量。
 
-1. 向 Codex 提供用户实际获配的额度窗口，验证原生额度显示和更新。
-2. 提供完整、准确、可追溯的模型元数据，使模型选择、推理档位、上下文与工具调用符合实际接入能力。
-3. 保持目录刷新、模型别名、HTTP/SSE/WebSocket、配置和偏好同步的兼容性。
+`CODEX_HOME` 被用于寻找用户配置。`configure/unconfigure codex --codex-profile <name>` 管理原生 `<name>.config.toml`，不改根文件，共享历史。带原生 profile 启动时跳过根配置 mtime 偏好导入；`sync codex --codex-profile <name>` 显式同步所选文件。未选原生 profile 时保留原有根配置导入，以兼容已有流程。真实 CLI 已验证；`app-server --profile` 不受客户端支持，Desktop 的原生 profile 选择仍需独立验收。
 
-不改变现有账户管理方式、计费规则、配额分配规则或客户端启动命令。不引入新的管理身份；额度查询只允许当前 API Key 读取其授权范围内的数据。
+持久配置保存备份与恢复 journal，三方恢复保留用户后续编辑。`rai codex --desktop` 使用明确的应用退出、切换、恢复流程；CLI 进程结束不代表 Desktop singleton 已退出。Desktop 原生 profile 替代方案经验证前保留这些恢复路径。不修改 Codex 会话数据库或伪造 ChatGPT 登录，不改变 Codex 的审批与 sandbox 策略。
 
-## 2. 架构
+## 模型目录
 
-```mermaid
-flowchart LR
-    RAI[rai 现有启动器] --> Codex[Codex]
-    Codex --> API[RelayAPI 模型与推理接口]
-    Metadata[模型设置 / 能力快照 / 兼容默认值] --> Catalog[模型目录投影]
-    Policy[租户 / Key / 模型授权] --> Catalog
-    Ledger[子订阅 / 预占 / 结算 / 重置] --> Quota[用户额度投影]
-    Policy --> Quota
-    Catalog --> API
-    Quota --> API
+`internal/upstream/codex_catalog.go` 从运行时 slug 构造完整 Codex ModelInfo；`internal/app/native_models.go` 应用模型能力、管理员覆盖、授权和别名。models.dev 第一方资料覆盖上下文、输入/输出预算、推理和模态，OpenAI slug 只接受第一方 OpenAI 资料，聚合商不能覆盖同名官方模型；模型资料不授予访问权限。管理员明确的能力值应被保留，传输能力受实际运行时约束。
+
+对外元数据优先使用模型作者命名空间。自动规范 ID 在请求侧映射回原模型，再执行现有授权、准入、计费和上游路由；旧调用 ID 与详情查询保留，Codex 旧条目保持完整但隐藏。显式别名、运行时完整 ID 和未知来源模型不会被自动命名覆盖。rai session 保留新旧可调用名称以兼容已保存偏好。详见 [模型 ID 与兼容](model-ids.md)。
+
+目录流程包括：生成完整条目、应用能力/覆盖、用户可见性与别名过滤、内容 revision 和 ETag。隐藏条目仍需满足客户端反序列化契约。保留隐藏 tombstone 是为了防止客户端内置目录按 slug 合并后重新显示受限模型；真正的调用权限仍由服务端强制执行。图像生成专用模型不进入对话选择器，图像 API 保持可用。
+
+现有模型目录仍输出 `prefer_websockets`、`supports_parallel_tool_calls`、`max_output_tokens` 等兼容字段。Codex 0.163.0 的 ModelInfo 已不读取这三项，不能再用它们证明客户端传输、工具或输出限制已生效；旧客户端、其他消费者和服务端模型事实的保留需求需分别处理。新客户端 WebSocket 选择由 provider 的 `supports_websockets` 与会话 fallback 决定；session 的 `codex.version=1` 契约声明当前 Key 全部可选模型的 transport、compaction v2 与 standalone search 能力，rai 按契约生成配置；旧版/未知契约保守使用 HTTP。静态 Key 的持久配置使用登录缓存的能力，网关策略变化后需要重新登录/配置。
+
+完整 models.dev 能力快照与价格在同一 PostgreSQL 事务中保存，未定价模型仍保留资料；定价记录的原始 JSON 不丢弃未知字段。输入预算决定有效上下文百分比与压缩阈值，明确无工具能力的模型从 agent 选择器隐藏。支持 priority 的模式可投影 Fast；任意 experimental body patch 不执行。短 base instructions 和资料缺失时的通用缺省值仍保留，不宣称等同官方逐模型提示。服务端负责模型事实，rai 不维护另一份完整能力数据库。
+
+## 协议适配与远程压缩
+
+嵌入式 CPA 将 Responses WebSocket 每轮请求交给执行器，兼容执行器可转换到 Chat-only 上游。`openai` 凭据规范化到 CPA 的 `openai-compatibility` 路由，避免自定义模型被保留路由名称误拒绝。管理员的明确 WS 关闭覆盖 provider 声明。
+
+兼容执行器使用既有 CPA summary/capsule codec 处理 compaction v2 的 `compaction_trigger`，经正常 Chat/Responses 执行器生成摘要，返回客户端接受的压缩项；续接时展开胶囊。SSE/WS 共用结果，usage 由真实摘要请求产生并关联终态 response ID，沿用正常准入和结算。它是摘要适配，不保证保留 OpenAI 原生私有推理状态。没有新增本机代理或数据库。服务端只为具备处理路径的 provider 集合启用 v2，真实商业上游仍需各自验收。
+
+## 用户额度
+
+额度投影复用已有子订阅分配、父窗口代次、预占与结算，不另建账本。金额使用整数 nano-USD，窗口使用量包含 settled + reserved，剩余量不得小于零。按用户、Key、模型权限和有效订阅过滤；普通账户余额不伪装成周期额度。
+
+`GET /api/rai/quota` 与 `rai quota` 展示当前模型凭据可访问的订阅窗口。四次批量读取避免 N+1；未使用窗口按当前父窗口代次投影，不创建预占。
+
+Codex 推理通路只投影本次 admission 选中的子订阅，以固定 `codex` bucket 整体替换旧状态，至多两个窗口，按有效周期从短到长选择。额外窗口仍留在内部与 rai 查询结果中。读取预算 250ms；无选定订阅、无有效窗口或读取失败时产生空状态，不能残留别的订阅额度。上游账号总额度不能替代用户获配额度。
+
+HTTP 以 `x-codex-primary/secondary-*` 响应头提供响应前快照；WebSocket 使用 `codex.rate_limits`，并在每轮持久化终态用量后更新。缺失窗口为 null，切换订阅清除旧槽位。不向 SSE 插入它不消费的 WS 额度事件，上游私有额度事件也不透传。
+
+`account/rateLimits/read` 与 `account/rateLimits/updated` 是 Codex app-server 协议，不是让第三方网关任意写额度的接口。历史客户端对多 bucket 的合并行为是当前单 bucket 策略的依据；新版源码具有多快照结构不代表多订阅输出已经端到端验收。
+
+## 认证与长连接
+
+浏览器登录签发短期 access token 与轮换 refresh token。refresh token 通过系统 keyring 或受限权限文件保存；跨进程锁串行刷新。退出 OAuth profile 先撤销服务端会话，再删除本地凭据；撤销失败保留凭据供重试。静态 Key 仍可通过 stdin 明确导入，退出只删除本地副本。
+
+Relay 在每个新的 OAuth `response.create` 上重新验证授权，已接纳的流可完成，后续请求不能绕过到期或撤销。Codex 0.163.0 会将认证 revision 纳入连接复用判断；同一真实客户端进程的 HTTP 401 后 helper 刷新、轮换凭据保存与重试已验证；WS 到期关闭后的客户端恢复和慢网络仍需单独验收。
+
+## 兼容验证
+
+本次用原生 Codex 0.163.0 重新运行并通过：
+
+```sh
+CODEX_INTEROP_BINARY=/usr/lib/openai-codex/bin/codex \
+  go test ./internal/rai ./internal/app \
+  -run '^TestCodexClient' \
+  -count=1 -v
 ```
 
-保留两个职责清晰的投影：
+测试使用隔离 CODEX_HOME、本地 mock 和假凭据，验证 helper 拉目录、原生 CLI profile、同进程 HTTP 401 续期、HTTP/WS 额度及自定义上下文采用。桥接模块用相同环境变量执行 `go test -run '^TestCodexClient' -count=1 ./...`，验证真实 Codex HTTP/WS 压缩与续接。CI 固定安装 0.163.0 并运行两组测试，未设置变量的普通测试仍会跳过。
 
-- **模型目录投影**：把模型事实、RelayAPI 适配能力和用户可见性转换成 Codex 所需的目录格式。
-- **用户额度投影**：从已有配额状态生成用户可见快照，再转换成经验证的 Codex 额度协议。
+0.158.0 曾出现自定义 provider 的 `/status` 显示回归，参见 [历史问题 #45052](https://github.com/openai/codex/issues/45052)。0.163.0 源码已将收到的额度快照传入状态卡片，不能继续把旧回归写成所有后续版本的限制。TUI、状态栏、Desktop 面板、首次请求前和空闲时刷新仍需分开验收；本次 app-server 测试通过不代表这些界面已验收。
 
-投影不修改业务状态、不另建账本。先以现有包中的函数和小型类型实现，不为这两个功能重构整个 rai 或增加通用框架。
-
-## 3. 当前实现与落点
-
-| 当前文件 | 已有能力 | 扩展方向 |
-| --- | --- | --- |
-| `internal/rai/codex.go` | 独立运行时 provider、command-based auth、参数和模型偏好传入 | 仅按实测需要调整兼容配置 |
-| `internal/upstream/codex_catalog.go` | 补齐 Codex ModelInfo、默认能力和隐藏图像模型 | 区分默认补齐与明确覆盖，增加最终字段校验 |
-| `internal/app/native_models.go` | 授权过滤、能力覆盖、别名、隐藏条目、传输策略和 ETag | 明确处理顺序与刷新契约 |
-| `internal/store/model_settings.go` | 管理员模型元数据覆盖 | 复用现有设置，按需要补充字段级来源与缺省语义 |
-| `internal/app/subscription_entitlements.go` | 子窗口总额、已结算、预占、剩余、重置时间 | 提取用户额度快照，复用现有计算 |
-| `internal/app/public.go`、`native_websocket.go` | 用户鉴权、准入及请求生命周期 | 在有用户身份和实际路由结果的位置提供额度 |
-| `internal/upstream/native_serve.go` | 上游响应头白名单 | 不直接放开上游配额透传，由外层生成用户配额 |
-
-## 4. 更好的模型元数据
-
-### 4.1 需要表达什么
-
-| 类别 | 内容 | 用户体验 |
-| --- | --- | --- |
-| 身份与展示 | slug、显示名、简洁描述、排序、可见性 | 能辨认并选择正确模型 |
-| 上下文 | 默认/最大上下文、输出上限，以及协议支持的上下文使用策略 | 减少超限及不合适的压缩行为 |
-| 推理 | 支持的 effort、默认 effort、档位说明 | 选择器展示可用档位，实际请求与选择一致 |
-| 输入 | 文本、图像及实际支持的图像细节 | 不向不支持的模型发送图片 |
-| 工具 | apply_patch、并行调用、搜索、结构化工具转换 | Codex 工具与 RelayAPI 适配结果一致 |
-| 传输 | HTTP/SSE、WebSocket 的有效支持情况 | 避免选择无法处理的传输路径 |
-| 兼容 | 必填字段、枚举、客户端版本、目录 revision | 避免单个坏条目导致整个目录失效 |
-
-字段名称和枚举以目标 Codex 版本的契约验证为准。当前代码已有的 ModelInfo 字段可以继续使用；新增字段不能仅凭名称猜测客户端支持。
-
-### 4.2 模型事实与适配能力分开
-
-模型上下文、模态和原生推理档位是模型事实；工具格式转换、传输支持是 RelayAPI 的适配能力；是否允许调用是租户与 Key 的授权策略。三者分别计算，最后生成面向用户的目录。
-
-保留现有“尽量提供完整 Codex agent 能力、由 adapter 转换协议”的产品方向。每个对外声明的能力应有原生支持或已验证的转换路径；无法兑现的能力不能仅因模板默认值而宣传为支持。
-
-当前 `applyModelsDevCapability` 会在关闭 WebSocket 时同时关闭 verbosity 并移除 multi-agent 字段。后续应将这些能力独立判定：传输方式本身不应决定推理或工具能力。已有 provider 限制通过明确的适配规则保留，不能在拆分时意外全部开启。
-
-### 4.3 确定的构建顺序
-
-1. 收集现有模型事实及有效能力快照。
-2. 按字段应用管理员明确设置；保留明确的 `false`。沿用当前配置格式：零上限、空字符串、空列表表示继承；推理明确关闭用仅含 `none` 的列表，不新增配置迁移。
-3. 对缺失的协议必填字段使用版本化兼容默认值，保留来源；不覆盖前两步已确认的值。
-4. 应用 RelayAPI 当前运行时能力约束，生成真实可用能力。管理员设置不能开启服务器实际无法提供的传输。
-5. 应用用户授权和别名，生成可见项及必要的完整隐藏条目。
-6. 校验完整目录，计算用户范围内的 revision / ETag 并输出。
-
-模型事实的覆盖优先级为：有效的管理员显式设置 > 现有规则选定的可信模型资料 > 兼容默认值。现有 OpenAI slug 不使用 models.dev 自动覆盖的规则保留，若需改变，按具体模型另行验证。元数据源只提供事实，不授予模型访问权限。
-
-不要仅凭模型名称前缀判断实际目标能力。别名继承解析后的真实目标元数据；对外 slug 保持别名，授权仍检查最终目标。
-
-### 4.4 校验与更新
-
-- 上下文和输出上限必须有效；最大上下文不得小于默认上下文。新增字段之间的约束以协议与模型资料为准，不随意补出虚假的精确值。
-- 默认推理档位必须属于支持列表。无推理模型按客户端支持的方式表达，不能机械套用通用四档。
-- 明确关闭或不支持的能力不能被后续通用补齐重新开启。优先采用有缺省语义的类型化中间数据，在协议边缘序列化。
-- `visibility=hide` 的条目也必须通过 ModelInfo 校验；继续保留现有 tombstone 行为，防止客户端内置目录重新显示被禁止模型。
-- 图像生成专用模型继续从 Codex 对话选择器隐藏，保留现有图像 API 行为。
-- ETag 应覆盖影响最终输出的模型设置、有效能力快照、别名、授权、运行策略和协议 revision；切换 Key 或租户不得误用旧目录。
-- 外部资料获取失败时使用最后一次有效快照，避免每次启动在线查询。身份相关可见性必须按当前权限重新计算，不能复用旧授权。
-- 新快照或设置在发布前校验；失败不覆盖有效元数据。若当前授权变化，不能回退成包含旧权限的完整目录。
-- 对目标 Codex 版本验证 `X-Models-Etag` 等已有刷新机制；上下文、档位或别名改变后，客户端应取得新数据，而不仅仅是服务器返回新 ETag。
-
-## 5. 用户额度提供
-
-### 5.1 额度快照
-
-建议内部快照包含：用户可见的订阅/bucket 标识、模型适用范围、窗口种类和长度、总额、已结算额、预占额、剩余额、真实重置时间及快照时间。只提供显示所需内容，不返回上游账号、凭据 ID 或其他租户信息。
-
-沿用现有整数金额单位与结算状态：
-
-```text
-used = settled + reserved
-remaining = max(0, limit - used)
-used_percent = clamp(100 × used / limit, 0, 100)  // 仅用于有限且正额度
-```
-
-保留原始整数计算结果，只在协议输出时转换百分比。零额度、无限额度和未知额度分别表达；未知不能显示为“剩余 100%”。额度投影与实际准入共用规则，不另造一套消耗计算。
-
-### 5.2 与 Codex 窗口对应
-
-- 真实 `7d` 配额可以投影成 10080 分钟的周窗口；真实 `5h` 对应 300 分钟。重置时间来自已有子订阅窗口。
-- 普通账户余额没有周周期，不伪装成每周额度，也不生成虚假的重置时间。
-- 查询当前租户全部有效子订阅，并用 Key 权限、子订阅与父订阅模型限制以及运行时实际模型过滤。不为展示创建预占；从父窗口按子订阅分配比例投影尚未使用的窗口。
-- 内部保留全部子订阅与窗口的独立投影。当前 Codex 适配器只选择本次准入实际使用的子订阅，用固定 `codex` 组整体替换旧状态；最多发送两个有效窗口，按周期从短到长选择，超出部分留在内部。窗口支持明确的分钟、小时、天、周时长及 daily/weekly；monthly/余额因没有明确固定时长而省略。
-- 显示用户获配的子额度，不直接使用 `UpstreamUsedPercent` 或上游响应中的账号总额度。
-- 周额度百分比只表示对应配额窗口；余额、Key 限制或上游容量可能独立阻止调用，由现有准入逻辑与错误说明处理。
-
-### 5.3 协议与读取边界
-
-Codex 官方文档中的窗口包含 `usedPercent`、`windowDurationMins`、`resetsAt`，但 `account/rateLimits/read` 与 `account/rateLimits/updated` 面向 ChatGPT 账号。它们是 app-server 读接口和通知，不是第三方 provider 的通用额度写接口。详见[已查阅的官方额度文档](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)。
-
-真实 Codex 0.156.1 的隔离测试确认 HTTP 使用 `x-{bucket-id}-primary/secondary-used-percent`、`window-minutes`、`reset-at` 响应头；WebSocket 使用 `codex.rate_limits`，其中 `metered_limit_name` 为 bucket ID，窗口字段为 `used_percent`、`window_minutes`、`reset_at`。SSE 不消费这一 WebSocket 事件，因此不向 SSE 插入此消息。
-
-**实测兼容边界：** 当前客户端推理通路将多组更新合并，`account/rateLimits/updated` 只通知最后一组。因此当前输出已收敛为准入选定子订阅的单个固定 `codex` 组，最多两个窗口；不启用多订阅同时输出，也不依赖事件顺序选择订阅。完整多组展示需要客户端保留并通知全部组。WebSocket 解析器会丢弃 `limit_name`；HTTP 显示名称仅发送安全 ASCII，其他名称回退为服务标识。
-
-CLI `/status`、状态栏和桌面端分别验收；客户端状态能解析不代表所有 UI 都已逐一验收。Codex CLI 0.158.0 隔离测试仍能解析 HTTP / WebSocket 额度并发出 app-server 更新，但当前 CLI `/status` 对自定义 provider 显示 `data not available yet`；见 [Codex 回归问题 #45052](https://github.com/openai/codex/issues/45052)。RAI 提供 `rai quota`，通过当前 API Key 的只读 `/api/rai/quota` 查看本人可用额度。
-
-额度数据由具有用户身份的 RelayAPI 网关层生成。若验证确实需要额外的只读查询端点，使用现有模型 Key 鉴权并限定到该 Key 的可见范围；不增加管理 API 或管理凭据。
-
-HTTP 响应头提供发送时快照；结算后的新数据只通过已验证的 SSE/WebSocket 更新机制提供。长连接要考虑多轮请求，不能仅在握手时发送一次。未识别的事件不得试探性加入生产响应流。
-
-额度展示失败不应改变请求计费、准入或原有模型调用结果。展示读取应有超时与成本边界，不为每个流片段查询数据库；更新时机围绕准入和终态结算。
-
-## 6. rai 与 Codex 的兼容边界
-
-- 继续使用现有运行时 provider 和 `credential print`，保持模型 Key 的用途。
-- 保持 `--` 后参数透传、子进程 I/O、退出码、CODEX_HOME、模型与推理偏好同步、configure 备份及更新恢复行为。
-- 服务端拥有模型和额度数据，rai 不保存另一份事实源，也不修改 Codex 本地会话数据库或伪造 ChatGPT 登录。
-- 启动适配、目录投影、额度投影分别测试。新元数据或额度改动不应要求重写现有 `App` 命令分发。
-- 按经过验证的客户端版本维护兼容 fixture。未知版本采用仍有效的基础契约，扩展字段与额度显示按兼容证据启用；不要只比较二进制版本字符串就假定能力存在。
-- 若原生额度 UI 必须修改 Codex 才能接入，记录限制并另行决策；本设计不包含维护 Codex 分支或替代界面的工作。
-
-## 7. 实施顺序与验收
-
-| 步骤 | 交付 | 验收 |
-| --- | --- | --- |
-| 1. 固定兼容基线 | 现有目录、别名、模型选择、偏好和启动行为 fixture | 明确当前支持范围及不可回归行为 |
-| 2. 原生额度验证 | 隔离 Codex 配置、本地 mock、假 Key、已知额度窗口 | 确认自定义 provider 的输入通路、刷新和实际 UI；分别记录 CLI 与桌面端结果 |
-| 3. 元数据改进 | 字段覆盖顺序、独立能力判断、目录校验和 revision | 管理员显式值不被补齐覆盖；模型选择与实际请求一致；客户端取得更新 |
-| 4. 用户额度接入 | 从真实子窗口生成快照，接入步骤 2 验证通过的协议 | 预占、结算、耗尽、重置、多 Key、多订阅和长连接展示正确；无跨租户泄露 |
-| 5. 联合回归 | 目标 Codex 版本与旧服务端/旧 rai 组合 | 新功能缺失不破坏已有启动、推理、模型目录和偏好 |
-
-步骤 3 不依赖额度 UI 验证成功，可以独立交付。步骤 4 以原生通路验证通过为前提，不以猜测的响应头或伪造账号状态实现。
-
-测试沿用已有 `internal/rai`、`internal/upstream/codex_catalog_test.go`、`internal/app/native_models_test.go` 和订阅测试。新增测试围绕真实边界：明确的 false/空值、无推理模型、别名目标变化、权限变化、坏快照、缓存刷新和窗口重置。协议层增加真实 Codex 客户端验证，不能只断言 JSON 中存在字段。
-
-## 8. 当前交付与验证方式
-
-已实施：按字段合并元数据、保留显式能力、推理档位规范化和保存校验、独立传输偏好、内容 revision、读取失败保留快照；租户与 Key 权限范围内的多子订阅配额查询、HTTP 响应头、WebSocket 初始/终态更新及上游额度过滤。另提供按当前 Key 授权范围查询的只读 `rai quota`；没有新增管理接口或授权体系。
-
-额度查询按已鉴权租户、Key 模型权限及有效订阅过滤，以四次批量读取避免 N+1 查询；按父窗口代次投影分配额，只有同一代次才复用子窗口计数。Codex 输出再按 admission 的子订阅 ID 精确选择，最多发送两个有效窗口，不限于 5h/7d。读取超时上限为 250ms；无已选订阅、没有有效窗口或读取失败均输出空状态，避免保留另一个订阅的额度。HTTP 是准入后、响应前的快照，结算结果在后续请求反映；WebSocket 在每轮用量持久化后更新。两个槽位整体替换，缺失窗口为 null。非 Codex WebSocket 客户端不增加新事件。
-
-常规测试：`go test ./...`。真实客户端契约测试设置 `CODEX_INTEROP_BINARY` 为 Codex 原生可执行文件的绝对路径，再运行 `go test ./internal/app -run '^TestCodexClientReadsRelayQuota$' -count=1 -v`。该测试使用隔离 CODEX_HOME、本地 mock 和假 Key，通过 app-server 验证两种传输下已选订阅的两个窗口、切换后只有一个窗口以及空额度状态；同时沿用 rai 的 command-based auth，确认 Codex 获取完整目录，并实际采用自定义模型的上下文窗口。数据库隔离与重置测试为 `TestSubscriptionQuotasAreBoundToTenantModelsAndGeneration`，需要专用 `TEST_DATABASE_URL`；未配置时跳过。
-
-后续客户端版本须重跑上述协议测试。桌面端面板、首次请求前显示及真实部署下的完整用户流程仍是单独的验收项，不能用 mock 协议测试替代。
+普通验证使用 `go test ./...`。数据库隔离、权限和窗口代次测试需专用 `TEST_DATABASE_URL`，未配置时跳过。实际上游搜索、Fast、摘要质量和 Desktop/TUI 展示仍需独立验收；协议测试不等于商业上游与客户端界面均已验证。

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/gorilla/websocket"
 )
@@ -58,16 +60,28 @@ func TestCodexClientReadsRelayQuota(t *testing.T) {
 				quota := projectSelectedCodexQuota(subscriptions, selected, now)
 				model := "gpt-5.4"
 				if transport == "catalog" {
-					model = "relay-interop-model"
+					model = "gpt-interop-model"
+				}
+				clientModel := model
+				var canonicalCatalog *App
+				if transport == "catalog" {
+					clientModel = "openai/" + model
+					canonicalCatalog = modelIDTestApp(t, model)
+					canonicalCatalog.setCapabilities(pricing.NewCapabilityIndex("canonical-interop", []pricing.Capability{{ID: model, Provider: "openai", Context: 128000, MaxInput: 128000, ServiceTiers: []string{"priority"}, Reasoning: true, ReasoningOptions: []pricing.ReasoningOption{{Type: "effort", Values: []string{"high"}}}}}))
 				}
 				var httpCalls, wsCalls, catalogCalls atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if strings.HasSuffix(r.URL.Path, "/models") {
 						catalogCalls.Add(1)
+						if canonicalCatalog != nil {
+							canonicalCatalog.serveModelCatalog(w, r, store.KeyContext{TenantModels: []string{model}})
+							return
+						}
 						// Use the production completion/normalization pipeline. The
 						// distinctive context size proves the client used this catalog.
 						input, _ := json.Marshal(map[string]any{"models": []any{map[string]any{"slug": model, "context_window": 128000, "effective_context_window_percent": 100, "prefer_websockets": transport == "websocket", "supported_reasoning_levels": []any{map[string]any{"effort": "high", "description": "Probe high"}}, "default_reasoning_level": "high"}}})
-						catalog, err := promoteCodexCatalogCapabilities(input, nil)
+						index := pricing.NewCapabilityIndex("interop", []pricing.Capability{{ID: model, Provider: "openai", ServiceTiers: []string{"priority"}}})
+						catalog, err := promoteCodexCatalogCapabilities(input, index)
 						if err != nil {
 							t.Error(err)
 							http.Error(w, "catalog error", 500)
@@ -97,6 +111,9 @@ func TestCodexClientReadsRelayQuota(t *testing.T) {
 							if conn.ReadJSON(&request) != nil {
 								return
 							}
+							if request["generate"] != false && request["service_tier"] != "priority" {
+								t.Errorf("Codex omitted priority tier: %v", request["service_tier"])
+							}
 							// Exercise replacement on the same connection as well as
 							// initial state: the final snapshot must win.
 							stale := projectSelectedCodexQuota(subscriptions, "codex-one", now)
@@ -110,6 +127,11 @@ func TestCodexClientReadsRelayQuota(t *testing.T) {
 						}
 					}
 					httpCalls.Add(1)
+					body, _ := io.ReadAll(r.Body)
+					var request map[string]any
+					if json.Unmarshal(body, &request) != nil || request["model"] != clientModel || request["service_tier"] != "priority" {
+						t.Errorf("Codex omitted HTTP priority tier")
+					}
 					quota.setHeaders(w.Header())
 					w.Header().Set("Content-Type", "text/event-stream")
 					for _, event := range mockCodexResponseEvents(0, false, model) {
@@ -122,7 +144,7 @@ func TestCodexClientReadsRelayQuota(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 				defer cancel()
 				helperArgs, _ := json.Marshal([]string{"-test.run=^TestCodexInteropCredentialHelper$"})
-				args := []string{"app-server", "-c", "model=" + strconv.Quote(model),
+				args := []string{"app-server", "-c", `service_tier="priority"`, "-c", "model=" + strconv.Quote(clientModel),
 					"-c", `model_provider="relay_probe"`,
 					"-c", `model_providers.relay_probe.name="RelayAPI probe"`,
 					"-c", "model_providers.relay_probe.base_url=" + strconv.Quote(server.URL+"/v1"),
@@ -169,7 +191,7 @@ func TestCodexClientReadsRelayQuota(t *testing.T) {
 					}
 					if msg["id"] == float64(1) {
 						send(map[string]any{"method": "initialized"})
-						send(map[string]any{"id": 2, "method": "thread/start", "params": map[string]any{"model": model, "modelProvider": "relay_probe", "cwd": home, "approvalPolicy": "never", "sandbox": "read-only"}})
+						send(map[string]any{"id": 2, "method": "thread/start", "params": map[string]any{"model": clientModel, "modelProvider": "relay_probe", "cwd": home, "approvalPolicy": "never", "sandbox": "read-only"}})
 					}
 					if msg["id"] == float64(2) {
 						result := msg["result"].(map[string]any)

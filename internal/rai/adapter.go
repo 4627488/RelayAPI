@@ -15,6 +15,7 @@ type Adapter interface {
 }
 
 type LaunchContext struct {
+	Codex      *CodexCapabilities
 	Profile    Profile
 	APIBase    string
 	APIKey     string

@@ -71,7 +71,7 @@ func codexAuthGroup(provider map[string]any) map[string]any {
 }
 
 func restoreCodexFieldsAt(current, before, after map[string]any, path string) {
-	if path == "model_providers."+providerID {
+	if strings.HasPrefix(path, "model_providers.") && strings.Count(path, ".") == 1 {
 		cg, bg, ag := codexAuthGroup(current), codexAuthGroup(before), codexAuthGroup(after)
 		if !reflect.DeepEqual(cg, ag) {
 			// Mask this group's changes without modifying either journal snapshot.
@@ -100,7 +100,7 @@ func restoreCodexFieldsAt(current, before, after map[string]any, path string) {
 		keys[k] = true
 	}
 	for k := range keys {
-		if path == "model_providers."+providerID && k == "auth" {
+		if strings.HasPrefix(path, "model_providers.") && strings.Count(path, ".") == 1 && k == "auth" {
 			continue
 		}
 		b, bok := before[k]
@@ -254,10 +254,14 @@ func restoreCodexManaged(path string, temporary bool) error {
 }
 
 func (a *App) unconfigureCodex(args []string) error {
-	if len(args) != 1 || args[0] != "codex" {
+	if len(args) < 1 || args[0] != "codex" {
 		return errors.New("usage: rai unconfigure codex")
 	}
-	path, err := codexConfigPath(a.Environ)
+	nativeProfile, err := parseCodexProfileFlag(args[1:])
+	if err != nil {
+		return err
+	}
+	path, err := codexTargetConfigPath(a.Environ, nativeProfile)
 	if err != nil {
 		return err
 	}

@@ -53,12 +53,13 @@ type tokenError struct {
 }
 
 type Session struct {
-	ContractVersion string   `json:"contract_version"`
-	Name            string   `json:"name"`
-	APIBase         string   `json:"api_base"`
-	Models          []string `json:"models"`
-	DefaultModel    string   `json:"default_model"`
-	Adapters        []string `json:"adapters"`
+	Codex           *CodexCapabilities `json:"codex,omitempty"`
+	ContractVersion string             `json:"contract_version"`
+	Name            string             `json:"name"`
+	APIBase         string             `json:"api_base"`
+	Models          []string           `json:"models"`
+	DefaultModel    string             `json:"default_model"`
+	Adapters        []string           `json:"adapters"`
 }
 
 type Gateway struct {

@@ -532,7 +532,7 @@ func TestRuntimeRoutesPinnedCredentialAndModelAlias(t *testing.T) {
 	if !ok || !response.Handled {
 		t.Fatal("pinned credential route was not handled")
 	}
-	if response.Target != "openai" || response.TargetModel != "gpt-image-1" {
+	if response.Target != "openai-compatibility" || response.TargetModel != "gpt-image-1" {
 		t.Fatalf("route = %#v", response)
 	}
 }

@@ -675,6 +675,11 @@ func attachModelCapability(item *store.AvailableModelPrice, index *pricing.Capab
 	item.InputModalities = append([]string(nil), capability.InputModalities...)
 	item.PreferWebSockets = capability.PreferWebSockets
 	item.CapabilitySource = capability.Source
+	item.MaxInputTokens = capability.MaxInput
+	item.ToolCall = capability.ToolCall
+	item.StructuredOutput = capability.StructuredOutput
+	item.Temperature = capability.Temperature
+	item.OutputModalities = append([]string(nil), capability.OutputModalities...)
 	if item.DefaultReasoningLevel == "" && len(item.ReasoningEfforts) > 0 {
 		item.DefaultReasoningLevel = item.ReasoningEfforts[0]
 	}

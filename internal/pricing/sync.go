@@ -22,21 +22,48 @@ type modelsDevProvider struct {
 	Models map[string]modelsDevModel `json:"models"`
 }
 type modelsDevModel struct {
+	Raw              json.RawMessage         `json:"-"`
 	ID               string                  `json:"id"`
 	Name             string                  `json:"name"`
+	Description      string                  `json:"description,omitempty"`
 	Status           string                  `json:"status"`
+	ToolCall         *bool                   `json:"tool_call,omitempty"`
+	StructuredOutput *bool                   `json:"structured_output,omitempty"`
+	Temperature      *bool                   `json:"temperature,omitempty"`
 	Reasoning        bool                    `json:"reasoning"`
 	ReasoningOptions []modelsDevReasoningOpt `json:"reasoning_options"`
 	Limit            modelsDevLimit          `json:"limit"`
 	Modalities       modelsDevModalities     `json:"modalities"`
 	Cost             modelsDevCost           `json:"cost"`
+	Experimental     struct {
+		Modes map[string]struct {
+			Provider struct {
+				Body struct {
+					ServiceTier string `json:"service_tier"`
+				} `json:"body"`
+			} `json:"provider"`
+		} `json:"modes"`
+	} `json:"experimental,omitempty"`
 }
+
+func (m *modelsDevModel) UnmarshalJSON(raw []byte) error {
+	type modelAlias modelsDevModel
+	var parsed modelAlias
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return err
+	}
+	*m = modelsDevModel(parsed)
+	m.Raw = append(json.RawMessage(nil), raw...)
+	return nil
+}
+
 type modelsDevReasoningOpt struct {
 	Type   string   `json:"type"`
 	Values []string `json:"values"`
 }
 type modelsDevLimit struct {
 	Context int `json:"context"`
+	Input   int `json:"input,omitempty"`
 	Output  int `json:"output"`
 }
 type modelsDevModalities struct {
@@ -132,7 +159,10 @@ func FetchModelsDev(ctx context.Context, client *http.Client, rawURL string) (Sy
 			if model.Cost.CacheWrite != nil && validCatalogCost(*model.Cost.CacheWrite) {
 				cacheWrite = *model.Cost.CacheWrite
 			}
-			rawModel, _ := json.Marshal(model)
+			rawModel := model.Raw
+			if len(rawModel) == 0 {
+				rawModel, _ = json.Marshal(model)
+			}
 			name := modelID
 			if providerID != "" && !strings.Contains(name, "/") {
 				name = providerID + "/" + name

@@ -191,10 +191,10 @@ func TestPromoteOverlaysModelsDevCapabilities(t *testing.T) {
 
 	gpt := got["gpt-5.4"]
 	assertCodexModelInfoComplete(t, gpt)
-	if gpt["context_window"] != float64(262144) {
-		t.Fatalf("official OpenAI slug was overlaid: context=%#v", gpt["context_window"])
+	if gpt["context_window"] != float64(1050000) {
+		t.Fatalf("first-party OpenAI facts were ignored: context=%#v", gpt["context_window"])
 	}
-	assertReasoningEfforts(t, gpt, []string{"none", "low", "medium", "high"}, "medium")
+	assertReasoningEfforts(t, gpt, []string{"none", "low", "medium", "high", "xhigh"}, "medium")
 }
 
 func TestPromoteOverlaysAdminKimiK3256k(t *testing.T) {
@@ -522,5 +522,33 @@ func TestServeModelCatalogDisablesWebSocketsWhenRuntimePolicyIsOff(t *testing.T)
 	}
 	if item == nil || item["prefer_websockets"] != false {
 		t.Fatalf("gpt-5.4 = %#v", item)
+	}
+}
+
+func TestCodexUsesModernInputBudgetAndHidesNonToolModels(t *testing.T) {
+	noTools := false
+	index := pricing.NewCapabilityIndex("modern", []pricing.Capability{
+		{ID: "openai/gpt-test", Provider: "openai", Context: 100000, MaxInput: 80000, MaxOutput: 20000, Reasoning: true, ServiceTiers: []string{"priority"}},
+		{ID: "vendor/plain", Provider: "vendor", Context: 10000, ToolCall: &noTools},
+	})
+	payload, err := promoteCodexCatalogCapabilities([]byte(`{"models":[{"slug":"gpt-test"},{"slug":"plain"}]}`), index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatal(err)
+	}
+	gpt := document.Models[0]
+	if gpt["context_window"] != float64(100000) || gpt["effective_context_window_percent"] != float64(80) || gpt["auto_compact_token_limit"] != float64(80000) {
+		t.Fatalf("bad modern budget: %s", payload)
+	}
+	if tiers, _ := gpt["service_tiers"].([]any); len(tiers) != 1 || tiers[0].(map[string]any)["id"] != "priority" {
+		t.Fatalf("missing priority tier: %s", payload)
+	}
+	if document.Models[1]["visibility"] != "hide" || document.Models[1]["apply_patch_tool_type"] != nil {
+		t.Fatalf("advertised tools on unsupported model: %s", payload)
 	}
 }

@@ -3,6 +3,7 @@ package rai
 import (
 	"encoding/json"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -31,7 +32,7 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 	}
 	// Codex recursively merges even whole-table CLI overrides. Use an unused
 	// provider so persisted credentials cannot mix with our auth command.
-	providerID, err := codexRuntimeProvider(ctx.Environ)
+	providerID, err := codexRuntimeProvider(ctx.Environ, ctx.Args...)
 	if err != nil {
 		return Command{}, err
 	}
@@ -52,17 +53,21 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 	if err != nil {
 		return Command{}, err
 	}
+	capabilities := effectiveCodexCapabilities(ctx.Codex)
 	overrides := []string{
 		"model_provider=" + providerID,
 		"model_providers." + providerID + ".name=RelayAPI",
 		"model_providers." + providerID + ".base_url=" + quoteTOMLString(base),
 		"model_providers." + providerID + ".wire_api=responses",
-		"model_providers." + providerID + ".supports_websockets=true",
-		"model_providers." + providerID + ".supports_standalone_web_search=true",
+		"model_providers." + providerID + ".supports_websockets=" + strconv.FormatBool(capabilities.WebSockets),
+		"model_providers." + providerID + ".supports_standalone_web_search=" + strconv.FormatBool(capabilities.StandaloneWebSearch),
 		"model_providers." + providerID + ".auth.command=" + quoteTOMLString(rai),
 		"model_providers." + providerID + ".auth.args=" + string(authArgs),
-		"model_providers." + providerID + ".auth.timeout_ms=5000",
-		"model_providers." + providerID + ".auth.refresh_interval_ms=300000",
+		"model_providers." + providerID + ".auth.timeout_ms=" + strconv.FormatInt(codexAuthTimeoutMS, 10),
+		"model_providers." + providerID + ".auth.refresh_interval_ms=" + strconv.FormatInt(codexAuthRefreshMS, 10),
+	}
+	if capabilities.RemoteCompaction {
+		overrides = append(overrides, "model_providers."+providerID+".capabilities.remote_compaction=\"v2\"")
 	}
 	if ctx.Model != "" {
 		overrides = append(overrides, "model="+quoteTOMLString(ctx.Model))
@@ -79,7 +84,6 @@ func (CodexAdapter) Prepare(ctx LaunchContext) (Command, error) {
 		Path: path,
 		Args: args,
 		Env: mergeEnv(ctx.Environ, map[string]string{
-			envAPIKey:  ctx.APIKey,
 			envProfile: ctx.Profile.Name,
 		}),
 	}, nil

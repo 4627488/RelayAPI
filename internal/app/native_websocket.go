@@ -289,7 +289,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	firstRequestBytes := int64(len(firstFrame))
 	frameMeta := readRequestMeta(firstFrame, r.URL.Path)
 	if meta.Model == "" {
-		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
+		resolved := a.resolveClientModel(frameMeta.Model, key)
 		if resolved.ModelAlias == "" {
 			resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, r, firstFrame)
 			if !strings.EqualFold(resolved.Model, frameMeta.Model) {
@@ -699,7 +699,7 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 	}
 	if event.Type == "session.update" {
 		update := readRequestMeta(payload, "")
-		resolved := resolveAPIKeyModel(update.Model, key.ModelAliases)
+		resolved := a.resolveClientModel(update.Model, key)
 		if update.Model != "" && !strings.EqualFold(resolved.Model, accounting.currentMeta.Model) {
 			return nil, accounting.currentMeta, false, fmt.Errorf("session.update cannot change the admitted model")
 		}
@@ -728,7 +728,7 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 		nextMeta = accounting.pending[len(accounting.pending)-1].Meta
 	}
 	if frameMeta.Model != "" {
-		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
+		resolved := a.resolveClientModel(frameMeta.Model, key)
 		if request != nil {
 			if authorization, ok := request.Context().Value(realtimeAuthContext).(realtimeAuthorization); ok && !strings.EqualFold(resolved.Model, authorization.Model) {
 				return nil, nextMeta, true, fmt.Errorf("realtime client secret cannot change its scoped model")

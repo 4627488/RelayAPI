@@ -20,7 +20,7 @@ const maxModelCatalogBytes int64 = 256 << 20
 
 // Bump this when the Codex ModelInfo shape changes so clients refresh
 // GET /v1/models and honor X-Models-Etag on subsequent Responses calls.
-const codexCatalogRevisionToken = "codex-modelinfo-v4"
+const codexCatalogRevisionToken = "codex-modelinfo-v6"
 
 func isNativeModelCatalogRequest(r *http.Request) bool {
 	_, _, ok := modelMetadataRequest(r)
@@ -86,6 +86,8 @@ func authorizedModelAliases(key store.KeyContext) []store.APIKeyModelAlias {
 // formats, then applies Relay's tenant and key policy.
 func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key store.KeyContext) {
 	collection, requestedModel, _ := modelMetadataRequest(r)
+	generatedIDs := a.modelIDAliases(key)
+	key = a.modelIDKey(key)
 	if requestedModel != "" && !key.AllowsModel(resolveAPIKeyModel(requestedModel, key.ModelAliases).Model) {
 		writeError(w, http.StatusForbidden, "model_not_allowed", "This API key does not have access to the requested model.")
 		return
@@ -159,6 +161,11 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 		payload, err = filterModelCatalogForClient(payload, clientModels, codexCatalog)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "model_catalog_error", "无法过滤模型列表")
+			return
+		}
+		payload, err = projectCanonicalModelIDs(payload, generatedIDs, codexCatalog, requestedModel != "")
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "model_catalog_error", "无法规范模型标识")
 			return
 		}
 		if requestedModel != "" {
@@ -354,7 +361,7 @@ func applyModelsDevCapability(item map[string]any, slug string, index *pricing.C
 	if item == nil || index == nil {
 		return
 	}
-	if capability, ok := index.LookupCatalog(slug); ok && !skipModelsDevOverlay(slug, capability) {
+	if capability, ok := index.LookupCatalog(slug); ok && trustedCodexCapability(slug, capability) {
 		applyCodexCapability(item, capability)
 	}
 	if capability, ok := index.LookupOverride(slug); ok {
@@ -366,12 +373,49 @@ func applyCodexCapability(item map[string]any, capability pricing.Capability) {
 	if capability.Name != "" {
 		item["display_name"] = capability.Name
 	}
+	if capability.Description != "" {
+		item["description"] = capability.Description
+	}
+	if len(capability.ServiceTiers) > 0 {
+		tiers := make([]any, 0, len(capability.ServiceTiers))
+		for _, tier := range capability.ServiceTiers {
+			if tier == "priority" {
+				tiers = append(tiers, map[string]any{"id": "priority", "name": "Fast", "description": "Priority processing when available; priority rates apply."})
+			}
+		}
+		if len(tiers) > 0 {
+			item["service_tiers"] = tiers
+		}
+	}
 	if capability.Context > 0 {
 		item["context_window"] = capability.Context
 		item["max_context_window"] = capability.Context
 	}
 	if capability.MaxOutput > 0 {
 		item["max_output_tokens"] = capability.MaxOutput
+	}
+	// Modern Codex consumes the input budget and compaction threshold rather
+	// than the legacy max_output_tokens field. Reserve the reported output
+	// budget, but never fabricate a tiny window when output equals context.
+	contextWindow := codexCatalogInt(item["context_window"])
+	inputBudget := capability.MaxInput
+	outputBudget := capability.MaxOutput
+	if outputBudget <= 0 && capability.Context > 0 {
+		outputBudget = codexCatalogInt(item["max_output_tokens"])
+	}
+	if inputBudget <= 0 && outputBudget > 0 && outputBudget < contextWindow {
+		inputBudget = contextWindow - outputBudget
+	}
+	if inputBudget > 0 && contextWindow > 0 {
+		inputBudget = min(inputBudget, contextWindow)
+		item["effective_context_window_percent"] = max(1, int(float64(inputBudget)/float64(contextWindow)*100))
+		item["auto_compact_token_limit"] = min(inputBudget, contextWindow-contextWindow/10)
+	}
+	if capability.ToolCall != nil && !*capability.ToolCall {
+		// Such models remain callable via the public APIs, but cannot operate
+		// Codex's agent loop. Do not present them as agent-capable choices.
+		item["visibility"] = "hide"
+		item["apply_patch_tool_type"] = nil
 	}
 	if modalities := codexInputModalities(capability.InputModalities); len(modalities) > 0 {
 		item["input_modalities"] = modalities
@@ -410,18 +454,16 @@ func applyCodexCapability(item map[string]any, capability pricing.Capability) {
 	}
 }
 
-func skipModelsDevOverlay(slug string, capability pricing.Capability) bool {
-	if strings.EqualFold(capability.Provider, "openai") {
-		return true
-	}
+func trustedCodexCapability(slug string, capability pricing.Capability) bool {
 	lower := strings.ToLower(strings.TrimSpace(slug))
 	switch {
 	case strings.HasPrefix(lower, "gpt-"), strings.HasPrefix(lower, "o1-"),
 		strings.HasPrefix(lower, "o3-"), strings.HasPrefix(lower, "o4-"),
 		strings.HasPrefix(lower, "codex-"):
-		return true
+		// Aggregator names must not overwrite first-party OpenAI facts.
+		return strings.EqualFold(capability.Provider, "openai")
 	default:
-		return false
+		return true
 	}
 }
 
@@ -773,4 +815,15 @@ func addCodexModelAliases(payload []byte, aliases []store.APIKeyModelAlias) ([]b
 	}
 	document["models"] = items
 	return json.Marshal(document)
+}
+
+func codexCatalogInt(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
 }
