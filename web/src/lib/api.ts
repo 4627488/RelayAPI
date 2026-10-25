@@ -71,8 +71,6 @@ export interface Invitation {
 }
 
 export interface RequestLog {
-  canonical_model?: string
-  canonical_requested_model?: string
   first_token_ms?: number
   reservation_request_id?: string
   log_unit?: string
@@ -197,7 +195,6 @@ export interface RequestLogPage {
 }
 
 export interface ModelPrice {
-  canonical_model?: string
   model: string
   input_nano_usd_per_token: number
   output_nano_usd_per_token: number
@@ -250,7 +247,6 @@ export interface UsageObservability {
   unpriced_requests: number
   unsettled_requests: number
   failures: {
-    canonical_model?: string
     model: string
     status_code: number
     error_code: string
@@ -303,7 +299,6 @@ export interface UsageReport {
     cost_nano_usd: number
   }>
   models: Array<{
-    canonical_model?: string
     model: string
     requests: number
     errors: number
@@ -563,7 +558,6 @@ export interface ChildSubscription {
   capacity_mode?: CapacityMode
   model_allowlist: string[]
   effective_model_allowlist?: string[]
-  canonical_model_allowlist?: string[]
   model_source?: "child" | "parent" | "upstream"
   parent_name?: string
   parent_plan_type?: string
@@ -598,14 +592,12 @@ export type TenantSubscription = Pick<
   | "available"
   | "model_allowlist"
   | "effective_model_allowlist"
-  | "canonical_model_allowlist"
   | "entitlement_windows"
   | "reset_history"
 >
 
 export interface TenantModel {
   id: string
-  canonical_id?: string
   settlements: Array<{
     mode: "balance" | "subscription"
     subscription_id?: string

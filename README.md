@@ -147,8 +147,6 @@ RelayAPI 内部按当前 Key 权限独立读取多个子订阅额度；向当前
 
 兼容策略依据：Codex 0.156.1 的推理通路只向界面通知一批更新中的最后一组，因此当前不启用多订阅同时输出。内部多订阅能力保留，原生同时展示等待客户端完整支持。WebSocket 会忽略自定义显示名称；额度归属以实际请求路由为准。
 
-对外模型目录优先使用 `作者/模型名`（如 `openai/gpt-5.4`、`x-ai/grok-4.5`），旧 ID 仍可调用和查询。规范化不改写订阅、权限或计费模型；已发布完整 ID、自定义别名和来源不明名称保留。详见 [模型 ID 与兼容规则](docs/model-ids.md)。
-
 Codex 接入按服务器版本化能力契约启用 WebSocket 和远程压缩；嵌入式网关可将 Responses WebSocket、compaction v2 转换到 Chat-only 上游，真实 Codex 0.163.0 已通过 HTTP/WS 压缩及续接测试。models.dev 的输入预算、上下文、工具、推理、模态与 priority 资料参与目录投影，未定价模型也保留能力；不会因资料标记而扩大调用权限。摘要适配的质量、实际 Fast/搜索与 Desktop 展示需针对真实上游验收。
 
 Codex 模型目录按字段合并资料源与「模型设置」：未填写的字段继承已有资料，明确的 `prefer_websockets=false` 会保留，关闭 WebSocket 本身不再连带关闭其他 agent 能力。空推理列表表示继承；只允许无推理时填写 `none`。目录保留明确的能力值、校正推理默认档位，并在模型覆盖内容变更或删除时更新 revision。详见 [额度与 Codex 互操作设计](docs/rai-architecture.md)。

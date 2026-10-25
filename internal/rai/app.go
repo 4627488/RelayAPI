@@ -631,7 +631,7 @@ func (a *App) status(ctx context.Context, profileName string) error {
 		a.terminal(a.Stderr).message("warning", "session: %s", redact(err.Error()))
 		return nil
 	}
-	ui.field("Available models", fmt.Sprint(len(session.displayModels())))
+	ui.field("Available models", fmt.Sprint(len(session.Models)))
 	if profile.DefaultModel == "" {
 		ui.field("Site default", session.DefaultModel)
 	}
@@ -661,11 +661,10 @@ func (a *App) modelsWithOutput(ctx context.Context, profileName string, asJSON b
 	}
 	defaultModel, _ := resolveLaunchModel(profile, "", session.Models, session.DefaultModel)
 	if asJSON {
-		return a.printManagementJSON(map[string]any{"models": session.Models, "default_model": defaultModel, "canonical_models": session.displayModels(), "canonical_default_model": session.displayModel(defaultModel)})
+		return a.printManagementJSON(map[string]any{"models": session.Models, "default_model": defaultModel})
 	}
 	ui := a.terminal(a.Stdout)
-	defaultModel = session.displayModel(defaultModel)
-	for _, model := range session.displayModels() {
+	for _, model := range session.Models {
 		mark := " "
 		if model == defaultModel {
 			mark = "*"

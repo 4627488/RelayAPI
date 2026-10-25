@@ -193,9 +193,7 @@ export function ObservationPanels({ report }: { report: UsageReport }) {
                       {o.failures.map((f, i) => (
                         <TableRow key={i}>
                           <TableCell className="max-w-60 break-all whitespace-normal">
-                            <p>
-                              {f.canonical_model || f.model || "未识别模型"}
-                            </p>
+                            <p>{f.model || "未识别模型"}</p>
                             <p className="text-xs text-muted-foreground">
                               {f.error_code || "未提供错误码"}
                             </p>
@@ -259,7 +257,7 @@ export function AttributionPanel({
       ? (report.models ?? []).map((x) => ({
           ...x,
           id: x.model,
-          name: x.canonical_model || x.model || "未识别",
+          name: x.model || "未识别",
           detail: `缓存命中 ${cacheHitRateLabel(x.cached_tokens, x.prompt_tokens)}`,
         }))
       : activeDimension === "keys"
@@ -286,7 +284,7 @@ export function AttributionPanel({
             }))
   const rows = data
     .filter((x) =>
-      `${x.id} ${x.name} ${x.detail}`
+      `${x.name} ${x.detail}`
         .toLowerCase()
         .includes(search.trim().toLowerCase())
     )

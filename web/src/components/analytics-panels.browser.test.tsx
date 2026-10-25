@@ -73,19 +73,3 @@ it("does not present absent observations as healthy zero latency", async () => {
     .element(screen.getByRole("tab", { name: "提供商", exact: true }))
     .not.toBeInTheDocument()
 })
-
-it("searches canonical model names without changing billing attribution", async () => {
-  const normalized = {
-    ...report,
-    models: report.models.map((row) => ({
-      ...row,
-      canonical_model: `openai/${row.model}`,
-    })),
-  }
-  const screen = await render(<AttributionPanel report={normalized} admin />)
-  await screen.getByRole("textbox", { name: "搜索归因名称" }).fill("openai/")
-  await expect
-    .element(screen.getByText("openai/expensive-model", { exact: true }))
-    .toBeVisible()
-  expect(normalized.models[0].model).toBe("expensive-model")
-})

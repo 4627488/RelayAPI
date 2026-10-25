@@ -167,8 +167,6 @@ type UsageDailyRollup struct {
 }
 
 type RequestLog struct {
-	CanonicalModel               string    `gorm:"-" json:"canonical_model,omitempty"`
-	CanonicalRequestedModel      string    `gorm:"-" json:"canonical_requested_model,omitempty"`
 	UsageQuality                 string    `gorm:"not null;default:''" json:"usage_quality,omitempty"`
 	FirstTokenMS                 *int64    `gorm:"column:first_token_ms" json:"first_token_ms,omitempty"`
 	LogUnit                      string    `gorm:"not null;default:step" json:"log_unit"`

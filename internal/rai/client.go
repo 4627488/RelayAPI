@@ -58,7 +58,6 @@ type Session struct {
 	Name            string             `json:"name"`
 	APIBase         string             `json:"api_base"`
 	Models          []string           `json:"models"`
-	ModelIDs        map[string]string  `json:"model_ids,omitempty"`
 	DefaultModel    string             `json:"default_model"`
 	Adapters        []string           `json:"adapters"`
 }

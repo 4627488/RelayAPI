@@ -15,7 +15,6 @@ func (a *App) raiCodexCapabilities(key store.KeyContext, models []string) rai.Co
 	if len(models) == 0 || a.nativeRuntime == nil {
 		return c
 	}
-	key = a.modelIDKey(key)
 	embedded := a.inferenceCPA() != nil
 	c.WebSockets = a.upstreamWebSockets()
 	c.RemoteCompaction = embedded

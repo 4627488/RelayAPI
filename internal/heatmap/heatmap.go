@@ -13,19 +13,17 @@ type Usage struct {
 }
 
 type Day struct {
-	CanonicalModel string `json:"canonical_model,omitempty"`
-	Date           string `json:"date"`
-	Tokens         int64  `json:"tokens"`
-	Model          string `json:"model"`
-	Level          int    `json:"level"`
-	Color          string `json:"color"`
+	Date   string `json:"date"`
+	Tokens int64  `json:"tokens"`
+	Model  string `json:"model"`
+	Level  int    `json:"level"`
+	Color  string `json:"color"`
 }
 
 type Model struct {
-	CanonicalName string `json:"canonical_name,omitempty"`
-	Name          string `json:"name"`
-	Tokens        int64  `json:"tokens"`
-	Color         string `json:"color"`
+	Name   string `json:"name"`
+	Tokens int64  `json:"tokens"`
+	Color  string `json:"color"`
 }
 
 type Report struct {

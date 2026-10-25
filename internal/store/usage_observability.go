@@ -30,11 +30,10 @@ type UsageObservability struct {
 }
 
 type UsageFailure struct {
-	CanonicalModel string `gorm:"-" json:"canonical_model,omitempty"`
-	Model          string `json:"model"`
-	StatusCode     int    `json:"status_code"`
-	ErrorCode      string `json:"error_code"`
-	Requests       int64  `json:"requests"`
+	Model      string `json:"model"`
+	StatusCode int    `json:"status_code"`
+	ErrorCode  string `json:"error_code"`
+	Requests   int64  `json:"requests"`
 }
 
 type UsageProvider struct {

@@ -75,7 +75,7 @@ func SVG(r Report, theme string) []byte {
 		}
 		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="11" height="11" rx="2" fill="%s" fill-opacity="%.2f"><title>%s · %d tokens`, x, y, color, opacity, d.Date, d.Tokens)
 		if d.Model != "" {
-			fmt.Fprintf(&b, ` · %s`, html.EscapeString(label(preferredModel(d.CanonicalModel, d.Model), 120)))
+			fmt.Fprintf(&b, ` · %s`, html.EscapeString(label(d.Model, 120)))
 		}
 		b.WriteString(`</title></rect>`)
 	}
@@ -90,7 +90,7 @@ func SVG(r Report, theme string) []byte {
 	}
 	for i, model := range r.Models {
 		x, y := 28+(i%4)*216, 232+(i/4)*25
-		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="9" height="9" rx="2" fill="%s"/><text x="%d" y="%d" font-size="11">%s<title>%s</title></text>`, x, y-8, model.Color, x+16, y, html.EscapeString(label(preferredModel(model.CanonicalName, model.Name), 25)), html.EscapeString(label(preferredModel(model.CanonicalName, model.Name), 120)))
+		fmt.Fprintf(&b, `<rect x="%d" y="%d" width="9" height="9" rx="2" fill="%s"/><text x="%d" y="%d" font-size="11">%s<title>%s</title></text>`, x, y-8, model.Color, x+16, y, html.EscapeString(label(model.Name, 25)), html.EscapeString(label(model.Name, 120)))
 	}
 	b.WriteString(`<text x="28" y="301" font-size="10" class="muted">Daily top model by tokens · Intensity relative to active days</text><text x="730" y="301" font-size="10" class="muted">Less</text>`)
 	for i, opacity := range []float64{.12, .28, .48, .72, 1} {
@@ -98,11 +98,4 @@ func SVG(r Report, theme string) []byte {
 	}
 	b.WriteString(`<text x="839" y="301" font-size="10" class="muted">More</text></svg>`)
 	return []byte(b.String())
-}
-
-func preferredModel(canonical, original string) string {
-	if canonical != "" {
-		return canonical
-	}
-	return original
 }

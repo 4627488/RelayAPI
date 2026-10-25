@@ -190,7 +190,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		if a.nativeRuntime != nil {
 			models = a.nativeRuntime.Models()
 		}
-		w.Header().Set("X-Models-Etag", modelCatalogRevision(a.modelIDKey(call.key), models, a.codexCatalogRevisionToken()))
+		w.Header().Set("X-Models-Etag", modelCatalogRevision(call.key, models, a.codexCatalogRevisionToken()))
 	}
 	if call.admission.ChildSubscriptionID != "" {
 		w.Header().Set("X-Relay-Subscription-ID", call.admission.ChildSubscriptionID)

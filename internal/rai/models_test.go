@@ -48,20 +48,3 @@ func TestResolveLaunchModelPriority(t *testing.T) {
 		})
 	}
 }
-
-func TestSessionDisplayModelsKeepsLegacyPreferences(t *testing.T) {
-	s := Session{Models: []string{"gpt-test", "openai/gpt-test", "custom"}, ModelIDs: map[string]string{"gpt-test": "openai/gpt-test"}}
-	got := s.displayModels()
-	if len(got) != 2 || got[0] != "openai/gpt-test" || got[1] != "custom" || s.displayModel("gpt-test") != "openai/gpt-test" || s.Models[0] != "gpt-test" {
-		t.Fatalf("display=%v session=%+v", got, s)
-	}
-	// A display mapping cannot add a model the session did not authorize.
-	s.ModelIDs["custom"] = "private/model"
-	if s.displayModel("custom") != "custom" {
-		t.Fatal("display metadata introduced an unavailable model")
-	}
-	legacy := Session{Models: []string{"gpt-test"}}
-	if legacy.displayModels()[0] != "gpt-test" {
-		t.Fatal("old server fallback changed")
-	}
-}

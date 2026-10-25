@@ -12,6 +12,45 @@ import (
 	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
+func TestModelCatalogKeepsPublishedIDsWithoutInferredNamespaces(t *testing.T) {
+	models := []string{"gpt-test", "grok-test", "openai/explicit-model", "custom"}
+	a := newNativeRuntimeTestApp(t, upstream.Credential{ID: "original-ids", Provider: "codex", Enabled: true, Models: models, Document: []byte(`{"type":"codex","access_token":"test"}`)})
+	key := store.KeyContext{TenantModels: models, ModelAliases: []store.APIKeyModelAlias{{Alias: "friendly", Model: "gpt-test"}}}
+	for _, query := range []string{"", "?client_version=0.163.0"} {
+		recorder := httptest.NewRecorder()
+		a.serveModelCatalog(recorder, httptest.NewRequest(http.MethodGet, "/v1/models"+query, nil), key)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("catalog: %d %s", recorder.Code, recorder.Body.String())
+		}
+		var document map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil {
+			t.Fatal(err)
+		}
+		field := "data"
+		if query != "" {
+			field = "models"
+		}
+		items := map[string]map[string]any{}
+		for _, raw := range document[field].([]any) {
+			item := raw.(map[string]any)
+			items[catalogModelID(item)] = item
+		}
+		for _, id := range append(append([]string(nil), models...), "friendly") {
+			if items[id] == nil || items[id]["visibility"] == "hide" {
+				t.Fatalf("original ID missing or hidden: %s: %s", id, recorder.Body.String())
+			}
+		}
+		if items["openai/gpt-test"] != nil || items["x-ai/grok-test"] != nil {
+			t.Fatalf("inferred author IDs returned: %s", recorder.Body.String())
+		}
+	}
+	for _, id := range a.raiSessionModels(key) {
+		if id == "openai/gpt-test" || id == "x-ai/grok-test" {
+			t.Fatalf("rai session inferred an ID: %s", id)
+		}
+	}
+}
+
 func TestFilterModelCatalogPreservesEnvelopeFormats(t *testing.T) {
 	tests := []struct {
 		name    string

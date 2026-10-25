@@ -24,7 +24,6 @@ function subscription(
     billing_mode: "quota",
     model_allowlist: [],
     effective_model_allowlist: ["gpt-test"],
-    canonical_model_allowlist: ["openai/gpt-test"],
     reset_history: [],
     entitlement_windows: [
       {
@@ -96,7 +95,7 @@ describe("personal shared subscriptions", () => {
         .getByRole("button", { name: "模型与重置记录 · 1 个模型" })
         .click()
       await expect
-        .element(screen.getByText("openai/gpt-test", { exact: true }))
+        .element(screen.getByText("gpt-test", { exact: true }))
         .toBeVisible()
       const text = document.body.innerText
       expect(text).not.toContain("secret-upstream")

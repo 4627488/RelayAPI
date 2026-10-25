@@ -18,9 +18,9 @@ rai 管理站点 profile、浏览器 PKCE 设备授权、凭据存储与续期�
 
 ## 模型目录
 
-`internal/upstream/codex_catalog.go` 从运行时 slug 构造完整 Codex ModelInfo；`internal/app/native_models.go` 应用模型能力、管理员覆盖、授权和别名。models.dev 第一方资料覆盖上下文、输入/输出预算、推理和模态，OpenAI slug 只接受第一方 OpenAI 资料，聚合商不能覆盖同名官方模型；模型资料不授予访问权限。管理员明确的能力值应被保留，传输能力受实际运行时约束。
+模型 ID 按运行时发布的原值返回和调用，不自动补充模型作者前缀。网页、日志、报表及 rai 均显示原 ID；已有完整 ID 与显式配置的 Key 别名保持原义。模型能力资料仅补充能力字段，不用于改名。
 
-对外元数据优先使用模型作者命名空间。自动规范 ID 在请求侧映射回原模型，再执行现有授权、准入、计费和上游路由；旧调用 ID 与详情查询保留，Codex 旧条目保持完整但隐藏。显式别名、运行时完整 ID 和未知来源模型不会被自动命名覆盖。rai session 保留新旧可调用名称以兼容已保存偏好。详见 [模型 ID 与兼容](model-ids.md)。
+`internal/upstream/codex_catalog.go` 从运行时 slug 构造完整 Codex ModelInfo；`internal/app/native_models.go` 应用模型能力、管理员覆盖、授权和别名。models.dev 第一方资料覆盖上下文、输入/输出预算、推理和模态，OpenAI slug 只接受第一方 OpenAI 资料，聚合商不能覆盖同名官方模型；模型资料不授予访问权限。管理员明确的能力值应被保留，传输能力受实际运行时约束。
 
 目录流程包括：生成完整条目、应用能力/覆盖、用户可见性与别名过滤、内容 revision 和 ETag。隐藏条目仍需满足客户端反序列化契约。保留隐藏 tombstone 是为了防止客户端内置目录按 slug 合并后重新显示受限模型；真正的调用权限仍由服务端强制执行。图像生成专用模型不进入对话选择器，图像 API 保持可用。
 

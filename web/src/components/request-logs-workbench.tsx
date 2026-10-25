@@ -1,4 +1,3 @@
-import { routedLogModel, requestedLogModel } from "@/lib/request-log"
 import {
   requestLogCost,
   requestLogUsageQuality,
@@ -892,8 +891,6 @@ function LogOverview({
             ["传输", requestLogTransport(log.request_type, log.stream)],
             ["类型", log.request_type],
             ["请求 / 路由模型", modelRoute(log)],
-            ["原始请求模型", log.requested_model || log.model],
-            ["原始路由模型", log.actual_model || log.model],
             ["上游返回模型", log.upstream_model || "未返回"],
             [
               "客户端",
@@ -1286,8 +1283,8 @@ function parseNumberRecord(value?: string) {
 }
 
 function modelRoute(log: RequestLog) {
-  const requested = requestedLogModel(log)
-  const actual = routedLogModel(log)
+  const requested = log.requested_model || log.model
+  const actual = log.actual_model || log.model
   if (requested && actual && requested !== actual)
     return `${requested} → ${actual}`
   return actual || requested

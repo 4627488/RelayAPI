@@ -141,7 +141,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		query.Set("model", realtimeAuth.Model)
 		r.URL.RawQuery = query.Encode()
 	}
-	resolved := a.resolveClientModel(meta.Model, key)
+	resolved := resolveAPIKeyModel(meta.Model, key.ModelAliases)
 	if resolved.ModelAlias == "" {
 		resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, r, body)
 		if !strings.EqualFold(resolved.Model, meta.Model) {

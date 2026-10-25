@@ -49,9 +49,7 @@ export function UserModels() {
   const [mode, setMode] = useState("all")
   const filtered = models.filter(
     (model) =>
-      [model.id, model.canonical_id].some((id) =>
-        id?.toLowerCase().includes(search.trim().toLowerCase())
-      ) &&
+      model.id.toLowerCase().includes(search.trim().toLowerCase()) &&
       (mode === "all" ||
         model.settlements.some((option) => option.mode === mode))
   )
@@ -138,15 +136,13 @@ export function UserModels() {
                     <TableCell className="max-w-72 whitespace-normal">
                       <div className="flex items-center gap-2">
                         <span className="min-w-0 font-mono text-xs break-all">
-                          {model.canonical_id || model.id}
+                          {model.id}
                         </span>
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          aria-label={`复制 ${model.canonical_id || model.id}`}
-                          onClick={() =>
-                            void copyText(model.canonical_id || model.id)
-                          }
+                          aria-label={`复制 ${model.id}`}
+                          onClick={() => void copyText(model.id)}
                         >
                           <CopyIcon />
                         </Button>

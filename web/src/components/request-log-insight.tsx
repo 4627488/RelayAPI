@@ -1,4 +1,3 @@
-import { routedLogModel, requestedLogModel } from "@/lib/request-log"
 import { useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import {
@@ -88,7 +87,7 @@ export function RequestLogInsight({
         <PopoverHeader>
           <PopoverTitle>请求观测详情</PopoverTitle>
           <PopoverDescription className="break-all">
-            {routedLogModel(log) || log.path}
+            {log.actual_model || log.model || log.path}
           </PopoverDescription>
         </PopoverHeader>
         <Tabs defaultValue={section}>
@@ -224,28 +223,9 @@ export function RequestLogInsight({
           <TabsContent value="route">
             <Facts
               rows={[
-                ["请求模型", requestedLogModel(log)],
-                ["路由模型", routedLogModel(log)],
+                ["请求模型", log.requested_model || log.model],
+                ["路由模型", log.actual_model || log.model],
                 ["上游返回模型", log.upstream_model || "未返回"],
-                ...(log.canonical_requested_model &&
-                log.canonical_requested_model !==
-                  (log.requested_model || log.model)
-                  ? [
-                      ["原始请求模型", log.requested_model || log.model] as [
-                        string,
-                        ReactNode,
-                      ],
-                    ]
-                  : []),
-                ...(log.canonical_model &&
-                log.canonical_model !== (log.actual_model || log.model)
-                  ? [
-                      ["原始路由模型", log.actual_model || log.model] as [
-                        string,
-                        ReactNode,
-                      ],
-                    ]
-                  : []),
                 ...(workspace === "admin"
                   ? ([
                       ["提供商", log.provider],

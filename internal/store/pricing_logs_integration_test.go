@@ -114,8 +114,6 @@ func TestPricingAndDetailedLogLifecycleIntegration(t *testing.T) {
 	for _, filter := range []LogQuery{
 		{APIKey: "Integration"}, {APIKey: "relay_int"}, {APIKey: keyID},
 		{Query: "Integration"}, {Query: "relay_int"}, {Query: requestID},
-		{Model: "canonical/alias-model", ModelAlternative: "alias-model"},
-		{Model: "alias-model", ModelAlternative: "unused"},
 	} {
 		filter.TenantID, filter.Public = tenantID, true
 		result, queryErr := dataStore.QueryLogs(ctx, filter)

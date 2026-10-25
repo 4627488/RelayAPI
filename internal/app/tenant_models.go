@@ -18,7 +18,6 @@ type tenantModelSettlement struct {
 
 type tenantModelView struct {
 	ID          string                  `json:"id"`
-	CanonicalID string                  `json:"canonical_id,omitempty"`
 	Settlements []tenantModelSettlement `json:"settlements"`
 }
 
@@ -82,22 +81,7 @@ func (a *App) tenantModels(w http.ResponseWriter, r *http.Request) {
 		}
 		grants = append(grants, grant)
 	}
-	items := projectTenantModels(a.nativeRuntime.Models(), tenant.ModelAllowlist, grants, now)
-	a.annotateTenantModelIDs(items)
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-// The web catalog also feeds Key policy editors. Preserve the policy ID and
-// expose a separate callable ID for display/copy, using the same collision
-// rules as the public inference catalog.
-func (a *App) annotateTenantModelIDs(items []tenantModelView) {
-	canonical := make(map[string]string)
-	for _, alias := range a.modelIDAliases(store.KeyContext{}) {
-		canonical[alias.Model] = alias.Alias
-	}
-	for i := range items {
-		items[i].CanonicalID = canonical[items[i].ID]
-	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": projectTenantModels(a.nativeRuntime.Models(), tenant.ModelAllowlist, grants, now)})
 }
 
 func projectTenantModels(models, tenantModels []string, grants []tenantModelGrant, now time.Time) []tenantModelView {

@@ -973,19 +973,18 @@ func requestLogUnitErrorSQLOn(table string) string {
 }
 
 type LogQuery struct {
-	TenantID         string
-	APIKey           string
-	Public           bool
-	Page             int
-	PageSize         int
-	Query            string
-	Status           string
-	Method           string
-	Model            string
-	ModelAlternative string
-	From             *time.Time
-	To               *time.Time
-	MinLatencyMS     int64
+	TenantID     string
+	APIKey       string
+	Public       bool
+	Page         int
+	PageSize     int
+	Query        string
+	Status       string
+	Method       string
+	Model        string
+	From         *time.Time
+	To           *time.Time
+	MinLatencyMS int64
 }
 
 type LogSummary struct {
@@ -1057,11 +1056,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 		query = query.Where("method = ?", strings.ToUpper(input.Method))
 	}
 	if input.Model != "" {
-		models := []string{input.Model}
-		if input.ModelAlternative != "" {
-			models = append(models, input.ModelAlternative)
-		}
-		query = query.Where("(model IN ? OR requested_model IN ? OR actual_model IN ? OR upstream_model IN ?)", models, models, models, models)
+		query = query.Where("(model = ? OR requested_model = ? OR actual_model = ? OR upstream_model = ?)", input.Model, input.Model, input.Model, input.Model)
 	}
 	if input.From != nil {
 		query = query.Where("started_at >= ?", *input.From)
@@ -1247,18 +1242,6 @@ func (s Store) AdminOverview(ctx context.Context) (map[string]any, error) {
 	}, nil
 }
 
-type UsageModelTotal struct {
-	CanonicalModel   string `gorm:"-" json:"canonical_model,omitempty"`
-	Model            string `json:"model"`
-	Requests         int64  `json:"requests"`
-	Errors           int64  `json:"errors"`
-	Tokens           int64  `json:"tokens"`
-	PromptTokens     int64  `json:"prompt_tokens"`
-	CompletionTokens int64  `json:"completion_tokens"`
-	CachedTokens     int64  `json:"cached_tokens"`
-	Cost             int64  `json:"cost_nano_usd"`
-}
-
 func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[string]any, error) {
 	if days < 1 || days > 365 {
 		days = 30
@@ -1387,8 +1370,17 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 		dailyItems = append(dailyItems, item)
 	}
 	sort.Slice(dailyItems, func(i, j int) bool { return dailyItems[i].Date < dailyItems[j].Date })
-
-	models := make([]UsageModelTotal, 0)
+	type modelTotal struct {
+		Model            string `json:"model"`
+		Requests         int64  `json:"requests"`
+		Errors           int64  `json:"errors"`
+		Tokens           int64  `json:"tokens"`
+		PromptTokens     int64  `json:"prompt_tokens"`
+		CompletionTokens int64  `json:"completion_tokens"`
+		CachedTokens     int64  `json:"cached_tokens"`
+		Cost             int64  `json:"cost_nano_usd"`
+	}
+	models := make([]modelTotal, 0)
 	modelQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
 		Select(
 			"model, "+"count(*) AS requests, "+
@@ -1412,11 +1404,11 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[
 	if tenantID != "" {
 		rolledModelQuery = rolledModelQuery.Where("tenant_id = ?", tenantID)
 	}
-	var rolledModels []UsageModelTotal
+	var rolledModels []modelTotal
 	if err := rolledModelQuery.Group("model").Scan(&rolledModels).Error; err != nil {
 		return nil, err
 	}
-	modelsByName := make(map[string]UsageModelTotal, len(models)+len(rolledModels))
+	modelsByName := make(map[string]modelTotal, len(models)+len(rolledModels))
 	for _, item := range append(models, rolledModels...) {
 		value := modelsByName[item.Model]
 		value.Model = item.Model

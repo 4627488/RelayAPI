@@ -24,7 +24,6 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 
 export interface HeatmapDay {
-  canonical_model?: string
   date: string
   tokens: number
   model: string
@@ -39,12 +38,7 @@ export interface TokenHeatmapReport {
   active_days: number
   peak_tokens: number
   days: HeatmapDay[]
-  models: {
-    name: string
-    canonical_name?: string
-    tokens: number
-    color: string
-  }[]
+  models: { name: string; tokens: number; color: string }[]
   share_path: string
 }
 
@@ -56,7 +50,7 @@ const exact = new Intl.NumberFormat("zh-CN")
 const intensity = [0, 0.28, 0.48, 0.72, 1]
 
 function describe(day: HeatmapDay) {
-  return `${day.date} · ${exact.format(day.tokens)} tokens${day.model ? ` · 最常用 ${day.canonical_model || day.model}` : " · 暂无消耗"}`
+  return `${day.date} · ${exact.format(day.tokens)} tokens${day.model ? ` · 最常用 ${day.model}` : " · 暂无消耗"}`
 }
 
 export function TokenCalendar({ report }: { report: TokenHeatmapReport }) {
@@ -206,13 +200,8 @@ export function TokenCalendar({ report }: { report: TokenHeatmapReport }) {
                 style={{ backgroundColor: model.color }}
                 aria-hidden="true"
               />
-              <span
-                className="max-w-52 truncate"
-                title={model.canonical_name || model.name}
-              >
-                {model.name === "Other models"
-                  ? "其他模型"
-                  : model.canonical_name || model.name}
+              <span className="max-w-52 truncate" title={model.name}>
+                {model.name === "Other models" ? "其他模型" : model.name}
               </span>
               <span className="text-muted-foreground tabular-nums">
                 {compact.format(model.tokens)}

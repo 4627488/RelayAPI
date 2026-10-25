@@ -116,7 +116,7 @@ func (a *App) resolveCodexReviewModel(requested string, key store.KeyContext, r 
 		}
 	}
 	if model != "" {
-		model = a.resolveClientModel(model, key).Model
+		model = resolveAPIKeyModel(model, key.ModelAliases).Model
 	}
 	if model == "" || strings.EqualFold(model, codexAutoReviewModel) || !key.AllowsModel(model) || a.nativeRuntime == nil {
 		return requested

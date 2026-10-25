@@ -20,7 +20,7 @@ const maxModelCatalogBytes int64 = 256 << 20
 
 // Bump this when the Codex ModelInfo shape changes so clients refresh
 // GET /v1/models and honor X-Models-Etag on subsequent Responses calls.
-const codexCatalogRevisionToken = "codex-modelinfo-v6"
+const codexCatalogRevisionToken = "codex-modelinfo-v7"
 
 func isNativeModelCatalogRequest(r *http.Request) bool {
 	_, _, ok := modelMetadataRequest(r)
@@ -86,8 +86,6 @@ func authorizedModelAliases(key store.KeyContext) []store.APIKeyModelAlias {
 // formats, then applies Relay's tenant and key policy.
 func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key store.KeyContext) {
 	collection, requestedModel, _ := modelMetadataRequest(r)
-	generatedIDs := a.modelIDAliases(key)
-	key = a.modelIDKey(key)
 	if requestedModel != "" && !key.AllowsModel(resolveAPIKeyModel(requestedModel, key.ModelAliases).Model) {
 		writeError(w, http.StatusForbidden, "model_not_allowed", "This API key does not have access to the requested model.")
 		return
@@ -161,11 +159,6 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 		payload, err = filterModelCatalogForClient(payload, clientModels, codexCatalog)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "model_catalog_error", "无法过滤模型列表")
-			return
-		}
-		payload, err = projectCanonicalModelIDs(payload, generatedIDs, codexCatalog, requestedModel != "")
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "model_catalog_error", "无法规范模型标识")
 			return
 		}
 		if requestedModel != "" {
