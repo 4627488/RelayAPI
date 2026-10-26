@@ -15,6 +15,8 @@ type Adapter interface {
 }
 
 type LaunchContext struct {
+	ModelInfo  map[string]ModelInfo
+	RuntimeDir string
 	Codex      *CodexCapabilities
 	Profile    Profile
 	APIBase    string
@@ -32,11 +34,11 @@ func Adapters() []Adapter {
 	return []Adapter{
 		ClaudeAdapter{},
 		CodexAdapter{},
-		EnvAdapter{Agent: "grok", BinaryName: "grok", InstallHint: "Install the Grok CLI from xAI and keep grok on PATH", Env: grokEnv, PassModel: true},
-		EnvAdapter{Agent: "hermes", BinaryName: "hermes", InstallHint: "npm install -g @nousresearch/hermes-agent", Env: openAICompatibleEnv, PassModel: true},
+		GrokAdapter{},
+		HermesAdapter{},
 		OpenCodeAdapter{},
-		EnvAdapter{Agent: "pi", BinaryName: "pi", InstallHint: "npm install -g @mariozechner/pi-coding-agent", Env: openAICompatibleEnv, PassModel: true},
-		EnvAdapter{Agent: "prime-agent", BinaryName: "prime-agent", InstallHint: "Install Prime Agent and keep prime-agent on PATH", Env: openAICompatibleEnv, PassModel: true},
+		PiAdapter{},
+		PrimeAdapter{},
 	}
 }
 

@@ -172,6 +172,56 @@ jobs:
       - name: Build
         run: pnpm build
 
+  agent-clients:
+    name: Real rai agent clients
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install pinned official agent clients
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/rai-clients" --no-audit --no-fund \
+            @earendil-works/pi-coding-agent@1.4.0 opencode-ai@1.19.4 \
+            @xai-official/grok@1.0.70 @anthropic-ai/claude-code@2.1.114
+          node "$RUNNER_TEMP/rai-clients/node_modules/opencode-ai/postinstall.mjs"
+          curl -fsSL --retry 3 https://github.com/PrimeIntellect-ai/prime-agent/releases/download/v0.10.1/prime-agent-0.10.1-linux-x64.tar.gz -o "$RUNNER_TEMP/prime-agent.tar.gz"
+          echo "21ec219183f4134dd23dce9572102e69456066fe374846525561c776d4d1945c  $RUNNER_TEMP/prime-agent.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/prime-agent"
+          tar -xzf "$RUNNER_TEMP/prime-agent.tar.gz" -C "$RUNNER_TEMP/prime-agent"
+          python -m pip install uv==0.13.5
+          git init "$RUNNER_TEMP/hermes-source"
+          git -C "$RUNNER_TEMP/hermes-source" remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C "$RUNNER_TEMP/hermes-source" fetch --depth 1 origin d05095663342556788cf2a198bfa7844cc7968ab
+          git -C "$RUNNER_TEMP/hermes-source" checkout --detach FETCH_HEAD
+          UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/hermes-venv" uv sync --project "$RUNNER_TEMP/hermes-source" --frozen --no-dev
+      - name: Verify routing and real tool round trips
+        shell: bash
+        run: |
+          set -euo pipefail
+          export RAI_PI_INTEROP_BINARY="$RUNNER_TEMP/rai-clients/node_modules/.bin/pi"
+          export RAI_OPENCODE_INTEROP_BINARY="$RUNNER_TEMP/rai-clients/node_modules/.bin/opencode"
+          export RAI_GROK_INTEROP_BINARY="$RUNNER_TEMP/rai-clients/node_modules/.bin/grok"
+          export RAI_CLAUDE_INTEROP_BINARY="$RUNNER_TEMP/rai-clients/node_modules/.bin/claude"
+          export RAI_PRIME_AGENT_INTEROP_BINARY="$RUNNER_TEMP/prime-agent/prime-agent"
+          export RAI_HERMES_INTEROP_BINARY="$RUNNER_TEMP/hermes-venv/bin/hermes"
+          for agent in "$RAI_PI_INTEROP_BINARY" "$RAI_OPENCODE_INTEROP_BINARY" "$RAI_GROK_INTEROP_BINARY" "$RAI_CLAUDE_INTEROP_BINARY" "$RAI_PRIME_AGENT_INTEROP_BINARY" "$RAI_HERMES_INTEROP_BINARY"; do
+            "$agent" --version
+          done
+          go test -count=1 -v ./internal/rai -run '^TestAgentClient(UsesGateway|ToolRoundTrip)$'
+
   images:
     name: Build RelayAPI image
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'

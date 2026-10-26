@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/4627488/RelayAPI/internal/config"
+	"github.com/4627488/RelayAPI/internal/pricing"
+	"github.com/4627488/RelayAPI/internal/store"
 )
 
 func TestRAIDiscoveryDocument(t *testing.T) {
@@ -43,5 +45,26 @@ func TestRAIDiscoveryDocument(t *testing.T) {
 	}
 	if document["rai_version"] != "sha-test" {
 		t.Fatalf("rai_version = %#v", document["rai_version"])
+	}
+}
+
+func TestRAIModelInfoUsesAuthorizedIDsAndTrustedFacts(t *testing.T) {
+	app := &App{}
+	tools := true
+	app.capabilities.Store(pricing.NewCapabilityIndex("test", []pricing.Capability{
+		{ID: "vendor/model", Provider: "vendor", Name: "Model", Context: 100000, ToolCall: &tools, Reasoning: true, InputModalities: []string{"text", "image"}},
+		{ID: "gpt-test", Provider: "aggregator", Context: 999999},
+		{ID: "denied", Provider: "vendor", Context: 999999},
+	}))
+	key := store.KeyContext{APIKey: store.APIKey{ModelAliases: []store.APIKeyModelAlias{{Alias: "friendly", Model: "vendor/model"}}}}
+	info := app.raiModelInfo(key, []string{"friendly", "gpt-test"})
+	if len(info) != 2 || info["friendly"].Context != 100000 || info["friendly"].Reasoning == nil || !*info["friendly"].Reasoning {
+		t.Fatalf("authorized alias facts missing: %#v", info)
+	}
+	if info["gpt-test"].Context != 0 {
+		t.Fatal("untrusted aggregator overwrote OpenAI facts")
+	}
+	if _, exists := info["denied"]; exists {
+		t.Fatal("model facts leaked outside allowed IDs")
 	}
 }

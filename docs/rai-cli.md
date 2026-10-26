@@ -88,7 +88,7 @@ Codex 通过 `rai credential print` 每分钟检查 access token，助手超时�
 
 Responses WebSocket 在每个新的 `response.create` 前重新检查 OAuth 授权，已打开的连接不能绕过 token 过期或设备撤销。拒绝后需要客户端重连并取得有效 access token。真实 Codex 同进程 HTTP 401 自动续期已验证；WS 到期关闭后的重连与界面行为仍需独立验收。
 
-其他仅支持环境变量凭据的客户端，通过每次启动时创建的 loopback 代理获取持续续期能力。子进程只得到随机的本地临时凭据，代理在每个上游请求前获取有效 access token，客户端退出时关闭。代理只开放 `/v1/` 请求；不提供账户管理能力。
+Claude、Grok、OpenCode 和 Pi 的 OAuth 调用通过本次启动的 loopback 代理续期，客户端退出时关闭。Hermes gateway 和 Prime worker 使用可复用的后台代理，使前台退出后仍可调用；用 `rai proxy status|stop` 查看或停止，退出 profile 时也会停止。客户端只获得随机本地凭据，代理在每个请求前获取有效 access token；不提供账户管理能力。客户端适配、配置清理及真实客户端测试见 [兼容性说明](rai-client-compatibility.md)。
 
 ## 自助管理
 

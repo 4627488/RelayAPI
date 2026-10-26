@@ -110,13 +110,18 @@ func (a *App) Execute(ctx context.Context) error {
 	case "configure":
 		return a.configureCodex(ctx, profileName, args[1:])
 	case "unconfigure":
+		if len(args) > 1 && args[1] != "codex" {
+			return a.unconfigureAgent(ctx, profileName, args[1:])
+		}
 		return a.unconfigureCodex(args[1:])
 	case "credential":
 		return a.credential(ctx, profileName, args[1:])
 	case "doctor":
-		return a.doctor(ctx, profileName)
+		return a.doctor(ctx, profileName, args[1:]...)
 	case "update":
 		return a.update(ctx)
+	case "proxy":
+		return a.proxyCommand(ctx, profileName, args[1:])
 	case "claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent":
 		if args[0] == "codex" && len(args) > 1 && args[1] == "--desktop" {
 			return a.temporaryCodex(ctx, profileName, args[2:])
@@ -191,9 +196,10 @@ CORE COMMANDS
   usage       View account usage as JSON
 
 AGENT COMMANDS
-  rai claude|codex|grok|hermes|opencode|pi|prime-agent [--model <id>] -- <args>
+  rai claude|codex|grok|hermes|opencode|pi|prime-agent [--model <id>] [--reasoning-effort <level>] -- <args>
   rai configure codex      Sign in and connect Codex [--codex-profile <name>]
   rai unconfigure codex    Restore rai-managed Codex settings [--codex-profile <name>]
+  rai unconfigure hermes|prime-agent  Remove this profile's managed provider
   rai codex --desktop      Temporarily connect Codex Desktop
   rai sync codex           Import saved Codex settings [--codex-profile <name>]
 
@@ -201,6 +207,7 @@ OTHER COMMANDS
   server set <url>  Save the default RelayAPI server
   quota             Show inference subscription allowances
   doctor            Check local configuration
+  proxy status|stop Inspect or stop the background credential proxy
   update            Update rai
   version           Print the installed version
 
@@ -582,6 +589,9 @@ func (a *App) logout(ctx context.Context, profileName string, args []string) err
 	if err := a.revokeSavedCredential(ctx, store, credentialName); err != nil {
 		return err
 	}
+	if state, err := readProxyState(store, profile); err == nil {
+		_, _ = proxyRequest(ctx, state, "POST", "/_rai/stop")
+	}
 	if err := store.DeleteCredential(credentialName); err != nil {
 		return err
 	}
@@ -761,7 +771,18 @@ func (a *App) credential(ctx context.Context, profileName string, args []string)
 	return nil
 }
 
-func (a *App) doctor(ctx context.Context, profileName string) error {
+func (a *App) doctor(ctx context.Context, profileName string, args ...string) error {
+	selected := ""
+	if len(args) > 0 {
+		if len(args) != 2 || args[0] != "--agent" {
+			return errors.New("usage: rai doctor [--agent <name>]")
+		}
+		selected = args[1]
+		if _, err := AdapterByName(selected); err != nil {
+			return err
+		}
+	}
+	var issues []string
 	store, err := a.store()
 	if err != nil {
 		return err
@@ -773,6 +794,9 @@ func (a *App) doctor(ctx context.Context, profileName string) error {
 	profile, err := store.ResolveProfile(profileName)
 	if err != nil {
 		ui.message("warning", "profile: %s", redact(err.Error()))
+		if selected != "" {
+			return err
+		}
 		return nil
 	}
 	ui.field("profile", profile.Name)
@@ -780,25 +804,39 @@ func (a *App) doctor(ctx context.Context, profileName string) error {
 	secret, err := a.profileCredential(ctx, store, profile)
 	if err != nil {
 		ui.message("warning", "credential: %s", redact(err.Error()))
+		issues = append(issues, "credential unavailable")
 	} else {
 		ui.field("credential", fmt.Sprintf("%s (%s)", keyPrefix(secret), profile.CredentialBackend))
 		session, sessErr := a.Gateway.Session(ctx, profile.ServerURL, secret)
 		if sessErr != nil {
 			ui.message("warning", "session: %s", redact(sessErr.Error()))
+			issues = append(issues, "gateway session unavailable")
 		} else {
 			ui.message("success", "session: %d models, default %s", len(session.Models), session.DefaultModel)
 		}
 	}
 	for _, adapter := range Adapters() {
+		if selected != "" && adapter.Name() != selected {
+			continue
+		}
 		path, version, probeErr := adapter.Probe()
 		if probeErr != nil {
 			ui.message("warning", "%s: %s", adapter.Name(), redact(probeErr.Error()))
+			if selected != "" {
+				issues = append(issues, adapter.Name()+" is unavailable")
+			}
 			continue
 		}
 		if version == "" {
 			version = filepath.Base(path)
+			if selected != "" {
+				issues = append(issues, adapter.Name()+" did not report a version")
+			}
 		}
 		ui.message("success", "%s: %s", adapter.Name(), version)
+	}
+	if selected != "" && len(issues) > 0 {
+		return errors.New(strings.Join(issues, "; "))
 	}
 	return nil
 }
@@ -815,9 +853,21 @@ func (a *App) ensureLogin(ctx context.Context, profileName string, noBrowser ...
 }
 
 func (a *App) launch(ctx context.Context, profileName, agent string, args []string) error {
+	effort, args, err := splitLaunchEffort(args)
+	if err != nil {
+		return err
+	}
 	model, passthrough, err := splitLaunchArgs(args)
 	if err != nil {
 		return err
+	}
+	if native, err := nativeLaunchModel(passthrough); err != nil {
+		return err
+	} else if native != "" {
+		model = native
+		if agent == "opencode" {
+			model = strings.TrimPrefix(model, providerID+"/")
+		}
 	}
 	store, err := a.store()
 	if err != nil {
@@ -856,6 +906,9 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 		profile.ReasoningEffort = ""
 		profile.FollowSiteDefault = false
 	}
+	if effort != "" {
+		profile.ReasoningEffort = effort
+	}
 	if agent != "codex" || model != "" || profile.DefaultModel != "" || profile.FollowSiteDefault {
 		model, err = resolveLaunchModel(profile, model, session.Models, session.DefaultModel)
 	}
@@ -866,12 +919,20 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 	if err != nil {
 		return err
 	}
+	if !agentCapable(session.ModelInfo[model]) {
+		return fmt.Errorf("model %q does not support agent tools; select another model", model)
+	}
 	executable, _, err := adapter.Probe()
 	if err != nil {
 		return err
 	}
 	apiBase := session.APIBase
-	if strings.HasPrefix(secret, "rai_at_") && agent != "codex" {
+	if agent == "prime-agent" || agent == "hermes" {
+		apiBase, secret, err = a.ensurePersistentProxy(ctx, store, profile)
+		if err != nil {
+			return err
+		}
+	} else if strings.HasPrefix(secret, "rai_at_") && agent != "codex" {
 		var closeProxy func()
 		apiBase, secret, closeProxy, err = a.startOAuthProxy(ctx, store, profile)
 		if err != nil {
@@ -879,7 +940,24 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 		}
 		defer closeProxy()
 	}
+	runtimeDir := ""
+	if agent == "pi" {
+		runtimeDir, err = os.MkdirTemp("", "rai-pi-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(runtimeDir)
+	}
+	unlockConfig := func() {}
+	if agent == "hermes" || agent == "prime-agent" {
+		unlockConfig, err = a.lockOAuthCredential(ctx, store, "client-config-"+agent)
+		if err != nil {
+			return err
+		}
+	}
 	command, err := adapter.Prepare(LaunchContext{
+		ModelInfo:  session.ModelInfo,
+		RuntimeDir: runtimeDir,
 		Codex:      session.Codex,
 		Profile:    profile,
 		APIBase:    apiBase,
@@ -892,6 +970,7 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 		RAI:        a.Self,
 		RAIHome:    store.Home,
 	})
+	unlockConfig()
 	if err != nil {
 		return err
 	}

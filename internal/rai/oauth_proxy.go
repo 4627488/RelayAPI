@@ -18,14 +18,23 @@ import (
 // proxy. Only the proxy reads refresh tokens; upstream calls always use a fresh
 // access token. The random local credential expires when the child exits.
 func (a *App) startOAuthProxy(ctx context.Context, store Store, profile Profile) (string, string, func(), error) {
-	base, err := managementServer(profile.ServerURL)
+	server, listener, localToken, err := a.newProfileProxy(ctx, store, profile, false)
 	if err != nil {
 		return "", "", nil, err
+	}
+	go func() { _ = server.Serve(listener) }()
+	return "http://" + listener.Addr().String(), localToken, func() { _ = server.Close() }, nil
+}
+
+func (a *App) newProfileProxy(ctx context.Context, store Store, profile Profile, managed bool) (*http.Server, net.Listener, string, error) {
+	base, err := managementServer(profile.ServerURL)
+	if err != nil {
+		return nil, nil, "", err
 	}
 	target, _ := url.Parse(base)
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
-		return "", "", nil, err
+		return nil, nil, "", err
 	}
 	localToken := "rai_local_" + rand.Text()
 	proxy := &httputil.ReverseProxy{
@@ -48,11 +57,30 @@ func (a *App) startOAuthProxy(ctx context.Context, store Store, profile Profile)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if managed && r.URL.Path == "/_rai/health" && r.Method == http.MethodGet {
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = io.WriteString(w, Version)
+			return
+		}
+		if managed && r.URL.Path == "/_rai/stop" && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusNoContent)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = server.Shutdown(ctx)
+			}()
+			return
+		}
 		if !strings.HasPrefix(r.URL.Path, "/v1/") {
 			http.NotFound(w, r)
 			return
 		}
-		access, err := a.profileCredential(r.Context(), store, profile)
+		current, err := store.ResolveProfile(profile.Name)
+		if err != nil || current.ServerURL != profile.ServerURL {
+			http.Error(w, "Run rai login to renew device authorization", http.StatusUnauthorized)
+			return
+		}
+		access, err := a.profileCredential(r.Context(), store, current)
 		if err != nil {
 			http.Error(w, "Run rai login to renew device authorization", http.StatusUnauthorized)
 			return
@@ -61,6 +89,5 @@ func (a *App) startOAuthProxy(ctx context.Context, store Store, profile Profile)
 		r.Header.Set("X-API-Key", access)
 		proxy.ServeHTTP(w, r)
 	})
-	go func() { _ = server.Serve(listener) }()
-	return "http://" + listener.Addr().String(), localToken, func() { _ = server.Close() }, nil
+	return server, listener, localToken, nil
 }

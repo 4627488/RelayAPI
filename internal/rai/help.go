@@ -20,6 +20,8 @@ func hasHelp(args []string) bool {
 
 func (a *App) executeHelp(args []string) error {
 	switch args[0] {
+	case "proxy":
+		return a.proxyCommand(context.Background(), "", nil)
 	case "auth":
 		if len(args) > 2 {
 			return errors.New("usage: rai help auth [command]")

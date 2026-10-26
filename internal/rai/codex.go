@@ -1,10 +1,12 @@
 package rai
 
 import (
+	"context"
 	"encoding/json"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type CodexAdapter struct{}
@@ -96,7 +98,9 @@ func quoteTOMLString(value string) string {
 }
 
 func probeVersion(path string) string {
-	out, err := exec.Command(path, "--version").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, path, "--version").Output()
 	if err != nil {
 		return ""
 	}

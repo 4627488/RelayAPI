@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/rai"
 	"github.com/4627488/RelayAPI/internal/store"
 )
@@ -47,10 +48,57 @@ func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 		"name":             "RelayAPI",
 		"api_base":         a.cfg.PublicURL,
 		"models":           models,
+		"model_info":       a.raiModelInfo(key, models),
 		"default_model":    defaultModel,
 		"codex":            a.raiCodexCapabilities(key, models),
 		"adapters":         raiAdapterNames(),
 	})
+}
+
+func (a *App) raiModelInfo(key store.KeyContext, models []string) map[string]rai.ModelInfo {
+	index := a.capabilityIndex()
+	result := make(map[string]rai.ModelInfo, len(models))
+	for _, id := range models {
+		target := resolveAPIKeyModel(id, key.ModelAliases).Model
+		info := rai.ModelInfo{}
+		if fact, ok := index.LookupCatalog(target); ok && trustedCodexCapability(target, fact) {
+			applyRAIModelInfo(&info, fact)
+		}
+		if override, ok := index.LookupOverride(target); ok {
+			applyRAIModelInfo(&info, override)
+		}
+		result[id] = info
+	}
+	return result
+}
+
+func applyRAIModelInfo(info *rai.ModelInfo, fact pricing.Capability) {
+	if fact.Name != "" {
+		info.Name = fact.Name
+	}
+	if fact.Context > 0 {
+		info.Context = fact.Context
+	}
+	if fact.MaxInput > 0 {
+		info.MaxInput = fact.MaxInput
+	}
+	if fact.MaxOutput > 0 {
+		info.MaxOutput = fact.MaxOutput
+	}
+	if fact.ToolCall != nil {
+		info.ToolCall = fact.ToolCall
+	}
+	if len(fact.InputModalities) > 0 {
+		info.InputModalities = fact.InputModalities
+	}
+	if len(fact.OutputModalities) > 0 {
+		info.OutputModalities = fact.OutputModalities
+	}
+	if fact.Source != pricing.SourceAdmin || len(fact.ReasoningOptions) > 0 {
+		reasoning := fact.Reasoning
+		info.Reasoning = &reasoning
+		info.ReasoningLevels = fact.EffortValues()
+	}
 }
 
 func (a *App) raiQuota(w http.ResponseWriter, r *http.Request) {
