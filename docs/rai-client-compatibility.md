@@ -22,13 +22,15 @@ rai doctor --agent pi
 | --- | --- | --- |
 | Codex | Responses provider、目录、原生 profile 与能力协商 | 绑定站点与 rai 目录的原生凭据助手 |
 | Claude Code | 主模型；Haiku、Sonnet、Opus、Fable 别名及默认子代理模型 | Anthropic 网关配置；OAuth 经本次启动的 loopback 代理续期 |
-| Grok Build | 网关模型目录；主模型、会话标题/摘要、图片描述、提示建议与搜索模型 | `GROK_MODELS_BASE_URL` 与本次启动凭据；OAuth 经 loopback 代理续期 |
+| Grok Build | 网关模型目录与同步注册的启动模型；主模型、会话标题/摘要、图片描述、提示建议与搜索模型 | 启动模型通过环境变量取得本次凭据；OAuth 经 loopback 代理续期 |
 | OpenCode | 临时配置内容，含上下文、输入/输出上限、工具、图片与推理信息 | 当前启动凭据；OAuth 经 loopback 代理续期 |
 | Pi | 临时 provider 扩展，注册授权模型及能力；退出时删除扩展 | 当前启动的 loopback 凭据或明确导入的静态 Key |
 | Hermes | 在现有 `config.yaml` 合并独立命名的 custom provider，启动时明确选择 | 可复用的后台 loopback 代理，每次请求读取有效凭据 |
 | Prime Agent | 在现有 `models.json` 合并独立 provider，包含模型与能力 | 可复用的后台 loopback 代理，供后台 worker 继续使用 |
 
 Claude 已设置的角色模型只有在当前授权目录中仍可用时才保留，否则使用本次主模型。用户在 agent 定义中明确指定的子代理模型仍受客户端自己的优先级控制，服务端继续校验实际请求权限。图片描述、搜索等功能也需要所选模型和上游确实支持对应能力。
+
+Grok 的 npm 包装器在首次启动时可能先检查登录，再完成异步目录加载。`rai grok` 因此会同步注册独立的启动模型条目，凭据使用 `RAI_API_KEY` 环境引用，不写入上游 Key，也不改变原有默认模型。启动条目与 configure 的持久条目分开，可以用 `rai unconfigure grok` 恢复。
 
 Hermes、Pi 和 Prime 的 provider 与认证参数由 rai 管理，透传冲突的 `--provider`、`--api-key` 等选项会报错；更换站点使用 rai profile。Hermes 要求至少 64,000 token 的上下文；已知模型窗口不足时在启动前报错。
 

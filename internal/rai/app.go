@@ -949,7 +949,7 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 		defer os.RemoveAll(runtimeDir)
 	}
 	unlockConfig := func() {}
-	if agent == "hermes" || agent == "prime-agent" {
+	if agent == "hermes" || agent == "prime-agent" || agent == "grok" {
 		unlockConfig, err = a.lockOAuthCredential(ctx, store, "client-config-"+agent)
 		if err != nil {
 			return err

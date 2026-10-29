@@ -125,6 +125,7 @@ func TestGrokPrepareUsesOpenAIAndXAIEnv(t *testing.T) {
 		APIKey:     "relay_secret",
 		Model:      "x-ai/grok-4.5",
 		Executable: "/usr/bin/grok",
+		Environ:    []string{"GROK_HOME=" + t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)

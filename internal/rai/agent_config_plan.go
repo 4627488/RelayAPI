@@ -173,15 +173,9 @@ func buildAgentConfig(agent string, ctx LaunchContext, files []*clientConfigFile
 	case "grok":
 		selected := ""
 		for _, model := range agentModels(ctx) {
-			alias := id + "_" + fmt.Sprintf("%x", sha256.Sum256([]byte(model)))[:12]
-			info := ctx.ModelInfo[model]
-			entry := map[string]any{"model": model, "name": model + " (RelayAPI)", "base_url": v1APIBase(ctx.APIBase), "api_key": ctx.APIKey, "api_backend": "chat_completions"}
-			if info.Context > 0 {
-				entry["context_window"] = info.Context
-			}
-			if info.MaxOutput > 0 {
-				entry["max_completion_tokens"] = info.MaxOutput
-			}
+			alias := grokModelAlias(id, model)
+			entry := grokModelConfig(ctx, model)
+			entry["api_key"] = ctx.APIKey
 			if err := set(first, entry, "model", alias); err != nil {
 				return err
 			}
@@ -208,4 +202,20 @@ func buildAgentConfig(agent string, ctx LaunchContext, files []*clientConfigFile
 
 func configureUsage() string {
 	return "rai configure <codex|" + strings.Join(configurableAgents, "|") + "> [--server <url>] [--model <id>] [--reasoning-effort <level>] [--no-browser] [-y|--yes]"
+}
+
+func grokModelAlias(id, model string) string {
+	return id + "_" + fmt.Sprintf("%x", sha256.Sum256([]byte(model)))[:12]
+}
+
+func grokModelConfig(ctx LaunchContext, model string) map[string]any {
+	info := ctx.ModelInfo[model]
+	entry := map[string]any{"model": model, "name": model + " (RelayAPI)", "base_url": v1APIBase(ctx.APIBase), "api_backend": "chat_completions"}
+	if info.Context > 0 {
+		entry["context_window"] = info.Context
+	}
+	if info.MaxOutput > 0 {
+		entry["max_completion_tokens"] = info.MaxOutput
+	}
+	return entry
 }

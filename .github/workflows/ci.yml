@@ -92,11 +92,13 @@ jobs:
         run: |
           set -euo pipefail
           npm install --prefix "$RUNNER_TEMP/codex-interop" --no-audit --no-fund @openai/codex@0.163.0
-          export CODEX_INTEROP_BINARY="$RUNNER_TEMP/codex-interop/node_modules/.bin/codex"
+          # These tests own the app-server process and its pipes. Execute the
+          # native binary so timeout cancellation also closes the actual server.
+          export CODEX_INTEROP_BINARY="$RUNNER_TEMP/codex-interop/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex"
           "$CODEX_INTEROP_BINARY" --version
-          go test -count=1 -v ./internal/rai ./internal/app -run '^TestCodexClient'
+          go test -timeout 3m -count=1 -v ./internal/rai ./internal/app -run '^TestCodexClient'
           cd third_party/cpaexecutor
-          go test -count=1 -v -run '^TestCodexClient' ./...
+          go test -timeout 3m -count=1 -v -run '^TestCodexClient' ./...
 
       - name: Build and smoke test managed Cursor SDK
         run: |
