@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tidwall/sjson"
 )
@@ -62,7 +63,7 @@ func mergeClientProvider(path, name string, config map[string]any) error {
 		return err
 	}
 	var document map[string]json.RawMessage
-	clean, original := normalizeClientJSON(raw)
+	clean := cleanClientJSON(raw)
 	if json.Unmarshal(clean, &document) != nil || document == nil {
 		return fmt.Errorf("invalid %s: expected a JSON object; existing configuration was retained", path)
 	}
@@ -72,24 +73,39 @@ func mergeClientProvider(path, name string, config map[string]any) error {
 			return fmt.Errorf("invalid providers in %s; existing configuration was retained", path)
 		}
 	}
-	var updated []byte
-	if config == nil {
-		updated, err = sjson.DeleteBytes(clean, "providers."+name)
-	} else {
-		entry, marshalErr := json.Marshal(config)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		updated, err = sjson.SetRawBytes(clean, "providers."+name, entry)
-	}
+	updated, err := patchClientJSON(raw, []string{"providers", name}, config, config != nil)
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(clean, updated) {
+	if bytes.Equal(raw, updated) {
 		return nil
 	}
-	// Apply the changed span to the commented document. Positions in clean
-	// match original; comments are whitespace and trailing commas are spaces.
+	return writeFileAtomic(path, updated, 0o600)
+}
+
+// Edit a JSONC field without rewriting unrelated comments or formatting.
+func patchClientJSON(raw []byte, path []string, value any, present bool) ([]byte, error) {
+	if raw == nil {
+		raw = []byte("{}\n")
+	}
+	clean, original := normalizeClientJSON(raw)
+	parts := make([]string, len(path))
+	for i, part := range path {
+		parts[i] = strings.NewReplacer("\\", "\\\\", ".", "\\.", "*", "\\*", "?", "\\?").Replace(part)
+	}
+	var updated []byte
+	var err error
+	if present {
+		updated, err = sjson.SetBytes(clean, strings.Join(parts, "."), value)
+	} else {
+		updated, err = sjson.DeleteBytes(clean, strings.Join(parts, "."))
+	}
+	if err != nil {
+		return nil, err
+	}
+	if bytes.Equal(clean, updated) {
+		return raw, nil
+	}
 	prefix, suffix := 0, 0
 	for prefix < len(clean) && prefix < len(updated) && clean[prefix] == updated[prefix] {
 		prefix++
@@ -99,14 +115,11 @@ func mergeClientProvider(path, name string, config map[string]any) error {
 	}
 	patched := append([]byte(nil), original[:prefix]...)
 	patched = append(patched, updated[prefix:len(updated)-suffix]...)
-	updated = append(patched, original[len(original)-suffix:]...)
-	if !json.Valid(cleanClientJSON(updated)) {
-		return fmt.Errorf("could not safely update %s; existing configuration was retained", path)
+	patched = append(patched, original[len(original)-suffix:]...)
+	if !json.Valid(cleanClientJSON(patched)) {
+		return nil, errors.New("cannot safely edit JSON configuration")
 	}
-	if string(updated) == string(raw) {
-		return nil
-	}
-	return writeFileAtomic(path, updated, 0o600)
+	return patched, nil
 }
 
 // Prime accepts JSON with comments and trailing commas. Keep the original

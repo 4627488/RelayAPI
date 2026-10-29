@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-func (a *App) unconfigureAgent(ctx context.Context, profileName string, args []string) error {
+func (a *App) unconfigureLegacyAgent(ctx context.Context, profileName string, args []string) error {
 	if len(args) != 1 || (args[0] != "hermes" && args[0] != "prime-agent") {
 		return errors.New("usage: rai unconfigure codex|hermes|prime-agent")
 	}

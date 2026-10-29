@@ -220,7 +220,7 @@ jobs:
           for agent in "$RAI_PI_INTEROP_BINARY" "$RAI_OPENCODE_INTEROP_BINARY" "$RAI_GROK_INTEROP_BINARY" "$RAI_CLAUDE_INTEROP_BINARY" "$RAI_PRIME_AGENT_INTEROP_BINARY" "$RAI_HERMES_INTEROP_BINARY"; do
             "$agent" --version
           done
-          go test -count=1 -v ./internal/rai -run '^TestAgentClient(UsesGateway|ToolRoundTrip)$'
+          go test -count=1 -v ./internal/rai -run '^TestAgentClient(UsesGateway|ToolRoundTrip|ConfiguredUsesGateway|ConfiguredToolRoundTrip)$'
 
   images:
     name: Build RelayAPI image

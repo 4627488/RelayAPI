@@ -36,6 +36,31 @@ Hermes、Pi 和 Prime 的 provider 与认证参数由 rai 管理，透传冲突�
 
 ## 后台代理与配置清理
 
+### 配置后直接使用客户端
+
+`rai configure <agent>` 支持下表中的全部客户端，Codex 保持已有原生凭据助手流程。其他六个客户端使用可复用的后台代理，配置后可以直接运行 `claude`、`opencode`、`grok`、`pi`、`hermes` 或 `prime-agent`。不要求先安装客户端二进制才能写入配置。
+
+| 客户端 | 用户级配置位置 | 设置内容 |
+| --- | --- | --- |
+| Claude Code | `$CLAUDE_CONFIG_DIR/settings.json`，默认 `~/.claude/settings.json` | 网关环境、主模型、后台模型和输出预算；移除冲突的 `apiKeyHelper`，恢复时还原 |
+| OpenCode | `$OPENCODE_CONFIG`，否则 `$XDG_CONFIG_HOME/opencode/opencode.json[c]`，默认 `~/.config/opencode/` | 独立 provider、模型能力、默认模型与后台小模型；已有 JSONC 文件优先 |
+| Grok Build | `$GROK_HOME/config.toml`，默认 `~/.grok/config.toml` | 独立的本地模型条目、主模型与辅助角色；实际请求使用原始模型 ID |
+| Pi | `$PI_CODING_AGENT_DIR/models.json` 和 `settings.json`，默认 `~/.pi/agent/` | 独立 provider、完整模型列表、默认 provider/model 和可选推理档位 |
+| Hermes | `$HERMES_HOME/config.yaml`，默认 `~/.hermes/config.yaml` | 独立 custom provider、默认模型路由和可选推理档位 |
+| Prime Agent | `$PRIME_AGENT_CODING_AGENT_DIR/models.json` 和 `settings.json`，默认 `~/.prime/agent/` | 独立 provider、模型资料、默认 provider/model 和可选推理档位 |
+
+```sh
+rai --profile work configure opencode --model model-a --yes
+opencode
+rai --profile work unconfigure opencode
+```
+
+默认先展示写入路径并确认，`-y/--yes` 跳过交互确认。备份保存为 `.rai.bak`，相邻的 `.rai-*.json` 记录恢复基线。`unconfigure` 可以在没有登录凭据时恢复这些记录；若显式指定 profile，必须与记录的 profile 匹配。未修改的文件精确恢复，后续编辑按字段保留；认证与目的地址作为一组恢复，避免把原有凭据接到用户后来修改的地址上。Pi/Prime 的两份文件写入失败时会回滚。旧版 rai 启动 Hermes/Prime 时生成的 provider 仍可通过原清理路径移除。
+
+这些用户级配置不覆盖客户端自己的项目级或企业策略。系统重启或停止代理后，需要重新执行对应的 configure；不会自动安装系统启动服务。新选择模型、授权目录或能力发生变化时，也可重新 configure。
+
+### 代理生命周期
+
 Hermes 的 gateway 和 Prime 的 worker 可以在前台客户端结束后继续运行，因此使用独立的 rai 代理进程。相同站点 profile 复用同一个端点，只有该用户可读的本地配置保存随机 loopback 凭据。上游 access/refresh token 不写入客户端配置。
 
 ```sh
@@ -47,7 +72,7 @@ rai --profile work unconfigure prime-agent
 
 `proxy stop` 会使仍在工作的后台客户端失去本地端点；下次通过 rai 启动会重新创建并更新配置。系统重启后也需要通过 rai 启动以恢复端点。退出 profile 会先撤销 OAuth 会话，再停止代理并删除本地凭据；撤销失败保留原授权供重试。更改 profile 的服务器地址后，旧代理拒绝继续使用该 profile。
 
-`unconfigure` 只删除所选 rai profile 创建的命名 provider，保留其他配置。请在删除该 profile 前执行。Prime 的 JSON 注释、URL 字符串和其他 provider 会保留；Hermes 通过 YAML 节点保留其他设置及注释。无效配置会明确报错并保留原文件。
+通过 configure 建立的配置由恢复记录还原。仅通过旧版启动流程写入的 Hermes/Prime provider，`unconfigure` 保持原有按 profile 清理的行为，需在删除该 profile 前执行。Prime 的 JSON 注释、URL 字符串和其他 provider 会保留；Hermes 通过 YAML 节点保留其他设置及注释。无效配置会明确报错并保留原文件。
 
 `doctor --agent <name>` 检查所选客户端、凭据和 session；失败返回非零退出码。它不会发起付费模型调用，也不代替下面的端到端测试。无参数 `doctor` 保持原有的综合诊断输出。
 
@@ -64,9 +89,9 @@ export RAI_GROK_INTEROP_BINARY=/path/to/grok
 export RAI_CLAUDE_INTEROP_BINARY=/path/to/claude
 export RAI_PRIME_AGENT_INTEROP_BINARY=/path/to/full-prime-package/prime-agent
 export RAI_HERMES_INTEROP_BINARY=/path/to/hermes
-go test -count=1 -v ./internal/rai -run '^TestAgentClient(UsesGateway|ToolRoundTrip)$'
+go test -count=1 -v ./internal/rai -run '^TestAgentClient(UsesGateway|ToolRoundTrip|ConfiguredUsesGateway|ConfiguredToolRoundTrip)$'
 ```
 
-未配置对应变量时只跳过该客户端。CI 的 `Real rai agent clients` job 固定安装六个官方客户端并运行两组测试；Codex 的真实客户端测试沿用原有独立步骤。
+未配置对应变量时只跳过该客户端。CI 的 `Real rai agent clients` job 固定安装六个官方客户端，既验证 rai 启动流程，也验证实际执行 configure 后不携带模型/凭据参数直接启动客户端的回复和工具往返。所有测试使用隔离配置。Codex 的真实客户端测试沿用原有独立步骤。
 
 普通包测试还覆盖模型资料的授权隔离、配置保留、后台代理进程复用、OAuth 续期、删除凭据后拒绝请求，以及代理只开放推理路径。Codex Desktop/TUI 的界面、WS 到期重连、真实模型的搜索/Fast/压缩质量仍需单独验收，见 [Codex 架构](rai-architecture.md)。

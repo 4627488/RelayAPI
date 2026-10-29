@@ -108,12 +108,12 @@ func (a *App) Execute(ctx context.Context) error {
 		}
 		return a.syncCodex(ctx, profileName, args[2:]...)
 	case "configure":
-		return a.configureCodex(ctx, profileName, args[1:])
+		return a.configureAgent(ctx, profileName, args[1:])
 	case "unconfigure":
-		if len(args) > 1 && args[1] != "codex" {
-			return a.unconfigureAgent(ctx, profileName, args[1:])
+		if len(args) > 1 && args[1] == "codex" && !hasHelp(args[1:]) {
+			return a.unconfigureCodex(args[1:])
 		}
-		return a.unconfigureCodex(args[1:])
+		return a.unconfigureAgent(ctx, profileName, args[1:])
 	case "credential":
 		return a.credential(ctx, profileName, args[1:])
 	case "doctor":
@@ -197,9 +197,9 @@ CORE COMMANDS
 
 AGENT COMMANDS
   rai claude|codex|grok|hermes|opencode|pi|prime-agent [--model <id>] [--reasoning-effort <level>] -- <args>
-  rai configure codex      Sign in and connect Codex [--codex-profile <name>]
-  rai unconfigure codex    Restore rai-managed Codex settings [--codex-profile <name>]
-  rai unconfigure hermes|prime-agent  Remove this profile's managed provider
+  rai configure <agent>    Set up any agent above for direct use [-y] [--model <id>]
+  rai unconfigure <agent>  Restore rai-managed settings and preserve later edits
+  rai configure codex --codex-profile <name>  Use a native Codex profile
   rai codex --desktop      Temporarily connect Codex Desktop
   rai sync codex           Import saved Codex settings [--codex-profile <name>]
 

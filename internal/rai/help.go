@@ -20,6 +20,11 @@ func hasHelp(args []string) bool {
 
 func (a *App) executeHelp(args []string) error {
 	switch args[0] {
+	case "configure":
+		fmt.Fprintln(a.Stdout, configureUsage())
+		return nil
+	case "unconfigure":
+		return a.unconfigureAgent(context.Background(), "", nil)
 	case "proxy":
 		return a.proxyCommand(context.Background(), "", nil)
 	case "auth":

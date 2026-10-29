@@ -32,6 +32,15 @@ func (ClaudeAdapter) Prepare(ctx LaunchContext) (Command, error) {
 	if ctx.Model != "" && !hasModelFlag(args) {
 		args = append([]string{"--model", ctx.Model}, args...)
 	}
+	env := claudeGatewayEnv(ctx)
+	return Command{
+		Path: path,
+		Args: args,
+		Env:  mergeEnv(ctx.Environ, env),
+	}, nil
+}
+
+func claudeGatewayEnv(ctx LaunchContext) map[string]string {
 	env := map[string]string{
 		envAPIKey:                                    ctx.APIKey,
 		envProfile:                                   ctx.Profile.Name,
@@ -85,11 +94,7 @@ func (ClaudeAdapter) Prepare(ctx LaunchContext) (Command, error) {
 	} else {
 		env["ENABLE_TOOL_SEARCH"] = "false"
 	}
-	return Command{
-		Path: path,
-		Args: args,
-		Env:  mergeEnv(ctx.Environ, env),
-	}, nil
+	return env
 }
 
 func claudeToolSearch(model string) bool {

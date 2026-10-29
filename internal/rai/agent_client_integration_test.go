@@ -19,14 +19,17 @@ import (
 // Opt-in tests run actual released agents against an isolated local gateway.
 // No existing user config, credential, project or paid provider is used.
 func TestAgentClientUsesGateway(t *testing.T) {
-	testAgentClients(t, false)
+	testAgentClients(t, false, false)
 }
 
 func TestAgentClientToolRoundTrip(t *testing.T) {
-	testAgentClients(t, true)
+	testAgentClients(t, true, false)
 }
 
-func testAgentClients(t *testing.T, toolRoundTrip bool) {
+func TestAgentClientConfiguredUsesGateway(t *testing.T)   { testAgentClients(t, false, true) }
+func TestAgentClientConfiguredToolRoundTrip(t *testing.T) { testAgentClients(t, true, true) }
+
+func testAgentClients(t *testing.T, toolRoundTrip, configured bool) {
 	for _, agent := range []string{"pi", "opencode", "grok", "claude", "prime-agent", "hermes"} {
 		t.Run(agent, func(t *testing.T) {
 			variable := "RAI_" + strings.ToUpper(strings.ReplaceAll(agent, "-", "_")) + "_INTEROP_BINARY"
@@ -58,6 +61,10 @@ func testAgentClients(t *testing.T, toolRoundTrip bool) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/rai/session" {
+					io.WriteString(w, `{"models":["custom-model"],"default_model":"custom-model","model_info":{"custom-model":{"context":131072,"max_output":4096,"tool_call":true,"input_modalities":["text"]}}}`)
+					return
+				}
 				if r.Method == "GET" && r.URL.Path == "/v1/models" {
 					io.WriteString(w, `{"object":"list","data":[{"id":"custom-model","name":"Custom model","context_length":131072,"max_output_tokens":4096}]}`)
 					return
@@ -150,6 +157,9 @@ func testAgentClients(t *testing.T, toolRoundTrip bool) {
 				"GROK_HOME": filepath.Join(home, "grok"), "CLAUDE_CONFIG_DIR": filepath.Join(home, "claude"), "OPENCODE_DISABLE_MODELS_FETCH": "true", "OPENCODE_DISABLE_AUTOUPDATE": "true",
 				"ANTHROPIC_AUTH_TOKEN": "", "ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": "", "OPENROUTER_API_KEY": "", "NO_COLOR": "1", "PI_OFFLINE": "1",
 			})
+			if kernel := os.Getenv("PRIME_AGENT_KERNEL_PYTHON"); kernel != "" {
+				env = mergeEnv(env, map[string]string{"PRIME_AGENT_KERNEL_PYTHON": kernel})
+			}
 			prompt := "Reply RAI_INTEROP_OK. Do not use tools."
 			if toolRoundTrip {
 				prompt = "Read " + fixture + " using your file or Python tool, then reply RAI_INTEROP_OK."
@@ -168,7 +178,48 @@ func testAgentClients(t *testing.T, toolRoundTrip bool) {
 				args = []string{"-p", prompt}
 			}
 			adapter, _ := AdapterByName(agent)
-			command, err := adapter.Prepare(LaunchContext{Profile: Profile{Name: "test", ServerURL: server.URL, OpenCodeProtocol: "chat"}, APIBase: server.URL, APIKey: "rai_local_test", Model: "custom-model", Models: []string{"custom-model"}, ModelInfo: map[string]ModelInfo{"custom-model": {Context: 131072, MaxOutput: 4096, ToolCall: boolValue(true), InputModalities: []string{"text"}}}, Executable: binary, Args: args, Environ: env, RuntimeDir: t.TempDir(), RAIHome: home})
+			var command Command
+			if !configured {
+				command, err = adapter.Prepare(LaunchContext{Profile: Profile{Name: "test", ServerURL: server.URL, OpenCodeProtocol: "chat"}, APIBase: server.URL, APIKey: "rai_local_test", Model: "custom-model", Models: []string{"custom-model"}, ModelInfo: map[string]ModelInfo{"custom-model": {Context: 131072, MaxOutput: 4096, ToolCall: boolValue(true), InputModalities: []string{"text"}}}, Executable: binary, Args: args, Environ: env, RuntimeDir: t.TempDir(), RAIHome: home})
+			}
+			if configured {
+				t.Setenv(envDisableKey, "1")
+				helper, helperErr := os.Executable()
+				if helperErr != nil {
+					t.Fatal(helperErr)
+				}
+				var messages strings.Builder
+				a := &App{Home: filepath.Join(home, "rai"), Self: helper, Environ: mergeEnv(env, map[string]string{"RAI_TEST_PROXY_PROCESS": "1", envDisableKey: "1"}), Stdout: &messages, Stderr: &messages}
+				a.defaults()
+				store, e := a.store()
+				if e != nil {
+					t.Fatal(e)
+				}
+				profile := Profile{Name: "test", ServerURL: server.URL, OpenCodeProtocol: "chat"}
+				if e := store.PutProfile(profile); e != nil {
+					t.Fatal(e)
+				}
+				if _, e := store.PutCredential(profile.Name, "rai_local_test"); e != nil {
+					t.Fatal(e)
+				}
+				a.Args = []string{"configure", agent, "--yes"}
+				if e := a.Execute(context.Background()); e != nil {
+					t.Fatalf("configure %s: %v", agent, e)
+				}
+				state, e := readProxyState(store, profile)
+				if e != nil {
+					t.Fatal(e)
+				}
+				t.Cleanup(func() { _, _ = proxyRequest(context.Background(), state, http.MethodPost, "/_rai/stop") })
+				command = Command{Path: binary, Args: args, Env: env}
+				err = nil
+				t.Cleanup(func() {
+					a.Args = []string{"unconfigure", agent}
+					if e := a.Execute(context.Background()); e != nil {
+						t.Error(e)
+					}
+				})
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

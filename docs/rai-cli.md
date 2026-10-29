@@ -68,6 +68,26 @@ rai auth login --server https://relay.example --no-browser
 
 `--profile work` 可以区分多个站点。`rai configure codex --server ...` 明确重新授权指定站点；已配置的 profile 不必每次传入地址。
 
+`configure` 也支持 `claude`、`opencode`、`grok`、`pi`、`hermes` 和 `prime-agent`。配置后重启客户端，即可直接使用原命令；无需每次通过 rai 启动。未登录时进入设备授权，已有登录则复用所选 profile。
+
+```sh
+rai configure claude --model model-a --yes
+claude
+rai configure opencode --model model-a --yes
+opencode
+rai configure grok --yes
+rai configure pi --yes
+rai configure hermes --yes
+rai configure prime-agent --yes
+rai unconfigure claude
+```
+
+这六个目标支持 `--server`、`--model`、`--reasoning-effort`、`--no-browser` 和 `-y/--yes`。默认交互确认写入路径；`--yes` 适用于脚本。省略模型时使用 profile 或站点默认模型，`--model default` 忽略 profile 的模型选择。本次配置不修改 rai profile 中保存的模型偏好。Codex 沿用原有选项，`--codex-profile` 仅适用于 Codex。
+
+持久配置只保存随机的本地代理凭据，access/refresh token 仍由 rai 保存和续期。后台代理按站点 profile 复用；系统重启或执行 `rai proxy stop` 后，请重新执行对应的 `rai configure <agent>` 以恢复端点。客户端自身的项目配置、环境变量或企业策略可能覆盖用户级配置。
+
+首次覆盖已有文件会保存 `.rai.bak`，并记录恢复信息。`rai unconfigure <agent>` 恢复仍与 rai 写入值一致的字段，保留用户后续编辑；未修改时恢复原始文件内容，配置前不存在的文件会删除。重复 configure 保留最初的恢复基线。JSON/JSONC 和 YAML 尽量保留其他内容与注释；Grok 的 TOML 会重新格式化。配置文件和恢复记录使用受限权限，备份可能含原配置已有的凭据，请妥善保管。详见[各客户端的配置位置与验证](rai-client-compatibility.md)。
+
 CLI 可选原生 Codex profile，以共享历史并保留根配置：
 
 ```sh
