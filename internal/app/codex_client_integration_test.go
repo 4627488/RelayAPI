@@ -143,7 +143,16 @@ func TestCodexClientReadsRelayQuota(t *testing.T) {
 					"-c", "model_providers.relay_probe.supports_websockets=" + strconv.FormatBool(transport == "websocket"),
 				}
 				command := exec.CommandContext(ctx, binary, args...)
-				command.Env = append(os.Environ(), "CODEX_HOME="+home, "RAI_INTEROP_CREDENTIAL_HELPER=1")
+				// App-server derives its HTTP originator from clientInfo.name.
+				// A surrounding Codex session must not override this fixture and
+				// hide differences between a developer machine and GitHub CI.
+				for _, entry := range os.Environ() {
+					name, _, _ := strings.Cut(entry, "=")
+					if !strings.EqualFold(name, "CODEX_INTERNAL_ORIGINATOR_OVERRIDE") {
+						command.Env = append(command.Env, entry)
+					}
+				}
+				command.Env = append(command.Env, "CODEX_HOME="+home, "RAI_INTEROP_CREDENTIAL_HELPER=1")
 				input, err := command.StdinPipe()
 				if err != nil {
 					t.Fatal(err)
@@ -163,7 +172,7 @@ func TestCodexClientReadsRelayQuota(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				send(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]any{"name": "relay_interop", "version": "1"}, "capabilities": map[string]any{"experimentalApi": true}}})
+				send(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]any{"name": "codex_cli_rs", "version": "1"}, "capabilities": map[string]any{"experimentalApi": true}}})
 				var live bytes.Buffer
 				scanner := bufio.NewScanner(stdout)
 				scanner.Buffer(make([]byte, 65536), 4<<20)
