@@ -19,19 +19,19 @@ encrypted credential store.
 ## Dependency maintenance
 
 The root module and `third_party/cpaexecutor/go.mod` pin the same replacement:
-[4627488/CLIProxyAPI commit 3f1caac90f46](https://github.com/4627488/CLIProxyAPI/commit/3f1caac90f46150b22ba4cda85c6f1826cb1573f),
-on branch `codex/credential-refresh-v8.0.38`. This is upstream **v8.0.38** plus
+[4627488/CLIProxyAPI commit 51236c85db7f](https://github.com/4627488/CLIProxyAPI/commit/51236c85db7fb835d04c16cfe6db255e9614dfb1),
+on branch `codex/credential-refresh-v8.0.47`. This is upstream **v8.0.47** plus
 the shared refresh lifecycle patch, with regression tests. The replacement version is
-`v8.0.0-20261021165512-3f1caac90f46`; the module path is `/v8` in both
+`v8.0.0-20261030044824-51236c85db7f`; the module path is `/v8` in both
 Relay modules. The pseudo-version reflects the fork's tags, not a downgrade
-from upstream v8.0.38.
+from upstream v8.0.47.
 
 The shared refresh entry point passes the current registration epoch through
 the locked refresh body, preserving upstream's protection against stale queued
 jobs refreshing a newly registered credential. Snapshot isolation is now
 included upstream, so the fork no longer carries that patch.
 
-CPA v8.0.38 uses the Grok CLI chat-proxy fallback identity `1.0.46`. Relay's quota probe
+CPA v8.0.47 uses the Grok CLI chat-proxy fallback identity `1.0.46`. Relay's quota probe
 uses the same version without overriding inference headers. Grok's protocol
 conversion remains owned by CPA.
 

@@ -10,9 +10,10 @@ require (
 	github.com/mattn/go-isatty v0.0.24
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/prometheus/client_golang v1.25.0
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.38
+	github.com/router-for-me/CLIProxyAPI/v8 v8.0.47
 	github.com/router-for-me/CLIProxyAPI/v8/relaybridge v0.0.0-00010101000000-000000000000
 	github.com/tidwall/gjson v1.20.0
+	github.com/tidwall/sjson v1.2.5
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.61.0
@@ -25,8 +26,8 @@ require (
 
 replace github.com/router-for-me/CLIProxyAPI/v8/relaybridge => ./third_party/cpaexecutor
 
-// v8.0.38 plus CPA's shared RefreshCredential entry point; see docs/credential-refresh.md.
-replace github.com/router-for-me/CLIProxyAPI/v8 => github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261021165512-3f1caac90f46
+// v8.0.47 plus CPA's shared RefreshCredential entry point; see docs/credential-refresh.md.
+replace github.com/router-for-me/CLIProxyAPI/v8 => github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261030044824-51236c85db7f
 
 require (
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
@@ -95,7 +96,6 @@ require (
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.2 // indirect
-	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tiktoken-go/tokenizer v0.10.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.2 // indirect
