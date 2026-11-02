@@ -181,7 +181,7 @@ it.each([320, 1280])(
       .toBeVisible()
     await expectNoA11yViolations()
     await userEvent.keyboard("{Escape}")
-    await screen.getByRole("link", { name: /查看日志/ }).click()
+    await screen.getByRole("link", { name: /查看扣费明细/ }).click()
     expect(onOpen).toHaveBeenCalledWith(log)
   }
 )
