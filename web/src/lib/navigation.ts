@@ -36,7 +36,7 @@ export const userNavigation: NavigationItem[] = [
     section: "开始使用",
   },
   { id: "usage", label: "用量", icon: ChartBarBigIcon, section: "运行与观测" },
-  { id: "logs", label: "请求日志", icon: ListIcon, section: "运行与观测" },
+  { id: "logs", label: "扣费明细", icon: ListIcon, section: "运行与观测" },
   {
     id: "subscriptions",
     label: "我的订阅",
@@ -64,7 +64,7 @@ export const adminNavigation: NavigationItem[] = [
     section: "模型与计费",
   },
   { id: "usage", label: "全局用量", icon: ChartBarBigIcon, section: "观测" },
-  { id: "logs", label: "请求日志", icon: ListIcon, section: "观测" },
+  { id: "logs", label: "扣费明细", icon: ListIcon, section: "观测" },
   { id: "updates", label: "近期更新", icon: NewspaperIcon, section: "关于" },
 ]
 
@@ -81,7 +81,7 @@ export const pageLabels: Partial<Record<Page, string>> = {
   usage: "用量",
   keys: "API Keys",
   "rai-devices": "设备",
-  logs: "请求日志",
+  logs: "扣费明细",
   guide: "接入指南",
   users: "用户",
   invitations: "邀请管理",

@@ -329,6 +329,8 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		if call.billable {
 			err := a.store.SettleRequestWithLog(finalizeCtx, call.requestID, input)
 			a.observePersistence("http_settlement", err)
+			slog.Log(finalizeCtx, settlementLogLevel(err), "billing settlement completed", "event", "billing.settled",
+				"request_id", call.requestID, "success", err == nil, "pricing_complete", complete, "cost_nano_usd", actual, "error", err)
 			if err != nil {
 				slog.Error("settle http billing detail", "request_id", call.requestID, "error", err)
 			}

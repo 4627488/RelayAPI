@@ -3,6 +3,11 @@ services:
     image: ghcr.io/4627488/relayapi:latest
     build: .
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     mem_limit: ${RELAY_MEMORY_LIMIT:-768m}
     mem_reservation: ${RELAY_MEMORY_RESERVATION:-384m}
     env_file: .env

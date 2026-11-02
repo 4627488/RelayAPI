@@ -74,6 +74,9 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	}
 	timeline.Step(time.Now(), "resolve_key", "解析 API Key", "relay", "鉴权并加载租户与 Key 权限")
 	r = r.WithContext(context.WithValue(r.Context(), runtimePrincipalContext, key.ID))
+	if op := operationalRequest(r); op != nil {
+		op.tenantID, op.keyID = key.TenantID, key.ID
+	}
 	// Query authentication is accepted by CPA/Gemini clients, but the Relay
 	// credential must not be sent to the provider or retained in URL logs.
 	query := r.URL.Query()
@@ -87,6 +90,9 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestID := identity.NewID()
+	if op := operationalRequest(r); op != nil {
+		requestID = op.requestID
+	}
 	w.Header().Set("X-Relay-Request-ID", requestID)
 	admission := store.Admission{RequestID: requestID}
 	expectedBodyBytes := r.ContentLength

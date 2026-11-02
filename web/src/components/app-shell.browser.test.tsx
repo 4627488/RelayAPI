@@ -114,7 +114,7 @@ describe("application shell", () => {
       </ThemeProvider>
     )
 
-    const logsLink = screen.getByRole("link", { name: "请求日志" })
+    const logsLink = screen.getByRole("link", { name: "扣费明细" })
     await expect.element(logsLink).toHaveAttribute("href", "/app/logs")
     await expect
       .element(screen.getByRole("link", { name: "总览" }))
@@ -152,7 +152,7 @@ describe("application shell", () => {
       await screen.getByRole("button", { name: "Toggle Sidebar" }).click()
       const navigationSheet = screen.getByRole("dialog")
       await expect.element(navigationSheet).toBeVisible()
-      await screen.getByRole("link", { name: "请求日志" }).click()
+      await screen.getByRole("link", { name: "扣费明细" }).click()
       expect(onPageChange).toHaveBeenCalledWith("logs")
       await expect.element(navigationSheet).not.toBeInTheDocument()
     } finally {

@@ -8,7 +8,7 @@ RelayAPI 是 Codex 优先的 Go 多租户模型网关。统一入口负责协议
 [docs/image-billing.md](docs/image-billing.md)，父/子订阅与严格凭据路由见
 [docs/subscriptions.md](docs/subscriptions.md)。
 
-Prometheus 可观测性通过 `GET /metrics` 提供，包含 Relay 和内嵌 CPA 指标；抓取、鉴权、指标语义和告警示例见 [docs/observability.md](docs/observability.md)。
+后台日志输出为分级 JSON，由 Alloy 推送到 Loki；可选部署配置见 [docker-compose.observability.yml](docker-compose.observability.yml)。页面中的「扣费明细」用于查看用量和扣费。Prometheus 指标通过 `GET /metrics` 提供，包含 Relay 和内嵌 CPA 指标；日志采集、查询、指标语义和告警示例见 [docs/observability.md](docs/observability.md)。
 
 ## 启动
 

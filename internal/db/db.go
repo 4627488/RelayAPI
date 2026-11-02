@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
-	"os"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -18,12 +16,7 @@ import (
 const schemaAdvisoryLockKey int64 = 742184201
 
 func Open(ctx context.Context, databaseURL string) (*gorm.DB, error) {
-	databaseLogger := logger.New(log.New(os.Stderr, "", log.LstdFlags), logger.Config{
-		SlowThreshold:             time.Second,
-		LogLevel:                  logger.Warn,
-		IgnoreRecordNotFoundError: true,
-		Colorful:                  false,
-	})
+	databaseLogger := databaseLog{level: logger.Warn}
 	database, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{
 		Logger: databaseLogger,
 	})
