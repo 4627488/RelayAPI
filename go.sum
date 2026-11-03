@@ -1,7 +1,7 @@
 cloud.google.com/go/compute/metadata v0.10.0 h1:pyKMUQSwchgkIBBJGdILqQbs/BNJXqwSA7Ej6LAvvtY=
 cloud.google.com/go/compute/metadata v0.10.0/go.mod h1:rGFHRrIif570kSibjFTMbt6/4/tzgJWFGI/HVol4GIk=
-github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261030044824-51236c85db7f h1:y+3gnV0MMsrMxuuruDxMM70qlO9I43n7ZInpkiBaeN4=
-github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261030044824-51236c85db7f/go.mod h1:PCYpdU5+5Sg+BxCGqi81TnSYpppzDaqe5ryH+Z+gJ64=
+github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261103051540-d004dbefe7ca h1:hBgprFmn1PaJGmdUNx7pFsSO6Lp0oMqHhp//+PfW/LA=
+github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261103051540-d004dbefe7ca/go.mod h1:5XndiySFWT6C8NcmuE64iEvr+RrlQhrLLSKqf8z+flw=
 github.com/andybalholm/brotli v1.2.6 h1:ftYnfj6usCp+UGV5kSJ3+chpMQgU+gJf/AxsUQ52REI=
 github.com/andybalholm/brotli v1.2.6/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
@@ -163,6 +163,8 @@ github.com/refraction-networking/utls v1.8.2 h1:j4Q1gJj0xngdeH+Ox/qND11aEfhpgoEv
 github.com/refraction-networking/utls v1.8.2/go.mod h1:jkSOEkLqn+S/jtpEHPOsVv/4V4EVnelwbMQl4vCWXAM=
 github.com/rogpeppe/go-internal v1.15.0 h1:D0RCU5rMAp+SpgkiNdrjfJ+LX4J1M32V2NeCY7EJ6hc=
 github.com/rogpeppe/go-internal v1.15.0/go.mod h1:DrUVZyrJU+txYW5/1kwtXQSMFio52ZOxX7yM1VHvnxs=
+github.com/router-for-me/moego v0.1.1 h1:EbcsqpnW7qSmSA6Zs77ET3n3DHKyLcfxmqzd4C+2Sxc=
+github.com/router-for-me/moego v0.1.1/go.mod h1:SBNiQjCpWC3IEBMKFBOwOyhhQ3jywMrISqCwJTdr4aA=
 github.com/sirupsen/logrus v1.10.2 h1:G2SED73/qrAu6YwbdxOD6peLkCBI3z7L+ykJFTXJBBo=
 github.com/sirupsen/logrus v1.10.2/go.mod h1:SLEg8TqYulVKKfIGHldVp2K2aYz2DKSVBq4g/H5bR7Q=
 github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 h1:JIAuq3EEf9cgbU6AtGPK4CTG3Zf6CKMNqf0MHTggAUA=
