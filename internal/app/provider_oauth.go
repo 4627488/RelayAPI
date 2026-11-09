@@ -299,6 +299,24 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	id := session.TargetCredentialID
+	if id == "" {
+		id = nativeCredentialID(session.Provider)
+	}
+	if err := a.quotaBackoff.beginReplacement(r.Context(), id); err != nil {
+		writeError(w, http.StatusRequestTimeout, "oauth_finalize_interrupted", "等待账户查询结束失败，请重试保存授权")
+		return
+	}
+	probeStarted := false
+	defer func() {
+		if !probeStarted {
+			a.quotaBackoff.finish(id, time.Now(), nil, session.Provider)
+		}
+	}()
+	if _, exists := a.providerOAuth.snapshotByState(state); !exists {
+		writeError(w, http.StatusConflict, "oauth_session_consumed", "授权会话已保存或过期")
+		return
+	}
 	var previous *store.UpstreamCredentialSnapshot
 	if session.TargetCredentialID != "" {
 		row, err := a.store.GetUpstreamCredential(r.Context(), session.TargetCredentialID)
@@ -330,16 +348,13 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "validation_error", "账户名称必填")
 		return
 	}
-	id := nativeCredentialID(session.Provider)
 	document := json.RawMessage(session.Document)
 	enabled := true
 	models := []string(nil)
-	var expiresAt *time.Time
 	if previous != nil {
 		id = previous.ID
 		enabled = previous.Enabled
 		models = previous.Models
-		expiresAt = previous.ExpiresAt
 		var mergeErr error
 		document, mergeErr = mergeOAuthCredentialSettings(previous.Document, document)
 		if mergeErr != nil {
@@ -356,9 +371,11 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 		}
 		proxyID = validatedProxyID
 	}
+	// The new token carries its own expiry. The old token's timestamp must not
+	// survive reauthorization; the account projection reads OAuth timestamps.
 	row, err := a.store.UpsertUpstreamCredential(r.Context(), store.UpstreamCredentialInput{
 		ID: id, Name: name, Provider: session.Provider, Enabled: enabled, Models: models,
-		Document: stripCredentialProxyFields(document), Source: "oauth", ProxyID: proxyID, ExpiresAt: expiresAt,
+		Document: stripCredentialProxyFields(document), Source: "oauth", ProxyID: proxyID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "credential_save_failed", "保存 OAuth 账户失败")
@@ -379,16 +396,27 @@ func (a *App) adminProviderOAuthFinalize(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "credential_invalid", err.Error())
 		return
 	}
-	if _, err = a.syncNativeParentSubscriptionRows(r.Context()); err != nil {
+	parents, err := a.syncNativeParentSubscriptionRows(r.Context())
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "subscription_sync_failed", "OAuth 账户已保存，但父订阅同步失败")
 		return
 	}
 	a.providerOAuth.remove(state)
+	account := nativeProviderAccount(row)
+	for _, parent := range parents {
+		if parent.UpstreamCredentialID == id {
+			probeStarted = true
+			// Authorization is already committed. A quota failure is reported
+			// separately and never rolls back valid credentials.
+			account["quota_sync"] = a.syncParentQuotaLocked(r.Context(), parent, true)
+			break
+		}
+	}
 	status := http.StatusCreated
 	if previous != nil {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, nativeProviderAccount(row))
+	writeJSON(w, status, account)
 }
 
 func mergeOAuthCredentialSettings(current, replacement json.RawMessage) (json.RawMessage, error) {

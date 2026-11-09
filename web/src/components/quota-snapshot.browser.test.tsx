@@ -9,6 +9,7 @@ const snapshot: UpstreamQuotaReport = {
   subscription: {
     status: "supported",
     source: "claude-oauth-profile",
+    observed_at: "2026-11-09T08:27:22Z",
     rate_limit_tier: "default_claude_max_20x",
     subscription_status: "active",
   },
@@ -28,12 +29,49 @@ const snapshot: UpstreamQuotaReport = {
 }
 
 describe("upstream quota snapshot", () => {
+  it("shows canceled Max benefits without inventing an expiry", async () => {
+    const screen = await render(
+      <QuotaSnapshot
+        snapshot={{
+          ...snapshot,
+          subscription: {
+            ...snapshot.subscription!,
+            rate_limit_tier: "default_claude_max_5x",
+            subscription_status: "canceled",
+          },
+        }}
+      />
+    )
+    await expect.element(screen.getByText("Max 5x")).toBeVisible()
+    await expect
+      .element(screen.getByText("订阅已取消", { exact: true }))
+      .toBeVisible()
+    await expect
+      .element(screen.getByText("上游标记订阅已取消，权益截止时间未提供。"))
+      .toBeVisible()
+  })
+
+  it("does not call an undated legacy snapshot live", async () => {
+    const screen = await render(
+      <QuotaSnapshot
+        snapshot={{
+          ...snapshot,
+          subscription: {
+            ...snapshot.subscription!,
+            observed_at: undefined,
+          },
+        }}
+      />
+    )
+    await expect
+      .element(screen.getByText("套餐已实时探测"))
+      .not.toBeInTheDocument()
+    await expect.element(screen.getByText(/套餐更新于/)).not.toBeInTheDocument()
+  })
   it("shows live plan tier and normalized extra usage amounts", async () => {
     const screen = await render(<QuotaSnapshot snapshot={snapshot} />)
-    await expect
-      .element(screen.getByText("default_claude_max_20x"))
-      .toBeVisible()
-    await expect.element(screen.getByText("套餐已实时探测")).toBeVisible()
+    await expect.element(screen.getByText("Max 20x")).toBeVisible()
+    await expect.element(screen.getByText(/套餐更新于/)).toBeVisible()
     await expect
       .element(screen.getByText(/已用 12.34 \/ 100 USD/))
       .toBeVisible()
@@ -65,8 +103,10 @@ describe("upstream quota snapshot", () => {
     const screen = await render(
       <QuotaSnapshot snapshot={{ ...snapshot, windows: [] }} status="error" />
     )
-    await expect.element(screen.getByText("max", { exact: true })).toBeVisible()
-    await expect.element(screen.getByText("套餐已实时探测")).toBeVisible()
+    await expect
+      .element(screen.getByText("Max 20x", { exact: true }))
+      .toBeVisible()
+    await expect.element(screen.getByText(/套餐更新于/)).toBeVisible()
     await expect.element(screen.getByText("额度探测失败")).toBeVisible()
   })
 

@@ -112,7 +112,9 @@ export function AccountStatusPanel({
             ? `${account.success} 成功 / ${account.failed} 失败（运行时累计）`
             : "暂无请求统计"}
         </Detail>
-        <Detail label="授权到期">
+        <Detail
+          label={account.auth_kind === "oauth" ? "访问令牌到期" : "凭据到期"}
+        >
           {account.expires_at ? dateTime(account.expires_at) : "未提供到期时间"}
         </Detail>
         <Detail label="最近令牌刷新">

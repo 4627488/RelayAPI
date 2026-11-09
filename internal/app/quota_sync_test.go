@@ -22,6 +22,60 @@ type quotaRefreshRuntime struct {
 	refresh func(context.Context, string, bool) ([]byte, bool, error)
 }
 
+func TestQuotaProbeStopsAfterProactiveRefreshFailure(t *testing.T) {
+	refreshErr := errors.New("refresh token expired")
+	calls := 0
+	a := &App{nativeRuntime: quotaRefreshRuntime{refresh: func(_ context.Context, _ string, force bool) ([]byte, bool, error) {
+		calls++
+		if force {
+			t.Fatal("terminal refresh was retried")
+		}
+		return nil, false, refreshErr
+	}}}
+	_, err := a.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{}, store.UpstreamCredentialSnapshot{ID: "claude"}, "", func(context.Context, gateway.QuotaProbeCredential) (gateway.QuotaReport, error) {
+		t.Fatal("usage requested with a token whose refresh already failed")
+		return gateway.QuotaReport{}, nil
+	})
+	if !errors.Is(err, refreshErr) || calls != 1 {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}
+
+func TestQuotaRetryUsesTokenRotatedByConcurrentRefresh(t *testing.T) {
+	a := &App{nativeRuntime: quotaRefreshRuntime{refresh: func(_ context.Context, _ string, force bool) ([]byte, bool, error) {
+		if force {
+			// CPA reused another caller's completed refresh; this call did not refresh.
+			return []byte(`{"access_token":"new"}`), false, nil
+		}
+		return []byte(`{"access_token":"old"}`), false, nil
+	}}}
+	calls := 0
+	_, err := a.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{}, store.UpstreamCredentialSnapshot{ID: "claude"}, "", func(_ context.Context, input gateway.QuotaProbeCredential) (gateway.QuotaReport, error) {
+		calls++
+		if strings.Contains(string(input.Document), "old") {
+			return gateway.QuotaReport{}, &gateway.QuotaHTTPError{StatusCode: 401}
+		}
+		return gateway.QuotaReport{Supported: true}, nil
+	})
+	if err != nil || calls != 2 {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}
+
+func TestQuotaProfileFailureRetainsConfirmedPlanAndIndependentClock(t *testing.T) {
+	observed := time.Now().Add(-time.Hour).UTC()
+	previous, _ := json.Marshal(gateway.QuotaReport{PlanType: "max", Observed: observed, Subscription: &gateway.QuotaSubscription{
+		Status: "supported", Source: "claude-oauth-profile", ObservedAt: &observed, RateLimitTier: "default_claude_max_5x", SubscriptionStatus: "canceled",
+	}})
+	now := time.Now().UTC()
+	report := mergeQuotaSubscription(previous, gateway.QuotaReport{PlanType: "pro", Observed: now, Subscription: &gateway.QuotaSubscription{
+		Status: "error", Source: "claude-oauth-profile", CheckedAt: now, ErrorCode: "rate_limited",
+	}})
+	if report.PlanType != "max" || report.Subscription.RateLimitTier != "default_claude_max_5x" || report.Subscription.Status != "error" || !report.Subscription.ObservedAt.Equal(observed) || !report.Observed.Equal(now) || !report.Subscription.CheckedAt.Equal(now) {
+		t.Fatalf("partial observation = %+v subscription=%+v", report, report.Subscription)
+	}
+}
+
 func (r quotaRefreshRuntime) RefreshCredential(ctx context.Context, id string, force bool) ([]byte, bool, error) {
 	return r.refresh(ctx, id, force)
 }
@@ -114,7 +168,10 @@ func TestRefreshQuotaCredentialDocumentUsesRuntimeToken(t *testing.T) {
 
 	application := &App{nativeRuntime: runtime}
 	stale := mustJSON(t, map[string]any{"type": "kimi", "access_token": "old-access", "refresh_token": "old-refresh"})
-	document := application.refreshQuotaCredentialDocument(t.Context(), "kimi-1", stale, false)
+	document, err := application.refreshQuotaCredentialDocument(t.Context(), "kimi-1", stale, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var payload map[string]any
 	if json.Unmarshal(document, &payload) != nil || payload["access_token"] != "new-access" {
 		t.Fatalf("document = %s", document)

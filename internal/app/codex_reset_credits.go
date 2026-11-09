@@ -67,11 +67,15 @@ func (a *App) adminCodexResetCredits(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) withCodexResetCredential(ctx context.Context, row store.UpstreamCredentialSnapshot, proxyURL string, call func(gateway.QuotaProbeCredential) error) error {
+	document, err := a.refreshQuotaCredentialDocument(ctx, row.ID, row.Document, false)
+	if err != nil {
+		return fmt.Errorf("Codex 授权刷新失败，请重新授权: %w", err)
+	}
 	credential := gateway.QuotaProbeCredential{
 		AuthIndex: row.ID, Provider: row.Provider, ProxyURL: proxyURL,
-		Document: a.refreshQuotaCredentialDocument(ctx, row.ID, row.Document, false),
+		Document: document,
 	}
-	err := call(credential)
+	err = call(credential)
 	if err == nil || !quotaProbeUnauthorized(err) || a.nativeRuntime == nil {
 		return err
 	}

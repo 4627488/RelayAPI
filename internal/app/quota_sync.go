@@ -128,15 +128,6 @@ func (a *App) syncParentQuotas(ctx context.Context, parents []store.ParentSubscr
 
 func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscription) (result quotaSyncResult) {
 	result = quotaSyncResult{ParentID: parent.ID, AuthIndex: firstNonEmptyString(parent.UpstreamCredentialID, parent.UpstreamAuthIndex), Provider: parent.Provider}
-	// Usage metadata has a much smaller rate limit than inference. Reuse the
-	// durable successful observation rather than creating another cache.
-	if (strings.EqualFold(parent.Provider, "claude") || strings.EqualFold(parent.Provider, "anthropic")) && parent.QuotaObservedAt != nil && parent.QuotaSupported {
-		next := parent.QuotaObservedAt.Add(5 * time.Minute)
-		if next.After(time.Now()) {
-			result.Status, result.Supported, result.ObservedAt, result.RetryAt = "cached", true, *parent.QuotaObservedAt, &next
-			return result
-		}
-	}
 	id := result.AuthIndex
 	if allowed, retryAt := a.quotaBackoff.begin(id, time.Now()); !allowed {
 		result.Status = "in_progress"
@@ -148,21 +139,42 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 		}
 		return result
 	}
+	return a.syncParentQuotaLocked(ctx, parent, false)
+}
+
+// The caller owns the credential's probe slot, including during reauthorization.
+func (a *App) syncParentQuotaLocked(ctx context.Context, parent store.ParentSubscription, fresh bool) (result quotaSyncResult) {
+	result = quotaSyncResult{ParentID: parent.ID, AuthIndex: firstNonEmptyString(parent.UpstreamCredentialID, parent.UpstreamAuthIndex), Provider: parent.Provider}
 	var probeErr error
 	defer func() {
-		if retryAt := a.quotaBackoff.finish(id, time.Now(), probeErr, parent.Provider); !retryAt.IsZero() {
+		if result.Status == "error" && probeErr == nil {
+			probeErr = errors.New(result.Error)
+		}
+		if retryAt := a.quotaBackoff.finish(result.AuthIndex, time.Now(), probeErr, parent.Provider); !retryAt.IsZero() {
 			result.RetryAt = &retryAt
 		}
 	}()
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	// A background batch may have been listed before a reauthorization completed.
+	// Read the durable state inside the slot so its old snapshot cannot win.
+	current, err := a.store.GetParentSubscription(probeCtx, parent.ID)
+	if err != nil {
+		probeErr = err
+		result.Status, result.Error = "error", err.Error()
+		return result
+	}
+	parent = current
+	if !fresh {
+		if next, ok := cachedParentQuota(parent, time.Now()); ok {
+			result.Status, result.Supported, result.ObservedAt, result.RetryAt = "cached", true, *parent.QuotaObservedAt, &next
+			return result
+		}
+	}
 	credential, err := a.nativeQuotaCredential(probeCtx, parent)
 	if err != nil {
 		probeErr = err
-		result.Status = "error"
-		result.Error = err.Error()
-		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
-		return result
+		return a.failedParentQuota(ctx, parent, gateway.QuotaReport{}, err)
 	}
 	proxyID := ""
 	if credential.ProxyID != nil {
@@ -171,32 +183,18 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 	proxyURL, err := a.proxyURL(probeCtx, proxyID)
 	if err != nil {
 		probeErr = err
-		result.Status = "error"
-		result.Error = "读取账户代理失败: " + err.Error()
-		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
-		return result
+		return a.failedParentQuota(ctx, parent, gateway.QuotaReport{}, fmt.Errorf("读取账户代理失败: %w", err))
 	}
 	report, err := a.probeQuotaWithRefresh(probeCtx, parent, credential, proxyURL)
 	probeErr = err
 	if err != nil {
-		result.Status = "error"
-		result.Error = err.Error()
-		// Preserve the successful usage clock and windows when only profile succeeds.
-		metadata := quotaSubscriptionSnapshot(parent.QuotaSnapshot, report)
-		plan := ""
-		if report.Subscription != nil && report.Subscription.Status == "supported" {
-			plan = report.PlanType
-		}
-		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, plan, nil, metadata)
-		return result
+		return a.failedParentQuota(ctx, parent, report, err)
 	}
 
+	report = mergeQuotaSubscription(parent.QuotaSnapshot, report)
 	snapshot, err := json.Marshal(report)
 	if err != nil {
-		result.Status = "error"
-		result.Error = fmt.Sprintf("encode normalized quota snapshot: %v", err)
-		_ = a.store.UpdateParentQuotaProbe(context.WithoutCancel(ctx), parent.ID, parent.QuotaSupported, "error", result.Error, "", nil, nil)
-		return result
+		return a.failedParentQuota(ctx, parent, gateway.QuotaReport{}, fmt.Errorf("encode normalized quota snapshot: %w", err))
 	}
 	result.Provider = firstNonEmptyString(report.Provider, parent.Provider)
 	result.Supported = report.Supported
@@ -234,6 +232,31 @@ func (a *App) syncParentQuota(ctx context.Context, parent store.ParentSubscripti
 	return result
 }
 
+func (a *App) failedParentQuota(ctx context.Context, parent store.ParentSubscription, report gateway.QuotaReport, probeErr error) quotaSyncResult {
+	// Commit the attempt without advancing the last successful usage clock.
+	metadata := quotaSubscriptionSnapshot(parent.QuotaSnapshot, report)
+	plan := ""
+	if report.Subscription != nil && report.Subscription.Status == "supported" {
+		plan = report.PlanType
+	}
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err := a.store.UpdateParentQuotaProbe(persistCtx, parent.ID, parent.QuotaSupported, "error", probeErr.Error(), plan, nil, metadata)
+	return quotaSyncResult{
+		ParentID: parent.ID, AuthIndex: firstNonEmptyString(parent.UpstreamCredentialID, parent.UpstreamAuthIndex),
+		Provider: parent.Provider, Supported: parent.QuotaSupported, Status: "error", Error: errors.Join(probeErr, err).Error(),
+	}
+}
+
+func cachedParentQuota(parent store.ParentSubscription, now time.Time) (time.Time, bool) {
+	if !(strings.EqualFold(parent.Provider, "claude") || strings.EqualFold(parent.Provider, "anthropic")) ||
+		parent.QuotaProbeStatus != "supported" || !parent.QuotaSupported || parent.QuotaObservedAt == nil {
+		return time.Time{}, false
+	}
+	next := parent.QuotaObservedAt.Add(5 * time.Minute)
+	return next, !parent.QuotaObservedAt.After(now) && next.After(now)
+}
+
 func (a *App) probeQuotaWithRefresh(ctx context.Context, parent store.ParentSubscription, credential store.UpstreamCredentialSnapshot, proxyURL string) (gateway.QuotaReport, error) {
 	return a.probeQuotaWithRefreshFn(ctx, parent, credential, proxyURL, gateway.ProbeQuota)
 }
@@ -245,7 +268,10 @@ func (a *App) probeQuotaWithRefreshFn(
 	proxyURL string,
 	probe func(context.Context, gateway.QuotaProbeCredential) (gateway.QuotaReport, error),
 ) (gateway.QuotaReport, error) {
-	document := a.refreshQuotaCredentialDocument(ctx, credential.ID, credential.Document, false)
+	document, err := a.refreshQuotaCredentialDocument(ctx, credential.ID, credential.Document, false)
+	if err != nil {
+		return gateway.QuotaReport{}, fmt.Errorf("refresh upstream credential: %w", err)
+	}
 	input := gateway.QuotaProbeCredential{
 		AuthIndex: parent.UpstreamCredentialID,
 		Provider:  firstNonEmptyString(parent.Provider, credential.Provider),
@@ -256,39 +282,43 @@ func (a *App) probeQuotaWithRefreshFn(
 	if err == nil || !quotaProbeUnauthorized(err) || a == nil || a.nativeRuntime == nil {
 		return report, err
 	}
-	updated, refreshed, refreshErr := a.nativeRuntime.RefreshCredential(ctx, strings.TrimSpace(credential.ID), true)
+	updated, _, refreshErr := a.nativeRuntime.RefreshCredential(ctx, strings.TrimSpace(credential.ID), true)
 	if refreshErr != nil {
 		slog.Warn("refresh upstream credential after quota 401", "credential_id", credential.ID, "error", refreshErr)
 		return report, errors.Join(err, fmt.Errorf("refresh upstream credential: %w", refreshErr))
 	}
-	if !refreshed || len(updated) == 0 {
+	if len(updated) == 0 {
 		return report, err
 	}
 	input.Document = updated
 	return probe(ctx, input)
 }
 
-func (a *App) refreshQuotaCredentialDocument(ctx context.Context, credentialID string, stored []byte, force bool) []byte {
+func (a *App) refreshQuotaCredentialDocument(ctx context.Context, credentialID string, stored []byte, force bool) ([]byte, error) {
 	if a == nil || a.nativeRuntime == nil {
-		return stored
+		return stored, nil
 	}
 	updated, refreshed, err := a.nativeRuntime.RefreshCredential(ctx, strings.TrimSpace(credentialID), force)
 	if err != nil {
 		slog.Warn("refresh upstream credential for quota probe", "credential_id", credentialID, "force", force, "error", err)
-		return stored
+		return nil, err
 	}
 	if len(updated) == 0 {
-		return stored
+		return stored, nil
 	}
 	if refreshed {
 		slog.Info("refreshed upstream credential for quota probe", "credential_id", credentialID, "force", force)
 	}
-	return updated
+	return updated, nil
 }
 
 func quotaProbeUnauthorized(err error) bool {
 	if err == nil {
 		return false
+	}
+	var upstream *gateway.QuotaHTTPError
+	if errors.As(err, &upstream) {
+		return upstream.StatusCode == http.StatusUnauthorized
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "http 401") ||
@@ -328,6 +358,7 @@ func quotaSubscriptionSnapshot(previous json.RawMessage, report gateway.QuotaRep
 	if snapshot == nil {
 		snapshot = map[string]any{}
 	}
+	report = mergeQuotaSubscription(previous, report)
 	snapshot["subscription"] = report.Subscription
 	if report.Subscription.Status == "supported" {
 		snapshot["plan_type"] = report.PlanType
@@ -338,4 +369,24 @@ func quotaSubscriptionSnapshot(previous json.RawMessage, report gateway.QuotaRep
 	}
 	encoded, _ := json.Marshal(snapshot)
 	return encoded
+}
+
+// Subscription and usage have independent observation clocks. A failed profile
+// attempt retains the last confirmed product rather than replacing it with a
+// stale hint from the credential document.
+func mergeQuotaSubscription(previous json.RawMessage, report gateway.QuotaReport) gateway.QuotaReport {
+	if report.Subscription == nil || report.Subscription.Status != "error" {
+		return report
+	}
+	var stored gateway.QuotaReport
+	if json.Unmarshal(previous, &stored) != nil || stored.Subscription == nil || stored.Subscription.ObservedAt == nil {
+		return report
+	}
+	subscription := *stored.Subscription
+	subscription.Status = report.Subscription.Status
+	subscription.ErrorCode = report.Subscription.ErrorCode
+	subscription.CheckedAt = report.Subscription.CheckedAt
+	report.Subscription = &subscription
+	report.PlanType = stored.PlanType
+	return report
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/store"
 )
 
@@ -167,6 +168,14 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 			if plan := strings.TrimSpace(parent.PlanType); plan != "" && plan != "native" {
 				item["plan_type"] = plan
 			}
+			var report gateway.QuotaReport
+			if json.Unmarshal(parent.QuotaSnapshot, &report) == nil && report.Subscription != nil &&
+				(report.Subscription.Status == "supported" || report.Subscription.ObservedAt != nil) {
+				// Profile success is authoritative even when usage failed or the
+				// product is unknown. Runtime hints must not resurrect an old plan.
+				quotaPlanAuthoritative = true
+				item["plan_type"] = report.PlanType
+			}
 		}
 		if a.nativeRuntime != nil {
 			if status, ok := a.nativeRuntime.CredentialStatus(row.ID); ok {
@@ -176,7 +185,10 @@ func (a *App) nativeProviderAccounts(w http.ResponseWriter, r *http.Request) {
 				item["success"] = status.Success
 				item["failed"] = status.Failed
 				if !status.LastRefreshedAt.IsZero() {
-					item["last_refreshed_at"] = status.LastRefreshedAt
+					stored, _ := item["last_refreshed_at"].(*time.Time)
+					if stored == nil || status.LastRefreshedAt.After(*stored) {
+						item["last_refreshed_at"] = status.LastRefreshedAt
+					}
 				}
 				if !status.NextRetryAfter.IsZero() {
 					item["next_retry_after"] = status.NextRetryAfter
@@ -202,13 +214,18 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 	email, _ := document["email"].(string)
 	baseURL, _ := document["base_url"].(string)
 	websockets, _ := document["websockets"].(bool)
-	expired := row.ExpiresAt != nil && !row.ExpiresAt.After(time.Now())
+	authKind := nativeCredentialAuthKind(document, row.Source)
+	expiresAt := row.ExpiresAt
+	if authKind == "oauth" {
+		expiresAt = credentialDocumentTime(document, "expired", "expires_at", "expire")
+	}
+	// OAuth token expiry is refreshable; scheduler status determines availability.
+	expired := authKind != "oauth" && expiresAt != nil && !expiresAt.After(time.Now())
 	result := map[string]any{"id": row.ID, "auth_index": row.ID, "name": row.ID, "label": row.Name, "provider": row.Provider, "type": row.Provider,
 		"disabled": !row.Enabled, "unavailable": expired, "status": "native", "source": row.Source, "models": row.Models,
 		"proxy_configured": row.ProxyID != nil, "proxy_id": row.ProxyID, "websockets": websockets,
 		"revision": row.Revision, "can_inspect": true, "can_toggle": true, "can_delete": true,
 		"can_replace_document": row.Source == "import" || row.Source == "config" || row.Source == "native"}
-	authKind := nativeCredentialAuthKind(document, row.Source)
 	if authKind != "" {
 		result["auth_kind"] = authKind
 	}
@@ -226,10 +243,23 @@ func nativeProviderAccount(row store.UpstreamCredentialSnapshot) map[string]any 
 		sort.Strings(names)
 		result["custom_header_names"] = names
 	}
-	if row.ExpiresAt != nil {
-		result["expires_at"] = row.ExpiresAt
+	if expiresAt != nil {
+		result["expires_at"] = expiresAt
+	}
+	if refreshedAt := credentialDocumentTime(document, "last_refresh", "last_refreshed_at"); refreshedAt != nil {
+		result["last_refreshed_at"] = refreshedAt
 	}
 	return result
+}
+
+func credentialDocumentTime(document map[string]any, keys ...string) *time.Time {
+	for _, key := range keys {
+		value, _ := document[key].(string)
+		if parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value)); err == nil && !parsed.IsZero() {
+			return &parsed
+		}
+	}
+	return nil
 }
 
 func nativeCredentialAuthKind(document map[string]any, source string) string {

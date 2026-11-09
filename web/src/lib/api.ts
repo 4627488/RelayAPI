@@ -448,6 +448,8 @@ export interface UpstreamQuotaWindow {
 }
 
 export interface UpstreamSubscriptionProbe {
+  observed_at?: string
+  checked_at?: string
   status: "supported" | "unsupported" | "error"
   source: string
   error_code?: string

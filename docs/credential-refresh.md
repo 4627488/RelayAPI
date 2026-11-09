@@ -8,7 +8,9 @@ those calls would bypass CPA's shared credential lock and state updates.
 
 Before probing quota, Relay obtains the latest runtime credential document.
 CPA applies its provider-specific refresh policy, so the document is returned
-even when no refresh is necessary. After an HTTP 401, Relay requests one forced
+even when no refresh is necessary. A failed proactive refresh stops the operation
+and exposes the refresh failure, without sending usage requests with stale tokens
+or attempting a second refresh. After an HTTP 401, Relay requests one forced
 refresh and retries the probe once. Force bypasses freshness checks, but still
 honors refresh failure backoff and terminal unauthorized state. A revoked or
 invalid refresh token requires reauthorization; retrying cannot repair it.

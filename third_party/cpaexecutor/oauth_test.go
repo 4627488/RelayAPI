@@ -25,9 +25,12 @@ func TestOAuthCaptureStoreCapturesCredentialWithoutLeavingFile(t *testing.T) {
 		return nil
 	})
 	ctx := coreauth.WithRequestInfo(context.Background(), &coreauth.RequestInfo{Query: map[string][]string{"relay_session": {"relay-session"}}})
-	_, err := store.Save(ctx, &coreauth.Auth{Provider: "codex", Label: "Test", Storage: testTokenStorage{document: []byte(`{"type":"codex","access_token":"secret"}`)}})
+	path, err := store.Save(ctx, &coreauth.Auth{Provider: "codex", FileName: "codex-test.json", Label: "Test", Storage: testTokenStorage{document: []byte(`{"type":"codex","access_token":"secret"}`)}})
 	if err != nil {
 		t.Fatalf("Save: %v", err)
+	}
+	if path != "" {
+		t.Fatalf("capture advertised a nonexistent credential file: %q", path)
 	}
 	if string(captured) != `{"type":"codex","access_token":"secret"}` {
 		t.Fatalf("unexpected captured document: %s", captured)

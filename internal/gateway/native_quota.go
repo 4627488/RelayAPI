@@ -38,13 +38,15 @@ type QuotaReport struct {
 // QuotaSubscription contains only product metadata, never account identity.
 // Its probe status is independent from quota usage availability.
 type QuotaSubscription struct {
-	Status             string `json:"status"`
-	Source             string `json:"source"`
-	ErrorCode          string `json:"error_code,omitempty"`
-	RateLimitTier      string `json:"rate_limit_tier,omitempty"`
-	SubscriptionStatus string `json:"subscription_status,omitempty"`
-	BillingType        string `json:"billing_type,omitempty"`
-	ExtraUsageEnabled  *bool  `json:"extra_usage_enabled,omitempty"`
+	ObservedAt         *time.Time `json:"observed_at,omitempty"`
+	CheckedAt          time.Time  `json:"checked_at,omitempty"`
+	Status             string     `json:"status"`
+	Source             string     `json:"source"`
+	ErrorCode          string     `json:"error_code,omitempty"`
+	RateLimitTier      string     `json:"rate_limit_tier,omitempty"`
+	SubscriptionStatus string     `json:"subscription_status,omitempty"`
+	BillingType        string     `json:"billing_type,omitempty"`
+	ExtraUsageEnabled  *bool      `json:"extra_usage_enabled,omitempty"`
 }
 
 type QuotaWindow struct {

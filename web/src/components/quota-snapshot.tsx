@@ -66,9 +66,6 @@ export function QuotaSnapshot({
             {report ? "快照可用" : "已有额度可用"} · 刷新失败
           </Badge>
         ) : null}
-        {!compact && report?.source ? (
-          <Badge variant="outline">{report.source}</Badge>
-        ) : null}
         {!compact && (report?.observed_at || observedAt) ? (
           <span className="text-xs text-muted-foreground">
             观测于 {dateTime(report?.observed_at || observedAt || undefined)}
@@ -105,25 +102,37 @@ function SubscriptionProbe({
   compact: boolean
 }) {
   const subscription = report?.subscription
+  const tier = subscription?.rate_limit_tier
+  const plan =
+    tier === "default_claude_max_5x"
+      ? "Max 5x"
+      : tier === "default_claude_max_20x"
+        ? "Max 20x"
+        : report?.plan_type
+  const subscriptionStatus = subscription?.subscription_status
+  const statusLabel =
+    subscriptionStatus === "canceled" || subscriptionStatus === "cancelled"
+      ? "订阅已取消"
+      : subscriptionStatus === "active"
+        ? "订阅有效"
+        : subscriptionStatus
   return (
     <>
-      {report?.plan_type ? (
-        <Badge variant="secondary">{report.plan_type}</Badge>
-      ) : null}
+      {plan ? <Badge variant="secondary">{plan}</Badge> : null}
       {subscription?.status === "error" ? (
         <Badge variant="outline">套餐查询失败 · 信息可能过期</Badge>
       ) : null}
-      {subscription?.status === "supported" ? (
+      {subscription?.status === "supported" || subscription?.observed_at ? (
         <>
-          {subscription.rate_limit_tier ? (
-            <Badge variant="outline">{subscription.rate_limit_tier}</Badge>
-          ) : null}
-          {subscription.subscription_status ? (
-            <Badge variant="outline">{subscription.subscription_status}</Badge>
-          ) : null}
-          {!compact ? (
+          {statusLabel ? <Badge variant="outline">{statusLabel}</Badge> : null}
+          {!compact && subscription.observed_at ? (
             <span className="text-xs text-muted-foreground">
-              套餐已实时探测
+              套餐更新于 {dateTime(subscription.observed_at)}
+            </span>
+          ) : null}
+          {!compact && statusLabel === "订阅已取消" ? (
+            <span className="text-xs text-muted-foreground">
+              上游标记订阅已取消，权益截止时间未提供。
             </span>
           ) : null}
         </>

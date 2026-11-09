@@ -112,6 +112,7 @@ func TestClaudeAccountProfileAndUsageFailIndependently(t *testing.T) {
 		profile, plan, subscriptionStatus, code string
 	}{
 		{"live upgrade", 200, 200, `{"account":{"email":"private@example.com","has_claude_pro":true},"organization":{"uuid":"private-org","name":"private-name","organization_type":"claude_max","rate_limit_tier":"default_claude_max_20x","subscription_status":"active","billing_type":"stripe_subscription","has_extra_usage_enabled":true}}`, "max", "supported", ""},
+		{"canceled max still reports product", 200, 200, `{"account":{"has_claude_pro":false,"has_claude_max":true},"organization":{"organization_type":"claude_max","rate_limit_tier":"default_claude_max_5x","subscription_status":"canceled","billing_type":"google_play_subscription"}}`, "max", "supported", ""},
 		{"team beats personal max", 200, 200, `{"account":{"has_claude_max":true},"organization":{"organization_type":"claude_team","subscription_status":"active"}}`, "team", "supported", ""},
 		{"enterprise", 200, 200, `{"organization":{"organization_type":"claude_enterprise"}}`, "enterprise", "supported", ""},
 		{"free clears stale max", 200, 200, `{"account":{"has_claude_max":false,"has_claude_pro":false}}`, "free", "supported", ""},
@@ -223,6 +224,39 @@ func TestClaudeNewScopedAndDollarWindows(t *testing.T) {
 	}
 	if dollars.Used == nil || *dollars.Used != 5 || *dollars.Limit != 25 || *dollars.Remaining != 20 || dollars.Unit != "USD" || dollars.Enforceable {
 		t.Fatalf("dollars=%+v", dollars)
+	}
+}
+
+func TestClaudeStructuredAccountLimitsOverrideLegacyAndHonorActivity(t *testing.T) {
+	now := time.Now().UTC()
+	reset := now.Add(time.Hour).Format(time.RFC3339)
+	for _, legacy := range []bool{false, true} {
+		payload := map[string]any{"limits": []any{
+			map[string]any{"kind": "session", "percent": 12.5, "resets_at": reset, "is_active": true},
+			map[string]any{"kind": "weekly_all", "percent": 100, "resets_at": reset, "is_active": false},
+			map[string]any{"kind": "weekly_scoped", "percent": 99, "resets_at": reset, "is_active": true, "scope": map[string]any{"model": map[string]any{"id": "sonnet"}}},
+		}}
+		if legacy {
+			payload["five_hour"] = map[string]any{"utilization": 80, "resets_at": reset}
+			payload["seven_day"] = map[string]any{"utilization": 100, "resets_at": reset}
+		}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(payload) }))
+		report, err := probeClaudeQuota(t.Context(), server.Client(), server.URL, "account", "claude", map[string]any{"access_token": "token"}, now)
+		server.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		windows := quotaWindowsByKind(report.Windows)
+		if w := windows["5h"]; w.UsedPercent == nil || *w.UsedPercent != 12.5 || !w.Enforceable {
+			t.Fatalf("structured session lost: %+v", w)
+		}
+		if windows["7d"].Enforceable || windows["7d-model-sonnet"].Enforceable {
+			t.Fatal("inactive or model-scoped limit constrained the whole account")
+		}
+	}
+	window, _ := claudeExtraUsage(map[string]any{"decimal_places": 3.0, "used_credits": 1234.0, "monthly_limit": 10000.0})
+	if window.Used == nil || *window.Used != 1.234 || window.Limit == nil || *window.Limit != 10 {
+		t.Fatalf("currency precision ignored: %+v", window)
 	}
 }
 

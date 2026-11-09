@@ -4,9 +4,25 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
+
+func TestOAuthAccountProjectsTokenClocksWithoutDisablingRefreshableToken(t *testing.T) {
+	oldExpiry := time.Now().Add(-time.Hour)
+	expiry := time.Now().Add(8 * time.Hour).UTC().Truncate(time.Second)
+	refresh := time.Now().UTC().Truncate(time.Second)
+	document, _ := json.Marshal(map[string]any{"access_token": "private-token", "expired": expiry.Format(time.RFC3339), "last_refresh": refresh.Format(time.RFC3339)})
+	account := nativeProviderAccount(store.UpstreamCredentialSnapshot{ID: "claude", Source: "oauth", ExpiresAt: &oldExpiry, Document: document})
+	if !account["expires_at"].(*time.Time).Equal(expiry) || !account["last_refreshed_at"].(*time.Time).Equal(refresh) || account["unavailable"] != false {
+		t.Fatalf("token clocks = %+v", account)
+	}
+	encoded, _ := json.Marshal(account)
+	if strings.Contains(string(encoded), "private-token") {
+		t.Fatal("token leaked into account projection")
+	}
+}
 
 func TestNativeProviderAccountOmitsEmptyDetails(t *testing.T) {
 	result := nativeProviderAccount(store.UpstreamCredentialSnapshot{

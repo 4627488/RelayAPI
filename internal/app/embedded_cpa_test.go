@@ -93,7 +93,10 @@ func TestEmbeddedCPARefreshCredentialReturnsLiveDocument(t *testing.T) {
 	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
 	application := &App{nativeCPARuntime: runtime}
 	application.nativeRuntime = &embeddedCPAAdapter{app: application}
-	document := application.refreshQuotaCredentialDocument(t.Context(), "kimi-live", []byte(`{"access_token":"stale-database-token"}`), false)
+	document, err := application.refreshQuotaCredentialDocument(t.Context(), "kimi-live", []byte(`{"access_token":"stale-database-token"}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var value map[string]any
 	if json.Unmarshal(document, &value) != nil || value["access_token"] != "live-access" {
 		t.Fatal("quota probe did not receive CPA's live token")

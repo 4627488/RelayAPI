@@ -270,7 +270,9 @@ export function ConnectAccountDialog({
     }
     setPending(true)
     try {
-      await api(
+      const account = await api<{
+        quota_sync?: { status: string; error?: string }
+      }>(
         `/api/admin/providers/oauth/sessions/${encodeURIComponent(oauth.state)}/finalize`,
         {
           method: "POST",
@@ -282,6 +284,13 @@ export function ConnectAccountDialog({
         title: reauthAccount ? "OAuth 账户已重新认证" : "OAuth 账户已连接",
         type: "success",
       })
+      if (account.quota_sync?.status === "error") {
+        toast.add({
+          title: "授权已保存，额度查询暂未成功",
+          description: account.quota_sync.error,
+          type: "warning",
+        })
+      }
       onOpenChange(false)
       reset()
       await onSaved()

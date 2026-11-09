@@ -27,7 +27,7 @@ func probeClaudeAccount(ctx context.Context, client *http.Client, endpoints quot
 	defer cancel()
 	usageErr := err
 	profile, err := requestQuotaJSON(profileCtx, client, endpoints.claudeProfile, claudeQuotaHeaders(claudeQuotaToken(document)))
-	report.Subscription = &QuotaSubscription{Status: "error", Source: "credential"}
+	report.Subscription = &QuotaSubscription{Status: "error", Source: "claude-oauth-profile", CheckedAt: now}
 	if err != nil {
 		code := "request_failed"
 		var upstream *QuotaHTTPError
@@ -55,7 +55,7 @@ func probeClaudeAccount(ctx context.Context, client *http.Client, endpoints quot
 	// change to an unknown product. Never infer a subscription from usage alone.
 	report.PlanType = plan
 	report.Subscription = &QuotaSubscription{
-		Status: "supported", Source: "claude-oauth-profile",
+		Status: "supported", Source: "claude-oauth-profile", ObservedAt: &now, CheckedAt: now,
 		RateLimitTier:      scalarQuotaText(organization["rate_limit_tier"]),
 		SubscriptionStatus: scalarQuotaText(organization["subscription_status"]),
 		BillingType:        scalarQuotaText(organization["billing_type"]),
@@ -186,31 +186,54 @@ func probeClaudeQuota(ctx context.Context, client *http.Client, endpoint, authIn
 		enforceable = enforceable && reset != nil && reset.After(now)
 		report.Windows = append(report.Windows, QuotaWindow{Kind: kind, Label: label, UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: reset, Enforceable: enforceable})
 	}
-	// New model-scoped rows are observations only, including unrecognized models.
-	// A percentage alone cannot establish an account-wide capacity generation.
+	// Current usage responses publish structured limits alongside legacy fields.
+	// Active structured rows win; an explicitly inactive account-wide row makes
+	// its legacy equivalent display-only, never an admission constraint.
 	rows, _ := payload["limits"].([]any)
 	// Prefer explicitly active rows when an older/inactive representation of
 	// the same model is also present; validQuotaWindows keeps the first kind.
 	sort.SliceStable(rows, func(i, j int) bool {
 		return quotaMap(rows[i])["is_active"] == true && quotaMap(rows[j])["is_active"] != true
 	})
+	structured := []QuotaWindow{}
 	for _, raw := range rows {
 		row := quotaMap(raw)
+		kind := scalarQuotaText(row["kind"])
+		accountKind := ""
+		switch kind {
+		case "session":
+			accountKind = quotaKind5h
+		case "weekly_all":
+			accountKind = quotaKind7d
+		}
 		if active, ok := row["is_active"].(bool); ok && !active {
+			for i := range report.Windows {
+				if report.Windows[i].Kind == accountKind {
+					report.Windows[i].Enforceable = false
+				}
+			}
 			continue
 		}
-		if scalarQuotaText(row["kind"]) != "weekly_scoped" {
+		used := percentQuota(row["percent"])
+		if used == nil {
+			continue
+		}
+		reset := parseQuotaTime(row["resets_at"], now)
+		if accountKind != "" {
+			structured = append(structured, QuotaWindow{Kind: accountKind, Label: quotaKindLabel(accountKind), UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: reset, Enforceable: reset != nil && reset.After(now)})
+			continue
+		}
+		if kind != "weekly_scoped" {
 			continue
 		}
 		model := quotaMap(lookupQuotaPath(row, "scope.model"))
 		id := quotaSlug(firstQuotaText(scalarQuotaText(model["id"]), scalarQuotaText(model["display_name"])))
-		used := percentQuota(row["percent"])
-		if id == "" || used == nil {
+		if id == "" {
 			continue
 		}
-		report.Windows = append(report.Windows, QuotaWindow{Kind: "7d-model-" + id, Label: firstQuotaText(scalarQuotaText(model["display_name"]), id) + " 7 天", UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: parseQuotaTime(row["resets_at"], now)})
+		structured = append(structured, QuotaWindow{Kind: "7d-model-" + id, Label: firstQuotaText(scalarQuotaText(model["display_name"]), id) + " 7 天", UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: reset})
 	}
-	report.Windows = validQuotaWindows(report.Windows, now)
+	report.Windows = validQuotaWindows(append(structured, report.Windows...), now)
 	if len(report.Windows) == 0 {
 		return report, errors.New("Claude quota response contains no usable windows")
 	}
@@ -223,7 +246,11 @@ func claudeExtraUsage(row map[string]any) (QuotaWindow, bool) {
 	if enabled, ok := row["is_enabled"].(bool); ok {
 		window.Enabled = &enabled
 	}
-	window.Limit, window.Used = claudeAmount(row["monthly_limit"], 100), claudeAmount(row["used_credits"], 100)
+	divisor := 100.0
+	if places := numericQuota(row["decimal_places"]); places != nil && *places >= 0 && *places <= 6 && math.Trunc(*places) == *places {
+		divisor = math.Pow10(int(*places))
+	}
+	window.Limit, window.Used = claudeAmount(row["monthly_limit"], divisor), claudeAmount(row["used_credits"], divisor)
 	currency := strings.ToUpper(scalarQuotaText(row["currency"]))
 	if currency == "" {
 		currency = "USD"

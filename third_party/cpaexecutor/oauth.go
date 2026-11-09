@@ -99,7 +99,9 @@ func (s *oauthCaptureStore) Save(ctx context.Context, auth *coreauth.Auth) (stri
 	if errCapture := s.capture(ctx, sessionID, auth.Provider, auth.Label, append([]byte(nil), document...)); errCapture != nil {
 		return "", errCapture
 	}
-	return strings.TrimSpace(auth.FileName), nil
+	// Relay captures the document in its authorization session and registers it
+	// only after finalize. There is no persisted CPA file to reload or register.
+	return "", nil
 }
 
 func (r *Runtime) StartOAuth(ctx context.Context, provider, sessionID string) (OAuthStartResult, error) {

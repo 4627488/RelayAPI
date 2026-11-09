@@ -65,12 +65,51 @@ func TestQuotaSyncCooldownPreservesStoredObservation(t *testing.T) {
 }
 
 func TestQuotaSyncReusesDurableClaudeSnapshot(t *testing.T) {
-	application := &App{}
 	observed := time.Now().Add(-time.Minute)
-	result := application.syncParentQuota(t.Context(), store.ParentSubscription{ID: "parent", Provider: "claude", QuotaSupported: true, QuotaObservedAt: &observed})
-	if result.Status != "cached" || !result.Supported || result.RetryAt == nil || !result.RetryAt.Equal(observed.Add(5*time.Minute)) {
-		t.Fatalf("result=%+v", result)
+	parent := store.ParentSubscription{ID: "parent", Provider: "claude", QuotaProbeStatus: "supported", QuotaSupported: true, QuotaObservedAt: &observed}
+	if next, ok := cachedParentQuota(parent, time.Now()); !ok || !next.Equal(observed.Add(5*time.Minute)) {
+		t.Fatalf("cached=%v next=%v", ok, next)
 	}
+	parent.QuotaProbeStatus = "error"
+	if _, ok := cachedParentQuota(parent, time.Now()); ok {
+		t.Fatal("failed latest probe was presented as a cache hit")
+	}
+}
+
+func TestQuotaReplacementDrainsOldProbeAndClearsItsBackoff(t *testing.T) {
+	var backoff quotaProbeBackoff
+	now := time.Now()
+	backoff.begin("account", now)
+	acquired := make(chan error, 1)
+	go func() { acquired <- backoff.beginReplacement(t.Context(), "account") }()
+	// A canceled waiter must leave the running probe alone.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := backoff.beginReplacement(ctx, "account"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled replacement: %v", err)
+	}
+	select {
+	case <-acquired:
+		t.Fatal("replacement overlapped the old probe")
+	default:
+	}
+	backoff.finish("account", now, &gateway.QuotaHTTPError{StatusCode: 401}, "claude")
+	select {
+	case err := <-acquired:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("replacement did not drain old probe")
+	}
+	if ok, _ := backoff.begin("account", now); ok {
+		t.Fatal("probe overlapped credential replacement")
+	}
+	backoff.finish("account", now, nil, "claude")
+	if ok, _ := backoff.begin("account", now); !ok {
+		t.Fatal("new authorization inherited old cooldown")
+	}
+	backoff.finish("account", now, nil, "claude")
 }
 
 func TestQuotaBackoffConcurrentProbes(t *testing.T) {
