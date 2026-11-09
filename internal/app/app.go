@@ -356,7 +356,7 @@ func (a *App) refreshPricingCatalog(ctx context.Context, onlyIfEmpty bool) (resu
 }
 
 func (a *App) Handler() http.Handler {
-	return securityHeaders(a.observeHTTP(a.recoverer(a.mux)))
+	return securityHeaders(withOperationalRequest(a.observeHTTP(a.recoverer(a.mux))))
 }
 
 func (a *App) routes() {
@@ -636,6 +636,9 @@ func (a *App) withTenantSession(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "Your session has expired. Sign in again.")
 			return
 		}
+		if op := operationalRequest(r); op != nil {
+			op.tenantID = tenant.ID
+		}
 		next.ServeHTTP(w, r)
 	}))
 }
@@ -714,7 +717,11 @@ func (a *App) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if value := recover(); value != nil {
-				slog.Error("panic", "value", value, "path", r.URL.Path)
+				requestID := ""
+				if op := operationalRequest(r); op != nil {
+					requestID = op.requestID
+				}
+				slog.Error("panic", "event", "http.panic", "value", value, "request_id", requestID, "stack", string(debug.Stack()))
 				writeError(w, http.StatusInternalServerError, "internal_error", "Relay encountered an internal error. Try again later. If the problem persists, contact your administrator.")
 			}
 		}()

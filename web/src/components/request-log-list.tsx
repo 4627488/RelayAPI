@@ -104,7 +104,7 @@ export function RequestLogList({
   function link(log: RequestLog) {
     return {
       href: routeHref({ workspace, page: "logs", logId: log.id }),
-      "aria-label": `查看日志 ${log.model || log.path} ${dateTime(log.started_at)}${log.log_unit === "legacy_session" ? " · 历史会话" : ""}`,
+      "aria-label": `查看扣费明细 ${log.model || log.path} ${dateTime(log.started_at)}${log.log_unit === "legacy_session" ? " · 历史会话" : ""}`,
       onClick: (event: MouseEvent<HTMLAnchorElement>) => {
         if (
           !onOpen ||

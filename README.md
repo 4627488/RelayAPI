@@ -8,7 +8,7 @@ RelayAPI 是 Codex 优先的 Go 多租户模型网关。统一入口负责协议
 [docs/image-billing.md](docs/image-billing.md)，父/子订阅与严格凭据路由见
 [docs/subscriptions.md](docs/subscriptions.md)。
 
-Prometheus 可观测性通过 `GET /metrics` 提供，包含 Relay 和内嵌 CPA 指标；抓取、鉴权、指标语义和告警示例见 [docs/observability.md](docs/observability.md)。
+后台日志输出为分级 JSON，由 Alloy 推送到 Loki；可选部署配置见 [docker-compose.observability.yml](docker-compose.observability.yml)。页面中的「扣费明细」用于查看用量和扣费。Prometheus 指标通过 `GET /metrics` 提供，包含 Relay 和内嵌 CPA 指标；日志采集、查询、指标语义和告警示例见 [docs/observability.md](docs/observability.md)。
 
 ## 启动
 
@@ -86,7 +86,7 @@ Grok/xAI、Kimi 与其他 OpenAI-compatible 模型共用 `/v1/chat/completions` 
 `/v1/responses`，由请求中的 `model` 和内嵌 CPA
 凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在独立“代理”页面维护和
 测试可复用代理，在“系统设置”中选择系统请求代理并热更新重试、调度和连接行为。
-CPA 负责协议转换和文本用量解释；Relay 保留用户鉴权、价格规则、额度预留和 PostgreSQL 结算。SDK 接入边界及暂时保留的内部依赖见 [CPA bridge](third_party/cpaexecutor/README.md)。图片用量仍由现有解析处理，等待 CPA 的公开用量接口支持图片字段。
+CPA 负责协议转换和文本用量解释；Relay 保留用户鉴权、价格规则、额度预留和 PostgreSQL 结算。SDK 接入边界及暂时保留的内部依赖见 [CPA bridge](third_party/cpaexecutor/README.md)。CPA 的公开用量接口已增加图片等结构化字段，Relay 的图片计费仍沿用现有响应解析。
 系统代理仅用于 Models.dev 同步、系统级 OAuth 等 RelayAPI 自身请求；每个模型账户单独
 选择代理，未选择时明确直连。账户代理同时作用于推理、模型发现、令牌刷新和额度查询。
 

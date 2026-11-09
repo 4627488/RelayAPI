@@ -1,0 +1,29 @@
+# Optional overlay: docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+services:
+  loki:
+    image: grafana/loki:3.5.7
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yml"]
+    ports:
+      - "127.0.0.1:${RELAY_LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./docs/observability/loki.yml:/etc/loki/config.yml:ro
+      - relay-loki:/loki
+    networks: [relay]
+
+  alloy:
+    image: grafana/alloy:v1.11.3
+    restart: unless-stopped
+    command: ["run", "--storage.path=/var/lib/alloy", "/etc/alloy/config.alloy"]
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-relayapi}
+    volumes:
+      - ./docs/observability/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - relay-alloy:/var/lib/alloy
+    depends_on: [loki]
+    networks: [relay]
+
+volumes:
+  relay-loki:
+  relay-alloy:

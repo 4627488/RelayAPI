@@ -1,4 +1,49 @@
-# Prometheus 可观测性
+# 可观测性：Loki 日志与 Prometheus 指标
+
+## 后台日志与扣费明细
+
+页面中的「扣费明细」保留请求用量、价格、扣费来源和诊断详情，账务依据仍是 PostgreSQL。后台运行日志使用 Go slog 输出单行 JSON，内嵌 CPA 的 logrus 也使用相同格式和脱敏规则。`RELAY_LOG_LEVEL=info` 为默认值，可设为 `debug`、`warn` 或 `error`，修改后需要重启服务。
+
+Loki 接收**推送**，不会像 Prometheus 一样定期抓取应用的 `/metrics`。本项目的数据流是：RelayAPI stdout → Docker 日志 → Grafana Alloy 采集 → HTTP 推送 Loki → Grafana 查询。应用无需知道 Loki 的地址，Loki 暂时不可用时不会让生成请求等待网络投递。
+
+指标保持 Prometheus 拉取，Grafana 同时查询 Prometheus 与 Loki。长期运行服务使用拉取便于统一控制采集频率，并通过 `up` 判断采集目标是否可达。跨站点且只能主动出网时，可在站点内由 Alloy 抓取 `/metrics` 后用 `remote_write` 推送中心；不需要让应用自己定时发送指标。
+
+| 级别 | 记录内容 |
+| --- | --- |
+| INFO | HTTP 完成摘要、生成用量摘要、结算结果、启动关闭和重要生命周期事件 |
+| WARN | 4xx、准入拒绝、用量或计价不完整、上游尝试失败、可恢复的凭据刷新故障 |
+| ERROR | 5xx、panic、数据库持久化/结算失败、后台任务失败 |
+| DEBUG | 成功健康检查/指标抓取、静态页面访问、预热、成功后台任务和上游尝试 |
+
+HTTP 摘要覆盖鉴权失败、管理接口操作、普通生成、SSE 和 WebSocket；WebSocket 在连接结束时记录 HTTP 摘要，生成用量按每个已持久化轮次记录。`X-Relay-Request-ID` 由服务生成并返回，可用它关联 HTTP、生成摘要和结算；WebSocket 轮次的 `session_request_id` 指向连接请求。`inference.completed` 的费用为评估费用，是否持久化成功应查看随后 `billing.settled` 的 `success` 字段，最终以扣费明细为准。
+
+日志不主动采集请求正文、响应正文、请求头、Cookie、完整 URL 或查询参数。常见凭据字段、Bearer、sk- Key 及 URL 用户信息/查询参数会脱敏，单个文本字段限制为 4 KiB。自由文本脱敏不能识别任意格式的秘密，因此禁止新增包含完整请求或凭据对象的日志。请求诊断正文仍按原有 PostgreSQL 权限和保留策略管理。
+
+### 启动 Loki 与 Alloy
+
+在已配置 `.env` 的部署目录运行：
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+```
+
+示例固定使用 Loki 3.5.7 和 Alloy 1.11.3，Loki 本地文件存储默认保留 14 天；生产规模增大时应根据容量改用对象存储。Docker 应用日志轮转为 20 MiB × 5 个文件。Alloy 的读取位置及发送 WAL 使用持久化卷，网络失败由采集器重试；超出重试/保留窗口、轮转、磁盘满或进程崩溃仍可能丢失日志，不作为审计账本。监控磁盘余量和 Alloy 投递失败。
+
+Alloy 只采集同一个 Compose 项目中的 `relayapi` 服务。它挂载 Docker socket 以读取日志；即使挂载为只读，Docker API 权限仍很高，仅向可信的采集器开放。示例 Loki 无鉴权，仅绑定宿主机 `127.0.0.1:3100`，不得直接暴露公网。
+
+在 Grafana 添加 Loki 数据源：Grafana 若加入相同 Docker 网络，地址为 `http://loki:3100`；宿主机 Grafana 使用 `http://127.0.0.1:3100`。远程 Grafana 需要自行配置内网连通与鉴权代理，不能使用其自身的 localhost。已有 Loki 时可修改 `config.alloy` 的 `loki.write.local.endpoint` 地址及对应鉴权配置，并省略本地 Loki 服务。
+
+只把服务、Compose 项目、级别等有限值作为 Loki 标签；请求 ID、用户、Key ID、模型等留在 JSON 字段中查询，避免标签基数膨胀：
+
+```logql
+{service_name="relayapi", level="ERROR"} | json
+{service_name="relayapi"} | json | request_id="替换为响应头中的请求ID"
+{service_name="relayapi"} | json | session_request_id="替换为连接请求ID"
+{service_name="relayapi"} | json | event="billing.settled" | success="false"
+{service_name="relayapi"} | json | event="http.completed" | status >= 500
+```
+
+## Prometheus 指标
 
 统一入口 `GET /metrics` 暴露 Relay、同进程 CPA、Go 和进程指标，支持 Prometheus 文本格式和 OpenMetrics 内容协商。使用独立的应用 registry，多个 App 实例不会共享业务计数。抓取不查询上游、不扫描请求日志、不请求数据库；数据库指标来自 `database/sql` 本地连接池快照。指标请求本身不计入 HTTP 请求指标，同时最多允许两个并发抓取，超过时返回 503。
 

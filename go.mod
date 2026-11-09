@@ -10,8 +10,9 @@ require (
 	github.com/mattn/go-isatty v0.0.24
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/prometheus/client_golang v1.25.0
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.47
+	github.com/router-for-me/CLIProxyAPI/v8 v8.0.52
 	github.com/router-for-me/CLIProxyAPI/v8/relaybridge v0.0.0-00010101000000-000000000000
+	github.com/sirupsen/logrus v1.10.2
 	github.com/tidwall/gjson v1.20.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/zalando/go-keyring v0.2.8
@@ -26,11 +27,15 @@ require (
 
 replace github.com/router-for-me/CLIProxyAPI/v8/relaybridge => ./third_party/cpaexecutor
 
-// v8.0.47 plus CPA's shared RefreshCredential entry point; see docs/credential-refresh.md.
-replace github.com/router-for-me/CLIProxyAPI/v8 => github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261030044824-51236c85db7f
+// v8.0.52 plus CPA's shared RefreshCredential entry point; see docs/credential-refresh.md.
+replace github.com/router-for-me/CLIProxyAPI/v8 => github.com/4627488/CLIProxyAPI/v8 v8.0.0-20261103051540-d004dbefe7ca
+
+// Match CPA's JSON implementation replacement; dependency replacements are not inherited.
+replace github.com/MoeForge/moego v0.1.0-alpha.1 => github.com/router-for-me/moego v0.1.1
 
 require (
 	cloud.google.com/go/compute/metadata v0.10.0 // indirect
+	github.com/MoeForge/moego v0.1.0-alpha.1 // indirect
 	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
@@ -92,7 +97,6 @@ require (
 	github.com/quic-go/quic-go v0.64.1 // indirect
 	github.com/redis/go-redis/v9 v9.23.0 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
-	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.2 // indirect

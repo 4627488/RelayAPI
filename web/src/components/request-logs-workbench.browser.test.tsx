@@ -82,7 +82,7 @@ describe("responsive request logs", () => {
           <RequestLogsWorkbench admin={admin} />
         </main>
       )
-      const entry = screen.getByRole("link", { name: /查看日志/ })
+      const entry = screen.getByRole("link", { name: /查看扣费明细/ })
       await expect.element(entry).toBeVisible()
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width)
       expect(document.body.innerText).toContain("sk-relay-1234")

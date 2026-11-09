@@ -1,0 +1,56 @@
+logging {
+  level = "warn"
+}
+
+discovery.docker "relayapi" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "10s"
+  filter {
+    name = "label"
+    values = [
+      "com.docker.compose.service=relayapi",
+      "com.docker.compose.project=" + sys.env("COMPOSE_PROJECT_NAME"),
+    ]
+  }
+}
+
+discovery.relabel "relayapi" {
+  targets = discovery.docker.relayapi.targets
+  rule {
+    target_label = "service_name"
+    replacement = "relayapi"
+  }
+  rule {
+    target_label = "compose_project"
+    replacement = sys.env("COMPOSE_PROJECT_NAME")
+  }
+}
+
+loki.source.docker "relayapi" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.relayapi.output
+  forward_to = [loki.process.relayapi.receiver]
+}
+
+loki.process "relayapi" {
+  stage.json {
+    expressions = { level = "level", time = "time" }
+  }
+  stage.timestamp {
+    source = "time"
+    format = "RFC3339Nano"
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+  wal {
+    enabled = true
+  }
+}

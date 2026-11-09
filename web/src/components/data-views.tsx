@@ -206,7 +206,7 @@ export function ApiKeyUsageTable({
       <CardHeader>
         <CardTitle>Key 用量</CardTitle>
         <CardDescription>
-          按 Token 消耗排序，统计最近 {report.days} 天仍在请求日志中的数据。
+          按 Token 消耗排序，统计最近 {report.days} 天仍在扣费明细中的数据。
         </CardDescription>
       </CardHeader>
       <CardContent>

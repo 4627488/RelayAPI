@@ -2,7 +2,9 @@ package app
 
 import (
 	"bufio"
+	"context"
 	"crypto/subtle"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -87,17 +89,15 @@ func (a *App) serveMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) observeHTTP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.metrics == nil || r.URL.Path == "/metrics" {
-			next.ServeHTTP(w, r)
-			return
-		}
 		transport := "http"
 		if isWebSocketUpgrade(r) {
 			transport = "websocket"
 		}
-		gauge := a.metrics.inFlight.WithLabelValues(transport)
-		gauge.Inc()
-		defer gauge.Dec()
+		if a.metrics != nil && r.URL.Path != "/metrics" {
+			gauge := a.metrics.inFlight.WithLabelValues(transport)
+			gauge.Inc()
+			defer gauge.Dec()
+		}
 		// httpsnoop preserves optional interfaces such as Hijacker and Flusher.
 		hijacked := false
 		wrapped := httpsnoop.Wrap(w, httpsnoop.Hooks{Hijack: func(next httpsnoop.HijackFunc) httpsnoop.HijackFunc {
@@ -123,12 +123,29 @@ func (a *App) observeHTTP(next http.Handler) http.Handler {
 		default:
 			method = "other"
 		}
-		a.metrics.httpRequests.WithLabelValues(method, route, strconv.Itoa(result.Code)).Inc()
-		a.metrics.httpDuration.WithLabelValues(method, route).Observe(result.Duration.Seconds())
+		if a.metrics != nil && r.URL.Path != "/metrics" {
+			a.metrics.httpRequests.WithLabelValues(method, route, strconv.Itoa(result.Code)).Inc()
+			a.metrics.httpDuration.WithLabelValues(method, route).Observe(result.Duration.Seconds())
+		}
+		level := slog.LevelInfo
+		if result.Code >= 500 {
+			level = slog.LevelError
+		} else if result.Code >= 400 {
+			level = slog.LevelWarn
+		} else if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" || route == "unmatched" {
+			level = slog.LevelDebug
+		}
+		attrs := []any{"event", "http.completed", "method", method, "route", route,
+			"status", result.Code, "duration_ms", result.Duration.Milliseconds(), "response_bytes", result.Written, "transport", transport}
+		if op := operationalRequest(r); op != nil {
+			attrs = append(attrs, "request_id", op.requestID, "tenant_id", op.tenantID, "api_key_id", op.keyID)
+		}
+		slog.Log(r.Context(), level, "http request completed", attrs...)
 	})
 }
 
 func (a *App) observeInference(input store.LogInput) {
+	logInference(input)
 	if a.metrics == nil || input.LogUnit == store.LogUnitConnection {
 		return
 	}
@@ -187,6 +204,14 @@ func metricProvider(value string) string {
 }
 
 func (a *App) observeCPAExecution(attempt relaybridge.ExecutionAttempt) {
+	level := slog.LevelDebug
+	if attempt.Status != "complete" && attempt.Error != "request_canceled" {
+		level = slog.LevelWarn
+	}
+	slog.Log(context.Background(), level, "upstream execution completed", "event", "upstream.completed",
+		"provider", metricProvider(attempt.Provider), "model", attempt.Model, "credential_id", attempt.CredentialID,
+		"attempt", attempt.Number, "kind", attempt.Kind, "status", attempt.Status, "error_code", attempt.Error,
+		"duration_ms", attempt.CompletedAt.Sub(attempt.StartedAt).Milliseconds())
 	if a.metrics == nil {
 		return
 	}
@@ -214,6 +239,11 @@ func (a *App) observeCPAExecution(attempt relaybridge.ExecutionAttempt) {
 }
 
 func (a *App) observePersistence(operation string, err error) {
+	level := slog.LevelDebug
+	if err != nil {
+		level = slog.LevelError
+	}
+	slog.Log(context.Background(), level, "persistence operation completed", "event", "persistence.completed", "operation", operation, "error", err)
 	if a.metrics == nil {
 		return
 	}
@@ -225,6 +255,12 @@ func (a *App) observePersistence(operation string, err error) {
 }
 
 func (a *App) observeJob(job string, started time.Time, err error) {
+	level := slog.LevelDebug
+	if err != nil {
+		level = slog.LevelError
+	}
+	slog.Log(context.Background(), level, "background job completed", "event", "job.completed", "task", job,
+		"duration_ms", time.Since(started).Milliseconds(), "error", err)
 	if a.metrics == nil {
 		return
 	}

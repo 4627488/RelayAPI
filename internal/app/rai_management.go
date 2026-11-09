@@ -27,6 +27,9 @@ func (a *App) withRAIManagement(next http.HandlerFunc) http.Handler {
 			return
 		}
 		session := identity.Session{Role: "tenant", TenantID: grant.TenantID, PasswordVersion: grant.PasswordVersion, Expires: grant.ExpiresAt.Unix()}
+		if op := operationalRequest(r); op != nil {
+			op.tenantID = grant.TenantID
+		}
 		ctx := context.WithValue(r.Context(), sessionKey, session)
 		ctx = context.WithValue(ctx, raiManagementContextKey{}, grant)
 		next(w, r.WithContext(ctx))

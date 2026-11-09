@@ -161,7 +161,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     } catch (cause) {
       if (token !== listRequest.current) return
       toast.add({
-        title: cause instanceof Error ? cause.message : "读取请求日志失败",
+        title: cause instanceof Error ? cause.message : "读取扣费明细失败",
         type: "error",
       })
     } finally {
@@ -204,7 +204,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
         if (detailRequest.current !== token) return
         setSelected(null)
         toast.add({
-          title: cause instanceof Error ? cause.message : "读取日志详情失败",
+          title: cause instanceof Error ? cause.message : "读取扣费详情失败",
           type: "error",
         })
         if (route.logId === id) {
@@ -319,7 +319,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-6">
-      <PageHeader title="请求日志" />
+      <PageHeader
+        title="扣费明细"
+        description="查看请求用量、计价与扣费来源。"
+      />
       <StatStrip
         items={[
           {
@@ -353,7 +356,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
           <FieldGroup className="grid min-w-0 grid-cols-2 gap-2 pt-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_9rem_auto_auto] [&_button]:min-h-10 sm:[&_button]:min-h-7 [&_input]:h-10 sm:[&_input]:h-7">
             <Field className="col-span-2 min-w-0 lg:col-span-1">
               <FieldLabel htmlFor="log-search" className="sr-only">
-                搜索日志
+                搜索扣费明细
               </FieldLabel>
               <SearchField
                 id="log-search"

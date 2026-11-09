@@ -12,9 +12,18 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/app"
 	"github.com/4627488/RelayAPI/internal/config"
+	"github.com/4627488/RelayAPI/internal/logging"
 )
 
 func main() {
+	level := os.Getenv("RELAY_LOG_LEVEL")
+	if level == "" {
+		level = "info"
+	}
+	if err := logging.Configure(os.Stdout, level); err != nil {
+		slog.Error("invalid logging configuration", "error", err)
+		os.Exit(1)
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("invalid configuration", "error", err)
@@ -47,5 +56,10 @@ func main() {
 	<-stop
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	_ = server.Shutdown(ctx)
+	slog.Info("server shutting down", "event", "service.stopping")
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("http shutdown", "error", err)
+		_ = server.Close()
+	}
+	slog.Info("http server stopped", "event", "service.stopped")
 }

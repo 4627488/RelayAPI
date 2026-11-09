@@ -1,7 +1,9 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -220,6 +222,17 @@ func (a *App) addNativeRuntimeTrace(timeline *latencyTimeline, requestID string)
 		return "", false
 	}
 	if trace, ok := a.nativeRuntime.TakeRequestTrace(requestID); ok {
+		for _, attempt := range trace.Attempts {
+			level := slog.LevelDebug
+			if attempt.Status != "complete" && attempt.Error != "request_canceled" {
+				level = slog.LevelWarn
+			}
+			slog.Log(context.Background(), level, "upstream request attempt", "event", "upstream.attempt",
+				"request_id", requestID, "provider", attempt.Provider, "model", attempt.Model,
+				"credential_id", attempt.CredentialID, "attempt", attempt.Number, "kind", attempt.Kind,
+				"status", attempt.Status, "error_code", attempt.Error,
+				"duration_ms", attempt.CompletedAt.Sub(attempt.StartedAt).Milliseconds())
+		}
 		timeline.AddUpstreamTrace(trace)
 		return trace.UpstreamModel, trace.Provider != ""
 	}

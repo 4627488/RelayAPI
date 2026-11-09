@@ -31,8 +31,8 @@ steps and other uncharged outcomes do not create request logs. The detail API
 contains no nested turns. Statistics and new retention rollups use the same
 confirmed-step predicate; previously archived aggregates retain their historical semantics.
 Requested Priority and upstream-confirmed Priority are displayed separately. The plugin queue is in memory, while PostgreSQL
-remains the accounting ledger. CPA does not expose image modality buckets in
-the public usage SDK, so image accounting retains the existing response parser.
+remains the accounting ledger. CPA now exposes image modality buckets in
+the public usage SDK; Relay image accounting still uses the existing response parser.
 Relay still owns pricing rules, tenant balances and subscription quotas.
 
 Supported public protocols are Responses, Chat Completions, the OpenAI Images

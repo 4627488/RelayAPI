@@ -112,6 +112,8 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 			settleErr = a.store.ReleaseRequestReservation(context.WithoutCancel(r.Context()), requestID)
 		}
 		a.observePersistence("websocket_settlement", settleErr)
+		slog.Log(r.Context(), settlementLogLevel(settleErr), "websocket billing settlement completed", "event", "billing.settled",
+			"request_id", requestID, "success", settleErr == nil, "turns", accounting.turnsSeen, "cost_nano_usd", accounting.accruedNanoUSD, "error", settleErr)
 		if settleErr != nil {
 			slog.Error("settle native websocket request", "request_id", requestID, "error", settleErr)
 		}

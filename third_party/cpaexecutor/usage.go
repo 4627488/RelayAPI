@@ -13,8 +13,8 @@ import (
 )
 
 // UsageResult contains CPA's canonical token totals. Input includes cache reads
-// and writes; output includes reasoning. CPA's public SDK does not expose image,
-// audio or video modality buckets, so callers must account for that limitation.
+// and writes; output includes reasoning. This bridge currently exposes text
+// totals; CPA's additional modality buckets are not forwarded here.
 type UsageResult struct {
 	RequestID, ResponseID, Model, ServiceTier                 string
 	InputTokens, OutputTokens, CachedTokens, CacheWriteTokens int64

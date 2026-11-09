@@ -84,7 +84,7 @@ describe("data views", () => {
       </div>
     )
 
-    const links = screen.getByRole("link", { name: /查看日志 特殊模型/ })
+    const links = screen.getByRole("link", { name: /查看扣费明细 特殊模型/ })
     await expect
       .element(links.nth(0))
       .toHaveAttribute("href", "/app/logs/request%2Fid%3Fdetail%3D1")
