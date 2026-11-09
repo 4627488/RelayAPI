@@ -250,8 +250,11 @@ func TestClaudeStructuredAccountLimitsOverrideLegacyAndHonorActivity(t *testing.
 		if w := windows["5h"]; w.UsedPercent == nil || *w.UsedPercent != 12.5 || !w.Enforceable {
 			t.Fatalf("structured session lost: %+v", w)
 		}
-		if windows["7d"].Enforceable || windows["7d-model-sonnet"].Enforceable {
-			t.Fatal("inactive or model-scoped limit constrained the whole account")
+		if w := windows["7d"]; w.UsedPercent == nil || *w.UsedPercent != 100 || !w.Enforceable {
+			t.Fatalf("weekly account window was lost because of is_active=false: %+v", w)
+		}
+		if windows["7d-model-sonnet"].Enforceable {
+			t.Fatal("model-scoped limit constrained the whole account")
 		}
 	}
 	window, _ := claudeExtraUsage(map[string]any{"decimal_places": 3.0, "used_credits": 1234.0, "monthly_limit": 10000.0})

@@ -187,8 +187,8 @@ func probeClaudeQuota(ctx context.Context, client *http.Client, endpoint, authIn
 		report.Windows = append(report.Windows, QuotaWindow{Kind: kind, Label: label, UsedPercent: used, RemainingPercent: quotaComplement(used), ResetsAt: reset, Enforceable: enforceable})
 	}
 	// Current usage responses publish structured limits alongside legacy fields.
-	// Active structured rows win; an explicitly inactive account-wide row makes
-	// its legacy equivalent display-only, never an admission constraint.
+	// Active structured rows win. is_active does not revoke an account-wide
+	// five-hour or weekly window still reported by the usage endpoint.
 	rows, _ := payload["limits"].([]any)
 	// Prefer explicitly active rows when an older/inactive representation of
 	// the same model is also present; validQuotaWindows keeps the first kind.
@@ -207,12 +207,19 @@ func probeClaudeQuota(ctx context.Context, client *http.Client, endpoint, authIn
 			accountKind = quotaKind7d
 		}
 		if active, ok := row["is_active"].(bool); ok && !active {
-			for i := range report.Windows {
-				if report.Windows[i].Kind == accountKind {
-					report.Windows[i].Enforceable = false
-				}
+			if accountKind == "" {
+				continue
 			}
-			continue
+			// Prefer the account-wide legacy observation to an inactive
+			// structured representation. Without legacy data, retain the
+			// structured account window instead of silently dropping it.
+			legacy := false
+			for _, window := range report.Windows {
+				legacy = legacy || window.Kind == accountKind
+			}
+			if legacy {
+				continue
+			}
 		}
 		used := percentQuota(row["percent"])
 		if used == nil {
