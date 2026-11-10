@@ -67,7 +67,11 @@ rai --profile work configure claude-desktop --model claude-sonnet-5-5 --reasonin
 rai --profile work unconfigure claude-desktop
 ```
 
-Claude Desktop 配置遵循其原生第三方推理流程，不使用 Claude Code 的 `settings.json` 环境来接管 Desktop。`CLAUDE_USER_DATA_DIR` 可显式指定 Desktop 数据目录。rai 选择一个独立的配置档，保留其他配置档、界面偏好和原先的选择；模型列表只包含当前授权、支持工具的 Claude ID，按家族标记默认模型。凭据助手缓存 60 秒、超时 30 秒，直接使用网关端点，不依赖 loopback 后台代理；系统重启后无需重新启动 rai 代理。保持 rai 路径稳定，移动二进制或更换 profile 的站点后需要重新 configure。Desktop 不支持 `none` 推理档位，使用 `low/medium/high/xhigh/max`。
+Claude Desktop 配置遵循其原生第三方推理流程，不使用 Claude Code 的 `settings.json` 环境来接管 Desktop。`CLAUDE_USER_DATA_DIR` 可显式指定 Desktop 数据目录。rai 选择一个独立的配置档，保留其他配置档、界面偏好和原先的选择。新服务器协商自动发现目录；显式选模型、原生 Claude profile 偏好、非标准别名或旧服务器保留静态列表。静态列表只包含当前授权、支持工具的 Claude ID，按家族标记默认模型；别名声明实际 Claude 身份，1M 标记服从可信上下文和输入上限。
+
+Desktop 的 `toolSearchEnabled` 根据服务器返回的实际原生 Claude 路由能力开启，不使用终端的工具搜索变量代替。未知自定义上游保持关闭；自动审批继续使用客户端内置安全检查。`--web-search-url <url>` 可选择配置 Desktop 内置的自建搜索连接器，保留其他 MCP，不向搜索服务发送 Relay 凭据。详细协议、配置和验证边界见 [Claude Desktop 网关兼容](claude-desktop-gateway.md)。
+
+凭据助手缓存 60 秒、超时 30 秒，直接使用网关端点，不依赖 loopback 后台代理；系统重启后无需重新启动 rai 代理。保持 rai 路径稳定，移动二进制或更换 profile 的站点后需要重新 configure。Desktop 不支持 `none` 推理档位，使用 `low/medium/high/xhigh/max`。
 
 Desktop 的配置档、选择元数据和启动模式使用同一套恢复记录；多文件写入失败会回滚。`unconfigure` 移除 rai 加入的配置档条目，保留后来新增的其他条目与用户切换的选择。配置仅作用于本机，既有会话需要重新打开；Cowork 的虚拟化和操作系统依赖仍由 Desktop 检查。此流程基于已确认可用的 Claude Desktop 4.23118.0 配置格式，旧版本未验证。
 

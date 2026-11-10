@@ -340,3 +340,145 @@ func TestClaudeDesktopRestoreWhenUserRemovedPreviousProfile(t *testing.T) {
 		t.Fatal("restored a pointer to a removed Desktop profile")
 	}
 }
+
+func TestClaudeDesktopDiscoveryAndToolSearchAreNegotiated(t *testing.T) {
+	for _, search := range []*bool{nil, boolValue(false), boolValue(true)} {
+		ctx := desktopTestContext(t)
+		ctx.ClaudeDiscovery = true
+		ctx.ModelInfo[ctx.Model] = ModelInfo{CanonicalModel: ctx.Model, ToolSearch: search}
+		files, err := loadAgentConfig("claude-desktop", ctx.Environ)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[0].Document["inferenceModels"] = []any{"old-model"}
+		if err := buildAgentConfig("claude-desktop", ctx, files); err != nil {
+			t.Fatal(err)
+		}
+		config := files[0].Document
+		if config["modelDiscoveryEnabled"] != true || config["inferenceModels"] != nil {
+			t.Fatal("static list prevented automatic model discovery")
+		}
+		want := search != nil && *search
+		if config["toolSearchEnabled"] != want || config["inferenceGatewayAutoModeServerChecks"] != false {
+			t.Fatal("unverified gateway capability was enabled")
+		}
+	}
+}
+
+func TestClaudeDesktopAliasesUseCanonicalIdentityAndBoundedContext(t *testing.T) {
+	ctx := desktopTestContext(t)
+	ctx.Model = "friendly"
+	ctx.Models = append(ctx.Models, ctx.Model)
+	ctx.ModelInfo[ctx.Model] = ModelInfo{CanonicalModel: "claude-sonnet-5-5", Context: 1000000, MaxInput: 200000, ToolSearch: boolValue(true)}
+	files, _ := loadAgentConfig("claude-desktop", ctx.Environ)
+	if err := buildAgentConfig("claude-desktop", ctx, files); err != nil {
+		t.Fatal(err)
+	}
+	entry := files[0].Document["inferenceModels"].([]any)[0].(map[string]any)
+	if entry["behavesAs"] != "claude-sonnet-5-5" || entry["anthropicFamilyTier"] != "sonnet" || entry["supports1m"] != nil {
+		t.Fatalf("bad alias capabilities: %#v", entry)
+	}
+	ctx.ModelInfo[ctx.Model] = ModelInfo{CanonicalModel: "gpt-main"}
+	if err := buildAgentConfig("claude-desktop", ctx, files); err == nil {
+		t.Fatal("non-Claude target was accepted as native Claude")
+	}
+}
+
+func TestClaudeDesktopOptionalSearchPreservesOtherConnectors(t *testing.T) {
+	ctx := desktopTestContext(t)
+	ctx.ClaudeSearchURL = "https://search.example/v1/search"
+	files, _ := loadAgentConfig("claude-desktop", ctx.Environ)
+	if err := buildAgentConfig("claude-desktop", ctx, files); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveClientConfig("claude-desktop", "work", files); err != nil {
+		t.Fatal(err)
+	}
+	files, _ = loadAgentConfig("claude-desktop", ctx.Environ)
+	servers := files[0].Document["managedMcpServers"].([]any)
+	if len(servers) != 1 || servers[0].(map[string]any)["provider"] != "custom" {
+		t.Fatal("search connector missing")
+	}
+	files[0].Document["managedMcpServers"] = append(servers, map[string]any{"name": "My MCP", "transport": "http", "url": "https://mcp.example"})
+	raw, _ := files[0].render(files[0].Document)
+	if err := writeFileAtomic(files[0].Path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	files, _ = loadAgentConfig("claude-desktop", ctx.Environ)
+	if _, err := restoreAgentConfig("claude-desktop", "work", files); err != nil {
+		t.Fatal(err)
+	}
+	read, err := readClientConfig(files[0].Path, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining := read.Document["managedMcpServers"].([]any)
+	if len(remaining) != 1 || remaining[0].(map[string]any)["name"] != "My MCP" {
+		t.Fatal("search removal changed a user connector")
+	}
+	for _, endpoint := range []string{"https://search.example?q=secret", "https://user:secret@search.example/", "file:///tmp/search"} {
+		if _, err := parseAgentConfigureFlags([]string{"--web-search-url", endpoint}); err == nil {
+			t.Fatal("invalid search URL accepted")
+		}
+	}
+	doc := map[string]any{"managedMcpServers": []any{map[string]any{"name": "Old search", "server": "websearch", "provider": "tavily", "headers": map[string]any{"Authorization": "secret"}}}}
+	if err := configureClaudeSearch(doc, ctx.ClaudeSearchURL); err == nil {
+		t.Fatal("a vendor credential was silently moved to a custom endpoint")
+	}
+}
+
+func TestClaudeDesktopConfigureNegotiatesDiscoveryWithoutLosingPinnedModels(t *testing.T) {
+	t.Setenv(envDisableKey, "1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/rai/session" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"models":["gpt-main","claude-sonnet-5-5","claude-opus-5-5","friendly"],"default_model":"gpt-main","claude":{"version":1,"model_discovery":true},"model_info":{"claude-sonnet-5-5":{"canonical_model":"claude-sonnet-5-5","tool_search":true},"friendly":{"canonical_model":"claude-sonnet-5-5","tool_search":true}}}`)
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		profile, model string
+		discovery      bool
+	}{
+		{"gpt-main", "", true}, {"claude-opus-5-5", "", false}, {"gpt-main", "claude-sonnet-5-5", false}, {"gpt-main", "friendly", false},
+	} {
+		ctx := desktopTestContext(t)
+		var output bytes.Buffer
+		a := &App{Home: ctx.RAIHome, Self: ctx.RAI, Environ: ctx.Environ, Stdout: &output, Stderr: &output, Args: []string{"configure", "claude-desktop", "--yes"}}
+		a.defaults()
+		store, profile := saveTestOAuth(t, a, server.URL, "inference", time.Now().Add(time.Hour))
+		profile.DefaultModel = tc.profile
+		if err := store.PutProfile(profile); err != nil {
+			t.Fatal(err)
+		}
+		if tc.model != "" {
+			a.Args = append(a.Args, "--model", tc.model)
+		}
+		if err := a.Execute(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		files, err := loadAgentConfig("claude-desktop", a.Environ)
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := files[0].Document
+		if config["modelDiscoveryEnabled"] != tc.discovery {
+			t.Fatalf("profile %s model %s: discovery=%v", tc.profile, tc.model, config["modelDiscoveryEnabled"])
+		}
+		if tc.discovery {
+			if config["inferenceModels"] != nil {
+				t.Fatal("static models suppress discovery")
+			}
+		} else {
+			first := config["inferenceModels"].([]any)[0].(map[string]any)["name"]
+			want := tc.model
+			if want == "" {
+				want = tc.profile
+			}
+			if first != want {
+				t.Fatal("pinned default model was lost")
+			}
+		}
+	}
+}

@@ -74,3 +74,24 @@ func TestWriteErrorIncludesStableTypeRetryabilityAndHeader(t *testing.T) {
 		t.Fatalf("body = %+v", body)
 	}
 }
+
+func TestMessagesBillingErrorsUseDesktopContract(t *testing.T) {
+	for _, path := range []string{"/v1/messages", "/v1/chat/completions"} {
+		w := httptest.NewRecorder()
+		writeUserFacingErrorForRequest(w, httptest.NewRequest(http.MethodPost, path, nil), admissionUserError(store.ErrInsufficientBalance))
+		var doc map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+			t.Fatal(err)
+		}
+		want := "insufficient_funds_error"
+		if path == "/v1/messages" {
+			want = "billing_error"
+			if doc["type"] != "error" {
+				t.Fatal("missing Anthropic error envelope")
+			}
+		}
+		if w.Code != 402 || w.Header().Get("X-Should-Retry") != "false" || doc["error"].(map[string]any)["type"] != want {
+			t.Fatalf("wrong billing contract: %s", w.Body.String())
+		}
+	}
+}

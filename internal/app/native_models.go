@@ -86,6 +86,7 @@ func authorizedModelAliases(key store.KeyContext) []store.APIKeyModelAlias {
 // formats, then applies Relay's tenant and key policy.
 func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key store.KeyContext) {
 	collection, requestedModel, _ := modelMetadataRequest(r)
+	_, codexCatalog := r.URL.Query()["client_version"]
 	if requestedModel != "" && !key.AllowsModel(resolveAPIKeyModel(requestedModel, key.ModelAliases).Model) {
 		writeError(w, http.StatusForbidden, "model_not_allowed", "This API key does not have access to the requested model.")
 		return
@@ -123,7 +124,6 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 				allowedModels = append(allowedModels, model)
 			}
 		}
-		_, codexCatalog := r.URL.Query()["client_version"]
 		aliases := authorizedModelAliases(key)
 		if filtered, filterErr := filterModelCatalogForClient(payload, allowedModels, codexCatalog); filterErr == nil {
 			payload = filtered
@@ -165,6 +165,13 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 			writeError(w, http.StatusBadGateway, "model_catalog_error", "无法过滤模型列表")
 			return
 		}
+		if !codexCatalog && collection == "/v1/models" {
+			payload, err = promoteClaudeCatalog(payload, a.raiModelInfo(key, clientModels))
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "model_catalog_error", "无法生成 Claude 模型能力")
+				return
+			}
+		}
 		if requestedModel != "" {
 			visible := false
 			for _, model := range clientModels {
@@ -192,7 +199,7 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 	w.Header().Add("Vary", "Authorization, X-Api-Key, X-Goog-Api-Key")
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		etag := modelCatalogRevision(key, runtimeModels, a.codexCatalogRevisionToken())
-		if requestedModel != "" {
+		if requestedModel != "" || !codexCatalog {
 			etag = modelCatalogETag(payload)
 		}
 		w.Header().Set("ETag", etag)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -14,6 +15,14 @@ import (
 // A stable UUID lets configure and unconfigure find rai's own library entry
 // without taking over another profile or depending on the current selection.
 const claudeDesktopProfileID = "f25cf69c-d996-5e83-a759-ec347e583971"
+
+func validateClaudeSearchURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return errors.New("--web-search-url must be an HTTP(S) endpoint without credentials, query parameters or fragments")
+	}
+	return nil
+}
 
 func validateClaudeDesktopFiles(files []*clientConfigFile) error {
 	for _, file := range files {
@@ -87,7 +96,7 @@ func desktopLibraryEntries(doc map[string]any) ([]any, error) {
 }
 
 func buildClaudeDesktopConfig(ctx LaunchContext, files []*clientConfigFile) error {
-	if claudeModelFamily(ctx.Model) == "" || !slices.Contains(ctx.Models, ctx.Model) || !agentCapable(ctx.ModelInfo[ctx.Model]) {
+	if ClaudeModelFamily(ctx.Model, ctx.ModelInfo[ctx.Model]) == "" || !slices.Contains(ctx.Models, ctx.Model) || !agentCapable(ctx.ModelInfo[ctx.Model]) {
 		return errors.New("Claude Desktop requires an authorized Claude model; select one with --model")
 	}
 	entries, err := desktopLibraryEntries(files[1].Document)
@@ -113,6 +122,8 @@ func buildClaudeDesktopConfig(ctx LaunchContext, files []*clientConfigFile) erro
 		"inferenceCredentialHelperTtlSec":               codexAuthRefreshMS / 1000,
 		"inferenceCredentialHelperSilentRefreshEnabled": true,
 		"modelDiscoveryEnabled":                         false,
+		"toolSearchEnabled":                             ctx.ModelInfo[ctx.Model].ToolSearch != nil && *ctx.ModelInfo[ctx.Model].ToolSearch,
+		"inferenceGatewayAutoModeServerChecks":          false,
 	}
 	// The first entry is the initial model; only authorized, tool-capable
 	// Claude IDs belong in Desktop's model picker. Preserve gateway IDs.
@@ -121,18 +132,37 @@ func buildClaudeDesktopConfig(ctx LaunchContext, files []*clientConfigFile) erro
 	ids := append([]string{ctx.Model}, agentModels(ctx)...)
 	seen := map[string]bool{}
 	for _, id := range ids {
-		family := claudeModelFamily(id)
+		info := ctx.ModelInfo[id]
+		family := ClaudeModelFamily(id, info)
 		if seen[id] || family == "" {
 			continue
 		}
 		seen[id] = true
 		entry := map[string]any{"name": id, "anthropicFamilyTier": family}
+		canonical := ClaudeModelID(id, info)
+		if canonical != id {
+			entry["behavesAs"] = canonical
+		}
+		// A fact sheet may describe a window larger than this deployment's
+		// input allowance. Never advertise 1M using the former alone.
+		window := info.Context
+		if info.MaxInput > 0 && (window == 0 || info.MaxInput < window) {
+			window = info.MaxInput
+		}
+		if window >= 1000000 {
+			entry["supports1m"] = true
+		}
 		if roles["ANTHROPIC_DEFAULT_"+strings.ToUpper(family)+"_MODEL"] == id {
 			entry["isFamilyDefault"] = true
 		}
 		models = append(models, entry)
 	}
 	settings["inferenceModels"] = models
+	if ctx.ClaudeDiscovery {
+		settings["modelDiscoveryEnabled"] = true
+		delete(settings, "inferenceModels")
+		delete(files[0].Document, "inferenceModels")
+	}
 	if level := ctx.Profile.ReasoningEffort; level != "" {
 		switch level {
 		case "minimal":
@@ -150,6 +180,11 @@ func buildClaudeDesktopConfig(ctx LaunchContext, files []*clientConfigFile) erro
 	for key, value := range settings {
 		files[0].Document[key] = value
 	}
+	if ctx.ClaudeSearchURL != "" {
+		if err := configureClaudeSearch(files[0].Document, ctx.ClaudeSearchURL); err != nil {
+			return err
+		}
+	}
 	entry := map[string]any{"id": claudeDesktopProfileID, "name": fmt.Sprintf("RelayAPI (%s)", ctx.Profile.Name)}
 	found := false
 	for i, raw := range entries {
@@ -164,6 +199,41 @@ func buildClaudeDesktopConfig(ctx LaunchContext, files []*clientConfigFile) erro
 	files[1].Document["appliedId"] = claudeDesktopProfileID
 	delete(files[1].Document, "hybridPointer")
 	files[2].Document["deploymentMode"] = "3p"
+	return nil
+}
+
+func configureClaudeSearch(doc map[string]any, endpoint string) error {
+	if err := validateClaudeSearchURL(endpoint); err != nil {
+		return err
+	}
+	var servers []any
+	if raw, exists := doc["managedMcpServers"]; exists {
+		var ok bool
+		servers, ok = raw.([]any)
+		if !ok {
+			return errors.New("Claude Desktop managedMcpServers must be a list")
+		}
+	}
+	for i, raw := range servers {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("invalid Claude Desktop MCP server")
+		}
+		if entry["name"] == "RelayAPI web search" && entry["server"] != "websearch" {
+			return errors.New("Claude Desktop MCP name RelayAPI web search is already in use")
+		}
+		if entry["server"] == "websearch" {
+			// Do not attach a previous vendor's credentials to a new search URL.
+			if entry["provider"] != "custom" || entry["customUrl"] != endpoint {
+				return errors.New("a different Desktop web search provider is configured; change it in Desktop before using --web-search-url")
+			}
+			servers[i] = entry
+			doc["managedMcpServers"] = servers
+			return nil
+		}
+	}
+	servers = append(servers, map[string]any{"name": "RelayAPI web search", "server": "websearch", "provider": "custom", "customUrl": endpoint, "toolPolicy": map[string]any{"web_search": "allow"}})
+	doc["managedMcpServers"] = servers
 	return nil
 }
 

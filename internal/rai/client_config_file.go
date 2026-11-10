@@ -309,14 +309,18 @@ func restoreClientConfig(current, before, after map[string]any, path string) {
 }
 
 func restoreNamedProviders(current, before, after map[string]any) {
-	if value, present := current["custom_providers"]; present {
+	restoreNamedEntries(current, before, after, "custom_providers")
+}
+
+func restoreNamedEntries(current, before, after map[string]any, field string) {
+	if value, present := current[field]; present {
 		if _, ok := value.([]any); !ok {
 			return
 		}
 	}
-	entries, _ := current["custom_providers"].([]any)
-	b, _ := before["custom_providers"].([]any)
-	a, _ := after["custom_providers"].([]any)
+	entries, _ := current[field].([]any)
+	b, _ := before[field].([]any)
+	a, _ := after[field].([]any)
 	index := func(items []any) map[string]any {
 		m := map[string]any{}
 		for _, item := range items {
@@ -346,10 +350,10 @@ func restoreNamedProviders(current, before, after map[string]any) {
 			}
 		}
 	}
-	if len(entries) == 0 && before["custom_providers"] == nil {
-		delete(current, "custom_providers")
+	if len(entries) == 0 && before[field] == nil {
+		delete(current, field)
 	} else {
-		current["custom_providers"] = entries
+		current[field] = entries
 	}
 }
 

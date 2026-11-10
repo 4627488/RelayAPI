@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -174,6 +175,9 @@ func NewRuntime(opts Options, credentials []Credential) (*Runtime, error) {
 		MaxRetryInterval:              maxRetryInterval,
 		TransientErrorCooldownSeconds: credentialCooldownSeconds(opts.DisableCredentialCooling),
 	}
+	// The embedded server uses CPA's native tool-search route and per-executor
+	// capability checks; the zero-value standalone config otherwise disables it.
+	cfg.Claude.ToolSearch = true
 	cfg.DisableImageGeneration = imageGenerationMode(opts.DisableImageGeneration)
 	routingStrategy := normalizedRoutingStrategy(opts.RoutingStrategy)
 	manager := coreauth.NewManager(nil, newCredentialSelector(routingStrategy), runtimeAuthHook{updated: opts.OnCredentialUpdated})
@@ -842,6 +846,9 @@ func compileCredential(item Credential, globalProxy string) (*coreauth.Auth, cre
 		return nil, credentialRoute{}, nil, fmt.Errorf("CPA credential %q requires a provider", id)
 	}
 	attrs := make(map[string]string)
+	if enabled, ok := metadata["native_tool_search"].(bool); ok {
+		attrs["native_tool_search"] = strconv.FormatBool(enabled)
+	}
 	for _, key := range []string{
 		"api_key", "base_url", "compat_name", "provider_key", "account_id", "project_id",
 		"location", "region", "priority", "prefix", "cloak_mode", "token_endpoint",

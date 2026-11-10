@@ -123,6 +123,8 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 Claude Code 使用 `rai claude`，或执行 `rai configure claude` 后直接运行 `claude`。未显式选模型时，优先使用授权目录中的原生 Claude，Haiku、Sonnet、Opus、Fable 按家族映射，保留完整提示词、自动工具搜索和原生输出预算。Claude Desktop 的 Chat、Code、Cowork 使用 `rai configure claude-desktop --reasoning-effort medium -y` 接入，完全退出并重开 Desktop 后生效。Desktop 使用独立的 `Claude-3p/configLibrary` 配置档和自动续期凭据助手，不依赖后台代理；`rai unconfigure claude-desktop` 恢复原选择并保留其他配置档。路径、模型选择与兼容边界见 [rai 客户端兼容性](docs/rai-client-compatibility.md)。
 
+新服务器可为 Desktop 协商自动模型发现与原生工具搜索，固定模型和旧服务器保留静态配置。网关目录声明授权模型的家族、别名目标和可信上下文；原生协议测试验证缓存、工具引用和 SSE 心跳往返。可用 `--web-search-url` 接入 Desktop 内置的自建搜索连接器，详见 [Claude Desktop 网关兼容](docs/claude-desktop-gateway.md)。
+
 服务器上可执行 `rai login --server <url> --no-browser`，在另一台设备打开终端显示的 `/rai/authorize` 入口，输入短验证码并核对设备后批准登录。验证码 10 分钟内有效，也可继续使用完整授权链接。
 
 `rai auth login --scope account --server <url>` 另行授权用户自助管理，可使用 `rai key list/create/update/delete`、`rai account quota`、`rai usage`、`rai device list/revoke`。管理授权与模型调用隔离，默认不输出 Key 明文；新建静态 Key 时显式添加 `--show-secret`。认证统一使用 `rai auth login/status/switch/refresh/logout/token`，通过 `--scope inference|account` 显式选择权限；默认仅模型调用权限。`rai auth status --json` 可供脚本检查，授权无效时返回非零退出码。`rai key/device` 默认显示可读文本，可加 `--json` 输出结构化结果；旧复数命令保留 JSON 输出。旧命令继续兼容。详细命令、安全边界和升级说明见 [rai 用户 CLI 与设备授权](docs/rai-cli.md)；各客户端的模型能力、后台续期、配置清理及真实客户端测试见 [rai 客户端兼容性](docs/rai-client-compatibility.md)。

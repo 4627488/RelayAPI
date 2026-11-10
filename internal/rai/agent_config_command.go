@@ -10,6 +10,7 @@ import (
 
 type agentConfigureFlags struct {
 	Server, Model, Effort string
+	WebSearchURL          string
 	Yes, NoBrowser        bool
 }
 
@@ -28,7 +29,7 @@ func parseAgentConfigureFlags(args []string) (agentConfigureFlags, error) {
 				return flags, errors.New("--no-browser does not take a value")
 			}
 			flags.NoBrowser = true
-		case "--server", "--model", "--reasoning-effort":
+		case "--server", "--model", "--reasoning-effort", "--web-search-url":
 			if !inline {
 				if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
 					return flags, fmt.Errorf("%s requires a value", name)
@@ -40,6 +41,11 @@ func parseAgentConfigureFlags(args []string) (agentConfigureFlags, error) {
 				return flags, fmt.Errorf("%s requires a value", name)
 			}
 			switch name {
+			case "--web-search-url":
+				if err := validateClaudeSearchURL(value); err != nil {
+					return flags, err
+				}
+				flags.WebSearchURL = value
 			case "--server":
 				flags.Server = value
 			case "--model":
@@ -72,6 +78,9 @@ func (a *App) configureAgent(ctx context.Context, profileName string, args []str
 	flags, err := parseAgentConfigureFlags(args[1:])
 	if err != nil {
 		return err
+	}
+	if flags.WebSearchURL != "" && agent != "claude-desktop" {
+		return errors.New("--web-search-url is only supported by configure claude-desktop")
 	}
 	// Parse every existing file before authorization or starting a background
 	// service; malformed settings must never be replaced by defaults.
@@ -134,6 +143,9 @@ func (a *App) configureAgent(ctx context.Context, profileName string, args []str
 		profile.ReasoningEffort = flags.Effort
 	}
 	launch := LaunchContext{Profile: profile, Model: model, Models: session.Models, ModelInfo: session.ModelInfo, RAI: a.Self, RAIHome: store.Home, Environ: a.Environ}
+	launch.ClaudeSearchURL = flags.WebSearchURL
+	launch.ClaudeDiscovery = session.Claude != nil && session.Claude.Version == 1 && session.Claude.ModelDiscovery && flags.Model == "" &&
+		claudeModelFamily(model) != "" && ClaudeModelFamily(profile.DefaultModel, session.ModelInfo[profile.DefaultModel]) == ""
 	// Validate the complete merge with a non-secret placeholder before asking
 	// for confirmation. The actual local credential is minted only afterwards.
 	launch.APIBase, launch.APIKey = "http://127.0.0.1:1", "rai_local_preview"

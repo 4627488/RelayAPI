@@ -16,6 +16,23 @@ Use `sdk/config`, `sdk/api`, `sdk/cliproxy` model registry operations,
 where they provide the required contract. SDK aliases are the same CPA types, so
 using them does not translate or duplicate configuration or model schemas.
 
+## Claude Desktop protocol
+
+The embedded config enables CPA's native tool-search routing, with each
+executor retaining its credential/model capability checks. The observation
+wrapper forwards `NativeToolSearchSupport` rather than hiding it. Native
+Claude discovery requires all registered routes for a public ID to agree on
+the Claude provider and canonical model. Custom Claude origins need the
+explicit boolean credential field `native_tool_search: true` before the
+gateway advertises tool search; do not set it without validating that origin.
+
+Native Messages remain on CPA's Anthropic path. The protocol fixtures check
+client-owned cache breakpoints and TTL, deferred tools and references, opaque
+fields, original tool IDs, heartbeat events, cache usage and context-error
+semantics. These fixtures validate protocol compatibility, not a paid
+provider's 1M window, cache hit rate or server-side safety review. See
+[Desktop gateway compatibility](../../docs/claude-desktop-gateway.md).
+
 ## Remaining internal seams
 
 | CPA package | Required capability missing from the public SDK |

@@ -222,7 +222,7 @@ func buildAgentConfig(agent string, ctx LaunchContext, files []*clientConfigFile
 }
 
 func configureUsage() string {
-	return "rai configure <codex|claude-desktop|" + strings.Join(configurableAgents, "|") + "> [--server <url>] [--model <id>] [--reasoning-effort <level>] [--no-browser] [-y|--yes]"
+	return "rai configure <codex|claude-desktop|" + strings.Join(configurableAgents, "|") + "> [--server <url>] [--model <id>] [--reasoning-effort <level>] [--no-browser] [-y|--yes]\nClaude Desktop: [--web-search-url <custom-search-endpoint>]"
 }
 
 func grokModelAlias(id, model string) string {

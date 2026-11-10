@@ -27,7 +27,7 @@ func publicError(status int, code, message string) userFacingError {
 }
 
 func (a *App) rejectPublic(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, body []byte, started time.Time, timeline *latencyTimeline, classified userFacingError) {
-	writeUserFacingError(w, classified)
+	writeUserFacingErrorForRequest(w, r, classified)
 	a.logRejectedRequest(r, key, requestID, admission, meta, body, started, timeline, classified)
 }
 

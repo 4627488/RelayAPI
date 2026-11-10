@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/4627488/RelayAPI/internal/store"
@@ -48,19 +49,37 @@ func defaultErrorRetryable(status int, code string) bool {
 }
 
 func writeUserFacingError(w http.ResponseWriter, value userFacingError) {
+	writeUserFacingErrorFormat(w, value, false)
+}
+
+func writeUserFacingErrorForRequest(w http.ResponseWriter, r *http.Request, value userFacingError) {
+	anthropic := r != nil && (r.URL.Path == "/v1/messages" || r.URL.Path == "/v1/messages/count_tokens")
+	writeUserFacingErrorFormat(w, value, anthropic)
+}
+
+func writeUserFacingErrorFormat(w http.ResponseWriter, value userFacingError, anthropic bool) {
 	if value.Status == 0 {
 		value.Status = http.StatusInternalServerError
 	}
 	w.Header().Set("X-Relay-Error-Code", value.Code)
 	w.Header().Set("X-Relay-Error-Source", "relay")
+	w.Header().Set("X-Should-Retry", strconv.FormatBool(value.Retryable))
 	details := map[string]any{"retryable": value.Retryable}
 	if value.UpstreamStatus > 0 {
 		details["upstream_status"] = value.UpstreamStatus
 	}
-	writeJSON(w, value.Status, map[string]any{"error": map[string]any{
-		"code": value.Code, "type": errorTypeForStatus(value.Status),
+	errorType := errorTypeForStatus(value.Status)
+	if anthropic && value.Status == http.StatusPaymentRequired {
+		errorType = "billing_error"
+	}
+	body := map[string]any{"error": map[string]any{
+		"code": value.Code, "type": errorType,
 		"message": value.Message, "details": details, "source": "relay",
-	}})
+	}}
+	if anthropic {
+		body["type"] = "error"
+	}
+	writeJSON(w, value.Status, body)
 }
 
 func admissionUserError(err error) userFacingError {

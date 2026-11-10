@@ -43,6 +43,11 @@ func restoreConfiguredClient(agent string, current, before, after map[string]any
 		}
 		groups = append(groups, group, [][]string{{"appliedId"}, {"hybridPointer"}})
 		restoreDesktopLibraryEntries(current, before, after)
+		if _, exists := after["managedMcpServers"]; exists {
+			restoreNamedEntries(current, before, after, "managedMcpServers")
+			delete(before, "managedMcpServers")
+			delete(after, "managedMcpServers")
+		}
 	}
 	if agent == "hermes" {
 		if model, ok := before["model"].(string); ok {

@@ -53,6 +53,7 @@ type tokenError struct {
 }
 
 type Session struct {
+	Claude          *ClaudeCapabilities  `json:"claude,omitempty"`
 	ModelInfo       map[string]ModelInfo `json:"model_info,omitempty"`
 	Codex           *CodexCapabilities   `json:"codex,omitempty"`
 	ContractVersion string               `json:"contract_version"`
@@ -61,6 +62,12 @@ type Session struct {
 	Models          []string             `json:"models"`
 	DefaultModel    string               `json:"default_model"`
 	Adapters        []string             `json:"adapters"`
+}
+
+// These are gateway protocol guarantees, separate from model fact sheets.
+type ClaudeCapabilities struct {
+	Version        int  `json:"version"`
+	ModelDiscovery bool `json:"model_discovery"`
 }
 
 type Gateway struct {

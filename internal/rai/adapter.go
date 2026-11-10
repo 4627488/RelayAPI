@@ -15,19 +15,21 @@ type Adapter interface {
 }
 
 type LaunchContext struct {
-	ModelInfo  map[string]ModelInfo
-	RuntimeDir string
-	Codex      *CodexCapabilities
-	Profile    Profile
-	APIBase    string
-	APIKey     string
-	Model      string
-	Models     []string
-	Executable string
-	Args       []string
-	Environ    []string
-	RAI        string
-	RAIHome    string
+	ClaudeDiscovery bool
+	ClaudeSearchURL string
+	ModelInfo       map[string]ModelInfo
+	RuntimeDir      string
+	Codex           *CodexCapabilities
+	Profile         Profile
+	APIBase         string
+	APIKey          string
+	Model           string
+	Models          []string
+	Executable      string
+	Args            []string
+	Environ         []string
+	RAI             string
+	RAIHome         string
 }
 
 func Adapters() []Adapter {

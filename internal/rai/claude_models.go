@@ -19,6 +19,21 @@ func claudeModelFamily(id string) string {
 	return ""
 }
 
+// ClaudeModelFamily resolves the gateway's one-hop alias before identifying
+// the family. A Claude-looking alias for GPT is never advertised as Claude.
+func ClaudeModelFamily(id string, info ModelInfo) string {
+	return claudeModelFamily(ClaudeModelID(id, info))
+}
+
+func ClaudeModelID(id string, info ModelInfo) string {
+	if info.CanonicalModel != "" {
+		return info.CanonicalModel
+	}
+	return id
+}
+
+func CompareClaudeModels(a, b string) int { return compareClaudeModels(a, b) }
+
 // Numeric comparison keeps 4.10 after 4.9, independent of catalog ordering.
 func compareClaudeModels(a, b string) int {
 	parts := func(id string) []string {
@@ -44,7 +59,7 @@ func compareClaudeModels(a, b string) int {
 func claudeFamilyModel(ctx LaunchContext, family string) string {
 	best := ""
 	for _, id := range agentModels(ctx) {
-		if claudeModelFamily(id) == family && (best == "" || compareClaudeModels(id, best) > 0) {
+		if ClaudeModelFamily(id, ctx.ModelInfo[id]) == family && (best == "" || compareClaudeModels(ClaudeModelID(id, ctx.ModelInfo[id]), ClaudeModelID(best, ctx.ModelInfo[best])) > 0) {
 			best = id
 		}
 	}
@@ -56,7 +71,7 @@ func resolveAgentModel(agent string, profile Profile, requested string, models [
 		return resolveLaunchModel(profile, requested, models, siteDefault)
 	}
 	for _, id := range []string{profile.DefaultModel, siteDefault} {
-		if claudeModelFamily(id) != "" && slices.Contains(models, id) && agentCapable(info[id]) {
+		if ClaudeModelFamily(id, info[id]) != "" && slices.Contains(models, id) && agentCapable(info[id]) {
 			return id, nil
 		}
 	}
@@ -77,10 +92,10 @@ func claudeRoleModels(ctx LaunchContext) map[string]string {
 	}
 	for _, family := range []string{"haiku", "sonnet", "opus", "fable"} {
 		model := claudeFamilyModel(ctx, family)
-		if claudeModelFamily(ctx.Model) == family {
+		if ClaudeModelFamily(ctx.Model, ctx.ModelInfo[ctx.Model]) == family {
 			model = ctx.Model
 		}
-		if model == "" || claudeModelFamily(ctx.Model) == "" {
+		if model == "" || ClaudeModelFamily(ctx.Model, ctx.ModelInfo[ctx.Model]) == "" {
 			model = ctx.Model
 		}
 		roles["ANTHROPIC_DEFAULT_"+strings.ToUpper(family)+"_MODEL"] = model

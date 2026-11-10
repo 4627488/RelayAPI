@@ -4,6 +4,8 @@ package rai
 // the authoritative list of IDs allowed for this credential. Older servers may
 // omit this map; adapters then leave optional client settings unspecified.
 type ModelInfo struct {
+	CanonicalModel   string   `json:"canonical_model,omitempty"`
+	ToolSearch       *bool    `json:"tool_search,omitempty"`
 	Name             string   `json:"name,omitempty"`
 	Context          int      `json:"context,omitempty"`
 	MaxInput         int      `json:"max_input,omitempty"`

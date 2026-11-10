@@ -195,6 +195,11 @@ func observeExecutor(inner cliproxyauth.ProviderExecutor, traces *requestTraceRe
 
 func (e *observedExecutor) Identifier() string { return e.inner.Identifier() }
 
+func (e *observedExecutor) SupportsNativeToolSearch(auth *cliproxyauth.Auth, model string) bool {
+	inner, ok := e.inner.(cliproxyauth.NativeToolSearchSupport)
+	return ok && inner.SupportsNativeToolSearch(auth, model)
+}
+
 func (e *observedExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	state, traced := e.begin(ctx, auth, req, opts, "request")
 	response, err := e.inner.Execute(traced, auth, req, opts)

@@ -81,7 +81,7 @@ func claudeGatewayEnv(ctx LaunchContext) map[string]string {
 	// inherited defaults that this gateway cannot serve.
 	for key, fallback := range claudeRoleModels(ctx) {
 		model := environmentValue(ctx.Environ, key)
-		if model == "" || !contains(ctx.Models, model) || !agentCapable(ctx.ModelInfo[model]) || (claudeModelFamily(ctx.Model) != "" && claudeModelFamily(model) == "") {
+		if model == "" || !contains(ctx.Models, model) || !agentCapable(ctx.ModelInfo[model]) || (ClaudeModelFamily(ctx.Model, ctx.ModelInfo[ctx.Model]) != "" && ClaudeModelFamily(model, ctx.ModelInfo[model]) == "") {
 			model = fallback
 		}
 		env[key] = model
@@ -105,16 +105,16 @@ func claudeGatewayEnv(ctx LaunchContext) map[string]string {
 	}
 	// Known Claude models already have client defaults. A maximum supported
 	// output is not a request budget; custom model IDs still need a safe cap.
-	if limit := ctx.ModelInfo[ctx.Model].MaxOutput; limit > 0 && claudeModelFamily(ctx.Model) == "" {
+	if limit := ctx.ModelInfo[ctx.Model].MaxOutput; limit > 0 && ClaudeModelFamily(ctx.Model, ctx.ModelInfo[ctx.Model]) == "" {
 		if selected, err := strconv.Atoi(environmentValue(ctx.Environ, "CLAUDE_CODE_MAX_OUTPUT_TOKENS")); err == nil && selected > 0 {
 			limit = min(limit, selected)
 		}
 		env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = strconv.Itoa(limit)
-	} else if claudeModelFamily(ctx.Model) != "" {
+	} else if ClaudeModelFamily(ctx.Model, ctx.ModelInfo[ctx.Model]) != "" {
 		// An empty overlay value also clears an old rai-generated user setting.
 		env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = environmentValue(ctx.Environ, "CLAUDE_CODE_MAX_OUTPUT_TOKENS")
 	}
-	if claudeToolSearch(ctx.Model) {
+	if claudeToolSearch(ClaudeModelID(ctx.Model, ctx.ModelInfo[ctx.Model])) {
 		env["ENABLE_TOOL_SEARCH"] = "auto"
 	} else {
 		env["ENABLE_TOOL_SEARCH"] = "false"

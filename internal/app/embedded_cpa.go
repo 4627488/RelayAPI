@@ -313,6 +313,14 @@ func (e *embeddedCPAAdapter) ModelProvider(string) (string, bool) {
 	return "", false
 }
 
+func (e *embeddedCPAAdapter) NativeClaudeCapabilities(model string) (upstream.NativeClaudeCapabilities, bool) {
+	if runtime := e.runtime(); runtime != nil {
+		canonical, toolSearch, ok := runtime.NativeClaudeCapabilities(model)
+		return upstream.NativeClaudeCapabilities{Model: canonical, ToolSearch: toolSearch}, ok
+	}
+	return upstream.NativeClaudeCapabilities{}, false
+}
+
 func (e *embeddedCPAAdapter) CredentialModels(id string) []string {
 	if runtime := e.runtime(); runtime != nil {
 		return runtime.CredentialModels(id)

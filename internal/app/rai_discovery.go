@@ -2,11 +2,13 @@ package app
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/rai"
 	"github.com/4627488/RelayAPI/internal/store"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 func (a *App) raiDiscovery(w http.ResponseWriter, _ *http.Request) {
@@ -51,6 +53,7 @@ func (a *App) raiSession(w http.ResponseWriter, r *http.Request) {
 		"model_info":       a.raiModelInfo(key, models),
 		"default_model":    defaultModel,
 		"codex":            a.raiCodexCapabilities(key, models),
+		"claude":           rai.ClaudeCapabilities{Version: 1, ModelDiscovery: true},
 		"adapters":         raiAdapterNames(),
 	})
 }
@@ -60,8 +63,15 @@ func (a *App) raiModelInfo(key store.KeyContext, models []string) map[string]rai
 	result := make(map[string]rai.ModelInfo, len(models))
 	for _, id := range models {
 		target := resolveAPIKeyModel(id, key.ModelAliases).Model
-		info := rai.ModelInfo{}
-		if fact, ok := index.LookupCatalog(target); ok && trustedCodexCapability(target, fact) {
+		info := rai.ModelInfo{CanonicalModel: target}
+		if runtime, ok := a.nativeRuntime.(upstream.ClaudeCapabilityProvider); ok {
+			if native, ok := runtime.NativeClaudeCapabilities(target); ok {
+				info.CanonicalModel = native.Model
+				info.ToolSearch = &native.ToolSearch
+			}
+		}
+		factID := info.CanonicalModel
+		if fact, ok := index.LookupCatalog(factID); ok && trustedCodexCapability(factID, fact) && (rai.ClaudeModelFamily(factID, info) == "" || strings.EqualFold(fact.Provider, "anthropic")) {
 			applyRAIModelInfo(&info, fact)
 		}
 		if override, ok := index.LookupOverride(target); ok {
