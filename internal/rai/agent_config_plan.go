@@ -14,6 +14,9 @@ var configurableAgents = []string{"claude", "opencode", "grok", "pi", "hermes", 
 type clientConfigTarget struct{ Path, Format string }
 
 func agentConfigTargets(agent string, environ []string) ([]clientConfigTarget, error) {
+	if agent == "claude-desktop" {
+		return claudeDesktopConfigTargets(environ)
+	}
 	var dir string
 	var err error
 	switch agent {
@@ -79,10 +82,18 @@ func loadAgentConfig(agent string, environ []string) ([]*clientConfigFile, error
 		}
 		files = append(files, file)
 	}
+	if agent == "claude-desktop" {
+		if err := validateClaudeDesktopFiles(files); err != nil {
+			return nil, err
+		}
+	}
 	return files, nil
 }
 
 func buildAgentConfig(agent string, ctx LaunchContext, files []*clientConfigFile) error {
+	if agent == "claude-desktop" {
+		return buildClaudeDesktopConfig(ctx, files)
+	}
 	if err := requireLocalClientCredential(ctx); err != nil {
 		return err
 	}
@@ -91,10 +102,20 @@ func buildAgentConfig(agent string, ctx LaunchContext, files []*clientConfigFile
 	first := files[0]
 	switch agent {
 	case "claude":
+		// Retire rai's old compatibility switches and generated output ceiling.
+		if claudeGeneratedOutputBudget(ctx, first.Document) {
+			configDelete(first.Document, "env", "CLAUDE_CODE_MAX_OUTPUT_TOKENS")
+		}
+		// Existing user role choices survive configure when they are still
+		// authorized; stale GPT mappings are replaced for a Claude session.
+		ctx = claudeSettingsContext(ctx, first.Document)
 		// Reuse the launch adapter's gateway contract, without inheriting
 		// unrelated shell variables into the persistent settings file.
 		for key, value := range claudeGatewayEnv(ctx) {
 			if key == envAPIKey || key == envProfile {
+				continue
+			}
+			if key == "CLAUDE_CODE_MAX_OUTPUT_TOKENS" && value == "" {
 				continue
 			}
 			if err := set(first, value, "env", key); err != nil {
@@ -201,7 +222,7 @@ func buildAgentConfig(agent string, ctx LaunchContext, files []*clientConfigFile
 }
 
 func configureUsage() string {
-	return "rai configure <codex|" + strings.Join(configurableAgents, "|") + "> [--server <url>] [--model <id>] [--reasoning-effort <level>] [--no-browser] [-y|--yes]"
+	return "rai configure <codex|claude-desktop|" + strings.Join(configurableAgents, "|") + "> [--server <url>] [--model <id>] [--reasoning-effort <level>] [--no-browser] [-y|--yes]"
 }
 
 func grokModelAlias(id, model string) string {

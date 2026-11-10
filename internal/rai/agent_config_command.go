@@ -66,7 +66,7 @@ func (a *App) configureAgent(ctx context.Context, profileName string, args []str
 	if agent == "codex" {
 		return a.configureCodex(ctx, profileName, args)
 	}
-	if !contains(configurableAgents, agent) {
+	if !contains(configurableAgents, agent) && agent != "claude-desktop" {
 		return fmt.Errorf("unsupported configure target %q; %s", agent, configureUsage())
 	}
 	flags, err := parseAgentConfigureFlags(args[1:])
@@ -123,7 +123,7 @@ func (a *App) configureAgent(ctx context.Context, profileName string, args []str
 		flags.Model = ""
 		profile.DefaultModel = ""
 	}
-	model, err := resolveLaunchModel(profile, flags.Model, session.Models, session.DefaultModel)
+	model, err := resolveAgentModel(agent, profile, flags.Model, session.Models, session.ModelInfo, session.DefaultModel)
 	if err != nil {
 		return err
 	}
@@ -137,6 +137,9 @@ func (a *App) configureAgent(ctx context.Context, profileName string, args []str
 	// Validate the complete merge with a non-secret placeholder before asking
 	// for confirmation. The actual local credential is minted only afterwards.
 	launch.APIBase, launch.APIKey = "http://127.0.0.1:1", "rai_local_preview"
+	if agent == "claude-desktop" {
+		launch.APIBase, launch.APIKey = session.APIBase, ""
+	}
 	if err := buildAgentConfig(agent, launch, files); err != nil {
 		return err
 	}
@@ -146,7 +149,11 @@ func (a *App) configureAgent(ctx context.Context, profileName string, args []str
 		}
 		fmt.Fprintf(a.Stdout, "Write rai profile %s to %s\n", profile.Name, file.Path)
 	}
-	fmt.Fprintln(a.Stdout, "This sets the default provider and model. Existing settings are merged; backups and recovery records are saved. Only a local proxy credential is written.")
+	if agent == "claude-desktop" {
+		fmt.Fprintln(a.Stdout, "This selects a RelayAPI third-party inference profile. Other Desktop profiles are retained. A site-bound rai credential helper renews credentials; no token or background proxy is saved.")
+	} else {
+		fmt.Fprintln(a.Stdout, "This sets the default provider and model. Existing settings are merged; backups and recovery records are saved. Only a local proxy credential is written.")
+	}
 	if agent == "grok" {
 		fmt.Fprintln(a.Stdout, "TOML formatting and comments will be rewritten.")
 	}
@@ -179,11 +186,13 @@ func (a *App) configureAgent(ctx context.Context, profileName string, args []str
 			return errors.New("client configuration changed during confirmation; run configure again")
 		}
 	}
-	base, key, err := a.ensurePersistentProxy(ctx, store, profile)
-	if err != nil {
-		return err
+	if agent != "claude-desktop" {
+		base, key, err := a.ensurePersistentProxy(ctx, store, profile)
+		if err != nil {
+			return err
+		}
+		launch.APIBase, launch.APIKey = base, key
 	}
-	launch.APIBase, launch.APIKey = base, key
 	if err := buildAgentConfig(agent, launch, files); err != nil {
 		return err
 	}
@@ -196,10 +205,10 @@ func (a *App) configureAgent(ctx context.Context, profileName string, args []str
 
 func (a *App) unconfigureAgent(ctx context.Context, profileName string, args []string) error {
 	if len(args) == 0 || hasHelp(args) {
-		fmt.Fprintln(a.Stdout, "Usage: rai unconfigure <codex|"+strings.Join(configurableAgents, "|")+">")
+		fmt.Fprintln(a.Stdout, "Usage: rai unconfigure <codex|claude-desktop|"+strings.Join(configurableAgents, "|")+">")
 		return nil
 	}
-	if len(args) != 1 || !contains(configurableAgents, args[0]) {
+	if len(args) != 1 || (!contains(configurableAgents, args[0]) && args[0] != "claude-desktop") {
 		return errors.New("select a supported client with rai unconfigure <agent>")
 	}
 	agent := args[0]

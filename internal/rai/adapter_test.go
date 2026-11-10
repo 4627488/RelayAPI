@@ -109,7 +109,7 @@ func TestClaudePrepareSetsAnthropicGatewayEnv(t *testing.T) {
 	if envValue(command.Env, "ANTHROPIC_API_KEY") != "" {
 		t.Fatalf("api key should be cleared, got %q", envValue(command.Env, "ANTHROPIC_API_KEY"))
 	}
-	if envValue(command.Env, "ENABLE_TOOL_SEARCH") != "true" {
+	if envValue(command.Env, "ENABLE_TOOL_SEARCH") != "auto" {
 		t.Fatalf("tool search = %q", envValue(command.Env, "ENABLE_TOOL_SEARCH"))
 	}
 }

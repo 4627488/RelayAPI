@@ -121,6 +121,8 @@ irm 'http://localhost:8080/rai/install.ps1' | iex
 
 `rai login` 打开浏览器，用 PKCE 设备授权取得短期 access token 和可轮换的 refresh token，写入系统钥匙串（无钥匙串时回退到 `~/.config/rai/credentials.json`，权限 0600）。自动接入不签发长期 API Key；`rai configure codex --server <url>` 可以直接完成首次登录和配置。无图形界面时加 `--no-browser`，把打印的 URL 贴到浏览器。CI 或用户明确接入静态 Key 时用 `--api-key-stdin`。`rai credential print` 供 Codex 的 command-based auth 按需续期，只输出 access token。发布镜像在构建时交叉编译各平台 `rai`，由本站 `GET /rai/download/{os}-{arch}` 下发；`rai update` 向当前登录站点拉取同一路径。
 
+Claude Code 使用 `rai claude`，或执行 `rai configure claude` 后直接运行 `claude`。未显式选模型时，优先使用授权目录中的原生 Claude，Haiku、Sonnet、Opus、Fable 按家族映射，保留完整提示词、自动工具搜索和原生输出预算。Claude Desktop 的 Chat、Code、Cowork 使用 `rai configure claude-desktop --reasoning-effort medium -y` 接入，完全退出并重开 Desktop 后生效。Desktop 使用独立的 `Claude-3p/configLibrary` 配置档和自动续期凭据助手，不依赖后台代理；`rai unconfigure claude-desktop` 恢复原选择并保留其他配置档。路径、模型选择与兼容边界见 [rai 客户端兼容性](docs/rai-client-compatibility.md)。
+
 服务器上可执行 `rai login --server <url> --no-browser`，在另一台设备打开终端显示的 `/rai/authorize` 入口，输入短验证码并核对设备后批准登录。验证码 10 分钟内有效，也可继续使用完整授权链接。
 
 `rai auth login --scope account --server <url>` 另行授权用户自助管理，可使用 `rai key list/create/update/delete`、`rai account quota`、`rai usage`、`rai device list/revoke`。管理授权与模型调用隔离，默认不输出 Key 明文；新建静态 Key 时显式添加 `--show-secret`。认证统一使用 `rai auth login/status/switch/refresh/logout/token`，通过 `--scope inference|account` 显式选择权限；默认仅模型调用权限。`rai auth status --json` 可供脚本检查，授权无效时返回非零退出码。`rai key/device` 默认显示可读文本，可加 `--json` 输出结构化结果；旧复数命令保留 JSON 输出。旧命令继续兼容。详细命令、安全边界和升级说明见 [rai 用户 CLI 与设备授权](docs/rai-cli.md)；各客户端的模型能力、后台续期、配置清理及真实客户端测试见 [rai 客户端兼容性](docs/rai-client-compatibility.md)。

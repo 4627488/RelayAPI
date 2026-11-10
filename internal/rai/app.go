@@ -200,6 +200,7 @@ AGENT COMMANDS
   rai configure <agent>    Set up any agent above for direct use [-y] [--model <id>]
   rai unconfigure <agent>  Restore rai-managed settings and preserve later edits
   rai configure codex --codex-profile <name>  Use a native Codex profile
+  rai configure claude-desktop  Set up Claude Desktop Chat, Code and Cowork
   rai codex --desktop      Temporarily connect Codex Desktop
   rai sync codex           Import saved Codex settings [--codex-profile <name>]
 
@@ -760,7 +761,7 @@ func (a *App) credential(ctx context.Context, profileName string, args []string)
 			return err
 		}
 		if actual != want {
-			return errors.New("rai profile now belongs to a different server; configure Codex again")
+			return errors.New("rai profile now belongs to a different server; configure the client again")
 		}
 	}
 	secret, err := a.profileCredential(ctx, store, profile)
@@ -910,7 +911,7 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 		profile.ReasoningEffort = effort
 	}
 	if agent != "codex" || model != "" || profile.DefaultModel != "" || profile.FollowSiteDefault {
-		model, err = resolveLaunchModel(profile, model, session.Models, session.DefaultModel)
+		model, err = resolveAgentModel(agent, profile, model, session.Models, session.ModelInfo, session.DefaultModel)
 	}
 	if err != nil {
 		return err
@@ -941,8 +942,8 @@ func (a *App) launch(ctx context.Context, profileName, agent string, args []stri
 		defer closeProxy()
 	}
 	runtimeDir := ""
-	if agent == "pi" {
-		runtimeDir, err = os.MkdirTemp("", "rai-pi-*")
+	if agent == "pi" || agent == "claude" {
+		runtimeDir, err = os.MkdirTemp("", "rai-"+agent+"-*")
 		if err != nil {
 			return err
 		}

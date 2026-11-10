@@ -180,6 +180,14 @@ func testAgentClients(t *testing.T, toolRoundTrip, configured bool) {
 			adapter, _ := AdapterByName(agent)
 			var command Command
 			if !configured {
+				if agent == "claude" {
+					// A launch overlay must beat stale user settings for both
+					// destination and authentication, not just the model flag.
+					settings := filepath.Join(home, "claude", "settings.json")
+					if err := writeFileAtomic(settings, []byte(`{"model":"old-model","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:1","ANTHROPIC_AUTH_TOKEN":"old-token","ANTHROPIC_DEFAULT_HAIKU_MODEL":"old-model"}}`), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
 				command, err = adapter.Prepare(LaunchContext{Profile: Profile{Name: "test", ServerURL: server.URL, OpenCodeProtocol: "chat"}, APIBase: server.URL, APIKey: "rai_local_test", Model: "custom-model", Models: []string{"custom-model"}, ModelInfo: map[string]ModelInfo{"custom-model": {Context: 131072, MaxOutput: 4096, ToolCall: boolValue(true), InputModalities: []string{"text"}}}, Executable: binary, Args: args, Environ: env, RuntimeDir: t.TempDir(), RAIHome: home})
 			}
 			if configured {

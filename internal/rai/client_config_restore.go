@@ -36,6 +36,14 @@ func restoreConfiguredClient(agent string, current, before, after map[string]any
 		}
 		groups = append(groups, group)
 	}
+	if agent == "claude-desktop" {
+		group := [][]string{}
+		for _, key := range []string{"inferenceProvider", "inferenceGatewayBaseUrl", "inferenceGatewayAuthScheme", "inferenceGatewayApiKey", "inferenceCredentialKind", "inferenceCredentialHelper", "inferenceCredentialHelperArgs", "inferenceGatewayOidc", "inferenceIdpOidc", "inferenceCustomHeaders"} {
+			group = append(group, []string{key})
+		}
+		groups = append(groups, group, [][]string{{"appliedId"}, {"hybridPointer"}})
+		restoreDesktopLibraryEntries(current, before, after)
+	}
 	if agent == "hermes" {
 		if model, ok := before["model"].(string); ok {
 			before["model"] = map[string]any{"default": model}
