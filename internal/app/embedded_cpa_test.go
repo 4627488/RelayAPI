@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,61 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
+
+func TestEmbeddedCPAModelCatalogWithClientCompression(t *testing.T) {
+	models := []string{"relay-catalog-gpt", "relay-catalog-claude"}
+	runtime, err := relaybridge.NewRuntime(relaybridge.Options{APIKey: "internal-test"}, []relaybridge.Credential{{
+		ID: "catalog-compat", Provider: "openai", Enabled: true, Models: models,
+		Document: []byte(`{"type":"openai","api_key":"unused","base_url":"https://example.invalid/v1"}`),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
+	server := httptest.NewServer(runtime.Handler())
+	defer server.Close()
+	client, err := cpa.New(server.URL, "internal-test", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{nativeCPA: client, nativeCPARuntime: runtime}
+	a.nativeRuntime = &embeddedCPAAdapter{app: a}
+	key := store.KeyContext{TenantModels: models}
+	for _, encoding := range []string{"identity", "gzip", "zstd", "gzip, deflate, br, zstd"} {
+		t.Run(encoding, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.167.0", nil)
+			request.Header.Set("Accept-Encoding", encoding)
+			recorder := httptest.NewRecorder()
+			a.serveModelCatalog(recorder, request, key)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("catalog: %d %s", recorder.Code, recorder.Body.String())
+			}
+			if got := recorder.Header().Get("Content-Encoding"); got != "" {
+				t.Fatalf("JSON catalog retained internal Content-Encoding: %q", got)
+			}
+			var document struct {
+				Models []struct {
+					Slug       string `json:"slug"`
+					Visibility string `json:"visibility"`
+				} `json:"models"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &document); err != nil {
+				t.Fatal(err)
+			}
+			for _, model := range models {
+				found := false
+				for _, item := range document.Models {
+					if strings.EqualFold(item.Slug, model) && item.Visibility == "list" {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("model %q missing from visible catalog", model)
+				}
+			}
+		})
+	}
+}
 
 func TestEmbeddedCPASyntheticPrewarmHasCompleteZeroSettlement(t *testing.T) {
 	runtime, err := relaybridge.NewRuntime(relaybridge.Options{APIKey: "internal-test"}, []relaybridge.Credential{{

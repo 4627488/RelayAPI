@@ -102,6 +102,10 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 	// Conditional responses belong to the filtered per-key representation.
 	catalogRequest.Header.Del("If-None-Match")
 	catalogRequest.Header.Del("If-Modified-Since")
+	// This response is parsed and rewritten as JSON, not forwarded verbatim.
+	// Let the internal HTTP transport negotiate and decode compression itself;
+	// forwarding the client's Accept-Encoding disables its automatic decoding.
+	catalogRequest.Header.Del("Accept-Encoding")
 	a.nativeRuntime.ServeModels(recorder, catalogRequest)
 	response := recorder.Result()
 	defer response.Body.Close()
