@@ -52,6 +52,40 @@ function mockKeys(value: ApiKey[]) {
 }
 
 describe("user API keys", () => {
+  it("shows the official Magpie button only after revealing an enabled key", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input)
+        const body = path.endsWith("/secret")
+          ? { key: "test-secret" }
+          : path === "/api/models"
+            ? { items: [] }
+            : { items: keys }
+        return new Response(JSON.stringify(body), { status: 200 })
+      })
+    )
+    const screen = await render(<UserKeys />)
+    await expect
+      .element(screen.getByText("生产环境", { exact: true }))
+      .toBeVisible()
+    await expect
+      .element(screen.getByRole("button", { name: "Add to magpie" }))
+      .not.toBeInTheDocument()
+    await screen.getByRole("button", { name: "查看 生产环境" }).click()
+    await expect
+      .element(screen.getByRole("button", { name: "Add to magpie" }))
+      .toBeVisible()
+    await expect
+      .element(screen.getByRole("img", { name: "Add to magpie" }))
+      .toHaveAttribute("src", "/magpie/add-to-magpie.svg")
+    await screen.getByRole("button", { name: "隐藏 生产环境" }).click()
+    await screen.getByRole("button", { name: "查看 旧测试环境" }).click()
+    await expect
+      .element(screen.getByRole("button", { name: "Add to magpie" }))
+      .not.toBeInTheDocument()
+  })
+
   it("defaults to dynamic all-model access even when the model catalog loads later", async () => {
     let resolveCatalog!: (response: Response) => void
     const catalog = new Promise<Response>((resolve) => {

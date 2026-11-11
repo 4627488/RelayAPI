@@ -367,6 +367,7 @@ func (a *App) routes() {
 	a.mux.HandleFunc("GET /api/rai/session", a.raiSession)
 	a.raiManagementRoutes()
 	a.mux.HandleFunc("GET /api/rai/quota", a.raiQuota)
+	a.mux.HandleFunc("GET /api/magpie/balance", a.magpieBalance)
 	a.mux.HandleFunc("POST /api/rai/authorizations", a.createRAIAuthorization)
 	a.mux.HandleFunc("POST /api/rai/revoke", a.revokeRAIOAuth)
 	// Do not allow unknown management paths to fall through to the public landing page.
@@ -414,6 +415,7 @@ func (a *App) routes() {
 	a.mux.Handle("DELETE /api/rai/devices/{id}", a.withTenant(http.HandlerFunc(a.revokeRAIDevice)))
 	a.mux.Handle("POST /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("GET /api/keys/{id}/secret", a.withTenant(http.HandlerFunc(a.keySecret)))
+	a.mux.Handle("GET /api/keys/{id}/magpie", a.withTenant(http.HandlerFunc(a.magpieImport)))
 	a.mux.Handle("PUT /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyUpdate)))
 	a.mux.Handle("DELETE /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyDelete)))
 	a.mux.Handle("GET /api/logs", a.withTenant(http.HandlerFunc(a.logs)))

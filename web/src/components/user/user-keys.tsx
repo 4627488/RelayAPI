@@ -24,6 +24,7 @@ import {
 import { LoadErrorView } from "@/components/load-error-view"
 import { LoadingView } from "@/components/loading-view"
 import { ModelSelector } from "@/components/model-selector"
+import { MagpieImportButton } from "@/components/magpie-import-button"
 import { PageHeader, SearchField } from "@/components/workspace-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -476,6 +477,14 @@ function KeysView({
                             id={`plain-key-${key.id}`}
                             value={revealedKeys[key.id]}
                           />
+                          {key.enabled ? (
+                            <div className="mt-3 flex flex-wrap items-center gap-3">
+                              <MagpieImportButton keyID={key.id} />
+                              <p className="text-xs text-muted-foreground">
+                                导入密钥与模型，并在 Magpie 查看余额和订阅额度。
+                              </p>
+                            </div>
+                          ) : null}
                         </TableCell>
                       </TableRow>
                     ) : null}
