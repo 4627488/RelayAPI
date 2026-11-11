@@ -2,9 +2,11 @@ package relaybridge
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
+	codexauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -12,6 +14,31 @@ type testTokenStorage struct{ document []byte }
 
 func (s testTokenStorage) SaveTokenToFile(path string) error {
 	return os.WriteFile(path, s.document, 0o600)
+}
+
+func TestOAuthCaptureStoreCapturesRealCodexStorage(t *testing.T) {
+	dir := t.TempDir()
+	var captured []byte
+	store := newOAuthCaptureStore(dir, func(_ context.Context, _, _, _ string, document []byte) error {
+		captured = append([]byte(nil), document...)
+		return nil
+	})
+	ctx := coreauth.WithRequestInfo(context.Background(), &coreauth.RequestInfo{Query: map[string][]string{"relay_session": {"relay-session"}}})
+	_, err := store.Save(ctx, &coreauth.Auth{Provider: "codex", Storage: &codexauth.CodexTokenStorage{AccessToken: "test-access", RefreshToken: "test-refresh"}})
+	if err != nil {
+		t.Fatalf("Save real Codex storage: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(captured, &document); err != nil {
+		t.Fatalf("decode captured document: %v", err)
+	}
+	if document["type"] != "codex" || document["access_token"] != "test-access" || document["refresh_token"] != "test-refresh" {
+		t.Fatalf("unexpected captured credential: %v", document)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("temporary credential files remain: %v, %v", entries, err)
+	}
 }
 
 func TestOAuthCaptureStoreCapturesCredentialWithoutLeavingFile(t *testing.T) {

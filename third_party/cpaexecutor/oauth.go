@@ -66,8 +66,17 @@ func (s *oauthCaptureStore) Save(ctx context.Context, auth *coreauth.Auth) (stri
 			return "", errTemp
 		}
 		path := file.Name()
-		_ = file.Close()
 		defer os.Remove(path)
+		defer os.Remove(path + ".lock")
+		// Codex merges existing JSON when saving, so the reserved file must
+		// contain a valid object rather than an empty CreateTemp placeholder.
+		if _, errWrite := file.WriteString("{}"); errWrite != nil {
+			_ = file.Close()
+			return "", errWrite
+		}
+		if errClose := file.Close(); errClose != nil {
+			return "", errClose
+		}
 		if errSave := auth.Storage.SaveTokenToFile(path); errSave != nil {
 			return "", errSave
 		}
