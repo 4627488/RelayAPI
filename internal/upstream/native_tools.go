@@ -128,6 +128,74 @@ func lowerCodexTools(payload []byte) ([]byte, *toolResponseRestorer) {
 	return encoded, newToolResponseRestorer(refs)
 }
 
+// xAI Responses accepts a fixed tool-type enum. Codex CLI 0.146+ injects
+// `tool_search` (and related input items) which xAI rejects with 422
+// "unknown variant `tool_search`".
+var xaiAllowedToolTypes = map[string]struct{}{
+	"function": {}, "web_search": {}, "x_search": {}, "image_generation": {},
+	"collections_search": {}, "file_search": {}, "code_execution": {},
+	"code_interpreter": {}, "mcp": {}, "shell": {},
+}
+
+var xaiDroppedInputTypes = map[string]struct{}{
+	"tool_search": {}, "tool_search_call": {}, "tool_search_output": {},
+	"additional_tools": {},
+}
+
+func sanitizeXAIResponses(payload []byte) []byte {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var root map[string]any
+	if decoder.Decode(&root) != nil {
+		return payload
+	}
+	changed := false
+	if tools, ok := root["tools"].([]any); ok {
+		kept := make([]any, 0, len(tools))
+		for _, value := range tools {
+			tool, ok := value.(map[string]any)
+			if !ok {
+				kept = append(kept, value)
+				continue
+			}
+			kind, _ := tool["type"].(string)
+			if kind != "" {
+				if _, allowed := xaiAllowedToolTypes[kind]; !allowed {
+					changed = true
+					continue
+				}
+			}
+			kept = append(kept, tool)
+		}
+		root["tools"] = kept
+	}
+	if input, ok := root["input"].([]any); ok {
+		kept := make([]any, 0, len(input))
+		for _, value := range input {
+			item, ok := value.(map[string]any)
+			if !ok {
+				kept = append(kept, value)
+				continue
+			}
+			kind, _ := item["type"].(string)
+			if _, drop := xaiDroppedInputTypes[kind]; drop {
+				changed = true
+				continue
+			}
+			kept = append(kept, item)
+		}
+		root["input"] = kept
+	}
+	if !changed {
+		return payload
+	}
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return payload
+	}
+	return encoded
+}
+
 func lowerToolChoice(value any) {
 	choice, ok := value.(map[string]any)
 	if !ok {
