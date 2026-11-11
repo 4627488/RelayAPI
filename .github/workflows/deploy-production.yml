@@ -31,6 +31,12 @@ jobs:
     timeout-minutes: 30
     environment: production
     steps:
+      - name: Check out deployment script
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
       - name: Resolve immutable image
         id: image
         env:
@@ -43,7 +49,7 @@ jobs:
           if [ "$EVENT_NAME" = workflow_dispatch ]; then
             tag=$MANUAL_TAG
           else
-            tag="sha-${PUBLISHED_SHA:0:7}"
+            tag="sha-${PUBLISHED_SHA}"
           fi
           if [[ ! "$tag" =~ ^(sha-[0-9a-f]{7,40}|v?[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "Invalid image tag: $tag" >&2
@@ -79,7 +85,7 @@ jobs:
               -o ServerAliveInterval=15 \
               -o ServerAliveCountMax=40 \
               "$DEPLOY_USER@$DEPLOY_HOST" \
-              "/opt/relayapi/deploy-relayapi.sh '$IMAGE'"; then
+              "bash -s -- '$IMAGE'" < deploy/deploy-relayapi.sh; then
               exit 0
             else
               status=$?

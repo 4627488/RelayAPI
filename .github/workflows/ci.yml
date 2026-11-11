@@ -7,6 +7,7 @@ on:
       - master
       - main
       - "rewrite/**"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -17,6 +18,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  delivery:
+    name: Delivery scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Validate workflow definitions
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Validate deployment and launcher scripts
+        run: |
+          sh -n scripts/build-rai-dist.sh
+          bash -n deploy/deploy-relayapi.sh
+          python3 scripts/test_deploy.py
+
   backend:
     name: Go backend
     runs-on: ubuntu-latest
@@ -48,7 +68,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
+            third_party/cpaexecutor/go.sum
 
       - name: Verify dependencies
         run: go mod verify
@@ -123,7 +145,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: go.sum
+          cache-dependency-path: |
+            go.sum
+            third_party/cpaexecutor/go.sum
 
       - name: Test launcher and running executable replacement
         run: go test -count=1 ./internal/rai ./cmd/rai
@@ -157,7 +181,7 @@ jobs:
         run: pnpm install --frozen-lockfile --prefer-offline
 
       - name: Install browser
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps --only-shell chromium
 
       - name: Check formatting
         run: pnpm format:check
@@ -226,10 +250,7 @@ jobs:
 
   images:
     name: Build RelayAPI image
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    needs:
-      - backend
-      - frontend
+    if: github.workflow == 'CI' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -246,5 +267,7 @@ jobs:
         with:
           context: .
           push: false
-          cache-from: type=gha,scope=relayapi
+          cache-from: |
+            type=gha,scope=relayapi
+            type=gha,scope=relayapi-amd64
           cache-to: type=gha,mode=max,scope=relayapi

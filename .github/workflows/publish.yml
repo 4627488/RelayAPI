@@ -11,12 +11,14 @@ on:
       - "internal/**"
       - "third_party/**"
       - "scripts/setup-cursor-runtime.mjs"
+      - "scripts/build-rai-dist.sh"
       - "web/**"
       - "go.mod"
       - "go.sum"
       - "Dockerfile"
       - ".dockerignore"
       - ".github/workflows/publish.yml"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 permissions:
@@ -27,8 +29,153 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Main pushes already run CI in parallel. Tags and manual releases run the
+  # same checks here, so every publication path has an explicit quality gate.
+  release-checks:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+
+  main-checks:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for CI on this exact main commit
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const deadline = Date.now() + 20 * 60 * 1000;
+            while (Date.now() < deadline) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                ...context.repo, workflow_id: 'ci.yml', head_sha: context.sha,
+                event: 'push', branch: 'main', per_page: 100,
+              });
+              const run = data.workflow_runs.sort((a, b) => b.id - a.id)[0];
+              if (run?.status === 'completed') {
+                if (run.conclusion !== 'success') {
+                  core.setFailed(`CI ${run.html_url}: ${run.conclusion}`);
+                }
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            core.setFailed('Timed out waiting for CI on the release commit');
+
+  backend:
+    name: Compile server ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        id: go
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Cache Go modules
+        uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}
+          restore-keys: |
+            release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-
+      - name: Cache incremental compilation
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: release-backend-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            release-backend-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}-
+            release-backend-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-
+      - name: Compile static server
+        run: CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" -o .build/relayapi ./cmd/relayapi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server-${{ matrix.arch }}
+          path: .build/relayapi
+          if-no-files-found: error
+          retention-days: 1
+
+  rai:
+    name: Compile shared launcher distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        id: go
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Cache Go modules
+        uses: actions/cache@v5
+        with:
+          path: ~/go/pkg/mod
+          key: release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}
+          restore-keys: |
+            release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-
+      - name: Cache incremental compilation
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: release-rai-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            release-rai-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}-
+            release-rai-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-
+      - run: sh scripts/build-rai-dist.sh .build/rai-bin
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rai-distribution
+          path: .build/rai-bin/
+          if-no-files-found: error
+          retention-days: 1
+
+  web:
+    name: Build shared web distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.14.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --prefer-offline
+        working-directory: web
+      - run: pnpm build
+        working-directory: web
+        env:
+          VITE_GIT_COMMIT: ${{ github.sha }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-distribution
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 1
+
   build:
-    name: Build ${{ matrix.arch }}
+    name: Assemble ${{ matrix.arch }}
+    needs: [backend, rai, web]
     permissions:
       contents: read
       packages: write
@@ -52,6 +199,21 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/download-artifact@v7
+        with:
+          name: server-${{ matrix.arch }}
+          path: .build/
+      - uses: actions/download-artifact@v7
+        with:
+          name: rai-distribution
+          path: .build/rai-bin/
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-distribution
+          path: .build/web/
+      - name: Restore executable permissions
+        run: chmod +x .build/relayapi .build/rai-bin/rai-*
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -69,7 +231,7 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           build-args: |
-            VITE_GIT_COMMIT=${{ github.sha }}
+            BUILD_SOURCE=prebuilt
           outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           provenance: false
           cache-from: type=gha,scope=relayapi-${{ matrix.arch }}
@@ -92,7 +254,10 @@ jobs:
 
   publish:
     name: Publish multi-architecture manifest
-    needs: build
+    needs: [build, main-checks, release-checks]
+    if: >-
+      always() && !cancelled() && needs.build.result == 'success' &&
+      (needs.main-checks.result == 'success' || needs.release-checks.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -130,7 +295,7 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-
+            type=sha,prefix=sha-,format=long
 
       - name: Create and push manifest
         id: manifest

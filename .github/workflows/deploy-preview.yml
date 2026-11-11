@@ -7,6 +7,11 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Immutable image tag (sha-xxxxxxx or version)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -23,43 +28,73 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     environment: preview
     steps:
+      - name: Check out deployment script
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Resolve immutable image
+        id: image
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_TAG: ${{ inputs.image_tag }}
+          PUBLISHED_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            tag=$MANUAL_TAG
+          else
+            tag="sha-${PUBLISHED_SHA}"
+          fi
+          if [[ ! "$tag" =~ ^(sha-[0-9a-f]{7,40}|v?[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Invalid image tag: $tag" >&2
+            exit 1
+          fi
+          echo "image=ghcr.io/${{ github.repository_owner }}/relayapi:$tag" >> "$GITHUB_OUTPUT"
+
       - name: Configure SSH
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        shell: bash
         run: |
+          set -euo pipefail
           install -d -m 700 ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Deploy RelayAPI preview
+      - name: Deploy preview with health check and rollback
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE: ${{ steps.image.outputs.image }}
+        shell: bash
         run: |
-          ssh -i ~/.ssh/deploy_key \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=40 \
-            "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
-          cd /opt/relayapi-preview
-          docker compose -f compose.yml pull relayapi
-          docker compose -f compose.yml up -d --no-deps --force-recreate relayapi
           for attempt in $(seq 1 40); do
-            if curl --fail --silent --show-error http://127.0.0.1:18080/healthz; then
-              echo
-              docker compose -f compose.yml ps relayapi
+            if ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=40 \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "RELAYAPI_DEPLOY_DIR=/opt/relayapi-preview bash -s -- '$IMAGE'" < deploy/deploy-relayapi.sh; then
               exit 0
+            else
+              status=$?
             fi
-            sleep 2
+            if [ "$status" -ne 3 ]; then
+              exit "$status"
+            fi
+            echo "Another deployment is still running; retrying in 30 seconds ($attempt/40)"
+            sleep 30
           done
-          docker compose -f compose.yml logs --tail=100 relayapi
-          exit 1
-          REMOTE
+          echo "Timed out waiting for the production deployment lock" >&2
+          exit 3

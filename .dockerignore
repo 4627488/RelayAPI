@@ -13,3 +13,4 @@ cliproxyapi
 /.devcontainer
 .env.*
 !.env.example
+!/.build/rai-bin/*.exe

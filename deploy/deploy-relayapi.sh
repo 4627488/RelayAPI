@@ -15,7 +15,8 @@ cd "$deploy_dir"
 exec 9>./.deploy.lock
 flock -n 9 || { echo "Another RelayAPI deployment is running" >&2; exit 3; }
 
-old_image=$(docker inspect relayapi-relayapi-1 --format '{{.Config.Image}}' 2>/dev/null || true)
+container_id=$(docker compose -f "$compose_file" ps -q relayapi)
+old_image=$(docker inspect "${container_id:-missing}" --format '{{.Config.Image}}' 2>/dev/null || true)
 if [[ -z "$old_image" ]]; then
   old_image=$(awk '/^  relayapi:/{service=1; next} service && /^    image:/{print $2; exit} service && /^  [^ ]/{exit}' "$compose_file")
 fi
@@ -32,7 +33,7 @@ set_compose_image() {
 
 healthy() {
   for _ in $(seq 1 45); do
-    if curl --fail --silent --show-error "$health_url" >/dev/null; then
+    if curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "$health_url" >/dev/null; then
       return 0
     fi
     sleep 2
@@ -56,9 +57,22 @@ backup="${compose_file}.bak.$(date -u +%Y%m%dT%H%M%SZ)"
 cp -a "$compose_file" "$backup"
 
 echo "Pulling $target_image"
+pull_started=$SECONDS
 docker pull "$target_image"
+echo "Image pull completed in $((SECONDS - pull_started))s"
+docker image inspect "$target_image" --format 'Image={{.Id}} UncompressedBytes={{.Size}}'
 set_compose_image "$target_image"
 
+# Re-running a deployment should not interrupt an already healthy instance.
+running_id=$(docker inspect "${container_id:-missing}" --format '{{.Image}}' 2>/dev/null || true)
+target_id=$(docker image inspect "$target_image" --format '{{.Id}}')
+if [[ "$running_id" == "$target_id" ]] && \
+  curl --fail --silent --show-error --connect-timeout 2 --max-time 5 "$health_url" >/dev/null; then
+  echo "RelayAPI already runs the requested image and is healthy; skipping restart"
+  exit 0
+fi
+
+restart_started=$SECONDS
 if ! docker compose -f "$compose_file" up -d --no-deps --force-recreate relayapi; then
   rollback
   exit 1
@@ -69,5 +83,6 @@ if ! healthy; then
   exit 1
 fi
 
+echo "Container replacement and readiness completed in $((SECONDS - restart_started))s"
 docker compose -f "$compose_file" ps relayapi
 echo "RelayAPI deployed: $old_image -> $target_image"
