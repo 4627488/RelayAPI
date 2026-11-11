@@ -184,6 +184,9 @@ func compileNativeCredential(source Credential, globalProxy string, headerTimeou
 			}
 		}
 	}
+	if provider == "kimi" {
+		applyDefaultKimiCodingPlanRoutes(credential.ModelRoutes)
+	}
 	credential.Models = normalizedModelList(source.Models)
 	if len(credential.Models) == 0 {
 		credential.Models = defaultModels(provider)
@@ -227,6 +230,20 @@ func defaultBaseURL(provider string) string {
 		return "https://dashscope.aliyuncs.com/compatible-mode/v1"
 	default:
 		return "https://api.openai.com/v1"
+	}
+}
+
+// applyDefaultKimiCodingPlanRoutes maps Relay catalog slugs to Kimi Coding
+// Plan wire IDs. Document model_routes win when already set. Kimi's 401 for
+// `kimi-k3-256k` is: set model id as `k3`.
+func applyDefaultKimiCodingPlanRoutes(routes map[string]string) {
+	for public, upstream := range map[string]string{
+		"kimi-k3":      "k3",
+		"kimi-k3-256k": "k3",
+	} {
+		if _, exists := routes[public]; !exists {
+			routes[public] = upstream
+		}
 	}
 }
 
