@@ -3,6 +3,7 @@ package rai
 import (
 	"encoding/json"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -71,8 +72,11 @@ func TestClaudeNativeRolesAndLaunchSettingsOverrideStaleUserConfig(t *testing.T)
 			t.Fatalf("%s = %q, want %q", key, settings.Env[key], want)
 		}
 	}
-	stat, _ := os.Stat(command.Args[1])
-	if stat.Mode().Perm() != 0o600 {
+	stat, err := os.Stat(command.Args[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && stat.Mode().Perm() != 0o600 {
 		t.Fatal("launch credential file is not private")
 	}
 }
