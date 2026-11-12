@@ -71,3 +71,69 @@ func TestMagpieMigrationPreservesChargesAndDoesNotReinventHistory(t *testing.T) 
 		t.Fatalf("legacy archive fabricated/doubled: %+v", rows)
 	}
 }
+
+func TestHistoricalCacheRepairPreservesNewUnknownObservations(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not configured")
+	}
+	database, err := Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, _ := database.DB()
+	defer conn.Close()
+	tx := database.Begin()
+	defer tx.Rollback()
+	var boundary SchemaMigration
+	if err := tx.First(&boundary, "version = 16").Error; err != nil {
+		t.Fatal(err)
+	}
+	tenant, key := identity.NewID(), identity.NewID()
+	cost := int64(123)
+	old := RequestLog{ID: identity.NewID(), TenantID: tenant, APIKeyID: key, LogUnit: "step", LegacyUsage: `{"prompt_tokens":100}`, MeteringVersion: 2, PromptTokens: 20, CachedTokens: 80, CacheUnknown: true, CostNanoUSD: &cost, StartedAt: time.Now(), CompletedAt: time.Now()}
+	current := old
+	current.ID = identity.NewID()
+	current.LegacyUsage = ""
+	if err := tx.Create(&[]RequestLog{old, current}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []time.Time{boundary.AppliedAt.Add(-time.Hour), boundary.AppliedAt.Add(time.Hour)} {
+		if err := tx.Create(&UsageDailyRollup{Day: at, TenantID: tenant, Model: "test", APIKeyID: key, Requests: 1, PromptTokens: 20, CachedTokens: 80, CacheUnknownTokens: 100, CacheUnknownReadTokens: 80, CacheUnknownCalls: 1, CostNanoUSD: 123}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		for _, m := range migrations {
+			if m.version == 17 {
+				for _, sql := range m.statements {
+					if err := tx.Exec(sql).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		}
+	}
+	var got RequestLog
+	if err := tx.First(&got, "id = ?", old.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.CacheUnknown || got.CostNanoUSD == nil || *got.CostNanoUSD != cost {
+		t.Fatalf("historical evidence/charge changed: %+v", got)
+	}
+
+	var newer RequestLog
+	if err := tx.First(&newer, "id = ?", current.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !newer.CacheUnknown {
+		t.Fatal("genuine current unknown-cache observation was overwritten")
+	}
+	var rows []UsageDailyRollup
+	if err := tx.Where("tenant_id = ?", tenant).Order("day").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].CacheUnknownTokens != 0 || rows[0].CacheUnknownReadTokens != 0 || rows[0].CostNanoUSD != 123 || rows[1].CacheUnknownTokens != 100 || rows[1].CacheUnknownReadTokens != 80 {
+		t.Fatalf("archive cache repair was not bounded: %+v", rows)
+	}
+}

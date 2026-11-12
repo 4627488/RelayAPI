@@ -25,6 +25,7 @@ type UsageTotals struct {
 	CacheWriteTokens           int64    `json:"cache_write"`
 	CacheWrite1hTokens         int64    `json:"cache_write_1h"`
 	CacheUnknownTokens         int64    `json:"cache_unknown"`
+	CacheUnknownReadTokens     int64    `json:"cache_unknown_read"`
 	CacheUnknownCalls          int64    `json:"cache_unknown_calls"`
 	ReasoningTokens            int64    `json:"reasoning"`
 	ImageInputTokens           int64    `json:"image_input_tokens"`
@@ -57,6 +58,7 @@ func (t *UsageTotals) add(v UsageTotals) {
 	t.CacheWrite1hTokens += v.CacheWrite1hTokens
 	t.CacheUnknownTokens += v.CacheUnknownTokens
 	t.CacheUnknownCalls += v.CacheUnknownCalls
+	t.CacheUnknownReadTokens += v.CacheUnknownReadTokens
 	t.ReasoningTokens += v.ReasoningTokens
 	t.ImageInputTokens += v.ImageInputTokens
 	t.CachedImageInputTokens += v.CachedImageInputTokens
@@ -71,10 +73,13 @@ func (t *UsageTotals) add(v UsageTotals) {
 	t.DecodeN += v.DecodeN
 }
 func (t *UsageTotals) finish() {
+	t.CacheHitRate = nil
+	t.MeanTTFTMS = nil
+	t.TokensPerSecond = nil
 	t.Tokens = metering.Add(t.PromptTokens, t.CompletionTokens)
 	p := metering.Add(t.PromptTokens, t.CachedTokens, t.CacheWriteTokens) - t.CacheUnknownTokens
 	if p > 0 {
-		n := float64(t.CachedTokens) / float64(p)
+		n := float64(max(int64(0), min(p, t.CachedTokens-t.CacheUnknownReadTokens))) / float64(p)
 		t.CacheHitRate = &n
 	}
 	if t.Timed > 0 {
@@ -99,7 +104,7 @@ type usageGroup struct {
 }
 
 // Every archive and report shares this additive metric list.
-var usageFactColumns = []string{"requests", "errors", "canceled", "rejected", "retried", "unpriced", "prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens", "cache_write1h_tokens", "cache_unknown_tokens", "cache_unknown_calls", "reasoning_tokens", "image_input_tokens", "cached_image_input_tokens", "image_output_tokens", "cost_nano_usd", "subscription_covered_nano_usd", "balance_charged_nano_usd", "timed", "ttft_sum_ms", "decode_out", "decode_ms", "decode_n"}
+var usageFactColumns = []string{"requests", "errors", "canceled", "rejected", "retried", "unpriced", "prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens", "cache_write1h_tokens", "cache_unknown_tokens", "cache_unknown_read_tokens", "cache_unknown_calls", "reasoning_tokens", "image_input_tokens", "cached_image_input_tokens", "image_output_tokens", "cost_nano_usd", "subscription_covered_nano_usd", "balance_charged_nano_usd", "timed", "ttft_sum_ms", "decode_out", "decode_ms", "decode_n"}
 
 const liveUsageFactsSQL = ` SELECT date_trunc('minute', started_at) AS day, tenant_id, model, api_key_id::text AS api_key_id,
  max(api_key_name) AS api_key_name, max(api_key_prefix) AS api_key_prefix,
@@ -113,6 +118,7 @@ const liveUsageFactsSQL = ` SELECT date_trunc('minute', started_at) AS day, tena
  COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens,
  COALESCE(sum(cache_write1h_tokens),0) AS cache_write1h_tokens,
  COALESCE(sum(CASE WHEN cache_unknown THEN prompt_tokens+cached_tokens+cache_write_tokens ELSE 0 END),0) AS cache_unknown_tokens,
+ COALESCE(sum(CASE WHEN cache_unknown THEN cached_tokens ELSE 0 END),0) AS cache_unknown_read_tokens,
  count(*) FILTER (WHERE cache_unknown) AS cache_unknown_calls,
  COALESCE(sum(reasoning_tokens),0) AS reasoning_tokens, COALESCE(sum(image_input_tokens),0) AS image_input_tokens,
  COALESCE(sum(cached_image_input_tokens),0) AS cached_image_input_tokens, COALESCE(sum(image_output_tokens),0) AS image_output_tokens,
@@ -158,7 +164,7 @@ func (s Store) UsageReport(ctx context.Context, tenantID string, days int, zones
  GROUP BY 1,tenant_id,model,api_key_id
  UNION ALL
  SELECT day,tenant_id,model,api_key_id,api_key_name,api_key_prefix,requests,errors,canceled,rejected,retried,unpriced,
- prompt_tokens,completion_tokens,cached_tokens,cache_write_tokens,cache_write1h_tokens,cache_unknown_tokens,cache_unknown_calls,
+ prompt_tokens,completion_tokens,cached_tokens,cache_write_tokens,cache_write1h_tokens,cache_unknown_tokens,cache_unknown_read_tokens,cache_unknown_calls,
  reasoning_tokens,image_input_tokens,cached_image_input_tokens,image_output_tokens,cost_nano_usd,subscription_covered_nano_usd,balance_charged_nano_usd,
  timed,ttft_sum_ms,decode_out,decode_ms,decode_n
  FROM usage_rollups_v2 WHERE day>=? AND day<=? AND (?='' OR tenant_id::text=?)

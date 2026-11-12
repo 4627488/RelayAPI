@@ -75,7 +75,8 @@ export function AnalyticsSummary({ report }: { report: UsageReport }) {
             s.cache_read,
             s.input,
             s.cache_write,
-            s.cache_unknown
+            s.cache_unknown,
+            s.cache_unknown_read
           ),
           detail: `${compactTokens(s.cache_read)} 缓存读取 · ${compactTokens(s.cache_write)} 缓存写入`,
         },
@@ -281,7 +282,7 @@ export function AttributionPanel({
           ...x,
           id: x.model,
           name: x.model || "未识别",
-          detail: `缓存命中 ${cacheHitRateLabel(x.cache_read, x.input, x.cache_write, x.cache_unknown)}`,
+          detail: `缓存命中 ${cacheHitRateLabel(x.cache_read, x.input, x.cache_write, x.cache_unknown, x.cache_unknown_read)}`,
         }))
       : activeDimension === "keys"
         ? (report.api_keys ?? []).map((x) => ({

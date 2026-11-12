@@ -272,6 +272,11 @@ var migrations = []migration{
    FROM usage_daily_rollups ON CONFLICT DO NOTHING;
    END IF; END $$`,
 	}},
+	{version: 17, name: "preserve historical cache evidence and repair unknown-cache aggregates", statements: []string{
+		`UPDATE request_logs SET cache_unknown=false WHERE legacy_usage<>'' AND cache_unknown`,
+		`UPDATE usage_rollups_v2 SET cache_unknown_tokens=0, cache_unknown_read_tokens=0, cache_unknown_calls=0
+   WHERE day < (SELECT applied_at FROM schema_migrations WHERE version=16)`,
+	}},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this

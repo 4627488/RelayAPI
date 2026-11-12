@@ -17,21 +17,23 @@ export function cacheHitRate(
   cacheRead: number,
   input: number,
   cacheWrite = 0,
-  unknown: boolean | number = false
+  unknown: boolean | number = false,
+  unknownRead = 0
 ) {
   if (unknown === true) return null
   const prompt =
     input + cacheRead + cacheWrite - (typeof unknown === "number" ? unknown : 0)
   if (!Number.isFinite(prompt) || prompt <= 0) return null
-  return Math.min(1, Math.max(0, cacheRead) / prompt)
+  return Math.min(1, Math.max(0, cacheRead - unknownRead) / prompt)
 }
 export function cacheHitRateLabel(
   cacheRead: number,
   input: number,
   cacheWrite = 0,
-  unknown: boolean | number = false
+  unknown: boolean | number = false,
+  unknownRead = 0
 ) {
-  const rate = cacheHitRate(cacheRead, input, cacheWrite, unknown)
+  const rate = cacheHitRate(cacheRead, input, cacheWrite, unknown, unknownRead)
   return rate == null ? "—" : `${(rate * 100).toFixed(1)}%`
 }
 

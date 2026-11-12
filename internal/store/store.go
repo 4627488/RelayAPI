@@ -1019,10 +1019,11 @@ type LogQuery struct {
 }
 
 type LogSummary struct {
-	CacheWriteTokens   int64 `json:"cache_write"`
-	CacheUnknownTokens int64 `json:"cache_unknown"`
-	Canceled           int64 `json:"canceled"`
-	Rejected           int64 `json:"rejected"`
+	CacheUnknownReadTokens int64 `json:"cache_unknown_read"`
+	CacheWriteTokens       int64 `json:"cache_write"`
+	CacheUnknownTokens     int64 `json:"cache_unknown"`
+	Canceled               int64 `json:"canceled"`
+	Rejected               int64 `json:"rejected"`
 
 	Requests       int64   `json:"requests"`
 	Errors         int64   `json:"errors"`
@@ -1115,7 +1116,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	itemsQuery := query.Session(&gorm.Session{})
 	var summary LogSummary
 	if err := summaryQuery.Select(
-		"count(*) AS requests, count(*) FILTER (WHERE canceled) AS canceled, count(*) FILTER (WHERE rejected) AS rejected, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, COALESCE(sum(CASE WHEN cache_unknown THEN prompt_tokens+cached_tokens+cache_write_tokens ELSE 0 END),0) AS cache_unknown_tokens, " +
+		"count(*) AS requests, count(*) FILTER (WHERE canceled) AS canceled, count(*) FILTER (WHERE rejected) AS rejected, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, COALESCE(sum(CASE WHEN cache_unknown THEN prompt_tokens+cached_tokens+cache_write_tokens ELSE 0 END),0) AS cache_unknown_tokens, COALESCE(sum(CASE WHEN cache_unknown THEN cached_tokens ELSE 0 END),0) AS cache_unknown_read_tokens, " +
 			requestLogUnitErrorSQL() + " AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
 			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, " +

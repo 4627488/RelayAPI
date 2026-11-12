@@ -285,7 +285,8 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     data.summary.cache_read,
     data.summary.input,
     data.summary.cache_write,
-    data.summary.cache_unknown
+    data.summary.cache_unknown,
+    data.summary.cache_unknown_read
   )
   const advancedFilterCount = [
     method !== "all",

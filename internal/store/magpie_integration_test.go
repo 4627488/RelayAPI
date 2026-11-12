@@ -109,3 +109,16 @@ func TestMagpieAllOutcomesAndArchiveKeepIdenticalMetrics(t *testing.T) {
 		t.Fatal("repeat retention double-counted")
 	}
 }
+
+func TestUnknownCacheReadIsExcludedFromBothSidesOfHitRate(t *testing.T) {
+	total := UsageTotals{PromptTokens: 100, CachedTokens: 900, CacheUnknownTokens: 900, CacheUnknownReadTokens: 800}
+	total.finish()
+	if total.CacheHitRate == nil || *total.CacheHitRate != 1 {
+		t.Fatalf("unknown cached reads inflated hit rate: %+v", total)
+	}
+	total.CacheUnknownTokens = 1000
+	total.finish()
+	if total.CacheHitRate != nil {
+		t.Fatal("no known cache samples must remain unknown")
+	}
+}

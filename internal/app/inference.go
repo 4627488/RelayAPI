@@ -216,6 +216,9 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 	}
 	a.nativeRuntime.Serve(out, r, call.body)
 	responseReadAt := time.Now()
+	// The server cancels r.Context after ServeHTTP returns, even on success.
+	// Capture client cancellation at the response boundary, never in a finalizer.
+	requestCanceled := r.Context().Err() != nil
 	status := out.statusCode()
 	errorForDetail := ""
 	if status >= http.StatusBadRequest {
@@ -338,7 +341,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		if status >= http.StatusBadRequest || writeErr != nil {
 			slog.Warn("http inference error", "request_id", call.requestID, "status", status, "code", logContext.errorCode, "message", boundedErrorText(errorMessage))
 		}
-		if r.Context().Err() != nil || writeErr != nil {
+		if requestCanceled || writeErr != nil {
 			input.Canceled = true
 			input.StatusCode = 499
 		}

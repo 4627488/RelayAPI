@@ -73,7 +73,7 @@ func (s Store) usageObservability(ctx context.Context, tenantID string, since ti
 	result.Failures = []UsageFailure{}
 	result.Providers = []UsageProvider{}
 	err = base().Select("model, status_code, COALESCE(error_code, '') AS error_code, count(*) AS requests").
-		Where("status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> ''").
+		Where("NOT canceled AND NOT rejected AND (status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> '')").
 		Group("model, status_code, error_code").Order("requests DESC, model, status_code, error_code").Limit(20).Scan(&result.Failures).Error
 	if err != nil {
 		return result, err

@@ -194,6 +194,7 @@ export interface RequestLogPage {
     retried?: number
     unpriced?: number
     cache_write_1h?: number
+    cache_unknown_read?: number
     cache_unknown?: number
     cache_unknown_calls?: number
     cache_hit_rate?: number | null
@@ -315,6 +316,7 @@ export interface UsageReport {
     retried?: number
     unpriced?: number
     cache_write_1h?: number
+    cache_unknown_read?: number
     cache_unknown?: number
     cache_unknown_calls?: number
     cache_hit_rate?: number | null
@@ -346,6 +348,7 @@ export interface UsageReport {
     output: number
     cache_read: number
     cache_write?: number
+    cache_unknown_read?: number
     cache_unknown?: number
     cost_nano_usd: number
   }>
@@ -358,6 +361,7 @@ export interface UsageReport {
     output: number
     cache_read: number
     cache_write?: number
+    cache_unknown_read?: number
     cache_unknown?: number
     cost_nano_usd: number
   }>

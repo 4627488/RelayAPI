@@ -152,21 +152,22 @@ type BillingLedger struct {
 // regroup it by their IANA timezone. The primary key retains API key identity.
 // Archive inserts and source deletes share a transaction.
 type UsageDailyRollup struct {
-	APIKeyID           string `gorm:"primaryKey;not null;default:''" json:"api_key_id"`
-	APIKeyName         string `gorm:"not null;default:''" json:"api_key_name"`
-	APIKeyPrefix       string `gorm:"not null;default:''" json:"api_key_prefix"`
-	Canceled           int64  `gorm:"not null;default:0" json:"canceled"`
-	Rejected           int64  `gorm:"not null;default:0" json:"rejected"`
-	Retried            int64  `gorm:"not null;default:0" json:"retried"`
-	Unpriced           int64  `gorm:"not null;default:0" json:"unpriced"`
-	CacheWrite1hTokens int64  `gorm:"not null;default:0" json:"cache_write_1h"`
-	CacheUnknownTokens int64  `gorm:"not null;default:0" json:"cache_unknown"`
-	CacheUnknownCalls  int64  `gorm:"not null;default:0" json:"cache_unknown_calls"`
-	Timed              int64  `gorm:"not null;default:0" json:"timed"`
-	TTFTSumMS          int64  `gorm:"not null;default:0" json:"ttft_ms"`
-	DecodeOut          int64  `gorm:"not null;default:0" json:"decode_out"`
-	DecodeMS           int64  `gorm:"not null;default:0" json:"decode_ms"`
-	DecodeN            int64  `gorm:"not null;default:0" json:"decode_n"`
+	APIKeyID               string `gorm:"primaryKey;not null;default:''" json:"api_key_id"`
+	APIKeyName             string `gorm:"not null;default:''" json:"api_key_name"`
+	APIKeyPrefix           string `gorm:"not null;default:''" json:"api_key_prefix"`
+	Canceled               int64  `gorm:"not null;default:0" json:"canceled"`
+	Rejected               int64  `gorm:"not null;default:0" json:"rejected"`
+	Retried                int64  `gorm:"not null;default:0" json:"retried"`
+	Unpriced               int64  `gorm:"not null;default:0" json:"unpriced"`
+	CacheWrite1hTokens     int64  `gorm:"not null;default:0" json:"cache_write_1h"`
+	CacheUnknownTokens     int64  `gorm:"not null;default:0" json:"cache_unknown"`
+	CacheUnknownReadTokens int64  `gorm:"not null;default:0" json:"cache_unknown_read"`
+	CacheUnknownCalls      int64  `gorm:"not null;default:0" json:"cache_unknown_calls"`
+	Timed                  int64  `gorm:"not null;default:0" json:"timed"`
+	TTFTSumMS              int64  `gorm:"not null;default:0" json:"ttft_ms"`
+	DecodeOut              int64  `gorm:"not null;default:0" json:"decode_out"`
+	DecodeMS               int64  `gorm:"not null;default:0" json:"decode_ms"`
+	DecodeN                int64  `gorm:"not null;default:0" json:"decode_n"`
 
 	Day                        time.Time `gorm:"type:timestamptz;primaryKey" json:"day"`
 	TenantID                   string    `gorm:"type:uuid;primaryKey;index" json:"tenant_id"`

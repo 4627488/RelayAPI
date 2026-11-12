@@ -27,7 +27,7 @@ HTTP 的扣费与记录原子提交；WebSocket 的每轮计量、扣费和记�
 | `cache_unknown` | 单次为布尔值；汇总为缓存未知请求的完整 prompt token 数 |
 
 完整 prompt 为 `input + cache_read + cache_write`。汇总缓存命中率为
-`cache_read / (input + cache_read + cache_write - cache_unknown)`；分母无有效样本时返回
+`(cache_read - cache_unknown_read) / (input + cache_read + cache_write - cache_unknown)`；分母无有效样本时返回
 `null`，页面显示“—”。未知缓存不视为未命中。质量不完整的用量不会变成确认费用。
 
 价格保持 nano-USD 单位，普通输入、缓存读取、5 分钟写入、1 小时写入和输出分别计价。
@@ -60,8 +60,8 @@ models.dev 的 context tiers 和 `cache_write_1h` 会被同步。Claude 未给 1
 ## 历史与统计
 
 迁移 16 将旧的包含缓存读取的输入转换为独立普通输入，并把原首响应时间迁入
-`first_byte_ms`。历史费用、余额和流水不重新计算；原输入、总 Token 与首响应值另存 `legacy_usage` 供审计。旧缓存观测无法完整证明，标记为
-未知，不参与命中率；旧归档没有 Key 身份，明确归入“历史归档（未记录 Key）”。
+`first_byte_ms`。历史费用、余额和流水不重新计算；原输入、总 Token 与首响应值另存 `legacy_usage` 供审计。旧记录已保存的缓存计数继续作为观测证据；迁移 17 修正了曾把这些计数统一标为未知的问题。
+旧归档没有 Key 身份，明确归入“历史归档（未记录 Key）”。
 旧日归档无法恢复请求发生的分钟，保留原 UTC 日期，不能凭空恢复本地日边界。
 
 新归档按 UTC 分钟、租户、模型和 Key 聚合，保留全部可加指标，包括取消、拒绝、
@@ -79,6 +79,7 @@ models.dev 的 context tiers 和 `cache_write_1h` 会被同步。Claude 未给 1
 总览与用量接口的 `summary`、`daily`、`models`、`api_keys` 和 `users` 使用相同指标。
 `mean_ttft_ms` 按 `timed` 样本计算均值；`tokens_per_second` 为
 `decode_out × 1000 / decode_ms`，并返回有效样本数 `decode_n`，不平均单次速度。
+HTTP 取消状态在响应结束边界采集，后台结算不读取 handler 返回后自动取消的 context。
 这些加性性能指标随归档保留。延迟、首 Token 与首响应分位数仅使用保留的 step，
 不从归档推算。全局提供商观测仅面向管理员，且明确只覆盖保留明细。
 
