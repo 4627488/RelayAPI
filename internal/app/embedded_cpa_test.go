@@ -1,6 +1,7 @@
 package app
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -221,5 +222,42 @@ func TestRuntimeBridgeSettingsMapsImageAndCooling(t *testing.T) {
 	}
 	if compiled.ProxyURL != "direct" || !compiled.DisableCredentialCooling || compiled.RequestRetry != 2 {
 		t.Fatalf("bridge settings = %#v", compiled)
+	}
+}
+
+func TestEmbeddedCPAStreamingObservesContentBeforeWireCompression(t *testing.T) {
+	payload := []byte("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n")
+	for _, encoding := range []string{"gzip", "gzip, deflate, br, zstd"} {
+		t.Run(encoding, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+					w.Header().Set("Content-Encoding", "gzip")
+					z := gzip.NewWriter(w)
+					_, _ = z.Write(payload)
+					_ = z.Close()
+					return
+				}
+				_, _ = w.Write(payload)
+			}))
+			defer server.Close()
+			client, err := cpa.New(server.URL, "internal-test", time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := App{nativeCPA: client}
+			o := &firstTokenObserver{}
+			recorder := httptest.NewRecorder()
+			out := &runtimeWriter{client: recorder, stream: true, firstToken: o, capture: &rollingCapture{max: 4096}}
+			req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			req.Header.Set("Accept-Encoding", encoding)
+			a.proxyEmbeddedCPA(out, req, []byte(`{"model":"test","stream":true}`), false)
+			if o.At.IsZero() || o.TextAt.IsZero() || !o.Usage.Found || o.Usage.Usage.Output != 5 {
+				t.Fatalf("compressed loopback hid stream facts: first=%v usage=%+v", o.At, o.Usage)
+			}
+			if recorder.Header().Get("Content-Encoding") != "" || !strings.Contains(recorder.Body.String(), "response.output_text.delta") {
+				t.Fatal("response was not a readable SSE stream")
+			}
+		})
 	}
 }

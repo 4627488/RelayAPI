@@ -477,6 +477,9 @@ func (a *App) proxyEmbeddedCPA(w http.ResponseWriter, r *http.Request, body []by
 		return
 	}
 	copyHeaders(request.Header, r.Header)
+	// Metering observes this loopback response as SSE/JSON. Do not forward the
+	// client's wire compression negotiation into the internal parsing boundary.
+	request.Header.Set("Accept-Encoding", "identity")
 	request.Header.Set("Authorization", "Bearer "+runtimeAuthorizationToken(r.Context(), client.APIKey))
 	if principal, _ := r.Context().Value(runtimePrincipalContext).(string); principal != "" {
 		request.Header.Set("X-Relay-Principal", principal)

@@ -87,7 +87,9 @@ HTTP 取消状态在响应结束边界采集，后台结算不读取 handler 返
 
 `ttft_ms` 与 `first_token_ms` 都表示首次生成内容；`first_byte_ms` 单独表示首次响应数据。
 支持 Responses、Chat、Anthropic Messages 与 Gemini 的文字、推理、拒绝文字和工具参数。
-跳过 created、角色、心跳和纯 usage；SSE 支持跨 Write 分块。`first_text_ms` 和
+跳过 created、角色、心跳和纯 usage；SSE 支持跨 Write 分块。
+内层 CPA 回环连接使用 `Accept-Encoding: identity`，保证计量器读取 SSE/JSON 明文；
+不把客户端的 gzip/zstd 协商透传到这条内部观测链路。`first_text_ms` 和
 `first_reasoning_ms` 分别保存文字与可见推理的首次到达时间。
 
 生成速度按 Magpie DecodeOf 的样本规则计算：推理回复优先只计首段文字后的正文输出，
