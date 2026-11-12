@@ -19,7 +19,7 @@ func generatedContent(payload []byte) (text, reasoning string) {
 	arr := func(v any) []any { a, _ := v.([]any); return a }
 	typ := str(e["type"])
 	switch typ {
-	case "response.output_text.delta", "response.refusal.delta", "response.function_call_arguments.delta":
+	case "response.output_text.delta", "response.refusal.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 		text = str(e["delta"])
 	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
 		reasoning = str(e["delta"])

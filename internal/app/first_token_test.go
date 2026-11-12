@@ -31,6 +31,7 @@ func TestGeneratedDeltaKinds(t *testing.T) {
 	for _, payload := range []string{
 		`{"type":"response.reasoning_summary_text.delta","delta":"think"}`,
 		`{"type":"response.function_call_arguments.delta","delta":"{"}`,
+		`{"type":"response.custom_tool_call_input.delta","delta":"*** Begin Patch"}`,
 		`{"choices":[{"delta":{"content":"hello"}}]}`,
 		`{"choices":[{"delta":{"reasoning_content":"think"}}]}`,
 		`{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{"}}]}}]}`,
