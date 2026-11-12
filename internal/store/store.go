@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/4627488/RelayAPI/internal/metering"
 	"math"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -72,12 +72,14 @@ type SubscriptionModelGrant struct {
 	UpstreamModels []string
 }
 
-type Usage struct {
-	Prompt, Completion, Cached, CacheWrite, Reasoning, Total int64
-	ImageInput, CachedImageInput, ImageOutput                int64
-}
+type Usage = metering.Usage
 
 type LogInput struct {
+	Rejected, Canceled                         bool
+	Tries                                      int
+	FirstByteMS, FirstTextMS, FirstReasoningMS *int64
+	FlowMS                                     int64
+
 	BillingSource                                                                                                                                        string
 	UsageQuality                                                                                                                                         string
 	LogUnit                                                                                                                                              string
@@ -550,6 +552,15 @@ func (s Store) AdminPrice(ctx context.Context, model string) (Price, error) {
 }
 
 func (s *Store) UpsertPrice(ctx context.Context, price Price) error {
+	raw, _ := json.Marshal(price)
+	var candidate pricing.Price
+	if err := json.Unmarshal(raw, &candidate); err != nil {
+		return err
+	}
+	if _, err := pricing.Compile([]pricing.Price{candidate}, nil, nil, nil, nil); err != nil {
+		return err
+	}
+
 	price.Source = "admin"
 	price.Version = "admin:" + time.Now().UTC().Format(time.RFC3339Nano)
 	// Explicit zero remains supported as a free-model override. JSON clients
@@ -560,7 +571,7 @@ func (s *Store) UpsertPrice(ctx context.Context, price Price) error {
 			"input_nano_usd_per_token", "output_nano_usd_per_token", "cached_input_nano_usd_per_token",
 			"cache_write_nano_usd_per_token", "reasoning_nano_usd_per_token",
 			"image_input_nano_usd_per_token", "cached_image_input_nano_usd_per_token", "image_output_nano_usd_per_token", "source", "version",
-			"price_multiplier", "updated_at",
+			"price_multiplier", "cache_write1h_nano_usd_per_token", "tiers", "updated_at",
 		}),
 	}).Create(&price).Error
 	if err == nil {
@@ -670,9 +681,10 @@ func (s *Store) ApplyCatalog(ctx context.Context, result pricing.SyncResult) err
 		for _, entry := range result.Entries {
 			rows = append(rows, db.ModelCatalogPrice{
 				Model: entry.Model, InputNanoUSDPerToken: entry.InputNanoUSDPerToken,
-				OutputNanoUSDPerToken:           entry.OutputNanoUSDPerToken,
-				CachedInputNanoUSDPerToken:      entry.CachedInputNanoUSDPerToken,
-				CacheWriteNanoUSDPerToken:       entry.CacheWriteNanoUSDPerToken,
+				OutputNanoUSDPerToken:       entry.OutputNanoUSDPerToken,
+				CachedInputNanoUSDPerToken:  entry.CachedInputNanoUSDPerToken,
+				CacheWriteNanoUSDPerToken:   entry.CacheWriteNanoUSDPerToken,
+				CacheWrite1hNanoUSDPerToken: entry.CacheWrite1hNanoUSDPerToken, Tiers: entry.Tiers,
 				ReasoningNanoUSDPerToken:        entry.ReasoningNanoUSDPerToken,
 				ImageInputNanoUSDPerToken:       entry.ImageInputNanoUSDPerToken,
 				CachedImageInputNanoUSDPerToken: entry.CachedImageInputNanoUSDPerToken,
@@ -728,9 +740,10 @@ func (s *Store) RefreshPricing(ctx context.Context) error {
 		}
 		adminPrices = append(adminPrices, pricing.Price{
 			Model: value.Model, InputNanoUSDPerToken: value.InputNanoUSDPerToken,
-			OutputNanoUSDPerToken:           value.OutputNanoUSDPerToken,
-			CachedInputNanoUSDPerToken:      value.CachedInputNanoUSDPerToken,
-			CacheWriteNanoUSDPerToken:       value.CacheWriteNanoUSDPerToken,
+			OutputNanoUSDPerToken:       value.OutputNanoUSDPerToken,
+			CachedInputNanoUSDPerToken:  value.CachedInputNanoUSDPerToken,
+			CacheWriteNanoUSDPerToken:   value.CacheWriteNanoUSDPerToken,
+			CacheWrite1hNanoUSDPerToken: value.CacheWrite1hNanoUSDPerToken, Tiers: value.Tiers,
 			ReasoningNanoUSDPerToken:        value.ReasoningNanoUSDPerToken,
 			ImageInputNanoUSDPerToken:       value.ImageInputNanoUSDPerToken,
 			CachedImageInputNanoUSDPerToken: value.CachedImageInputNanoUSDPerToken,
@@ -742,9 +755,10 @@ func (s *Store) RefreshPricing(ctx context.Context) error {
 	for _, value := range catalog {
 		catalogPrices = append(catalogPrices, pricing.Price{
 			Model: value.Model, InputNanoUSDPerToken: value.InputNanoUSDPerToken,
-			OutputNanoUSDPerToken:           value.OutputNanoUSDPerToken,
-			CachedInputNanoUSDPerToken:      value.CachedInputNanoUSDPerToken,
-			CacheWriteNanoUSDPerToken:       value.CacheWriteNanoUSDPerToken,
+			OutputNanoUSDPerToken:       value.OutputNanoUSDPerToken,
+			CachedInputNanoUSDPerToken:  value.CachedInputNanoUSDPerToken,
+			CacheWriteNanoUSDPerToken:   value.CacheWriteNanoUSDPerToken,
+			CacheWrite1hNanoUSDPerToken: value.CacheWrite1hNanoUSDPerToken, Tiers: value.Tiers,
 			ReasoningNanoUSDPerToken:        value.ReasoningNanoUSDPerToken,
 			ImageInputNanoUSDPerToken:       value.ImageInputNanoUSDPerToken,
 			CachedImageInputNanoUSDPerToken: value.CachedImageInputNanoUSDPerToken,
@@ -784,12 +798,31 @@ func nullableIdentifier(value string) *string {
 }
 
 func requestLogItem(l LogInput) db.RequestLog {
+	l.Usage.Total = l.Usage.Tokens()
 	stageTimings := strings.TrimSpace(l.StageTimings)
 	if stageTimings == "" {
 		stageTimings = "{}"
 	}
+	var trace struct {
+		Segments []struct {
+			Track, Provider string
+			Attempt         int
+		} `json:"segments"`
+	}
+	_ = json.Unmarshal([]byte(stageTimings), &trace)
+	for _, seg := range trace.Segments {
+		if seg.Track == "attempt" && seg.Attempt > l.Tries {
+			l.Tries = seg.Attempt
+		}
+		if seg.Provider != "" {
+			l.Provider = seg.Provider
+		}
+	}
 	item := db.RequestLog{
-		LogUnit: l.LogUnit, UsageQuality: l.UsageQuality,
+		LogUnit: l.LogUnit, UsageQuality: l.UsageQuality, MeteringVersion: 2,
+		CacheWrite1hTokens: l.Usage.CacheWrite1h, CacheUnknown: l.Usage.CacheUnknown,
+		Rejected: l.Rejected, Canceled: l.Canceled || l.StatusCode == 499, Tries: l.Tries,
+		FirstByteMS: l.FirstByteMS, FirstTextMS: l.FirstTextMS, FirstReasoningMS: l.FirstReasoningMS, FlowMS: l.FlowMS,
 		ID: l.ID, TenantID: l.TenantID, APIKeyID: l.APIKeyID, ReservationRequestID: nullableIdentifier(l.ReservationRequestID), UpstreamRequestID: l.UpstreamRequestID,
 		UpstreamTraceID: l.UpstreamTraceID, UpstreamExecutionID: l.UpstreamExecutionID,
 		Model: l.Model, RequestedModel: l.RequestedModel, ActualModel: l.ActualModel, UpstreamModel: l.UpstreamModel, ModelAlias: l.ModelAlias,
@@ -801,13 +834,23 @@ func requestLogItem(l LogInput) db.RequestLog {
 		ClientName: l.ClientName, ClientVersion: l.ClientVersion, UserAgent: l.UserAgent,
 		Method: l.Method, Path: l.Path, RequestType: l.RequestType, StatusCode: l.StatusCode,
 		Stream: l.Stream, RequestBodyBytes: l.RequestBodyBytes, ForwardedBodyBytes: l.ForwardedBodyBytes,
-		ResponseBodyBytes: l.ResponseBodyBytes, PromptTokens: l.Usage.Prompt, CompletionTokens: l.Usage.Completion,
-		CachedTokens: l.Usage.Cached, CacheWriteTokens: l.Usage.CacheWrite, ReasoningTokens: l.Usage.Reasoning,
+		ResponseBodyBytes: l.ResponseBodyBytes, PromptTokens: l.Usage.Input, CompletionTokens: l.Usage.Output,
+		CachedTokens: l.Usage.CacheRead, CacheWriteTokens: l.Usage.CacheWrite, ReasoningTokens: l.Usage.Reasoning,
 		ImageInputTokens: l.Usage.ImageInput, CachedImageInputTokens: l.Usage.CachedImageInput,
 		ImageOutputTokens: l.Usage.ImageOutput, TotalTokens: l.Usage.Total, CostNanoUSD: l.CostNanoUSD, PricingComplete: l.PricingComplete,
 		BillingSource: l.BillingSource,
-		Settled:       l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.TTFTMS, FirstTokenMS: l.FirstTokenMS,
+		Settled:       l.Settled, ReservedNanoUSD: l.ReservedNanoUSD, LatencyMS: l.LatencyMS, TTFTMS: l.FirstTokenMS, FirstTokenMS: l.FirstTokenMS,
 		ErrorCode: l.ErrorCode, ErrorMessage: l.ErrorMessage, StageTimings: stageTimings, StartedAt: l.StartedAt, CompletedAt: l.CompletedAt,
+	}
+	if l.FirstTokenMS != nil && (l.UsageQuality == "complete" || l.UsageQuality == "") && !item.Canceled && l.StatusCode < 400 && l.ErrorCode == "" {
+		text, reasoning := int64(0), int64(0)
+		if l.FirstTextMS != nil {
+			text = *l.FirstTextMS
+		}
+		if l.FirstReasoningMS != nil {
+			reasoning = *l.FirstReasoningMS
+		}
+		item.DecodeOut, item.DecodeMS = metering.Decode(l.Usage.Output, l.Usage.Reasoning, l.LatencyMS, *l.FirstTokenMS, text, l.FlowMS, reasoning, false)
 	}
 	if item.LogUnit == "" {
 		item.LogUnit = LogUnitStep
@@ -820,6 +863,7 @@ func requestLogItem(l LogInput) db.RequestLog {
 		item.OutputPriceNanoUSD = l.Price.OutputNanoUSDPerToken
 		item.CachedPriceNanoUSD = l.Price.CachedInputNanoUSDPerToken
 		item.CacheWritePriceNanoUSD = l.Price.CacheWriteNanoUSDPerToken
+		item.CacheWrite1hPriceNanoUSD = l.Price.CacheWrite1hNanoUSDPerToken
 		item.ReasoningPriceNanoUSD = l.Price.ReasoningNanoUSDPerToken
 		item.ImageInputPriceNanoUSD = l.Price.ImageInputNanoUSDPerToken
 		item.CachedImageInputPriceNanoUSD = l.Price.CachedImageInputNanoUSDPerToken
@@ -845,8 +889,8 @@ func (s Store) writeLog(ctx context.Context, l LogInput, upsert bool) error {
 }
 
 func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
-	if !isBillingDetail(l) {
-		return nil
+	if l.TenantID == "" || l.APIKeyID == "" {
+		return errors.New("request record requires tenant and API key")
 	}
 	item := requestLogItem(l)
 	previousTokens := int64(0)
@@ -886,7 +930,7 @@ func writeLogTx(tx *gorm.DB, l LogInput, upsert bool) error {
 		create = create.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
-				"log_unit", "usage_quality",
+				"log_unit", "usage_quality", "metering_version", "cache_write1h_tokens", "cache_unknown", "canceled", "rejected", "tries", "first_byte_ms", "first_text_ms", "first_reasoning_ms", "flow_ms", "decode_out", "decode_ms",
 				"model", "requested_model", "actual_model", "upstream_model", "model_alias",
 				"service_tier", "reasoning_effort", "upstream_request_id", "response_service_tier",
 				"status_code", "stream", "request_body_bytes",
@@ -938,25 +982,12 @@ func (s Store) Dashboard(ctx context.Context, tenantID string) (map[string]any, 
 	if err := scoped(ctx, s.DB).First(&tenant, "id = ?", tenantID).Error; err != nil {
 		return nil, notFound(err)
 	}
-	since := time.Now().AddDate(0, 0, -30)
-	type totals struct{ Requests, Tokens, Cost int64 }
-	var total totals
-	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
-		Select("count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
-		Where("tenant_id = ? AND started_at >= ?", tenantID, since).Scan(&total).Error
+	report, err := s.UsageReport(ctx, tenantID, 30)
 	if err != nil {
 		return nil, err
 	}
-	var rolled totals
-	if err := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).
-		Select("COALESCE(sum(requests),0) AS requests, COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost").
-		Where("tenant_id = ? AND day >= ?", tenantID, since).Scan(&rolled).Error; err != nil {
-		return nil, err
-	}
-	total.Requests += rolled.Requests
-	total.Tokens += rolled.Tokens
-	total.Cost += rolled.Cost
-	return map[string]any{"tenant": tenant, "requests_30d": total.Requests, "tokens_30d": total.Tokens, "cost_nano_usd_30d": total.Cost}, nil
+	totals := report["summary"].(UsageTotals)
+	return map[string]any{"tenant": tenant, "requests_30d": totals.Requests, "tokens_30d": totals.Tokens, "cost_nano_usd_30d": totals.CostNanoUSD}, nil
 }
 
 func requestLogUnitErrorSQL() string {
@@ -968,7 +999,7 @@ func requestLogUnitErrorSQLOn(table string) string {
 	if table != "" {
 		prefix = table + "."
 	}
-	return "COALESCE(sum(CASE WHEN (" +
+	return "COALESCE(sum(CASE WHEN NOT " + prefix + "canceled AND NOT " + prefix + "rejected AND (" +
 		prefix + "status_code = 0 OR " + prefix + "status_code >= 400 OR COALESCE(" + prefix + "error_code, '') <> '') THEN 1 ELSE 0 END),0)"
 }
 
@@ -988,11 +1019,16 @@ type LogQuery struct {
 }
 
 type LogSummary struct {
+	CacheWriteTokens   int64 `json:"cache_write"`
+	CacheUnknownTokens int64 `json:"cache_unknown"`
+	Canceled           int64 `json:"canceled"`
+	Rejected           int64 `json:"rejected"`
+
 	Requests       int64   `json:"requests"`
 	Errors         int64   `json:"errors"`
 	Tokens         int64   `json:"tokens"`
-	PromptTokens   int64   `json:"prompt_tokens"`
-	CachedTokens   int64   `json:"cached_tokens"`
+	PromptTokens   int64   `json:"input"`
+	CachedTokens   int64   `json:"cache_read"`
 	CostNanoUSD    int64   `json:"cost_nano_usd"`
 	AverageLatency float64 `json:"average_latency_ms"`
 	LatencyP50     float64 `json:"latency_p50_ms"`
@@ -1043,10 +1079,18 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 		}
 	}
 	switch input.Status {
+	case "canceled":
+		query = query.Where("canceled = true")
+	case "rejected":
+		query = query.Where("rejected = true")
+	case "retried":
+		query = query.Where("tries > 1")
+	case "unpriced":
+		query = query.Where("pricing_complete = false")
 	case "success":
-		query = query.Where("(status_code = ? OR (status_code >= 200 AND status_code < 400)) AND COALESCE(error_code, '') = ''", http.StatusSwitchingProtocols)
+		query = query.Where("NOT canceled AND NOT rejected AND (status_code = ? OR (status_code >= 200 AND status_code < 400)) AND COALESCE(error_code, '') = ''", http.StatusSwitchingProtocols)
 	case "error":
-		query = query.Where("status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> ''")
+		query = query.Where("NOT canceled AND NOT rejected AND (status_code = 0 OR status_code >= 400 OR COALESCE(error_code, '') <> '')")
 	case "stream":
 		query = query.Where("stream = ? AND request_type NOT LIKE ?", true, "%websocket%")
 	case "websocket":
@@ -1071,7 +1115,7 @@ func (s Store) QueryLogs(ctx context.Context, input LogQuery) (LogPage, error) {
 	itemsQuery := query.Session(&gorm.Session{})
 	var summary LogSummary
 	if err := summaryQuery.Select(
-		"count(*) AS requests, " +
+		"count(*) AS requests, count(*) FILTER (WHERE canceled) AS canceled, count(*) FILTER (WHERE rejected) AS rejected, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, COALESCE(sum(CASE WHEN cache_unknown THEN prompt_tokens+cached_tokens+cache_write_tokens ELSE 0 END),0) AS cache_unknown_tokens, " +
 			requestLogUnitErrorSQL() + " AS errors, " +
 			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, " +
 			"COALESCE(sum(cost_nano_usd),0) AS cost_nano_usd, " +
@@ -1216,294 +1260,17 @@ func (s Store) AdminOverview(ctx context.Context) (map[string]any, error) {
 		Count(&pendingInvitations).Error; err != nil {
 		return nil, err
 	}
-	type totals struct {
-		Requests int64
-		Tokens   int64
-		Cost     int64
-		Errors   int64
-	}
-	var today totals
-	now := time.Now()
-	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	if err := database.Model(&db.RequestLog{}).Where(generationLogSQL).Select(
-		"count(*) AS requests, COALESCE(sum(total_tokens),0) AS tokens, "+
-			"COALESCE(sum(cost_nano_usd),0) AS cost, "+
-			requestLogUnitErrorSQL()+" AS errors",
-	).Where("started_at >= ?", dayStart).Scan(&today).Error; err != nil {
+	report, err := s.UsageReport(ctx, "", 1)
+	if err != nil {
 		return nil, err
 	}
+	today := report["summary"].(UsageTotals)
 	return map[string]any{
 		"users": users, "enabled_users": enabledUsers, "active_api_keys": activeKeys,
 		"pending_invitations": pendingInvitations,
 		"today": map[string]int64{
 			"requests": today.Requests, "tokens": today.Tokens,
-			"cost_nano_usd": today.Cost, "errors": today.Errors,
+			"cost_nano_usd": today.CostNanoUSD, "errors": today.Errors,
 		},
-	}, nil
-}
-
-func (s Store) UsageReport(ctx context.Context, tenantID string, days int) (map[string]any, error) {
-	if days < 1 || days > 365 {
-		days = 30
-	}
-	since := time.Now().AddDate(0, 0, -days+1)
-	since = time.Date(since.Year(), since.Month(), since.Day(), 0, 0, 0, 0, since.Location())
-	base := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).Where("started_at >= ?", since)
-	if tenantID != "" {
-		base = base.Where("tenant_id = ?", tenantID)
-	}
-	type summary struct {
-		Requests               int64 `json:"requests"`
-		Errors                 int64 `json:"errors"`
-		Tokens                 int64 `json:"tokens"`
-		PromptTokens           int64 `json:"prompt_tokens"`
-		CompletionTokens       int64 `json:"completion_tokens"`
-		CachedTokens           int64 `json:"cached_tokens"`
-		CacheWriteTokens       int64 `json:"cache_write_tokens"`
-		ReasoningTokens        int64 `json:"reasoning_tokens"`
-		ImageInputTokens       int64 `json:"image_input_tokens"`
-		CachedImageInputTokens int64 `json:"cached_image_input_tokens"`
-		ImageOutputTokens      int64 `json:"image_output_tokens"`
-		Cost                   int64 `json:"cost_nano_usd"`
-		SubscriptionCovered    int64 `json:"subscription_covered_nano_usd"`
-		BalanceCharged         int64 `json:"balance_charged_nano_usd"`
-	}
-	var total summary
-	if err := base.Select(
-		"count(*) AS requests, " +
-			requestLogUnitErrorSQLOn("request_logs") + " AS errors, " +
-			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, " +
-			"COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, " +
-			"COALESCE(sum(reasoning_tokens),0) AS reasoning_tokens, COALESCE(sum(image_input_tokens),0) AS image_input_tokens, " +
-			"COALESCE(sum(cached_image_input_tokens),0) AS cached_image_input_tokens, COALESCE(sum(image_output_tokens),0) AS image_output_tokens, " +
-			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
-			"COALESCE(sum(CASE WHEN billing_source = 'subscription' THEN cost_nano_usd ELSE 0 END),0) AS subscription_covered, " +
-			"COALESCE(sum(CASE WHEN billing_source = 'balance' OR (billing_source = '' AND parent_subscription_id IS NULL) THEN cost_nano_usd ELSE 0 END),0) AS balance_charged",
-	).Scan(&total).Error; err != nil {
-		return nil, err
-	}
-	rollupBase := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).Where("day >= ?", since)
-	if tenantID != "" {
-		rollupBase = rollupBase.Where("tenant_id = ?", tenantID)
-	}
-	var rolledTotal summary
-	if err := rollupBase.Select(
-		"COALESCE(sum(requests),0) AS requests, COALESCE(sum(errors),0) AS errors, " +
-			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, " +
-			"COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cache_write_tokens),0) AS cache_write_tokens, " +
-			"COALESCE(sum(reasoning_tokens),0) AS reasoning_tokens, COALESCE(sum(image_input_tokens),0) AS image_input_tokens, " +
-			"COALESCE(sum(cached_image_input_tokens),0) AS cached_image_input_tokens, COALESCE(sum(image_output_tokens),0) AS image_output_tokens, " +
-			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost, " +
-			"COALESCE(sum(subscription_covered_nano_usd),0) AS subscription_covered, " +
-			"COALESCE(sum(balance_charged_nano_usd),0) AS balance_charged",
-	).Scan(&rolledTotal).Error; err != nil {
-		return nil, err
-	}
-	total.Requests += rolledTotal.Requests
-	total.Errors += rolledTotal.Errors
-	total.Tokens += rolledTotal.Tokens
-	total.PromptTokens += rolledTotal.PromptTokens
-	total.CompletionTokens += rolledTotal.CompletionTokens
-	total.CachedTokens += rolledTotal.CachedTokens
-	total.CacheWriteTokens += rolledTotal.CacheWriteTokens
-	total.ReasoningTokens += rolledTotal.ReasoningTokens
-	total.ImageInputTokens += rolledTotal.ImageInputTokens
-	total.CachedImageInputTokens += rolledTotal.CachedImageInputTokens
-	total.ImageOutputTokens += rolledTotal.ImageOutputTokens
-	total.Cost += rolledTotal.Cost
-	total.SubscriptionCovered += rolledTotal.SubscriptionCovered
-	total.BalanceCharged += rolledTotal.BalanceCharged
-	type daily struct {
-		Date             string `json:"date"`
-		Requests         int64  `json:"requests"`
-		Errors           int64  `json:"errors"`
-		Tokens           int64  `json:"tokens"`
-		PromptTokens     int64  `json:"prompt_tokens"`
-		CompletionTokens int64  `json:"completion_tokens"`
-		CachedTokens     int64  `json:"cached_tokens"`
-		Cost             int64  `json:"cost_nano_usd"`
-	}
-	dailyItems := make([]daily, 0)
-	dailyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
-		Select(
-			"to_char(started_at, 'YYYY-MM-DD') AS date, "+"count(*) AS requests, "+
-				requestLogUnitErrorSQL()+" AS errors, "+
-				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
-				"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
-				"COALESCE(sum(cost_nano_usd),0) AS cost",
-		).Where("started_at >= ?", since)
-	if tenantID != "" {
-		dailyQuery = dailyQuery.Where("tenant_id = ?", tenantID)
-	}
-	if err := dailyQuery.Group("to_char(started_at, 'YYYY-MM-DD')").
-		Order("date").Scan(&dailyItems).Error; err != nil {
-		return nil, err
-	}
-	rolledDailyQuery := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).Select(
-		"to_char(day, 'YYYY-MM-DD') AS date, COALESCE(sum(requests),0) AS requests, "+
-			"COALESCE(sum(errors),0) AS errors, COALESCE(sum(total_tokens),0) AS tokens, "+
-			"COALESCE(sum(prompt_tokens),0) AS prompt_tokens, COALESCE(sum(completion_tokens),0) AS completion_tokens, "+
-			"COALESCE(sum(cached_tokens),0) AS cached_tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
-	).Where("day >= ?", since)
-	if tenantID != "" {
-		rolledDailyQuery = rolledDailyQuery.Where("tenant_id = ?", tenantID)
-	}
-	var rolledDaily []daily
-	if err := rolledDailyQuery.Group("day").Scan(&rolledDaily).Error; err != nil {
-		return nil, err
-	}
-	dailyByDate := make(map[string]daily, len(dailyItems)+len(rolledDaily))
-	for _, item := range append(dailyItems, rolledDaily...) {
-		value := dailyByDate[item.Date]
-		value.Date = item.Date
-		value.Requests += item.Requests
-		value.Errors += item.Errors
-		value.Tokens += item.Tokens
-		value.PromptTokens += item.PromptTokens
-		value.CompletionTokens += item.CompletionTokens
-		value.CachedTokens += item.CachedTokens
-		value.Cost += item.Cost
-		dailyByDate[item.Date] = value
-	}
-	dailyItems = dailyItems[:0]
-	for _, item := range dailyByDate {
-		dailyItems = append(dailyItems, item)
-	}
-	sort.Slice(dailyItems, func(i, j int) bool { return dailyItems[i].Date < dailyItems[j].Date })
-	type modelTotal struct {
-		Model            string `json:"model"`
-		Requests         int64  `json:"requests"`
-		Errors           int64  `json:"errors"`
-		Tokens           int64  `json:"tokens"`
-		PromptTokens     int64  `json:"prompt_tokens"`
-		CompletionTokens int64  `json:"completion_tokens"`
-		CachedTokens     int64  `json:"cached_tokens"`
-		Cost             int64  `json:"cost_nano_usd"`
-	}
-	models := make([]modelTotal, 0)
-	modelQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
-		Select(
-			"model, "+"count(*) AS requests, "+
-				requestLogUnitErrorSQL()+" AS errors, "+
-				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
-				"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
-				"COALESCE(sum(cost_nano_usd),0) AS cost",
-		).Where("started_at >= ?", since)
-	if tenantID != "" {
-		modelQuery = modelQuery.Where("tenant_id = ?", tenantID)
-	}
-	if err := modelQuery.Group("model").Order("tokens DESC").Scan(&models).Error; err != nil {
-		return nil, err
-	}
-	rolledModelQuery := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).Select(
-		"model, COALESCE(sum(requests),0) AS requests, COALESCE(sum(errors),0) AS errors, "+
-			"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(prompt_tokens),0) AS prompt_tokens, "+
-			"COALESCE(sum(completion_tokens),0) AS completion_tokens, COALESCE(sum(cached_tokens),0) AS cached_tokens, "+
-			"COALESCE(sum(cost_nano_usd),0) AS cost",
-	).Where("day >= ?", since)
-	if tenantID != "" {
-		rolledModelQuery = rolledModelQuery.Where("tenant_id = ?", tenantID)
-	}
-	var rolledModels []modelTotal
-	if err := rolledModelQuery.Group("model").Scan(&rolledModels).Error; err != nil {
-		return nil, err
-	}
-	modelsByName := make(map[string]modelTotal, len(models)+len(rolledModels))
-	for _, item := range append(models, rolledModels...) {
-		value := modelsByName[item.Model]
-		value.Model = item.Model
-		value.Requests += item.Requests
-		value.Errors += item.Errors
-		value.Tokens += item.Tokens
-		value.PromptTokens += item.PromptTokens
-		value.CompletionTokens += item.CompletionTokens
-		value.CachedTokens += item.CachedTokens
-		value.Cost += item.Cost
-		modelsByName[item.Model] = value
-	}
-	models = models[:0]
-	for _, item := range modelsByName {
-		models = append(models, item)
-	}
-	sort.Slice(models, func(i, j int) bool { return models[i].Tokens > models[j].Tokens })
-	type apiKeyTotal struct {
-		APIKeyID     string `json:"api_key_id"`
-		APIKeyName   string `json:"api_key_name"`
-		APIKeyPrefix string `json:"api_key_prefix"`
-		TenantName   string `json:"tenant_name,omitempty"`
-		Requests     int64  `json:"requests"`
-		Errors       int64  `json:"errors"`
-		Tokens       int64  `json:"tokens"`
-		Cost         int64  `json:"cost_nano_usd"`
-	}
-	apiKeys := make([]apiKeyTotal, 0)
-	apiKeyQuery := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
-		Select(
-			"api_key_id, api_key_name, api_key_prefix, tenant_name, "+"count(*) AS requests, "+
-				requestLogUnitErrorSQL()+" AS errors, "+
-				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
-		).Where("started_at >= ?", since)
-	if tenantID != "" {
-		apiKeyQuery = apiKeyQuery.Where("tenant_id = ?", tenantID)
-	}
-	if err := apiKeyQuery.Group("api_key_id, api_key_name, api_key_prefix, tenant_name").
-		Order("tokens DESC, requests DESC").Scan(&apiKeys).Error; err != nil {
-		return nil, err
-	}
-	type userTotal struct {
-		TenantID   string `json:"tenant_id"`
-		TenantName string `json:"tenant_name"`
-		Requests   int64  `json:"requests"`
-		Errors     int64  `json:"errors"`
-		Tokens     int64  `json:"tokens"`
-		Cost       int64  `json:"cost_nano_usd"`
-	}
-	users := make([]userTotal, 0)
-	if tenantID == "" {
-		var liveUsers []userTotal
-		if err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).Select(
-			"tenant_id, tenant_name, "+"count(*) AS requests, "+
-				requestLogUnitErrorSQL()+" AS errors, "+
-				"COALESCE(sum(total_tokens),0) AS tokens, COALESCE(sum(cost_nano_usd),0) AS cost",
-		).Where("started_at >= ?", since).Group("tenant_id, tenant_name").Scan(&liveUsers).Error; err != nil {
-			return nil, err
-		}
-		var rolledUsers []userTotal
-		if err := scoped(ctx, s.DB).Model(&db.UsageDailyRollup{}).
-			Joins("LEFT JOIN tenants ON tenants.id = usage_daily_rollups.tenant_id").
-			Select(
-				"usage_daily_rollups.tenant_id, COALESCE(tenants.name, '') AS tenant_name, "+
-					"COALESCE(sum(usage_daily_rollups.requests),0) AS requests, COALESCE(sum(usage_daily_rollups.errors),0) AS errors, "+
-					"COALESCE(sum(usage_daily_rollups.total_tokens),0) AS tokens, COALESCE(sum(usage_daily_rollups.cost_nano_usd),0) AS cost",
-			).Where("usage_daily_rollups.day >= ?", since).
-			Group("usage_daily_rollups.tenant_id, tenants.name").Scan(&rolledUsers).Error; err != nil {
-			return nil, err
-		}
-		usersByID := make(map[string]userTotal, len(liveUsers)+len(rolledUsers))
-		for _, item := range append(liveUsers, rolledUsers...) {
-			value := usersByID[item.TenantID]
-			value.TenantID = item.TenantID
-			if item.TenantName != "" {
-				value.TenantName = item.TenantName
-			}
-			value.Requests += item.Requests
-			value.Errors += item.Errors
-			value.Tokens += item.Tokens
-			value.Cost += item.Cost
-			usersByID[item.TenantID] = value
-		}
-		for _, item := range usersByID {
-			users = append(users, item)
-		}
-		sort.Slice(users, func(i, j int) bool { return users[i].Tokens > users[j].Tokens })
-	}
-	observability, err := s.usageObservability(ctx, tenantID, since)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"observability": observability, "period_start": since, "generated_at": time.Now(),
-		"days": days, "user_id": tenantID, "summary": total,
-		"daily": dailyItems, "models": models, "api_keys": apiKeys, "users": users,
 	}, nil
 }

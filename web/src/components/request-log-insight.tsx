@@ -102,7 +102,7 @@ export function RequestLogInsight({
             <Facts
               rows={[
                 ["总耗时", measuredMS(log.latency_ms)],
-                ["首响应 / 首字节", measuredMS(log.ttft_ms)],
+                ["首响应 / 首字节", measuredMS(log.first_byte_ms)],
                 ["首 Token", measuredMS(log.first_token_ms)],
                 ["输出 Token 速度", requestTokenRateLabel(log)],
               ]}
@@ -133,15 +133,22 @@ export function RequestLogInsight({
             <Facts
               rows={[
                 ["总 Tokens", count(log.total_tokens)],
-                ["输入", count(log.prompt_tokens)],
-                ["输出", count(log.completion_tokens)],
-                ["缓存读取", count(log.cached_tokens)],
+                ["输入", count(log.input)],
+                ["输出", count(log.output)],
+                ["缓存读取", count(log.cache_read)],
                 [
                   "缓存命中率",
-                  cacheHitRateLabel(log.cached_tokens, log.prompt_tokens),
+                  cacheHitRateLabel(
+                    log.cache_read,
+                    log.input,
+                    log.cache_write,
+                    log.cache_unknown
+                  ),
                 ],
-                ["缓存写入", count(log.cache_write_tokens)],
-                ["推理", count(log.reasoning_tokens)],
+                ["缓存写入", count(log.cache_write)],
+                ["推理", count(log.reasoning)],
+                ["缓存写入（1 小时）", count(log.cache_write_1h)],
+                ["缓存是否未知", log.cache_unknown ? "是" : "否"],
                 ["图片输入", count(log.image_input_tokens)],
                 ["图片缓存读取", count(log.cached_image_input_tokens)],
                 ["图片输出", count(log.image_output_tokens)],
@@ -166,7 +173,7 @@ export function RequestLogInsight({
               ]}
             />
             <p className="mt-3 text-xs text-muted-foreground">
-              缓存、图片、推理可能包含在输入或输出中，不重复累加。
+              普通输入、缓存读取、缓存写入分别计量；推理包含在输出中，不重复计费。
             </p>
           </TabsContent>
           <TabsContent value="billing">

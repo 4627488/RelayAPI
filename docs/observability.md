@@ -1,8 +1,8 @@
 # 可观测性：Loki 日志与 Prometheus 指标
 
-## 后台日志与扣费明细
+## 后台日志与请求记录
 
-页面中的「扣费明细」保留请求用量、价格、扣费来源和诊断详情，账务依据仍是 PostgreSQL。后台运行日志使用 Go slog 输出单行 JSON，内嵌 CPA 的 logrus 也使用相同格式和脱敏规则。`RELAY_LOG_LEVEL=info` 为默认值，可设为 `debug`、`warn` 或 `error`，修改后需要重启服务。
+页面中的「请求记录」保留请求用量、价格、扣费来源和诊断详情，账务依据仍是 PostgreSQL。后台运行日志使用 Go slog 输出单行 JSON，内嵌 CPA 的 logrus 也使用相同格式和脱敏规则。`RELAY_LOG_LEVEL=info` 为默认值，可设为 `debug`、`warn` 或 `error`，修改后需要重启服务。
 
 Loki 接收**推送**，不会像 Prometheus 一样定期抓取应用的 `/metrics`。本项目的数据流是：RelayAPI stdout → Docker 日志 → Grafana Alloy 采集 → HTTP 推送 Loki → Grafana 查询。应用无需知道 Loki 的地址，Loki 暂时不可用时不会让生成请求等待网络投递。
 
@@ -15,7 +15,7 @@ Loki 接收**推送**，不会像 Prometheus 一样定期抓取应用的 `/metri
 | ERROR | 5xx、panic、数据库持久化/结算失败、后台任务失败 |
 | DEBUG | 成功健康检查/指标抓取、静态页面访问、预热、成功后台任务和上游尝试 |
 
-HTTP 摘要覆盖鉴权失败、管理接口操作、普通生成、SSE 和 WebSocket；WebSocket 在连接结束时记录 HTTP 摘要，生成用量按每个已持久化轮次记录。`X-Relay-Request-ID` 由服务生成并返回，可用它关联 HTTP、生成摘要和结算；WebSocket 轮次的 `session_request_id` 指向连接请求。`inference.completed` 的费用为评估费用，是否持久化成功应查看随后 `billing.settled` 的 `success` 字段，最终以扣费明细为准。
+HTTP 摘要覆盖鉴权失败、管理接口操作、普通生成、SSE 和 WebSocket；WebSocket 在连接结束时记录 HTTP 摘要，生成用量按每个已持久化轮次记录。`X-Relay-Request-ID` 由服务生成并返回，可用它关联 HTTP、生成摘要和结算；WebSocket 轮次的 `session_request_id` 指向连接请求。`inference.completed` 的费用为评估费用，是否持久化成功应查看随后 `billing.settled` 的 `success` 字段，最终以请求记录为准。
 
 日志不主动采集请求正文、响应正文、请求头、Cookie、完整 URL 或查询参数。常见凭据字段、Bearer、sk- Key 及 URL 用户信息/查询参数会脱敏，单个文本字段限制为 4 KiB。自由文本脱敏不能识别任意格式的秘密，因此禁止新增包含完整请求或凭据对象的日志。请求诊断正文仍按原有 PostgreSQL 权限和保留策略管理。
 
@@ -69,7 +69,7 @@ curl -fsS -H "Authorization: Bearer $RELAY_METRICS_TOKEN" http://localhost:8080/
 | `relay_inference_first_byte_seconds` | Histogram：protocol、transport | 首个上游响应字节/事件的延迟，有观测才记录 |
 | `relay_inference_first_token_seconds` | Histogram：protocol、transport | 首个生成内容延迟，心跳、角色和用量事件不算 token |
 | `relay_inference_body_bytes` | Histogram：direction、transport | request / forwarded / response 的负载大小 |
-| `relay_inference_tokens_total` | Counter：protocol、transport、kind | input、output、cached、cache_write、reasoning、total 及 image_input、cached_image_input、image_output |
+| `relay_inference_tokens_total` | Counter：protocol、transport、kind | input、output、cache_read、cache_write、cache_write_1h、reasoning、total 及 image_input、cached_image_input、image_output |
 | `relay_inference_usage_quality_total` | Counter：transport、quality | complete / incomplete / inconsistent / unclassified / missing / unknown 用量质量 |
 | `relay_prewarm_requests_total` | Counter：transport | 非生成预热，不计入生成次数、Token、费用和延迟 |
 | `relay_billing_cost_usd_total` | Counter：transport | 已结算的已知费用，nano-USD 换算为 USD |

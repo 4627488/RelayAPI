@@ -13,14 +13,25 @@ export function compactTokens(value: number) {
   }).format(value)
 }
 
-export function cacheHitRate(cachedTokens: number, promptTokens: number) {
-  if (!Number.isFinite(promptTokens) || promptTokens <= 0) return null
-  const cached = Number.isFinite(cachedTokens) ? Math.max(0, cachedTokens) : 0
-  return Math.min(1, cached / promptTokens)
+export function cacheHitRate(
+  cacheRead: number,
+  input: number,
+  cacheWrite = 0,
+  unknown: boolean | number = false
+) {
+  if (unknown === true) return null
+  const prompt =
+    input + cacheRead + cacheWrite - (typeof unknown === "number" ? unknown : 0)
+  if (!Number.isFinite(prompt) || prompt <= 0) return null
+  return Math.min(1, Math.max(0, cacheRead) / prompt)
 }
-
-export function cacheHitRateLabel(cachedTokens: number, promptTokens: number) {
-  const rate = cacheHitRate(cachedTokens, promptTokens)
+export function cacheHitRateLabel(
+  cacheRead: number,
+  input: number,
+  cacheWrite = 0,
+  unknown: boolean | number = false
+) {
+  const rate = cacheHitRate(cacheRead, input, cacheWrite, unknown)
   return rate == null ? "—" : `${(rate * 100).toFixed(1)}%`
 }
 

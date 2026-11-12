@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/4627488/RelayAPI/internal/billing"
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	relaybridge "github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
@@ -38,6 +39,10 @@ func (a *App) cpaBillingUsage(ctx context.Context, requestID, responseID, endpoi
 	}
 	result, complete := a.nativeCPARuntime.RequestUsage(ctx, requestID, responseID)
 	canonical := cpaUsageResult(result, complete)
+	if canonical.Found {
+		canonical.Usage.CacheWrite1h = min(observed.Usage.CacheWrite1h, canonical.Usage.CacheWrite)
+		canonical.Usage.CacheUnknown = observed.Usage.CacheUnknown
+	}
 	if canonical.RequestID == "" {
 		canonical.RequestID = observed.RequestID
 	}
@@ -67,11 +72,28 @@ func cpaUsageResult(result relaybridge.UsageResult, complete bool) billing.Resul
 		RequestID:    result.ResponseID, Model: result.Model,
 		ResponseServiceTier: result.ServiceTier, Found: complete && result.Found,
 		Usage: store.Usage{
-			// Relay's prompt bucket includes cache reads but excludes cache writes.
-			Prompt: result.InputTokens - result.CacheWriteTokens,
-			Cached: result.CachedTokens, CacheWrite: result.CacheWriteTokens,
-			Completion: result.OutputTokens, Reasoning: result.ReasoningTokens,
-			Total: result.TotalTokens,
+			// Disjoint Magpie input bucket; CPA includes both cache buckets.
+			Input:     max64(0, result.InputTokens-result.CacheWriteTokens-result.CachedTokens),
+			CacheRead: result.CachedTokens, CacheWrite: result.CacheWriteTokens,
+			Output: result.OutputTokens, Reasoning: result.ReasoningTokens,
+			Total: saturatingAdd(max64(0, result.InputTokens-result.CacheWriteTokens-result.CachedTokens), result.OutputTokens),
 		},
 	}
+}
+
+// A user price for the requested model wins. Otherwise price the model the
+// upstream says it served, falling back to the requested model if unknown.
+// This is Magpie Pricer's requested/served precedence, not a model-name guess.
+func (a *App) resolveUsagePrice(ctx context.Context, dimensions pricing.Dimensions, served string) (store.ResolvedPrice, error) {
+	requested, err := a.store.ResolvePrice(ctx, dimensions)
+	served = strings.TrimSpace(served)
+	if served != "" && !strings.EqualFold(served, dimensions.Model) && (err != nil || requested.Source != pricing.SourceAdmin) {
+		actual := dimensions
+		actual.Model = served
+		actual.ModelAlias = ""
+		if price, servedErr := a.store.ResolvePrice(ctx, actual); servedErr == nil {
+			return price, nil
+		}
+	}
+	return requested, err
 }

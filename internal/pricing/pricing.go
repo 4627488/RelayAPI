@@ -24,6 +24,8 @@ const (
 )
 
 type Price struct {
+	CacheWrite1hNanoUSDPerToken     int64   `json:"cache_write_1h_nano_usd_per_token"`
+	Tiers                           []Tier  `json:"tiers,omitempty"`
 	Model                           string  `json:"model"`
 	InputNanoUSDPerToken            int64   `json:"input_nano_usd_per_token"`
 	OutputNanoUSDPerToken           int64   `json:"output_nano_usd_per_token"`
@@ -36,6 +38,16 @@ type Price struct {
 	Source                          string  `json:"source"`
 	Version                         string  `json:"version"`
 	PriceMultiplier                 float64 `json:"price_multiplier"`
+}
+
+// Tier reprices the whole call when the full prompt exceeds Above.
+type Tier struct {
+	Above                       int64 `json:"above"`
+	InputNanoUSDPerToken        int64 `json:"input_nano_usd_per_token"`
+	OutputNanoUSDPerToken       int64 `json:"output_nano_usd_per_token"`
+	CachedInputNanoUSDPerToken  int64 `json:"cached_input_nano_usd_per_token"`
+	CacheWriteNanoUSDPerToken   int64 `json:"cache_write_nano_usd_per_token"`
+	CacheWrite1hNanoUSDPerToken int64 `json:"cache_write_1h_nano_usd_per_token"`
 }
 
 type Rule struct {
@@ -113,10 +125,31 @@ func Compile(admin, catalog, bundled []Price, aliases map[string]string, rules [
 				price.InputNanoUSDPerToken, price.OutputNanoUSDPerToken,
 				price.CachedInputNanoUSDPerToken, price.CacheWriteNanoUSDPerToken,
 				price.ReasoningNanoUSDPerToken, price.ImageInputNanoUSDPerToken,
-				price.CachedImageInputNanoUSDPerToken, price.ImageOutputNanoUSDPerToken,
+				price.CachedImageInputNanoUSDPerToken, price.ImageOutputNanoUSDPerToken, price.CacheWrite1hNanoUSDPerToken,
 			} {
 				if value < 0 {
 					return fmt.Errorf("negative price for %q", price.Model)
+				}
+			}
+			price.Tiers = append([]Tier(nil), price.Tiers...)
+			sort.Slice(price.Tiers, func(i, j int) bool { return price.Tiers[i].Above < price.Tiers[j].Above })
+			for i, tier := range price.Tiers {
+				if tier.Above < 0 || (i > 0 && tier.Above == price.Tiers[i-1].Above) {
+					return fmt.Errorf("invalid tier threshold for %q", price.Model)
+				}
+				for _, n := range []int64{tier.InputNanoUSDPerToken, tier.OutputNanoUSDPerToken, tier.CachedInputNanoUSDPerToken, tier.CacheWriteNanoUSDPerToken, tier.CacheWrite1hNanoUSDPerToken} {
+					if n < 0 {
+						return fmt.Errorf("negative tier price for %q", price.Model)
+					}
+				}
+			}
+			if strings.Contains(strings.ToLower(price.Model), "claude") && price.CacheWriteNanoUSDPerToken > 0 && price.CacheWrite1hNanoUSDPerToken == 0 {
+				price.CacheWrite1hNanoUSDPerToken = saturatingMultiply(price.InputNanoUSDPerToken, 2)
+				for i := range price.Tiers {
+					tier := &price.Tiers[i]
+					if tier.CacheWrite1hNanoUSDPerToken == 0 && tier.CacheWriteNanoUSDPerToken > 0 {
+						tier.CacheWrite1hNanoUSDPerToken = saturatingMultiply(tier.InputNanoUSDPerToken, 2)
+					}
 				}
 			}
 			key := strings.ToLower(price.Model)
@@ -185,10 +218,20 @@ func (s *Snapshot) Resolve(dimensions Dimensions) (SnapshotPrice, bool) {
 				// replaces this default instead of multiplying it a second time.
 				ruleMultiplier *= 2
 			}
-			if defaultLongContext(model.price.Model, dimensions.PromptTokens) && !hasPromptThresholdRule(model.rules) {
+			if len(model.price.Tiers) == 0 && defaultLongContext(model.price.Model, dimensions.PromptTokens) && !hasPromptThresholdRule(model.rules) {
 				ruleMultiplier *= 2
 			}
-			price := scaled(model.price, ruleMultiplier)
+			base := model.price
+			for _, tier := range base.Tiers {
+				if dimensions.PromptTokens > tier.Above {
+					base.InputNanoUSDPerToken = tier.InputNanoUSDPerToken
+					base.OutputNanoUSDPerToken = tier.OutputNanoUSDPerToken
+					base.CachedInputNanoUSDPerToken = tier.CachedInputNanoUSDPerToken
+					base.CacheWriteNanoUSDPerToken = tier.CacheWriteNanoUSDPerToken
+					base.CacheWrite1hNanoUSDPerToken = tier.CacheWrite1hNanoUSDPerToken
+				}
+			}
+			price := scaled(base, ruleMultiplier)
 			return SnapshotPrice{
 				Price: price, RequestedModel: requested, PricedModel: model.price.Model,
 				MatchedBy: matchedBy, RuleMultiplier: ruleMultiplier,
@@ -231,6 +274,7 @@ func modelCandidates(model string) []string {
 }
 
 func scaled(price Price, ruleMultiplier float64) Price {
+	price.CacheWrite1hNanoUSDPerToken = scaleInt(price.CacheWrite1hNanoUSDPerToken, price.PriceMultiplier*ruleMultiplier)
 	multiplier := price.PriceMultiplier
 	if multiplier < 0 || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
 		multiplier = 1
@@ -244,6 +288,15 @@ func scaled(price Price, ruleMultiplier float64) Price {
 	price.ImageInputNanoUSDPerToken = scaleInt(price.ImageInputNanoUSDPerToken, total)
 	price.CachedImageInputNanoUSDPerToken = scaleInt(price.CachedImageInputNanoUSDPerToken, total)
 	price.ImageOutputNanoUSDPerToken = scaleInt(price.ImageOutputNanoUSDPerToken, total)
+	price.Tiers = append([]Tier(nil), price.Tiers...)
+	for i := range price.Tiers {
+		t := &price.Tiers[i]
+		t.InputNanoUSDPerToken = scaleInt(t.InputNanoUSDPerToken, total)
+		t.OutputNanoUSDPerToken = scaleInt(t.OutputNanoUSDPerToken, total)
+		t.CachedInputNanoUSDPerToken = scaleInt(t.CachedInputNanoUSDPerToken, total)
+		t.CacheWriteNanoUSDPerToken = scaleInt(t.CacheWriteNanoUSDPerToken, total)
+		t.CacheWrite1hNanoUSDPerToken = scaleInt(t.CacheWrite1hNanoUSDPerToken, total)
+	}
 	price.PriceMultiplier = total
 	return price
 }
@@ -424,4 +477,18 @@ func SortedRuleFields() []string {
 		"response_service_tier", "reasoning_effort", "endpoint", "executor_type", "prompt_tokens_gte"}
 	sort.Strings(fields)
 	return fields
+}
+
+// At follows Magpie's strict greater-than context tier threshold.
+func (p Price) At(prompt int64) Price {
+	for _, t := range p.Tiers {
+		if prompt > t.Above {
+			p.InputNanoUSDPerToken = t.InputNanoUSDPerToken
+			p.OutputNanoUSDPerToken = t.OutputNanoUSDPerToken
+			p.CachedInputNanoUSDPerToken = t.CachedInputNanoUSDPerToken
+			p.CacheWriteNanoUSDPerToken = t.CacheWriteNanoUSDPerToken
+			p.CacheWrite1hNanoUSDPerToken = t.CacheWrite1hNanoUSDPerToken
+		}
+	}
+	return p
 }

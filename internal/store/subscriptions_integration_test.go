@@ -738,7 +738,7 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 		ID: requestID, TenantID: tenantID, APIKeyID: keyID, ReservationRequestID: requestID,
 		Model: "model", ActualModel: "model",
 		Method: "GET", Path: "/v1/responses", RequestType: "responses.websocket", StatusCode: 101,
-		Stream: true, PricingComplete: true, Settled: true, Usage: Usage{Prompt: 20, Completion: 10, Total: 30},
+		Stream: true, PricingComplete: true, Settled: true, Usage: Usage{Input: 20, Output: 10, Total: 30},
 		CostNanoUSD: int64Pointer(25), ReservedNanoUSD: 10, StartedAt: time.Now(), CompletedAt: time.Now(),
 	}
 	input := WebSocketTurnAccrual{
@@ -754,11 +754,11 @@ func TestWebSocketTurnAccrualSurvivesExpiryAndIsIdempotent(t *testing.T) {
 		t.Fatalf("duplicate accrual inserted=%v, err=%v", inserted, err)
 	}
 	secondLog := log
-	secondLog.Usage = Usage{Prompt: 24, Completion: 13, Total: 37}
+	secondLog.Usage = Usage{Input: 24, Output: 13, Total: 37}
 	secondLog.CostNanoUSD = int64Pointer(32)
 	secondInput := input
 	secondInput.TurnID = "resp_2"
-	secondInput.Usage = Usage{Prompt: 4, Completion: 3, Total: 7}
+	secondInput.Usage = Usage{Input: 4, Output: 3, Total: 7}
 	secondInput.CostNanoUSD = 7
 	secondInput.Model = "model-2"
 	secondInput.Log = secondLog

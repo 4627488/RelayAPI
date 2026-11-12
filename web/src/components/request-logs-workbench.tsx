@@ -100,8 +100,8 @@ const emptyPage: RequestLogPage = {
     requests: 0,
     errors: 0,
     tokens: 0,
-    prompt_tokens: 0,
-    cached_tokens: 0,
+    input: 0,
+    cache_read: 0,
     cost_nano_usd: 0,
     average_latency_ms: 0,
     latency_p50_ms: 0,
@@ -161,7 +161,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
     } catch (cause) {
       if (token !== listRequest.current) return
       toast.add({
-        title: cause instanceof Error ? cause.message : "读取扣费明细失败",
+        title: cause instanceof Error ? cause.message : "读取请求记录失败",
         type: "error",
       })
     } finally {
@@ -282,8 +282,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
 
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
   const cacheRate = cacheHitRateLabel(
-    data.summary.cached_tokens,
-    data.summary.prompt_tokens
+    data.summary.cache_read,
+    data.summary.input,
+    data.summary.cache_write,
+    data.summary.cache_unknown
   )
   const advancedFilterCount = [
     method !== "all",
@@ -320,7 +322,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
   return (
     <div className="flex w-full min-w-0 flex-col gap-6">
       <PageHeader
-        title="扣费明细"
+        title="请求记录"
         description="查看请求用量、计价与扣费来源。"
       />
       <StatStrip
@@ -356,7 +358,7 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
           <FieldGroup className="grid min-w-0 grid-cols-2 gap-2 pt-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,12rem)_9rem_auto_auto] [&_button]:min-h-10 sm:[&_button]:min-h-7 [&_input]:h-10 sm:[&_input]:h-7">
             <Field className="col-span-2 min-w-0 lg:col-span-1">
               <FieldLabel htmlFor="log-search" className="sr-only">
-                搜索扣费明细
+                搜索请求记录
               </FieldLabel>
               <SearchField
                 id="log-search"
@@ -394,6 +396,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                   all: "全部状态",
                   success: "成功",
                   error: "错误",
+                  canceled: "已取消",
+                  rejected: "本地拒绝",
+                  retried: "发生重试",
+                  unpriced: "未定价",
                   stream: "SSE",
                   websocket: "WebSocket",
                 }}
@@ -413,6 +419,10 @@ export function RequestLogsWorkbench({ admin = false }: { admin?: boolean }) {
                     <SelectItem value="all">全部状态</SelectItem>
                     <SelectItem value="success">成功</SelectItem>
                     <SelectItem value="error">错误</SelectItem>
+                    <SelectItem value="canceled">已取消</SelectItem>
+                    <SelectItem value="rejected">本地拒绝</SelectItem>
+                    <SelectItem value="retried">发生重试</SelectItem>
+                    <SelectItem value="unpriced">未定价</SelectItem>
                     <SelectItem value="stream">SSE</SelectItem>
                     <SelectItem value="websocket">WebSocket</SelectItem>
                   </SelectGroup>
@@ -784,32 +794,31 @@ function LogOverview({
     if (!log.pricing_complete || !log.price_model) return []
     const imageInput = Math.min(
       Math.max(0, log.image_input_tokens ?? 0),
-      Math.max(0, log.prompt_tokens)
+      Math.max(0, log.input)
     )
     const cachedInput = Math.min(
-      Math.max(0, log.cached_tokens),
-      Math.max(0, log.prompt_tokens)
+      Math.max(0, log.cache_read),
+      Math.max(0, log.input)
     )
     const cachedImage = Math.min(
       Math.max(0, log.cached_image_input_tokens ?? 0),
       imageInput,
       cachedInput
     )
-    const textInput = Math.max(0, log.prompt_tokens - imageInput)
+    const textInput = Math.max(0, log.input - imageInput)
     const cachedText = Math.min(
       textInput,
       Math.max(0, cachedInput - cachedImage)
     )
     const imageOutput = Math.min(
       Math.max(0, log.image_output_tokens ?? 0),
-      Math.max(0, log.completion_tokens)
+      Math.max(0, log.output)
     )
-    let textOutput = Math.max(0, log.completion_tokens - imageOutput)
+    let textOutput = Math.max(0, log.output - imageOutput)
     const reasoningIncluded =
-      log.total_tokens <= log.prompt_tokens ||
-      log.total_tokens - log.prompt_tokens <= log.completion_tokens
-    if (reasoningIncluded)
-      textOutput = Math.max(0, textOutput - log.reasoning_tokens)
+      log.total_tokens <= log.input ||
+      log.total_tokens - log.input <= log.output
+    if (reasoningIncluded) textOutput = Math.max(0, textOutput - log.reasoning)
     return [
       [
         "文本输入",
@@ -833,16 +842,12 @@ function LogOverview({
       ],
       [
         "缓存写入",
-        log.cache_write_tokens,
+        log.cache_write,
         log.cache_write_price_nano_usd_per_token ?? 0,
       ],
       ["文本输出", textOutput, log.output_price_nano_usd_per_token ?? 0],
       ["图片输出", imageOutput, log.image_output_price_nano_usd_per_token ?? 0],
-      [
-        "推理",
-        log.reasoning_tokens,
-        log.reasoning_price_nano_usd_per_token ?? 0,
-      ],
+      ["推理", log.reasoning, log.reasoning_price_nano_usd_per_token ?? 0],
     ].filter(([, tokens]) => Number(tokens) > 0) as Array<
       [string, number, number]
     >
@@ -947,7 +952,7 @@ function LogOverview({
           items={[
             [
               "Token",
-              `${compactTokens(log.total_tokens)}（输入 ${compactTokens(log.prompt_tokens)} · 输出 ${compactTokens(log.completion_tokens)}） · 缓存命中 ${cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}`,
+              `${compactTokens(log.total_tokens)}（输入 ${compactTokens(log.input)} · 输出 ${compactTokens(log.output)}） · 缓存命中 ${cacheHitRateLabel(log.cache_read, log.input, log.cache_write, log.cache_unknown)}`,
             ],
             ["客户端请求体", bytes(log.request_body_bytes)],
             ["上游转发体", bytes(log.forwarded_body_bytes)],
@@ -956,7 +961,10 @@ function LogOverview({
               "首 Token",
               log.first_token_ms != null ? `${log.first_token_ms} ms` : "—",
             ],
-            ["首字节", log.ttft_ms != null ? `${log.ttft_ms} ms` : ""],
+            [
+              "首字节",
+              log.first_byte_ms != null ? `${log.first_byte_ms} ms` : "",
+            ],
             ["计费块耗时", `${log.latency_ms} ms`],
             ["输出 Token 速度", requestTokenRateLabel(log)],
           ]}
@@ -970,7 +978,7 @@ function LogOverview({
       <RequestLatencyTimeline
         value={latencyTrace}
         totalMS={log.latency_ms}
-        ttftMS={log.ttft_ms}
+        ttftMS={log.first_byte_ms}
         stream={log.stream}
       />
 

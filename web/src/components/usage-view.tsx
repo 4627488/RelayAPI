@@ -44,9 +44,9 @@ export function PeriodControl({
       size="sm"
       aria-label="统计周期"
     >
-      {[7, 30, 90, 365].map((n) => (
+      {[1, 7, 30, 90, 365, 0].map((n) => (
         <ToggleGroupItem key={n} value={String(n)}>
-          {n === 365 ? "1 年" : `${n} 天`}
+          {n === 0 ? "全部" : n === 1 ? "今天" : n === 365 ? "1 年" : `${n} 天`}
         </ToggleGroupItem>
       ))}
     </ToggleGroup>
@@ -66,7 +66,11 @@ export function UsageView({
   const [userID, setUserID] = useState("all")
   const [users, setUsers] = useState(initialUsers)
   const load = useCallback(() => {
-    const params = new URLSearchParams({ days: String(days) })
+    const params = new URLSearchParams({
+      days: String(days),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    })
+    if (days === 0) params.set("period", "all")
     if (admin)
       params.set("timezone_offset", String(-new Date().getTimezoneOffset()))
     if (admin && userID !== "all") params.set("user_id", userID)
@@ -105,7 +109,7 @@ export function UsageView({
     <div className="flex min-w-0 flex-col gap-6" aria-busy={loading}>
       <PageHeader
         title={admin ? "全局用量" : "用量"}
-        description={`当前展示最近 ${report.days} 天${admin && report.user_id ? " · 已筛选租户" : ""}${report.generated_at ? ` · 更新于 ${dateTime(report.generated_at)}` : ""}`}
+        description={`当前展示${report.days === 0 ? "全部历史" : `最近 ${report.days} 天`}（${report.timezone ?? "UTC"}）${admin && report.user_id ? " · 已筛选租户" : ""}${report.generated_at ? ` · 更新于 ${dateTime(report.generated_at)}` : ""}`}
         actions={
           <>
             {admin && (

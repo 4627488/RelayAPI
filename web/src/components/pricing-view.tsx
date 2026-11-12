@@ -173,11 +173,12 @@ export function PricingView() {
           output_nano_usd_per_token: perMillion("output"),
           cached_input_nano_usd_per_token: perMillion("cached"),
           cache_write_nano_usd_per_token: perMillion("cacheWrite"),
-          reasoning_nano_usd_per_token: perMillion("reasoning"),
+          cache_write_1h_nano_usd_per_token: perMillion("cacheWrite1h"),
           image_input_nano_usd_per_token: perMillion("imageInput"),
           cached_image_input_nano_usd_per_token: perMillion("cachedImageInput"),
           image_output_nano_usd_per_token: perMillion("imageOutput"),
           price_multiplier: Number(data.get("multiplier") || 1),
+          tiers: editingPrice?.tiers ?? [],
         }),
       })
       setEditingPrice(null)
@@ -722,9 +723,9 @@ export function PricingView() {
                     ],
                     ["output", "输出", editingPrice?.output_nano_usd_per_token],
                     [
-                      "reasoning",
-                      "推理",
-                      editingPrice?.reasoning_nano_usd_per_token,
+                      "cacheWrite1h",
+                      "缓存写入（1 小时）",
+                      editingPrice?.cache_write_1h_nano_usd_per_token,
                     ],
                     [
                       "multiplier",

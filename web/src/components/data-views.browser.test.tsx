@@ -12,11 +12,11 @@ const usage: UsageReport = {
     requests: 20,
     errors: 1,
     tokens: 3600,
-    prompt_tokens: 2200,
-    completion_tokens: 1400,
-    cached_tokens: 0,
-    cache_write_tokens: 0,
-    reasoning_tokens: 0,
+    input: 2200,
+    output: 1400,
+    cache_read: 0,
+    cache_write: 0,
+    reasoning: 0,
     image_input_tokens: 0,
     cached_image_input_tokens: 0,
     image_output_tokens: 0,
@@ -30,9 +30,9 @@ const usage: UsageReport = {
       requests: 8,
       errors: 1,
       tokens: 1200,
-      prompt_tokens: 700,
-      completion_tokens: 500,
-      cached_tokens: 0,
+      input: 700,
+      output: 500,
+      cache_read: 0,
       cost_nano_usd: 40,
     },
   ],
@@ -52,8 +52,8 @@ const log = {
   client_version: "1.0",
   user_agent: "browser",
   total_tokens: 42,
-  cached_tokens: 0,
-  prompt_tokens: 20,
+  cache_read: 0,
+  input: 20,
   latency_ms: 125,
   cost_nano_usd: 100,
 } as RequestLog
@@ -84,7 +84,7 @@ describe("data views", () => {
       </div>
     )
 
-    const links = screen.getByRole("link", { name: /查看扣费明细 特殊模型/ })
+    const links = screen.getByRole("link", { name: /查看请求记录 特殊模型/ })
     await expect
       .element(links.nth(0))
       .toHaveAttribute("href", "/app/logs/request%2Fid%3Fdetail%3D1")

@@ -8,7 +8,7 @@ RelayAPI 是 Codex 优先的 Go 多租户模型网关。统一入口负责协议
 [docs/image-billing.md](docs/image-billing.md)，父/子订阅与严格凭据路由见
 [docs/subscriptions.md](docs/subscriptions.md)。
 
-后台日志输出为分级 JSON，由 Alloy 推送到 Loki；可选部署配置见 [docker-compose.observability.yml](docker-compose.observability.yml)。页面中的「扣费明细」用于查看用量和扣费。Prometheus 指标通过 `GET /metrics` 提供，包含 Relay 和内嵌 CPA 指标；日志采集、查询、指标语义和告警示例见 [docs/observability.md](docs/observability.md)。
+后台日志输出为分级 JSON，由 Alloy 推送到 Loki；可选部署配置见 [docker-compose.observability.yml](docker-compose.observability.yml)。页面中的「请求记录」用于查看用量和扣费。Prometheus 指标通过 `GET /metrics` 提供，包含 Relay 和内嵌 CPA 指标；日志采集、查询、指标语义和告警示例见 [docs/observability.md](docs/observability.md)。
 
 ## 启动
 
@@ -271,7 +271,7 @@ Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段�
 - `POST /api/auth/register`：首用户无邀请初始化；后续用户使用邀请 token 注册
 - `POST /api/auth/login`：登录
 - `GET /api/dashboard`：账户与近 30 天概览
-- `GET /api/usage?days=30`：按天、模型和 API Key 聚合的个人用量
+- `GET /api/usage?days=30&timezone=Asia/Singapore`：按天、模型和 API Key 聚合的个人用量
 - `GET|POST /api/keys`：查看或生成个人 API Key，可限制启用模型并配置 Key 私有模型别名
 - `GET /api/keys/{id}/secret`：按需读取自己可恢复的完整 API Key（禁止缓存）
 - `PUT /api/keys/{id}`：编辑 API Key 名称、额度、启用模型和模型别名
@@ -314,3 +314,7 @@ function，响应再恢复成标准 `custom_tool_call`。Responses
 WebSocket 的首帧与后续帧都透明交给内层处理，Relay 只读取终态事件中的 usage 并
 按连接内所有轮次累计结算。旧的外置数据面、C-ABI bridge、兼容执行器和第三方运行时
 依赖均已移除；提供商实现不会向业务、计费或 HTTP 层泄漏内部类型。
+
+计量使用 Magpie 的独立普通输入、缓存读取和缓存写入口径；推理已包含在输出，不重复计费。
+请求记录包含失败、取消、拒绝、免费与未定价结果。全部历史可用 `period=all` 查询，
+字段与迁移说明见 [请求计量与结算](docs/billing-step-logs.md)。

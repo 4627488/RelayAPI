@@ -35,10 +35,10 @@ export function Last24HoursTokenRate({ report }: { report: UsageReport }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>过去24小时全站输出 Token 速率</CardTitle>
+        <CardTitle>过去 24 小时输出 Token 吞吐量</CardTitle>
         <CardDescription>
           按当前时区、请求完成时间统计，每分钟输出 Token ÷
-          秒数，首尾分钟按窗口内实际秒数计算。此图始终展示全站数据。
+          秒数，首尾分钟按窗口内实际秒数计算。跟随当前用户筛选；这是请求吞吐量，生成速度按有效流式样本统计。
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -123,7 +123,7 @@ const trendConfig = {
   requests: { label: "请求", color: "var(--chart-3)" },
   errors: { label: "错误", color: "var(--destructive)" },
   tokens: { label: "Tokens", color: "var(--chart-4)" },
-  cached_tokens: { label: "缓存命中", color: "var(--chart-2)" },
+  cache_read: { label: "缓存命中", color: "var(--chart-2)" },
   cost_usd: { label: "费用", color: "var(--chart-3)" },
 } satisfies ChartConfig
 
@@ -161,11 +161,11 @@ function BreakdownRow({
 export function TokenBreakdown({ report }: { report: UsageReport }) {
   const summary = report.summary
   const items = [
-    ["输入", summary.prompt_tokens],
-    ["输出", summary.completion_tokens],
-    ["缓存读取", summary.cached_tokens],
-    ["缓存写入", summary.cache_write_tokens],
-    ["推理", summary.reasoning_tokens],
+    ["输入", summary.input],
+    ["输出", summary.output],
+    ["缓存读取", summary.cache_read],
+    ["缓存写入", summary.cache_write],
+    ["推理", summary.reasoning],
   ] as const
   const imageTokens = summary.image_input_tokens + summary.image_output_tokens
   return (
@@ -173,7 +173,7 @@ export function TokenBreakdown({ report }: { report: UsageReport }) {
       <CardHeader>
         <CardTitle>Token 结构</CardTitle>
         <CardDescription>
-          输入输出为主维度，缓存与推理为其中的细分计数。
+          普通输入、缓存读取、缓存写入分别计量；推理已包含在输出中。
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -385,11 +385,11 @@ export function UsageTrend({ report }: { report: UsageReport }) {
                     strokeWidth={2}
                   />
                   <Area
-                    dataKey="cached_tokens"
+                    dataKey="cache_read"
                     type="monotone"
-                    fill="var(--color-cached_tokens)"
+                    fill="var(--color-cache_read)"
                     fillOpacity={0.08}
-                    stroke="var(--color-cached_tokens)"
+                    stroke="var(--color-cache_read)"
                     strokeWidth={1.5}
                   />
                 </>

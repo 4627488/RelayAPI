@@ -15,7 +15,7 @@ func TestCPAUsageCanonicalCacheAndReasoningAccounting(t *testing.T) {
 		OutputTokens: 50, ReasoningTokens: 10, TotalTokens: 150,
 	}, true)
 	want := billing.Result{RequestID: "resp-1", Model: "gpt-5", ResponseServiceTier: "priority", Found: true, UsageQuality: "complete",
-		Usage: store.Usage{Prompt: 80, Cached: 30, CacheWrite: 20, Completion: 50, Reasoning: 10, Total: 150}}
+		Usage: store.Usage{Input: 50, CacheRead: 30, CacheWrite: 20, Output: 50, Reasoning: 10, Total: 100}}
 	if result != want {
 		t.Fatalf("canonical billing result = %+v, want %+v", result, want)
 	}
@@ -69,7 +69,7 @@ func TestCPAUsageMissingVersusExplicitZero(t *testing.T) {
 func TestCPATokenCountsAreCompleteZeroCostOutcomes(t *testing.T) {
 	for _, path := range []string{"/v1/messages/count_tokens", "/v1beta/models/gemini-2.5-flash:countTokens"} {
 		got := (&App{}).cpaBillingUsage(t.Context(), "count", "", path, requestMeta{Model: "test"},
-			billing.Result{Found: true, Usage: store.Usage{Prompt: 100, Total: 100}})
+			billing.Result{Found: true, Usage: store.Usage{Input: 100, Total: 100}})
 		assessment := billing.Assess(got, nil)
 		if !got.NonGenerated() || got.Usage != (store.Usage{}) || !assessment.Complete || assessment.CostNanoUSD != 0 {
 			t.Fatalf("token estimate was charged: %+v %+v", got, assessment)

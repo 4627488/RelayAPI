@@ -118,7 +118,7 @@ func TestMetricsInferenceUnitsAndCPAStages(t *testing.T) {
 	a := metricsTestApp()
 	cost, first := int64(250_000_000), int64(1500)
 	input := store.LogInput{RequestType: "responses.websocket", StatusCode: 200, LatencyMS: 2500,
-		FirstTokenMS: &first, CostNanoUSD: &cost, PricingComplete: true, Settled: true, Usage: store.Usage{Prompt: 10, Completion: 2, Total: 12}, Model: "private-model", TenantID: "private-tenant"}
+		FirstTokenMS: &first, CostNanoUSD: &cost, PricingComplete: true, Settled: true, Usage: store.Usage{Input: 10, Output: 2, Total: 12}, Model: "private-model", TenantID: "private-tenant"}
 	a.observeInference(input)
 	input.LogUnit = store.LogUnitConnection
 	a.observeInference(input)

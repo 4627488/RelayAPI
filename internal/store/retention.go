@@ -216,48 +216,23 @@ func (s Store) compactRequestLogs(ctx context.Context, cutoff time.Time, batch i
 			return 0, err
 		}
 		var rollups []db.UsageDailyRollup
-		if err := tx.Raw(`SELECT (l.started_at AT TIME ZONE 'UTC')::date AS day, l.tenant_id, l.model,
-			count(*) AS requests,
-			COALESCE(sum(CASE WHEN (l.status_code >= 400 OR l.status_code = 0 OR COALESCE(l.error_code, '') <> '') THEN 1 ELSE 0 END),0) AS errors,
-			COALESCE(sum(l.prompt_tokens),0) AS prompt_tokens, COALESCE(sum(l.completion_tokens),0) AS completion_tokens,
-			COALESCE(sum(l.cached_tokens),0) AS cached_tokens, COALESCE(sum(l.cache_write_tokens),0) AS cache_write_tokens,
-			COALESCE(sum(l.reasoning_tokens),0) AS reasoning_tokens,
-			COALESCE(sum(l.image_input_tokens),0) AS image_input_tokens,
-			COALESCE(sum(l.cached_image_input_tokens),0) AS cached_image_input_tokens,
-			COALESCE(sum(l.image_output_tokens),0) AS image_output_tokens,
-			COALESCE(sum(l.total_tokens),0) AS total_tokens,
-			COALESCE(sum(l.cost_nano_usd),0) AS cost_nano_usd,
-			COALESCE(sum(CASE WHEN l.billing_source = 'subscription' THEN l.cost_nano_usd ELSE 0 END),0) AS subscription_covered_nano_usd,
-			COALESCE(sum(CASE WHEN l.billing_source = 'balance' OR (l.billing_source = '' AND l.parent_subscription_id IS NULL) THEN l.cost_nano_usd ELSE 0 END),0) AS balance_charged_nano_usd
-			FROM request_logs l
-			WHERE l.id IN ? AND l.log_unit = 'step' AND l.pricing_complete = true AND l.settled = true AND l.cost_nano_usd > 0 GROUP BY 1, l.tenant_id, l.model`, ids).Scan(&rollups).Error; err != nil {
+		if err := tx.Raw(liveUsageFactsSQL+` FROM request_logs WHERE id IN ? AND log_unit='step'
+   GROUP BY 1,tenant_id,model,api_key_id`, ids).Scan(&rollups).Error; err != nil {
 			return 0, err
 		}
+		columns := append(append([]string(nil), usageFactColumns...), "total_tokens")
 		for index := range rollups {
+			rollups[index].TotalTokens = rollups[index].PromptTokens + rollups[index].CompletionTokens
 			rollups[index].UpdatedAt = time.Now()
-			if err := tx.Clauses(clause.OnConflict{
-				Columns: []clause.Column{{Name: "day"}, {Name: "tenant_id"}, {Name: "model"}},
-				DoUpdates: clause.Assignments(map[string]any{
-					"requests":                      gorm.Expr("usage_daily_rollups.requests + EXCLUDED.requests"),
-					"errors":                        gorm.Expr("usage_daily_rollups.errors + EXCLUDED.errors"),
-					"prompt_tokens":                 gorm.Expr("usage_daily_rollups.prompt_tokens + EXCLUDED.prompt_tokens"),
-					"completion_tokens":             gorm.Expr("usage_daily_rollups.completion_tokens + EXCLUDED.completion_tokens"),
-					"cached_tokens":                 gorm.Expr("usage_daily_rollups.cached_tokens + EXCLUDED.cached_tokens"),
-					"cache_write_tokens":            gorm.Expr("usage_daily_rollups.cache_write_tokens + EXCLUDED.cache_write_tokens"),
-					"reasoning_tokens":              gorm.Expr("usage_daily_rollups.reasoning_tokens + EXCLUDED.reasoning_tokens"),
-					"image_input_tokens":            gorm.Expr("usage_daily_rollups.image_input_tokens + EXCLUDED.image_input_tokens"),
-					"cached_image_input_tokens":     gorm.Expr("usage_daily_rollups.cached_image_input_tokens + EXCLUDED.cached_image_input_tokens"),
-					"image_output_tokens":           gorm.Expr("usage_daily_rollups.image_output_tokens + EXCLUDED.image_output_tokens"),
-					"total_tokens":                  gorm.Expr("usage_daily_rollups.total_tokens + EXCLUDED.total_tokens"),
-					"cost_nano_usd":                 gorm.Expr("usage_daily_rollups.cost_nano_usd + EXCLUDED.cost_nano_usd"),
-					"subscription_covered_nano_usd": gorm.Expr("usage_daily_rollups.subscription_covered_nano_usd + EXCLUDED.subscription_covered_nano_usd"),
-					"balance_charged_nano_usd":      gorm.Expr("usage_daily_rollups.balance_charged_nano_usd + EXCLUDED.balance_charged_nano_usd"),
-					"updated_at":                    time.Now(),
-				}),
-			}).Create(&rollups[index]).Error; err != nil {
+			updates := map[string]any{"updated_at": time.Now(), "api_key_name": gorm.Expr("EXCLUDED.api_key_name"), "api_key_prefix": gorm.Expr("EXCLUDED.api_key_prefix")}
+			for _, column := range columns {
+				updates[column] = gorm.Expr("usage_rollups_v2." + column + " + EXCLUDED." + column)
+			}
+			if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "day"}, {Name: "tenant_id"}, {Name: "model"}, {Name: "api_key_id"}}, DoUpdates: clause.Assignments(updates)}).Create(&rollups[index]).Error; err != nil {
 				return 0, err
 			}
 		}
+
 		stats.Rollups += int64(len(rollups))
 		if err := tx.Where("request_log_id IN ?", ids).Delete(&db.RequestLogDetail{}).Error; err != nil {
 			return 0, err

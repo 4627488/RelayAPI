@@ -40,7 +40,7 @@ func TestFastPricingActualTierAndOverrides(t *testing.T) {
 	}
 	normal, _ := snapshot.Resolve(Dimensions{Model: price.Model})
 	fast, _ := snapshot.Resolve(Dimensions{Model: price.Model, ResponseServiceTier: "priority"})
-	usage := Usage{Prompt: 100, Cached: 30, CacheWrite: 20, Completion: 50, Reasoning: 10, Total: 170,
+	usage := Usage{Input: 100, CacheRead: 30, CacheWrite: 20, Output: 50, Reasoning: 10, Total: 170,
 		ImageInput: 10, CachedImageInput: 5, ImageOutput: 5}
 	if got, want := CostNanoUSD(fast, usage), 2*CostNanoUSD(normal, usage); got != want {
 		t.Fatalf("Fast cost %d, want exactly double %d", got, want)

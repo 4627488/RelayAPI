@@ -17,17 +17,17 @@ func TestParseResponseProtocols(t *testing.T) {
 		{
 			name:    "openai responses SSE",
 			payload: "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":10,\"output_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":3},\"output_tokens_details\":{\"reasoning_tokens\":2}}}}\n\n",
-			want:    store.Usage{Prompt: 10, Completion: 4, Cached: 3, Reasoning: 2, Total: 14},
+			want:    store.Usage{Input: 7, Output: 4, CacheRead: 3, Reasoning: 2, Total: 11},
 		},
 		{
 			name:    "bailian chat cache details",
 			payload: `{"id":"chat_1","usage":{"prompt_tokens":1200,"completion_tokens":20,"total_tokens":1220,"prompt_tokens_details":{"cached_tokens":900}}}`,
-			want:    store.Usage{Prompt: 1200, Completion: 20, Cached: 900, Total: 1220},
+			want:    store.Usage{Input: 300, Output: 20, CacheRead: 900, Total: 320},
 		},
 		{
 			name:    "openai image usage",
 			payload: `{"usage":{"input_tokens":110,"output_tokens":196,"total_tokens":306,"input_tokens_details":{"text_tokens":10,"image_tokens":100},"output_tokens_details":{"image_tokens":196}}}`,
-			want:    store.Usage{Prompt: 110, Completion: 196, ImageInput: 100, ImageOutput: 196, Total: 306},
+			want:    store.Usage{Input: 110, Output: 196, ImageInput: 100, ImageOutput: 196, Total: 306},
 		},
 	}
 	for _, test := range tests {
@@ -45,7 +45,7 @@ func TestParseResponseProtocols(t *testing.T) {
 
 func TestKimiMessagesCacheUsageIsBilledAsSeparateInput(t *testing.T) {
 	result := ParseResponse([]byte(`{"type":"message_start","message":{"id":"msg_kimi","usage":{"input_tokens":475,"output_tokens":690,"cache_read_input_tokens":218880,"cache_creation_input_tokens":0,"total_tokens":1165}}}`))
-	wantUsage := store.Usage{Prompt: 219355, Completion: 690, Cached: 218880, Total: 220045}
+	wantUsage := store.Usage{Input: 475, Output: 690, CacheRead: 218880, Total: 1165}
 	if !result.Found || result.Usage != wantUsage {
 		t.Fatalf("usage = %+v, want %+v", result.Usage, wantUsage)
 	}
@@ -91,18 +91,18 @@ func TestCostAvoidsChargingCachedInputTwice(t *testing.T) {
 		ReasoningNanoUSDPerToken: 3,
 	},
 	}
-	usage := store.Usage{Prompt: 10, Completion: 5, Cached: 4, CacheWrite: 2, Reasoning: 1}
-	if got, want := Cost(price, usage), int64(159); got != want {
+	usage := store.Usage{Input: 6, Output: 5, CacheRead: 4, CacheWrite: 2, Reasoning: 1}
+	if got, want := Cost(price, usage), int64(176); got != want {
 		t.Fatalf("cost = %d, want %d", got, want)
 	}
 }
 
-func TestCostChargesSeparatelyReportedReasoning(t *testing.T) {
+func TestCostNeverChargesReasoningTwice(t *testing.T) {
 	price := pricing.SnapshotPrice{Price: pricing.Price{
 		InputNanoUSDPerToken: 10, OutputNanoUSDPerToken: 20, ReasoningNanoUSDPerToken: 3,
 	}}
-	usage := store.Usage{Prompt: 10, Completion: 5, Reasoning: 2, Total: 17}
-	if got, want := Cost(price, usage), int64(206); got != want {
+	usage := store.Usage{Input: 10, Output: 5, Reasoning: 2, Total: 17}
+	if got, want := Cost(price, usage), int64(200); got != want {
 		t.Fatalf("cost = %d, want %d", got, want)
 	}
 }
@@ -114,8 +114,8 @@ func TestCostChargesImageAndTextTokensAtSeparateRates(t *testing.T) {
 		ImageOutputNanoUSDPerToken: 30,
 	}}
 	usage := store.Usage{
-		Prompt: 110, Cached: 15, ImageInput: 100, CachedImageInput: 10,
-		Completion: 196, ImageOutput: 196, Total: 306,
+		Input: 95, CacheRead: 15, ImageInput: 100, CachedImageInput: 10,
+		Output: 196, ImageOutput: 196, Total: 306,
 	}
 	// text: 5 uncached + 5 cached; image input: 90 uncached + 10 cached;
 	// image output: 196.
@@ -126,18 +126,53 @@ func TestCostChargesImageAndTextTokensAtSeparateRates(t *testing.T) {
 
 func TestImagePricingRequiresImageOutputUsage(t *testing.T) {
 	price := pricing.SnapshotPrice{Price: pricing.Price{ImageOutputNanoUSDPerToken: 30}}
-	if UsageComplete(price, store.Usage{Completion: 196}) {
+	if UsageComplete(price, store.Usage{Output: 196}) {
 		t.Fatal("aggregate completion tokens must not be accepted as image usage")
 	}
-	if !UsageComplete(price, store.Usage{Completion: 196, ImageOutput: 196}) {
+	if !UsageComplete(price, store.Usage{Output: 196, ImageOutput: 196}) {
 		t.Fatal("image output usage should be complete")
 	}
 }
 
 func TestCostSaturatesInsteadOfOverflowing(t *testing.T) {
 	price := pricing.SnapshotPrice{Price: pricing.Price{OutputNanoUSDPerToken: 2}}
-	usage := store.Usage{Completion: math.MaxInt64, Total: math.MaxInt64}
+	usage := store.Usage{Output: math.MaxInt64, Total: math.MaxInt64}
 	if got := Cost(price, usage); got != math.MaxInt64 {
 		t.Fatalf("cost = %d, want MaxInt64", got)
+	}
+}
+
+func TestMagpieProtocolCacheTTLandGeminiReasoning(t *testing.T) {
+	for _, tc := range []struct {
+		payload string
+		want    store.Usage
+	}{
+		{`{"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":300,"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_1h_input_tokens":60}}}`, store.Usage{Input: 100, Output: 50, CacheRead: 300, CacheWrite: 100, CacheWrite1h: 60, Total: 150}},
+		{`{"usageMetadata":{"promptTokenCount":100,"cachedContentTokenCount":80,"candidatesTokenCount":10,"thoughtsTokenCount":20}}`, store.Usage{Input: 20, Output: 30, CacheRead: 80, Reasoning: 20, Total: 50}},
+		{`{"usage":{"prompt_tokens":100,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":80},"completion_tokens_details":{"reasoning_tokens":20}}}`, store.Usage{Input: 20, Output: 50, CacheRead: 80, Reasoning: 20, Total: 70}},
+	} {
+		got := ParseResponse([]byte(tc.payload))
+		if !got.Found || got.Usage != tc.want {
+			t.Fatalf("%s: got %+v want %+v", tc.payload, got, tc.want)
+		}
+	}
+	if ParseResponse([]byte(`{"usage":{}}`)).Found {
+		t.Fatal("empty object is not explicit zero usage")
+	}
+}
+
+func TestMalformedOrPartialUsageDoesNotBecomeACharge(t *testing.T) {
+	price := &store.ResolvedPrice{Price: pricing.Price{InputNanoUSDPerToken: 1, OutputNanoUSDPerToken: 2}}
+	for _, payload := range []string{`{"usage":{"input_tokens":100}}`, `{"usage":{"input_tokens":10,"output_tokens":5,"cached_tokens":100}}`, `{"usage":{"input_tokens":-1,"output_tokens":50}}`, `{"usage":{"input_tokens":"100","output_tokens":50}}`} {
+		got := ParseResponse([]byte(payload))
+		if assessment := Assess(got, price); assessment.Complete || assessment.CostNanoUSD != 0 {
+			t.Fatalf("malformed usage charged: %s %+v", payload, got)
+		}
+	}
+	var got Result
+	Merge(&got, ParseResponse([]byte(`{"usage":{"input_tokens":100}}`)))
+	Merge(&got, ParseResponse([]byte(`{"usage":{"output_tokens":50}}`)))
+	if got.UsageQuality != "complete" || !Assess(got, price).Complete {
+		t.Fatalf("split stream did not complete: %+v", got)
 	}
 }

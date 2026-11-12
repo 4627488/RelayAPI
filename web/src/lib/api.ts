@@ -71,6 +71,18 @@ export interface Invitation {
 }
 
 export interface RequestLog {
+  cache_write_1h?: number
+  cache_unknown?: boolean
+  canceled?: boolean
+  rejected?: boolean
+  tries?: number
+  first_byte_ms?: number
+  first_text_ms?: number
+  first_reasoning_ms?: number
+  flow_ms?: number
+  decode_out?: number
+  decode_ms?: number
+
   first_token_ms?: number
   reservation_request_id?: string
   log_unit?: string
@@ -113,11 +125,11 @@ export interface RequestLog {
   request_body_bytes: number
   forwarded_body_bytes: number
   response_body_bytes: number
-  prompt_tokens: number
-  completion_tokens: number
-  cached_tokens: number
-  cache_write_tokens: number
-  reasoning_tokens: number
+  input: number
+  output: number
+  cache_read: number
+  cache_write: number
+  reasoning: number
   image_input_tokens: number
   cached_image_input_tokens: number
   image_output_tokens: number
@@ -177,11 +189,24 @@ export interface RequestLogPage {
   page_size: number
   total: number
   summary: {
+    canceled?: number
+    rejected?: number
+    retried?: number
+    unpriced?: number
+    cache_write_1h?: number
+    cache_unknown?: number
+    cache_unknown_calls?: number
+    cache_hit_rate?: number | null
+    mean_ttft_ms?: number | null
+    tokens_per_second?: number | null
+    timed?: number
+    decode_n?: number
     requests: number
     errors: number
     tokens: number
-    prompt_tokens: number
-    cached_tokens: number
+    input: number
+    cache_read: number
+    cache_write?: number
     cost_nano_usd: number
     average_latency_ms: number
     latency_p50_ms: number
@@ -195,6 +220,16 @@ export interface RequestLogPage {
 }
 
 export interface ModelPrice {
+  cache_write_1h_nano_usd_per_token?: number
+  tiers?: Array<{
+    above: number
+    input_nano_usd_per_token: number
+    output_nano_usd_per_token: number
+    cached_input_nano_usd_per_token: number
+    cache_write_nano_usd_per_token: number
+    cache_write_1h_nano_usd_per_token: number
+  }>
+
   model: string
   input_nano_usd_per_token: number
   output_nano_usd_per_token: number
@@ -235,13 +270,13 @@ export interface UsageObservability {
   retained_requests: number
   step_samples: number
   first_token_samples: number
-  ttft_samples: number
+  first_byte_samples: number
   latency_p50_ms: number | null
   latency_p95_ms: number | null
   first_token_p50_ms: number | null
   first_token_p95_ms: number | null
-  ttft_p50_ms: number | null
-  ttft_p95_ms: number | null
+  first_byte_p50_ms: number | null
+  first_byte_p95_ms: number | null
   first_observed_at: string | null
   last_observed_at: string | null
   unpriced_requests: number
@@ -262,6 +297,8 @@ export interface UsageObservability {
 }
 
 export interface UsageReport {
+  timezone?: string
+  metering_version?: number
   token_rate?: Array<{
     time: string
     tokens: number
@@ -273,14 +310,26 @@ export interface UsageReport {
   days: number
   user_id: string
   summary: {
+    canceled?: number
+    rejected?: number
+    retried?: number
+    unpriced?: number
+    cache_write_1h?: number
+    cache_unknown?: number
+    cache_unknown_calls?: number
+    cache_hit_rate?: number | null
+    mean_ttft_ms?: number | null
+    tokens_per_second?: number | null
+    timed?: number
+    decode_n?: number
     requests: number
     errors: number
     tokens: number
-    prompt_tokens: number
-    completion_tokens: number
-    cached_tokens: number
-    cache_write_tokens: number
-    reasoning_tokens: number
+    input: number
+    output: number
+    cache_read: number
+    cache_write: number
+    reasoning: number
     image_input_tokens: number
     cached_image_input_tokens: number
     image_output_tokens: number
@@ -293,9 +342,11 @@ export interface UsageReport {
     requests: number
     errors: number
     tokens: number
-    prompt_tokens: number
-    completion_tokens: number
-    cached_tokens: number
+    input: number
+    output: number
+    cache_read: number
+    cache_write?: number
+    cache_unknown?: number
     cost_nano_usd: number
   }>
   models: Array<{
@@ -303,9 +354,11 @@ export interface UsageReport {
     requests: number
     errors: number
     tokens: number
-    prompt_tokens: number
-    completion_tokens: number
-    cached_tokens: number
+    input: number
+    output: number
+    cache_read: number
+    cache_write?: number
+    cache_unknown?: number
     cost_nano_usd: number
   }>
   api_keys: Array<{

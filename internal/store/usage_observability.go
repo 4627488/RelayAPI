@@ -14,13 +14,13 @@ type UsageObservability struct {
 	RetainedRequests  int64           `json:"retained_requests"`
 	StepSamples       int64           `json:"step_samples"`
 	FirstTokenSamples int64           `json:"first_token_samples"`
-	TTFTSamples       int64           `json:"ttft_samples"`
+	TTFTSamples       int64           `json:"first_byte_samples"`
 	LatencyP50        *float64        `json:"latency_p50_ms"`
 	LatencyP95        *float64        `json:"latency_p95_ms"`
 	FirstTokenP50     *float64        `json:"first_token_p50_ms"`
 	FirstTokenP95     *float64        `json:"first_token_p95_ms"`
-	TTFTP50           *float64        `json:"ttft_p50_ms" gorm:"column:ttft_p50"`
-	TTFTP95           *float64        `json:"ttft_p95_ms" gorm:"column:ttft_p95"`
+	TTFTP50           *float64        `json:"first_byte_p50_ms" gorm:"column:ttft_p50"`
+	TTFTP95           *float64        `json:"first_byte_p95_ms" gorm:"column:ttft_p95"`
 	FirstObservedAt   *time.Time      `json:"first_observed_at"`
 	LastObservedAt    *time.Time      `json:"last_observed_at"`
 	UnpricedRequests  int64           `json:"unpriced_requests"`
@@ -56,13 +56,13 @@ func (s Store) usageObservability(ctx context.Context, tenantID string, since ti
 	err := base().Select(`count(*) AS retained_requests,
  count(*) FILTER (WHERE log_unit = 'step') AS step_samples,
  count(first_token_ms) FILTER (WHERE log_unit = 'step' AND first_token_ms >= 0) AS first_token_samples,
- count(ttftms) FILTER (WHERE log_unit = 'step' AND ttftms >= 0) AS ttft_samples,
+ count(first_byte_ms) FILTER (WHERE log_unit = 'step' AND first_byte_ms >= 0) AS ttft_samples,
  percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE log_unit = 'step') AS latency_p50,
  percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE log_unit = 'step') AS latency_p95,
  percentile_cont(0.50) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE log_unit = 'step' AND first_token_ms >= 0) AS first_token_p50,
  percentile_cont(0.95) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE log_unit = 'step' AND first_token_ms >= 0) AS first_token_p95,
- percentile_cont(0.50) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE log_unit = 'step' AND ttftms >= 0) AS ttft_p50,
- percentile_cont(0.95) WITHIN GROUP (ORDER BY ttftms) FILTER (WHERE log_unit = 'step' AND ttftms >= 0) AS ttft_p95,
+ percentile_cont(0.50) WITHIN GROUP (ORDER BY first_byte_ms) FILTER (WHERE log_unit = 'step' AND first_byte_ms >= 0) AS ttft_p50,
+ percentile_cont(0.95) WITHIN GROUP (ORDER BY first_byte_ms) FILTER (WHERE log_unit = 'step' AND first_byte_ms >= 0) AS ttft_p95,
  min(started_at) AS first_observed_at, max(started_at) AS last_observed_at,
  count(*) FILTER (WHERE NOT pricing_complete) AS unpriced_requests,
  count(*) FILTER (WHERE NOT settled) AS unsettled_requests`).Scan(&result).Error

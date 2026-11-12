@@ -52,8 +52,8 @@ it("does not present absent observations as healthy zero latency", async () => {
       ...report.summary,
       requests: 0,
       errors: 0,
-      prompt_tokens: 0,
-      cached_tokens: 0,
+      input: 0,
+      cache_read: 0,
     },
     observability: undefined,
   }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -193,6 +194,17 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func usageDays(r *http.Request) int {
+	switch r.URL.Query().Get("period") {
+	case "today":
+		return 1
+	case "7d":
+		return 7
+	case "30d":
+		return 30
+	case "all":
+		return -1
+	}
+
 	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
 	if days < 1 || days > 365 {
 		return 30
@@ -201,7 +213,13 @@ func usageDays(r *http.Request) int {
 }
 
 func (a *App) usage(w http.ResponseWriter, r *http.Request) {
-	value, err := a.store.UsageReport(r.Context(), currentSession(r).TenantID, usageDays(r))
+	if zone := r.URL.Query().Get("timezone"); zone != "" {
+		if _, err := time.LoadLocation(zone); err != nil {
+			writeError(w, 400, "invalid_timezone", "Use an IANA timezone such as Asia/Singapore.")
+			return
+		}
+	}
+	value, err := a.store.UsageReport(r.Context(), currentSession(r).TenantID, usageDays(r), r.URL.Query().Get("timezone"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
 		return
@@ -210,8 +228,14 @@ func (a *App) usage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) adminUsage(w http.ResponseWriter, r *http.Request) {
+	if zone := r.URL.Query().Get("timezone"); zone != "" {
+		if _, err := time.LoadLocation(zone); err != nil {
+			writeError(w, 400, "invalid_timezone", "Use an IANA timezone such as Asia/Singapore.")
+			return
+		}
+	}
 	value, err := a.store.UsageReport(
-		r.Context(), strings.TrimSpace(r.URL.Query().Get("user_id")), usageDays(r),
+		r.Context(), strings.TrimSpace(r.URL.Query().Get("user_id")), usageDays(r), r.URL.Query().Get("timezone"),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
@@ -221,7 +245,7 @@ func (a *App) adminUsage(w http.ResponseWriter, r *http.Request) {
 	if offset < -720 || offset > 840 {
 		offset = 0
 	}
-	rate, err := a.store.Last24HoursTokenRate(r.Context(), time.Now(), offset)
+	rate, err := a.store.Last24HoursTokenRate(r.Context(), time.Now(), offset, strings.TrimSpace(r.URL.Query().Get("user_id")))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "database_error", err.Error())
 		return
@@ -687,15 +711,17 @@ func attachModelCapability(item *store.AvailableModelPrice, index *pricing.Capab
 
 func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		InputNanoUSDPerToken            int64    `json:"input_nano_usd_per_token"`
-		OutputNanoUSDPerToken           int64    `json:"output_nano_usd_per_token"`
-		CachedInputNanoUSDPerToken      int64    `json:"cached_input_nano_usd_per_token"`
-		CacheWriteNanoUSDPerToken       int64    `json:"cache_write_nano_usd_per_token"`
-		ReasoningNanoUSDPerToken        int64    `json:"reasoning_nano_usd_per_token"`
-		ImageInputNanoUSDPerToken       int64    `json:"image_input_nano_usd_per_token"`
-		CachedImageInputNanoUSDPerToken int64    `json:"cached_image_input_nano_usd_per_token"`
-		ImageOutputNanoUSDPerToken      int64    `json:"image_output_nano_usd_per_token"`
-		PriceMultiplier                 *float64 `json:"price_multiplier"`
+		CacheWrite1hNanoUSDPerToken     int64          `json:"cache_write_1h_nano_usd_per_token"`
+		Tiers                           []pricing.Tier `json:"tiers"`
+		InputNanoUSDPerToken            int64          `json:"input_nano_usd_per_token"`
+		OutputNanoUSDPerToken           int64          `json:"output_nano_usd_per_token"`
+		CachedInputNanoUSDPerToken      int64          `json:"cached_input_nano_usd_per_token"`
+		CacheWriteNanoUSDPerToken       int64          `json:"cache_write_nano_usd_per_token"`
+		ReasoningNanoUSDPerToken        int64          `json:"reasoning_nano_usd_per_token"`
+		ImageInputNanoUSDPerToken       int64          `json:"image_input_nano_usd_per_token"`
+		CachedImageInputNanoUSDPerToken int64          `json:"cached_image_input_nano_usd_per_token"`
+		ImageOutputNanoUSDPerToken      int64          `json:"image_output_nano_usd_per_token"`
+		PriceMultiplier                 *float64       `json:"price_multiplier"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -710,7 +736,7 @@ func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
 		multiplier = *input.PriceMultiplier
 	}
 	price := store.Price{
-		Model: model, InputNanoUSDPerToken: input.InputNanoUSDPerToken,
+		Model: model, InputNanoUSDPerToken: input.InputNanoUSDPerToken, CacheWrite1hNanoUSDPerToken: input.CacheWrite1hNanoUSDPerToken, Tiers: input.Tiers,
 		OutputNanoUSDPerToken:      input.OutputNanoUSDPerToken,
 		CachedInputNanoUSDPerToken: input.CachedInputNanoUSDPerToken,
 		CacheWriteNanoUSDPerToken:  input.CacheWriteNanoUSDPerToken,
@@ -719,9 +745,13 @@ func (a *App) adminPriceUpdate(w http.ResponseWriter, r *http.Request) {
 		CachedImageInputNanoUSDPerToken: input.CachedImageInputNanoUSDPerToken,
 		ImageOutputNanoUSDPerToken:      input.ImageOutputNanoUSDPerToken,
 	}
+	if _, err := pricing.Compile([]pricing.Price{{Model: model, Tiers: input.Tiers, PriceMultiplier: multiplier}}, nil, nil, nil, nil); err != nil {
+		writeError(w, 400, "validation_error", err.Error())
+		return
+	}
 	if min(price.InputNanoUSDPerToken, price.OutputNanoUSDPerToken, price.CachedInputNanoUSDPerToken,
 		price.CacheWriteNanoUSDPerToken, price.ReasoningNanoUSDPerToken, price.ImageInputNanoUSDPerToken,
-		price.CachedImageInputNanoUSDPerToken, price.ImageOutputNanoUSDPerToken) < 0 || multiplier < 0 {
+		price.CachedImageInputNanoUSDPerToken, price.ImageOutputNanoUSDPerToken, price.CacheWrite1hNanoUSDPerToken) < 0 || multiplier < 0 || math.IsNaN(multiplier) || math.IsInf(multiplier, 0) {
 		writeError(w, 400, "validation_error", "价格和倍率不能为负数")
 		return
 	}

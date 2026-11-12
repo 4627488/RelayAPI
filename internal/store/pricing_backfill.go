@@ -29,6 +29,9 @@ type HistoricalModelPrice struct {
 }
 
 type AvailableModelPrice struct {
+	CacheWrite1hNanoUSDPerToken int64          `json:"cache_write_1h_nano_usd_per_token"`
+	Tiers                       []pricing.Tier `json:"tiers,omitempty"`
+
 	Model                           string   `json:"model"`
 	Priced                          bool     `json:"priced"`
 	PricedModel                     string   `json:"priced_model"`
@@ -70,6 +73,8 @@ func (s *Store) AvailableModelPrices(ctx context.Context, models []string) ([]Av
 		if err != nil {
 			return nil, err
 		}
+		item.CacheWrite1hNanoUSDPerToken = resolved.CacheWrite1hNanoUSDPerToken
+		item.Tiers = resolved.Tiers
 		item.Priced = true
 		item.PricedModel = resolved.PricedModel
 		item.InputNanoUSDPerToken = resolved.InputNanoUSDPerToken

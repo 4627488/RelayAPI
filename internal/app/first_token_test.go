@@ -66,3 +66,15 @@ func TestWebSocketStepResetsFirstToken(t *testing.T) {
 		t.Fatal("next step inherited the previous first token")
 	}
 }
+
+func TestStreamKeepsCacheUsageBeyondDiagnosticCaptureAndTimesText(t *testing.T) {
+	started := time.Now()
+	o := &firstTokenObserver{}
+	o.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":0,\"cache_read_input_tokens\":30,\"cache_creation_input_tokens\":20,\"cache_creation\":{\"ephemeral_1h_input_tokens\":15}}}}\n\n"), started)
+	o.Write([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"think\"}}\n\n"), started.Add(time.Second))
+	o.Write([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n"), started.Add(2*time.Second))
+	o.Write([]byte("data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":50}}\n\n"), started.Add(3*time.Second))
+	if o.At != started.Add(time.Second) || o.TextAt != started.Add(2*time.Second) || o.Usage.Usage.Input != 10 || o.Usage.Usage.CacheRead != 30 || o.Usage.Usage.CacheWrite1h != 15 || o.Usage.Usage.Total != 60 {
+		t.Fatalf("stream lost accounting/first content: %+v", o)
+	}
+}

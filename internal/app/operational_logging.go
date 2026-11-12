@@ -55,7 +55,7 @@ func logInference(input store.LogInput) {
 		"protocol", metricProtocol(input.RequestType), "transport", requestTransport(input.RequestType, input.Stream),
 		"model", input.Model, "provider", input.Provider, "credential_id", input.AuthIndex,
 		"status", input.StatusCode, "error_code", input.ErrorCode, "duration_ms", input.LatencyMS,
-		"usage_quality", input.UsageQuality, "input_tokens", input.Usage.Prompt, "output_tokens", input.Usage.Completion,
+		"usage_quality", input.UsageQuality, "input_tokens", input.Usage.Input, "output_tokens", input.Usage.Output,
 		"total_tokens", input.Usage.Total, "pricing_complete", input.PricingComplete,
 		"request_bytes", input.RequestBodyBytes, "response_bytes", input.ResponseBodyBytes}
 	if input.CostNanoUSD != nil {

@@ -57,7 +57,7 @@ func (a *App) initMetrics() {
 	m.firstByte = histogram("inference_first_byte_seconds", "Time to first upstream event, when observed.", latencyBuckets, "protocol", "transport")
 	m.firstToken = histogram("inference_first_token_seconds", "Time to first generated content, when observed.", latencyBuckets, "protocol", "transport")
 	m.sizes = histogram("inference_body_bytes", "Inference payload sizes; WebSocket sizes are per turn.", []float64{1024, 16384, 65536, 262144, 1048576, 8388608, 67108864, 1073741824}, "direction", "transport")
-	m.tokens = counter("inference_tokens_total", "Observed usage buckets overlap; total is the provider accounting total.", "protocol", "transport", "kind")
+	m.tokens = counter("inference_tokens_total", "Disjoint input/cache buckets; output includes reasoning; total excludes cache traffic.", "protocol", "transport", "kind")
 	m.costs = counter("billing_cost_usd_total", "Settled inference charges in USD; not an accounting ledger.", "transport")
 	m.persistence = counter("persistence_operations_total", "Request accounting/log persistence outcomes.", "operation", "outcome")
 	m.executions = counter("cpa_execution_attempts_total", "Actual CPA executor invocations, including retry attempts and token counting.", "provider", "kind", "outcome")
@@ -169,13 +169,13 @@ func (a *App) observeInference(input store.LogInput) {
 	}
 	m.requests.WithLabelValues(protocol, transport, strconv.Itoa(input.StatusCode), pricing, strconv.FormatBool(input.Settled)).Inc()
 	m.latency.WithLabelValues(protocol, transport).Observe(float64(max64(0, input.LatencyMS)) / 1000)
-	if input.TTFTMS != nil {
-		m.firstByte.WithLabelValues(protocol, transport).Observe(float64(max64(0, *input.TTFTMS)) / 1000)
+	if input.FirstByteMS != nil {
+		m.firstByte.WithLabelValues(protocol, transport).Observe(float64(max64(0, *input.FirstByteMS)) / 1000)
 	}
 	if input.FirstTokenMS != nil {
 		m.firstToken.WithLabelValues(protocol, transport).Observe(float64(max64(0, *input.FirstTokenMS)) / 1000)
 	}
-	for kind, value := range map[string]int64{"input": input.Usage.Prompt, "output": input.Usage.Completion, "cached": input.Usage.Cached, "cache_write": input.Usage.CacheWrite, "reasoning": input.Usage.Reasoning, "total": input.Usage.Total, "image_input": input.Usage.ImageInput, "cached_image_input": input.Usage.CachedImageInput, "image_output": input.Usage.ImageOutput} {
+	for kind, value := range map[string]int64{"input": input.Usage.Input, "output": input.Usage.Output, "cache_read": input.Usage.CacheRead, "cache_write": input.Usage.CacheWrite, "cache_write_1h": input.Usage.CacheWrite1h, "reasoning": input.Usage.Reasoning, "total": input.Usage.Total, "image_input": input.Usage.ImageInput, "cached_image_input": input.Usage.CachedImageInput, "image_output": input.Usage.ImageOutput} {
 		m.tokens.WithLabelValues(protocol, transport, kind).Add(float64(max64(0, value)))
 	}
 	for direction, value := range map[string]int64{"request": input.RequestBodyBytes, "forwarded": input.ForwardedBodyBytes, "response": input.ResponseBodyBytes} {

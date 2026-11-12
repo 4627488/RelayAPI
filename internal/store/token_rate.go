@@ -16,14 +16,18 @@ type TokenRatePoint struct {
 // Last24HoursTokenRate counts only output tokens from completed generation logs,
 // once per log in one-minute buckets. Tokens in each point means output tokens.
 // The rolling window covers exactly 24 hours; partial buckets use elapsed seconds.
-func (s Store) Last24HoursTokenRate(ctx context.Context, now time.Time, offsetMinutes int) ([]TokenRatePoint, error) {
+func (s Store) Last24HoursTokenRate(ctx context.Context, now time.Time, offsetMinutes int, tenantIDs ...string) ([]TokenRatePoint, error) {
 	local := now.In(time.FixedZone("browser", offsetMinutes*60))
 	start := local.Add(-24 * time.Hour)
 	var rows []struct {
 		Bucket int64
 		Tokens int64
 	}
-	err := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL).
+	query := scoped(ctx, s.DB).Model(&db.RequestLog{}).Where(generationLogSQL)
+	if len(tenantIDs) > 0 && tenantIDs[0] != "" {
+		query = query.Where("tenant_id = ?", tenantIDs[0])
+	}
+	err := query.
 		Where("completed_at >= ? AND completed_at <= ?", start, now).
 		Select("floor(extract(epoch FROM completed_at) / 60)::bigint AS bucket, COALESCE(sum(completion_tokens), 0) AS tokens").
 		Group("bucket").Scan(&rows).Error

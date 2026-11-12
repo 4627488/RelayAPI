@@ -572,7 +572,7 @@ export function UsersView({
             <AlertDialogTitle>永久删除用户？</AlertDialogTitle>
             <AlertDialogDescription>
               将永久删除 {deleteUser?.name} 及其 API
-              Key、订阅分配、扣费明细和计费记录。此操作无法撤销。
+              Key、订阅分配、请求记录和计费记录。此操作无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

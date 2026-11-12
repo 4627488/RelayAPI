@@ -16,7 +16,7 @@ describe("workspace UI contract", () => {
     const screen = await render(
       <main>
         <PageHeader
-          title="扣费明细"
+          title="请求记录"
           description="查看请求用量、计价与扣费来源。"
         />
         <SearchField
@@ -32,7 +32,7 @@ describe("workspace UI contract", () => {
 
     await expect
       .element(screen.getByRole("heading", { level: 1 }))
-      .toHaveTextContent("扣费明细")
+      .toHaveTextContent("请求记录")
     await expect
       .element(screen.getByText("查看请求用量、计价与扣费来源。"))
       .toBeVisible()

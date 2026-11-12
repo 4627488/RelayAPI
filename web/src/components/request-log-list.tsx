@@ -104,7 +104,7 @@ export function RequestLogList({
   function link(log: RequestLog) {
     return {
       href: routeHref({ workspace, page: "logs", logId: log.id }),
-      "aria-label": `查看扣费明细 ${log.model || log.path} ${dateTime(log.started_at)}${log.log_unit === "legacy_session" ? " · 历史会话" : ""}`,
+      "aria-label": `查看请求记录 ${log.model || log.path} ${dateTime(log.started_at)}${log.log_unit === "legacy_session" ? " · 历史会话" : ""}`,
       onClick: (event: MouseEvent<HTMLAnchorElement>) => {
         if (
           !onOpen ||
@@ -214,7 +214,12 @@ export function RequestLogList({
                   </p>
                   <p className="text-xs text-muted-foreground">
                     缓存率{" "}
-                    {cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}
+                    {cacheHitRateLabel(
+                      log.cache_read,
+                      log.input,
+                      log.cache_write,
+                      log.cache_unknown
+                    )}
                   </p>
                 </TableCell>
                 <TableCell className="py-2 text-right tabular-nums">
@@ -327,7 +332,12 @@ export function RequestLogList({
                 <div>
                   <dt className="text-xs text-muted-foreground">缓存率</dt>
                   <dd>
-                    {cacheHitRateLabel(log.cached_tokens, log.prompt_tokens)}
+                    {cacheHitRateLabel(
+                      log.cache_read,
+                      log.input,
+                      log.cache_write,
+                      log.cache_unknown
+                    )}
                   </dd>
                 </div>
                 <div>

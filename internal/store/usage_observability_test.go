@@ -33,9 +33,9 @@ func TestUsageObservabilityIntegration(t *testing.T) {
 	// and avoids changing any existing request or tenant data.
 	err = tx.Exec(`CREATE TEMP TABLE request_logs (
  tenant_id text, started_at timestamptz, log_unit text, latency_ms bigint,
- first_token_ms bigint, ttftms bigint, pricing_complete boolean, settled boolean,
+ first_token_ms bigint, first_byte_ms bigint, pricing_complete boolean, settled boolean,
  model text, status_code integer, error_code text, provider text,
- total_tokens bigint, cost_nano_usd bigint) ON COMMIT DROP`).Error
+ total_tokens bigint, cost_nano_usd bigint, canceled boolean DEFAULT false, rejected boolean DEFAULT false) ON COMMIT DROP`).Error
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestUsageObservabilityIntegration(t *testing.T) {
 		{"b", "step", 8000, 5000, 6000, 503, "other_tenant", now},
 		{"a", "step", 8888, 888, 888, 500, "expired", now.Add(-48 * time.Hour)},
 	} {
-		if err = tx.Exec(`INSERT INTO request_logs VALUES (?, ?, ?, ?, ?, ?, true, true, 'model', ?, ?, 'provider', 10, 100)`, row.tenant, row.at, row.unit, row.latency, row.first, row.ttft, row.status, row.code).Error; err != nil {
+		if err = tx.Exec(`INSERT INTO request_logs VALUES (?, ?, ?, ?, ?, ?, true, true, 'model', ?, ?, 'provider', 10, 100, false, false)`, row.tenant, row.at, row.unit, row.latency, row.first, row.ttft, row.status, row.code).Error; err != nil {
 			t.Fatal(err)
 		}
 	}

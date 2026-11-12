@@ -1273,7 +1273,12 @@ func (s Store) SettleRequestWithLog(ctx context.Context, requestID string, l Log
 			return err
 		}
 		l.ID, l.TenantID, l.APIKeyID = requestID, reservation.TenantID, reservation.APIKeyID
-		l.CostNanoUSD, l.Settled, l.ReservedNanoUSD = &actual, true, 0
+		l.Settled, l.ReservedNanoUSD = true, 0
+		if l.PricingComplete {
+			l.CostNanoUSD = &actual
+		} else {
+			l.CostNanoUSD = nil
+		}
 		l.BillingSource = reservationBillingSource(reservation)
 		if actual > 0 && !isBillingDetail(l) {
 			return errors.New("charge requires a billing step")
@@ -1295,7 +1300,11 @@ func webSocketStepLog(input WebSocketTurnAccrual, startedAt, completedAt time.Ti
 	stepLog.Model, stepLog.ActualModel = input.Model, input.Model
 	stepLog.Usage = input.Usage
 	// Every billing detail contains only this step's confirmed charge.
-	stepLog.CostNanoUSD = &input.CostNanoUSD
+	if input.PricingComplete {
+		stepLog.CostNanoUSD = &input.CostNanoUSD
+	} else {
+		stepLog.CostNanoUSD = nil
+	}
 	stepLog.PricingComplete = input.PricingComplete
 	stepLog.StartedAt, stepLog.CompletedAt = startedAt, completedAt
 	stepLog.LatencyMS = completedAt.Sub(startedAt).Milliseconds()
@@ -1314,8 +1323,8 @@ func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccru
 	if input.Log.LogUnit == LogUnitPrewarm && (input.CostNanoUSD != 0 || input.Usage != (Usage{}) || !input.PricingComplete) {
 		return false, errors.New("prewarm must have complete zero-cost accounting")
 	}
-	// Uncharged terminal events advance the transport without creating a bill.
-	if input.CostNanoUSD == 0 {
+	// Every terminal is durable, including unpriced and zero-cost outcomes.
+	if input.Log.LogUnit == LogUnitPrewarm {
 		return true, nil
 	}
 	inserted := false
@@ -1338,8 +1347,8 @@ func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccru
 		turn := db.WebSocketTurn{
 			RequestID: input.RequestID, TurnID: strings.TrimSpace(input.TurnID),
 			Model:        strings.TrimSpace(input.Model),
-			PromptTokens: input.Usage.Prompt, CompletionTokens: input.Usage.Completion,
-			CachedTokens: input.Usage.Cached, CacheWriteTokens: input.Usage.CacheWrite,
+			PromptTokens: input.Usage.Input, CompletionTokens: input.Usage.Output,
+			CachedTokens: input.Usage.CacheRead, CacheWriteTokens: input.Usage.CacheWrite,
 			ReasoningTokens: input.Usage.Reasoning, ImageInputTokens: input.Usage.ImageInput,
 			CachedImageInputTokens: input.Usage.CachedImageInput, ImageOutputTokens: input.Usage.ImageOutput,
 			TotalTokens: input.Usage.Total, CostNanoUSD: input.CostNanoUSD,
@@ -1418,7 +1427,7 @@ func (s Store) AccrueWebSocketTurn(ctx context.Context, input WebSocketTurnAccru
 		stepLog.TenantID, stepLog.APIKeyID = reservation.TenantID, reservation.APIKeyID
 		stepLog.Settled = true
 		stepLog.BillingSource = reservationBillingSource(reservation)
-		if !isBillingDetail(stepLog) {
+		if input.CostNanoUSD > 0 && !isBillingDetail(stepLog) {
 			return errors.New("charge requires a billing step")
 		}
 		return writeLogTx(tx, stepLog, false)

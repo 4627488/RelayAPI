@@ -414,7 +414,7 @@ func TestNativeResponsesWebSocketUsesNativeRuntimeHandlerAndAccountsUsage(t *tes
 	}
 	select {
 	case got := <-accountingCh:
-		if !got.Found || got.RequestID != "resp_test" || got.Model != "gpt-reported" || got.Usage.Prompt != 11 || got.Usage.Completion != 7 || got.Usage.Total != 18 {
+		if !got.Found || got.RequestID != "resp_test" || got.Model != "gpt-reported" || got.Usage.Input != 11 || got.Usage.Output != 7 || got.Usage.Total != 18 {
 			t.Fatalf("accounting result = %#v", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -570,7 +570,7 @@ func TestNativeResponsesWebSocketLeavesMultiTurnStateToNativeRuntime(t *testing.
 	}
 	select {
 	case got := <-accountingCh:
-		if got.Usage.Prompt != 3 || got.Usage.Completion != 2 || got.Usage.Total != 5 {
+		if got.Usage.Input != 3 || got.Usage.Output != 2 || got.Usage.Total != 5 {
 			t.Fatalf("multi-turn accounting = %#v", got)
 		}
 	case <-time.After(5 * time.Second):
@@ -630,12 +630,12 @@ func TestNativeResponsesWebSocketPreservesNativeRuntimePrewarm(t *testing.T) {
 func TestMergeNativeWebSocketResultSumsTurns(t *testing.T) {
 	var result billing.Result
 	mergeNativeWebSocketResult(&result, billing.Result{RequestID: "resp_1", Found: true,
-		Usage: store.Usage{Prompt: 10, Completion: 4, Total: 14}})
+		Usage: store.Usage{Input: 10, Output: 4, Total: 14}})
 	mergeNativeWebSocketResult(&result, billing.Result{RequestID: "resp_2", ResponseServiceTier: "priority", Found: true,
-		Usage: store.Usage{Prompt: 6, Completion: 3, Cached: 2, Reasoning: 1, Total: 9}})
+		Usage: store.Usage{Input: 6, Output: 3, CacheRead: 2, Reasoning: 1, Total: 9}})
 
 	if result.RequestID != "resp_2" || result.ResponseServiceTier != "priority" ||
-		result.Usage.Prompt != 16 || result.Usage.Completion != 7 || result.Usage.Cached != 2 ||
+		result.Usage.Input != 16 || result.Usage.Output != 7 || result.Usage.CacheRead != 2 ||
 		result.Usage.Reasoning != 1 || result.Usage.Total != 23 {
 		t.Fatalf("merged result = %#v", result)
 	}
@@ -877,7 +877,7 @@ func TestNativeResponsesWebSocketPipelinedStepsKeepIndependentBoundaries(t *test
 	}
 	select {
 	case got := <-accountingCh:
-		if got.Usage.Prompt != 3 || got.Usage.Completion != 2 || got.Usage.Total != 5 {
+		if got.Usage.Input != 3 || got.Usage.Output != 2 || got.Usage.Total != 5 {
 			t.Fatalf("multi-turn accounting = %#v", got)
 		}
 	case <-time.After(5 * time.Second):

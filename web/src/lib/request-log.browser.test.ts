@@ -1,34 +1,35 @@
 import { describe, expect, it } from "vitest"
 import type { RequestLog } from "./api"
 import { requestTokenRate } from "./request-log"
-
-describe("request token rates", () => {
+describe("Magpie stream speed", () => {
   const log = {
     log_unit: "step",
+    usage_quality: "complete",
+    output: 100,
     total_tokens: 300,
-    completion_tokens: 100,
-    latency_ms: 2000,
-    first_token_ms: 1000,
+    decode_out: 40,
+    decode_ms: 1000,
   } as RequestLog
-  it("uses only output tokens after the first token", () => {
-    expect(requestTokenRate(log)).toBe(100)
-    expect(requestTokenRate({ ...log, total_tokens: 999999 })).toBe(100)
+  it("uses the server's measured decode tokens and window", () => {
+    expect(requestTokenRate(log)).toBe(40)
+    expect(
+      requestTokenRate({ ...log, output: 999999, total_tokens: 999999 })
+    ).toBe(40)
   })
-  it("does not invent speeds for missing or invalid measurements", () => {
+  it("does not reconstruct missing timing or show canceled speeds", () => {
     for (const patch of [
-      { latency_ms: 0 },
-      { latency_ms: -1 },
-      { completion_tokens: 0 },
-      { completion_tokens: -1 },
-      { first_token_ms: Number.NaN },
+      { decode_ms: undefined },
+      { decode_out: undefined },
+      { decode_ms: 0 },
+      { decode_out: -1 },
+      { decode_ms: Number.NaN },
+      { decode_out: Number.POSITIVE_INFINITY },
       { usage_quality: "missing" },
+      { canceled: true },
       { log_unit: "connection" },
       { log_unit: "legacy_session" },
     ]) {
       expect(requestTokenRate({ ...log, ...patch })).toBeNull()
     }
-    expect(requestTokenRate({ ...log, first_token_ms: undefined })).toBeNull()
-    expect(requestTokenRate({ ...log, first_token_ms: 2000 })).toBeNull()
-    expect(requestTokenRate({ ...log, total_tokens: 0 })).toBe(100)
   })
 })

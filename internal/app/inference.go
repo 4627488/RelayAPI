@@ -239,6 +239,14 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		if out.firstToken != nil && !out.firstToken.At.IsZero() {
 			elapsed := out.firstToken.At.Sub(call.started).Milliseconds()
 			logContext.firstTokenMS = &elapsed
+			if !out.firstToken.TextAt.IsZero() {
+				n := out.firstToken.TextAt.Sub(call.started).Milliseconds()
+				logContext.firstTextMS = &n
+			}
+			if !out.firstToken.ReasoningAt.IsZero() {
+				n := out.firstToken.ReasoningAt.Sub(call.started).Milliseconds()
+				logContext.firstReasoningMS = &n
+			}
 			call.timeline.Mark(out.firstToken.At, "first_token", "首个生成内容")
 		}
 		if call.deferredAdmissionPrice != nil {
@@ -255,12 +263,16 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			prefix, _, _ := capture.Info()
 			parsed.Model = billing.ParseResponse(prefix).Model
 		}
+		if out.firstToken != nil {
+			billing.Merge(&parsed, out.firstToken.Usage)
+		}
 		parsed = a.cpaBillingUsage(finalizeCtx, call.requestID, "", r.URL.Path, call.meta, parsed)
-		if call.priceConfigured && parsed.Found && !parsed.NonGenerated() {
+		if parsed.Found && !parsed.NonGenerated() {
 			dimensions := requestPriceDimensions(call.key, call.meta, r.URL.Path, admissionAuthIndex(call.admission), parsed.ResponseServiceTier)
-			dimensions.PromptTokens = parsed.Usage.Prompt
-			if resolved, resolveErr := a.store.ResolvePrice(finalizeCtx, dimensions); resolveErr == nil {
+			dimensions.PromptTokens = parsed.Usage.Prompt()
+			if resolved, resolveErr := a.resolveUsagePrice(finalizeCtx, dimensions, parsed.Model); resolveErr == nil {
 				price = resolved
+				call.priceConfigured = true
 				logContext.price = &price
 				_ = a.store.UpdateReservationPriceSnapshot(finalizeCtx, call.requestID, store.EncodePriceSnapshot(price))
 			}
@@ -278,6 +290,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 				slog.Warn("uncharged http usage", "request_id", call.requestID, "usage_quality", parsed.UsageQuality, "priced", effectivePrice != nil)
 			}
 		}
+		logContext.flowMS = out.firstToken.flow(parsed.Usage.Reasoning > 0)
 		assessedAt := time.Now()
 		errorMessage := ""
 		rawResponse, responseTruncated, responseBytes := capture.Info()
@@ -324,6 +337,10 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		}
 		if status >= http.StatusBadRequest || writeErr != nil {
 			slog.Warn("http inference error", "request_id", call.requestID, "status", status, "code", logContext.errorCode, "message", boundedErrorText(errorMessage))
+		}
+		if r.Context().Err() != nil || writeErr != nil {
+			input.Canceled = true
+			input.StatusCode = 499
 		}
 		a.observeInference(input)
 		if call.billable {

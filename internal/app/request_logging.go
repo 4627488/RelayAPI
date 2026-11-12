@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"hash/fnv"
 	"log/slog"
@@ -217,18 +218,20 @@ func boundedErrorText(value string) string {
 }
 
 type requestLogContext struct {
-	logUnit         string
-	firstTokenMS    *int64
-	price           *store.ResolvedPrice
-	detail          *store.LogDetailInput
-	ttftMS          *int64
-	upstreamTraceID string
-	errorCode       string
-	requestBytes    int64
-	forwardedBytes  int64
-	responseBytes   int64
-	stageTimings    string
-	completedAt     time.Time
+	firstTextMS, firstReasoningMS *int64
+	flowMS                        int64
+	logUnit                       string
+	firstTokenMS                  *int64
+	price                         *store.ResolvedPrice
+	detail                        *store.LogDetailInput
+	ttftMS                        *int64
+	upstreamTraceID               string
+	errorCode                     string
+	requestBytes                  int64
+	forwardedBytes                int64
+	responseBytes                 int64
+	stageTimings                  string
+	completedAt                   time.Time
 }
 
 func rejectedRequestDetail(r *http.Request, body []byte, code, message string, started time.Time, timeline ...*latencyTimeline) *store.LogDetailInput {
@@ -261,7 +264,15 @@ func (a *App) writeRejectedRequestLog(key store.KeyContext, requestID string, ad
 	}
 	input := requestLogInput(key, requestID, admission, meta, r, status, started, nil, false, false, 0,
 		boundedErrorText(message), requestLogContext{errorCode: code, requestBytes: requestBytes, stageTimings: stageTimings})
+	input.Rejected = true
 	a.observeInference(input)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	err := a.store.WriteLog(ctx, input)
+	a.observePersistence("rejected_request", err)
+	if err != nil {
+		slog.Error("persist rejected request", "request_id", requestID, "error", err)
+	}
 	slog.Warn("request rejected without charge", "request_id", requestID, "status", status, "code", code, "message", boundedErrorText(message))
 }
 
@@ -346,7 +357,7 @@ func requestLogInput(key store.KeyContext, requestID string, admission store.Adm
 		CostNanoUSD: costPointer, Price: logContext.price, PricingComplete: pricingComplete, Settled: settled,
 		ReservedNanoUSD: 0, LatencyMS: completedAt.Sub(started).Milliseconds(),
 		RequestBodyBytes: logContext.requestBytes, ForwardedBodyBytes: logContext.forwardedBytes, ResponseBodyBytes: logContext.responseBytes,
-		TTFTMS: logContext.ttftMS, FirstTokenMS: logContext.firstTokenMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
+		FirstByteMS: logContext.ttftMS, FirstTextMS: logContext.firstTextMS, FirstReasoningMS: logContext.firstReasoningMS, FlowMS: logContext.flowMS, FirstTokenMS: logContext.firstTokenMS, ErrorCode: logContext.errorCode, ErrorMessage: errorMessage,
 		StageTimings: logContext.stageTimings,
 		StartedAt:    started, CompletedAt: completedAt, Detail: detail,
 	}

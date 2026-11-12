@@ -18,9 +18,9 @@ func TestAssessDistinguishesPrewarmZeroGenerationAndUnknownUsage(t *testing.T) {
 		{"zero_generation", Result{Found: true}, price, Assessment{Complete: true}},
 		{"zero_without_price", Result{Found: true}, nil, Assessment{Complete: true}},
 		{"missing", Result{}, price, Assessment{}},
-		{"missing_price", Result{Found: true, Usage: store.Usage{Prompt: 10, Total: 10}}, nil, Assessment{}},
-		{"inconsistent", Result{Found: true, UsageQuality: "inconsistent", Usage: store.Usage{Prompt: 10, Total: 10}}, price, Assessment{}},
-		{"generated", Result{Found: true, Usage: store.Usage{Prompt: 10, Completion: 2, Total: 12}}, price, Assessment{CostNanoUSD: 40, Complete: true}},
+		{"missing_price", Result{Found: true, Usage: store.Usage{Input: 10, Total: 10}}, nil, Assessment{}},
+		{"inconsistent", Result{Found: true, UsageQuality: "inconsistent", Usage: store.Usage{Input: 10, Total: 10}}, price, Assessment{}},
+		{"generated", Result{Found: true, Usage: store.Usage{Input: 10, Output: 2, Total: 12}}, price, Assessment{CostNanoUSD: 40, Complete: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Assess(tc.result, tc.price); got != tc.want {

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"github.com/4627488/RelayAPI/internal/pricing"
 	"time"
 
 	"github.com/lib/pq"
@@ -66,38 +67,42 @@ type APIKeyModelAlias struct {
 }
 
 type ModelPrice struct {
-	Model                           string    `gorm:"primaryKey" json:"model"`
-	InputNanoUSDPerToken            int64     `gorm:"not null" json:"input_nano_usd_per_token"`
-	OutputNanoUSDPerToken           int64     `gorm:"not null" json:"output_nano_usd_per_token"`
-	CachedInputNanoUSDPerToken      int64     `gorm:"not null" json:"cached_input_nano_usd_per_token"`
-	CacheWriteNanoUSDPerToken       int64     `gorm:"not null" json:"cache_write_nano_usd_per_token"`
-	ReasoningNanoUSDPerToken        int64     `gorm:"not null" json:"reasoning_nano_usd_per_token"`
-	ImageInputNanoUSDPerToken       int64     `gorm:"not null;default:0" json:"image_input_nano_usd_per_token"`
-	CachedImageInputNanoUSDPerToken int64     `gorm:"not null;default:0" json:"cached_image_input_nano_usd_per_token"`
-	ImageOutputNanoUSDPerToken      int64     `gorm:"not null;default:0" json:"image_output_nano_usd_per_token"`
-	Source                          string    `gorm:"not null;default:admin" json:"source"`
-	Version                         string    `gorm:"not null;default:''" json:"version"`
-	PriceMultiplier                 float64   `gorm:"not null;default:1" json:"price_multiplier"`
-	UpdatedAt                       time.Time `json:"updated_at"`
+	Tiers                           []pricing.Tier `gorm:"serializer:json;type:text" json:"tiers,omitempty"`
+	Model                           string         `gorm:"primaryKey" json:"model"`
+	InputNanoUSDPerToken            int64          `gorm:"not null" json:"input_nano_usd_per_token"`
+	OutputNanoUSDPerToken           int64          `gorm:"not null" json:"output_nano_usd_per_token"`
+	CachedInputNanoUSDPerToken      int64          `gorm:"not null" json:"cached_input_nano_usd_per_token"`
+	CacheWrite1hNanoUSDPerToken     int64          `gorm:"not null;default:0" json:"cache_write_1h_nano_usd_per_token"`
+	CacheWriteNanoUSDPerToken       int64          `gorm:"not null" json:"cache_write_nano_usd_per_token"`
+	ReasoningNanoUSDPerToken        int64          `gorm:"not null" json:"reasoning_nano_usd_per_token"`
+	ImageInputNanoUSDPerToken       int64          `gorm:"not null;default:0" json:"image_input_nano_usd_per_token"`
+	CachedImageInputNanoUSDPerToken int64          `gorm:"not null;default:0" json:"cached_image_input_nano_usd_per_token"`
+	ImageOutputNanoUSDPerToken      int64          `gorm:"not null;default:0" json:"image_output_nano_usd_per_token"`
+	Source                          string         `gorm:"not null;default:admin" json:"source"`
+	Version                         string         `gorm:"not null;default:''" json:"version"`
+	PriceMultiplier                 float64        `gorm:"not null;default:1" json:"price_multiplier"`
+	UpdatedAt                       time.Time      `json:"updated_at"`
 }
 
 // ModelCatalogPrice stores replaceable catalog data separately from administrator
 // overrides. This preserves the resolution order admin > live catalog > bundled.
 type ModelCatalogPrice struct {
-	Model                           string    `gorm:"primaryKey" json:"model"`
-	InputNanoUSDPerToken            int64     `gorm:"not null" json:"input_nano_usd_per_token"`
-	OutputNanoUSDPerToken           int64     `gorm:"not null" json:"output_nano_usd_per_token"`
-	CachedInputNanoUSDPerToken      int64     `gorm:"not null" json:"cached_input_nano_usd_per_token"`
-	CacheWriteNanoUSDPerToken       int64     `gorm:"not null" json:"cache_write_nano_usd_per_token"`
-	ReasoningNanoUSDPerToken        int64     `gorm:"not null" json:"reasoning_nano_usd_per_token"`
-	ImageInputNanoUSDPerToken       int64     `gorm:"not null;default:0" json:"image_input_nano_usd_per_token"`
-	CachedImageInputNanoUSDPerToken int64     `gorm:"not null;default:0" json:"cached_image_input_nano_usd_per_token"`
-	ImageOutputNanoUSDPerToken      int64     `gorm:"not null;default:0" json:"image_output_nano_usd_per_token"`
-	Source                          string    `gorm:"not null" json:"source"`
-	Version                         string    `gorm:"not null" json:"version"`
-	SourceModelID                   string    `gorm:"not null;default:''" json:"source_model_id"`
-	RawJSON                         string    `gorm:"type:text;not null;default:''" json:"-"`
-	UpdatedAt                       time.Time `json:"updated_at"`
+	Tiers                           []pricing.Tier `gorm:"serializer:json;type:text" json:"tiers,omitempty"`
+	Model                           string         `gorm:"primaryKey" json:"model"`
+	InputNanoUSDPerToken            int64          `gorm:"not null" json:"input_nano_usd_per_token"`
+	OutputNanoUSDPerToken           int64          `gorm:"not null" json:"output_nano_usd_per_token"`
+	CachedInputNanoUSDPerToken      int64          `gorm:"not null" json:"cached_input_nano_usd_per_token"`
+	CacheWrite1hNanoUSDPerToken     int64          `gorm:"not null;default:0" json:"cache_write_1h_nano_usd_per_token"`
+	CacheWriteNanoUSDPerToken       int64          `gorm:"not null" json:"cache_write_nano_usd_per_token"`
+	ReasoningNanoUSDPerToken        int64          `gorm:"not null" json:"reasoning_nano_usd_per_token"`
+	ImageInputNanoUSDPerToken       int64          `gorm:"not null;default:0" json:"image_input_nano_usd_per_token"`
+	CachedImageInputNanoUSDPerToken int64          `gorm:"not null;default:0" json:"cached_image_input_nano_usd_per_token"`
+	ImageOutputNanoUSDPerToken      int64          `gorm:"not null;default:0" json:"image_output_nano_usd_per_token"`
+	Source                          string         `gorm:"not null" json:"source"`
+	Version                         string         `gorm:"not null" json:"version"`
+	SourceModelID                   string         `gorm:"not null;default:''" json:"source_model_id"`
+	RawJSON                         string         `gorm:"type:text;not null;default:''" json:"-"`
+	UpdatedAt                       time.Time      `json:"updated_at"`
 }
 
 type ModelAlias struct {
@@ -142,20 +147,37 @@ type BillingLedger struct {
 	CreatedAt           time.Time `gorm:"index:billing_ledger_tenant_idx,priority:2,sort:desc" json:"created_at"`
 }
 
-// UsageDailyRollup preserves reporting and billing analytics after individual
-// request logs age out. Rows are added in the same transaction that deletes
-// their source request logs, making the compaction idempotent.
+// UsageDailyRollup preserves additive facts at UTC minute resolution after
+// requests age out. Day holds the minute bucket (legacy Go field name); readers
+// regroup it by their IANA timezone. The primary key retains API key identity.
+// Archive inserts and source deletes share a transaction.
 type UsageDailyRollup struct {
-	Day                        time.Time `gorm:"type:date;primaryKey" json:"day"`
+	APIKeyID           string `gorm:"primaryKey;not null;default:''" json:"api_key_id"`
+	APIKeyName         string `gorm:"not null;default:''" json:"api_key_name"`
+	APIKeyPrefix       string `gorm:"not null;default:''" json:"api_key_prefix"`
+	Canceled           int64  `gorm:"not null;default:0" json:"canceled"`
+	Rejected           int64  `gorm:"not null;default:0" json:"rejected"`
+	Retried            int64  `gorm:"not null;default:0" json:"retried"`
+	Unpriced           int64  `gorm:"not null;default:0" json:"unpriced"`
+	CacheWrite1hTokens int64  `gorm:"not null;default:0" json:"cache_write_1h"`
+	CacheUnknownTokens int64  `gorm:"not null;default:0" json:"cache_unknown"`
+	CacheUnknownCalls  int64  `gorm:"not null;default:0" json:"cache_unknown_calls"`
+	Timed              int64  `gorm:"not null;default:0" json:"timed"`
+	TTFTSumMS          int64  `gorm:"not null;default:0" json:"ttft_ms"`
+	DecodeOut          int64  `gorm:"not null;default:0" json:"decode_out"`
+	DecodeMS           int64  `gorm:"not null;default:0" json:"decode_ms"`
+	DecodeN            int64  `gorm:"not null;default:0" json:"decode_n"`
+
+	Day                        time.Time `gorm:"type:timestamptz;primaryKey" json:"day"`
 	TenantID                   string    `gorm:"type:uuid;primaryKey;index" json:"tenant_id"`
 	Model                      string    `gorm:"primaryKey" json:"model"`
 	Requests                   int64     `gorm:"not null;default:0" json:"requests"`
 	Errors                     int64     `gorm:"not null;default:0" json:"errors"`
-	PromptTokens               int64     `gorm:"not null;default:0" json:"prompt_tokens"`
-	CompletionTokens           int64     `gorm:"not null;default:0" json:"completion_tokens"`
-	CachedTokens               int64     `gorm:"not null;default:0" json:"cached_tokens"`
-	CacheWriteTokens           int64     `gorm:"not null;default:0" json:"cache_write_tokens"`
-	ReasoningTokens            int64     `gorm:"not null;default:0" json:"reasoning_tokens"`
+	PromptTokens               int64     `gorm:"not null;default:0" json:"input"`
+	CompletionTokens           int64     `gorm:"not null;default:0" json:"output"`
+	CachedTokens               int64     `gorm:"not null;default:0" json:"cache_read"`
+	CacheWriteTokens           int64     `gorm:"not null;default:0" json:"cache_write"`
+	ReasoningTokens            int64     `gorm:"not null;default:0" json:"reasoning"`
 	ImageInputTokens           int64     `gorm:"not null;default:0" json:"image_input_tokens"`
 	CachedImageInputTokens     int64     `gorm:"not null;default:0" json:"cached_image_input_tokens"`
 	ImageOutputTokens          int64     `gorm:"not null;default:0" json:"image_output_tokens"`
@@ -166,7 +188,23 @@ type UsageDailyRollup struct {
 	UpdatedAt                  time.Time `json:"updated_at"`
 }
 
+func (UsageDailyRollup) TableName() string { return "usage_rollups_v2" }
+
 type RequestLog struct {
+	LegacyUsage        string `gorm:"type:text;not null;default:''" json:"legacy_usage,omitempty"`
+	MeteringVersion    int    `gorm:"not null;default:1" json:"metering_version"`
+	CacheWrite1hTokens int64  `gorm:"not null;default:0" json:"cache_write_1h"`
+	CacheUnknown       bool   `gorm:"not null;default:false" json:"cache_unknown"`
+	Canceled           bool   `gorm:"not null;default:false" json:"canceled"`
+	Rejected           bool   `gorm:"not null;default:false" json:"rejected"`
+	Tries              int    `gorm:"not null;default:0" json:"tries"`
+	FirstByteMS        *int64 `json:"first_byte_ms,omitempty"`
+	FirstTextMS        *int64 `json:"first_text_ms,omitempty"`
+	FirstReasoningMS   *int64 `json:"first_reasoning_ms,omitempty"`
+	FlowMS             int64  `gorm:"not null;default:0" json:"flow_ms"`
+	DecodeOut          int64  `gorm:"not null;default:0" json:"decode_out"`
+	DecodeMS           int64  `gorm:"not null;default:0" json:"decode_ms"`
+
 	UsageQuality                 string    `gorm:"not null;default:''" json:"usage_quality,omitempty"`
 	FirstTokenMS                 *int64    `gorm:"column:first_token_ms" json:"first_token_ms,omitempty"`
 	LogUnit                      string    `gorm:"not null;default:step" json:"log_unit"`
@@ -212,11 +250,11 @@ type RequestLog struct {
 	RequestBodyBytes             int64     `gorm:"not null;default:0" json:"request_body_bytes"`
 	ForwardedBodyBytes           int64     `gorm:"not null;default:0" json:"forwarded_body_bytes"`
 	ResponseBodyBytes            int64     `gorm:"not null;default:0" json:"response_body_bytes"`
-	PromptTokens                 int64     `gorm:"not null;default:0" json:"prompt_tokens"`
-	CompletionTokens             int64     `gorm:"not null;default:0" json:"completion_tokens"`
-	CachedTokens                 int64     `gorm:"not null;default:0" json:"cached_tokens"`
-	CacheWriteTokens             int64     `gorm:"not null;default:0" json:"cache_write_tokens"`
-	ReasoningTokens              int64     `gorm:"not null;default:0" json:"reasoning_tokens"`
+	PromptTokens                 int64     `gorm:"not null;default:0" json:"input"`
+	CompletionTokens             int64     `gorm:"not null;default:0" json:"output"`
+	CachedTokens                 int64     `gorm:"not null;default:0" json:"cache_read"`
+	CacheWriteTokens             int64     `gorm:"not null;default:0" json:"cache_write"`
+	ReasoningTokens              int64     `gorm:"not null;default:0" json:"reasoning"`
 	ImageInputTokens             int64     `gorm:"not null;default:0" json:"image_input_tokens"`
 	CachedImageInputTokens       int64     `gorm:"not null;default:0" json:"cached_image_input_tokens"`
 	ImageOutputTokens            int64     `gorm:"not null;default:0" json:"image_output_tokens"`
@@ -229,6 +267,7 @@ type RequestLog struct {
 	InputPriceNanoUSD            int64     `gorm:"not null;default:0" json:"input_price_nano_usd_per_token"`
 	OutputPriceNanoUSD           int64     `gorm:"not null;default:0" json:"output_price_nano_usd_per_token"`
 	CachedPriceNanoUSD           int64     `gorm:"not null;default:0" json:"cached_input_price_nano_usd_per_token"`
+	CacheWrite1hPriceNanoUSD     int64     `gorm:"not null;default:0" json:"cache_write_1h_nano_usd_per_token"`
 	CacheWritePriceNanoUSD       int64     `gorm:"not null;default:0" json:"cache_write_price_nano_usd_per_token"`
 	ReasoningPriceNanoUSD        int64     `gorm:"not null;default:0" json:"reasoning_price_nano_usd_per_token"`
 	ImageInputPriceNanoUSD       int64     `gorm:"not null;default:0" json:"image_input_price_nano_usd_per_token"`

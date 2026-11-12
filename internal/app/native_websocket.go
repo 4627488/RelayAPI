@@ -44,6 +44,7 @@ type nativeWebSocketAccounting struct {
 	currentReady      time.Time
 	currentFirst      time.Time
 	currentFirstToken time.Time
+	currentContent    *firstTokenObserver
 	currentBody       []byte
 	currentActive     bool
 	pending           []nativeWebSocketBillingEntry
@@ -64,6 +65,7 @@ type nativeWebSocketBillingEntry struct {
 	ReadyAt        time.Time
 	FirstAt        time.Time
 	FirstTokenAt   time.Time
+	Content        *firstTokenObserver
 	RequestBody    []byte
 	RequestBytes   int64
 	ForwardedBytes int64
@@ -75,6 +77,7 @@ func (a *nativeWebSocketAccounting) startStep(entry nativeWebSocketBillingEntry)
 	a.currentMeta, a.currentStarted, a.currentReady = entry.Meta, entry.StartedAt, entry.ReadyAt
 	a.currentFirst = time.Time{}
 	a.currentFirstToken = time.Time{}
+	a.currentContent = &firstTokenObserver{}
 	a.currentModel = ""
 	a.currentBody = entry.RequestBody
 	a.currentRequest, a.currentForwarded, a.currentResponse = entry.RequestBytes, entry.ForwardedBytes, 0
@@ -102,6 +105,35 @@ func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.
 			logContext, &accounting, entry, cumulative)
 	}
 	session, _, err := a.serveNativeWebSocket(w, r, key, meta, requestID, logContext.detail, &accounting)
+	if accounting.currentActive || len(accounting.pending) > 0 {
+		entries := append([]nativeWebSocketBillingEntry(nil), accounting.pending...)
+		if accounting.currentActive {
+			entries = append(entries, nativeWebSocketBillingEntry{Meta: accounting.currentMeta, StartedAt: accounting.currentStarted, RequestBytes: accounting.currentRequest, ForwardedBytes: accounting.currentForwarded, ResponseBytes: accounting.currentResponse, FirstTokenAt: accounting.currentFirstToken, FirstAt: accounting.currentFirst, Content: accounting.currentContent})
+		}
+		for i, entry := range entries {
+			end := time.Now()
+			input := requestLogInput(key, store.WebSocketStepID(requestID, fmt.Sprintf("interrupted:%d:%d", entry.StartedAt.UnixNano(), i)), admission, entry.Meta, r, 499, entry.StartedAt, &billing.Result{UsageQuality: "missing"}, false, false, 0, "client closed before terminal usage", logContext)
+			input.CompletedAt = end
+			input.Canceled = true
+			input.ReservationRequestID = requestID
+			input.Stream = true
+			input.LatencyMS = end.Sub(entry.StartedAt).Milliseconds()
+			input.RequestBodyBytes = entry.RequestBytes
+			input.ResponseBodyBytes = entry.ResponseBytes
+			persistErr := a.store.WriteLog(context.WithoutCancel(r.Context()), input)
+			a.observePersistence("websocket_interrupted", persistErr)
+			a.observeInference(input)
+		}
+	}
+	if !session.established && !accounting.currentActive && len(accounting.pending) == 0 {
+		input := requestLogInput(key, requestID, admission, meta, r, 502, started, &billing.Result{UsageQuality: "not_generated"}, true, false, 0, "websocket connection failed", logContext)
+		input.LogUnit = store.LogUnitStep
+		input.Rejected = true
+		persistErr := a.store.WriteLog(context.WithoutCancel(r.Context()), input)
+		a.observePersistence("websocket_connection_failure", persistErr)
+		a.observeInference(input)
+	}
+
 	if accounting.billable {
 		// Only durable per-step charges survive session close. Unknown or
 		// interrupted usage never consumes the connection's admission hold.
@@ -146,12 +178,12 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	}
 	var turnPrice *store.ResolvedPrice
 	if !turn.NonGenerated() {
-		if resolved, err := a.store.ResolvePrice(ctx, pricing.Dimensions{
+		if resolved, err := a.resolveUsagePrice(ctx, pricing.Dimensions{
 			APIGroupKey: key.ID, Model: meta.Model, AuthIndex: admissionAuthIndex(accounting.admission),
 			ServiceTier: meta.ServiceTier, ResponseServiceTier: turn.ResponseServiceTier,
 			ReasoningEffort: meta.ReasoningEffort, Endpoint: r.URL.Path,
-			PromptTokens: turn.Usage.Prompt,
-		}); err == nil {
+			PromptTokens: turn.Usage.Prompt(),
+		}, turn.Model); err == nil {
 			turnPrice = &resolved
 		}
 	}
@@ -195,6 +227,17 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 	if !entry.FirstTokenAt.IsZero() {
 		elapsed := entry.FirstTokenAt.Sub(entry.StartedAt).Milliseconds()
 		logContext.firstTokenMS = &elapsed
+		if entry.Content != nil {
+			if !entry.Content.TextAt.IsZero() {
+				n := entry.Content.TextAt.Sub(entry.StartedAt).Milliseconds()
+				logContext.firstTextMS = &n
+			}
+			if !entry.Content.ReasoningAt.IsZero() {
+				n := entry.Content.ReasoningAt.Sub(entry.StartedAt).Milliseconds()
+				logContext.firstReasoningMS = &n
+			}
+			logContext.flowMS = entry.Content.flow(turn.Usage.Reasoning > 0)
+		}
 		stepTimeline.Mark(entry.FirstTokenAt, "first_token", "首个生成内容")
 	}
 	stepTimeline.Mark(entry.FirstAt, "first_byte", "收到首个响应事件")
@@ -472,6 +515,11 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			turnKey := ""
 			if terminal {
 				turn = parseNativeWebSocketUsage(payload)
+				if accounting.currentContent != nil {
+					combined := accounting.currentContent.Usage
+					billing.Merge(&combined, turn)
+					turn = combined
+				}
 				if a.nativeCPARuntime != nil && turn.RequestID == "" {
 					// Without an envelope ID a WS turn cannot be correlated safely.
 					turn.Found = false
@@ -490,6 +538,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 					return payload, nil
 				}
 			}
+			if accounting.currentContent != nil {
+				accounting.currentContent.observe(payload, observedAt)
+			}
 			if accounting.currentFirstToken.IsZero() && hasGeneratedDelta(payload) {
 				accounting.currentFirstToken = observedAt
 			}
@@ -507,7 +558,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			if accounting.persistTurn != nil {
 				entry := nativeWebSocketBillingEntry{
 					Meta: accounting.currentMeta, Result: turn, Payload: append([]byte(nil), payload...),
-					StartedAt: accounting.currentStarted, CompletedAt: observedAt, ReadyAt: accounting.currentReady, FirstAt: accounting.currentFirst, FirstTokenAt: accounting.currentFirstToken, RequestBody: accounting.currentBody, RequestBytes: accounting.currentRequest,
+					StartedAt: accounting.currentStarted, CompletedAt: observedAt, ReadyAt: accounting.currentReady, FirstAt: accounting.currentFirst, FirstTokenAt: accounting.currentFirstToken, Content: accounting.currentContent, RequestBody: accounting.currentBody, RequestBytes: accounting.currentRequest,
 					ForwardedBytes: accounting.currentForwarded, ResponseBytes: accounting.currentResponse,
 				}
 				inserted, persistErr := accounting.persistTurn(entry, cumulative)
@@ -922,9 +973,9 @@ func mergeNativeWebSocketResult(target *billing.Result, turn billing.Result) {
 		target.ResponseServiceTier = turn.ResponseServiceTier
 	}
 	target.Found = target.Found || turn.Found
-	target.Usage.Prompt = saturatingAdd(target.Usage.Prompt, turn.Usage.Prompt)
-	target.Usage.Completion = saturatingAdd(target.Usage.Completion, turn.Usage.Completion)
-	target.Usage.Cached = saturatingAdd(target.Usage.Cached, turn.Usage.Cached)
+	target.Usage.Input = saturatingAdd(target.Usage.Input, turn.Usage.Input)
+	target.Usage.Output = saturatingAdd(target.Usage.Output, turn.Usage.Output)
+	target.Usage.CacheRead = saturatingAdd(target.Usage.CacheRead, turn.Usage.CacheRead)
 	target.Usage.CacheWrite = saturatingAdd(target.Usage.CacheWrite, turn.Usage.CacheWrite)
 	target.Usage.Reasoning = saturatingAdd(target.Usage.Reasoning, turn.Usage.Reasoning)
 	target.Usage.Total = saturatingAdd(target.Usage.Total, turn.Usage.Total)

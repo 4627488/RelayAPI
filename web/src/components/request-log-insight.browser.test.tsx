@@ -19,12 +19,13 @@ const log = {
   stream: true,
   started_at: "2026-09-25T01:00:00Z",
   latency_ms: 1200,
-  ttft_ms: 0,
+  ttft_ms: 320,
+  first_byte_ms: 0,
   first_token_ms: 320,
-  total_tokens: 1500,
-  prompt_tokens: 1000,
-  completion_tokens: 500,
-  cached_tokens: 800,
+  total_tokens: 700,
+  input: 200,
+  output: 500,
+  cache_read: 800,
   cost_nano_usd: 0,
   pricing_complete: true,
   settled: true,
@@ -181,7 +182,7 @@ it.each([320, 1280])(
       .toBeVisible()
     await expectNoA11yViolations()
     await userEvent.keyboard("{Escape}")
-    await screen.getByRole("link", { name: /查看扣费明细/ }).click()
+    await screen.getByRole("link", { name: /查看请求记录/ }).click()
     expect(onOpen).toHaveBeenCalledWith(log)
   }
 )

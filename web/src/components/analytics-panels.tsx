@@ -48,13 +48,13 @@ export function AnalyticsSummary({ report }: { report: UsageReport }) {
         {
           label: "请求",
           value: compact(s.requests),
-          detail: `${report.days} 天 · ${compact(s.errors)} 次错误`,
+          detail: `${report.days} 天 · ${compact(s.errors)} 次错误 · ${compact(s.canceled ?? 0)} 次取消`,
         },
         {
           label: "成功率",
-          value: rate(s.requests - s.errors, s.requests),
+          value: rate(s.requests - s.errors - (s.canceled ?? 0), s.requests),
           detail: s.requests
-            ? `${compact(s.requests - s.errors)} 次成功`
+            ? `${compact(s.requests - s.errors - (s.canceled ?? 0))} 次成功`
             : "尚无请求样本",
         },
         {
@@ -67,12 +67,35 @@ export function AnalyticsSummary({ report }: { report: UsageReport }) {
         {
           label: "Tokens",
           value: compactTokens(s.tokens),
-          detail: `${compactTokens(s.prompt_tokens)} 输入 · ${compactTokens(s.completion_tokens)} 输出`,
+          detail: `${compactTokens(s.input)} 输入 · ${compactTokens(s.output)} 输出`,
         },
         {
           label: "缓存命中率",
-          value: cacheHitRateLabel(s.cached_tokens, s.prompt_tokens),
-          detail: `${compactTokens(s.cached_tokens)} 缓存读取 / ${compactTokens(s.prompt_tokens)} 输入`,
+          value: cacheHitRateLabel(
+            s.cache_read,
+            s.input,
+            s.cache_write,
+            s.cache_unknown
+          ),
+          detail: `${compactTokens(s.cache_read)} 缓存读取 · ${compactTokens(s.cache_write)} 缓存写入`,
+        },
+        {
+          label: "平均首 Token",
+          value: measuredMS(s.mean_ttft_ms ?? undefined),
+          detail: `${compact(s.timed ?? 0)} 个有效流式样本`,
+        },
+        {
+          label: "生成速度",
+          value:
+            s.tokens_per_second == null
+              ? "—"
+              : `${s.tokens_per_second.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} token/s`,
+          detail: `${compact(s.decode_n ?? 0)} 个有效样本 · 按输出量与解码时间加权`,
+        },
+        {
+          label: "未定价请求",
+          value: compact(s.unpriced ?? 0),
+          detail: `${compact(s.retried ?? 0)} 次重试请求 · ${compact(s.rejected ?? 0)} 次本地拒绝`,
         },
         {
           label: "余额支付",
@@ -92,7 +115,7 @@ export function ObservationPanels({ report }: { report: UsageReport }) {
         <CardHeader>
           <CardTitle>响应性能</CardTitle>
           <CardDescription>
-            仅统计所选周期内仍保留的计费块，历史会话不参与延迟分位数。
+            统计所选周期内保留的请求记录；分位数不从日汇总推算。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -124,9 +147,9 @@ export function ObservationPanels({ report }: { report: UsageReport }) {
                       ],
                       [
                         "首响应 / 首字节",
-                        o.ttft_p50_ms,
-                        o.ttft_p95_ms,
-                        o.ttft_samples,
+                        o.first_byte_p50_ms,
+                        o.first_byte_p95_ms,
+                        o.first_byte_samples,
                       ],
                     ] as const
                   ).map(([label, p50, p95, n]) => (
@@ -258,7 +281,7 @@ export function AttributionPanel({
           ...x,
           id: x.model,
           name: x.model || "未识别",
-          detail: `缓存命中 ${cacheHitRateLabel(x.cached_tokens, x.prompt_tokens)}`,
+          detail: `缓存命中 ${cacheHitRateLabel(x.cache_read, x.input, x.cache_write, x.cache_unknown)}`,
         }))
       : activeDimension === "keys"
         ? (report.api_keys ?? []).map((x) => ({

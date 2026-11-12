@@ -71,6 +71,19 @@ type modelsDevModalities struct {
 	Output []string `json:"output"`
 }
 type modelsDevCost struct {
+	CacheWrite1h *float64 `json:"cache_write_1h"`
+	Tiers        []struct {
+		Above int64 `json:"above"`
+		Tier  struct {
+			Type string `json:"type"`
+			Size int64  `json:"size"`
+		} `json:"tier"`
+		Input, Output *float64
+		CacheRead     *float64 `json:"cache_read"`
+		CacheWrite    *float64 `json:"cache_write"`
+		CacheWrite1h  *float64 `json:"cache_write_1h"`
+	} `json:"tiers"`
+
 	Input      *float64 `json:"input"`
 	Output     *float64 `json:"output"`
 	CacheRead  *float64 `json:"cache_read"`
@@ -181,6 +194,28 @@ func FetchModelsDev(ctx context.Context, client *http.Client, rawURL string) (Sy
 					SourceModelID: providerID + "/" + modelID, RawJSON: string(rawModel),
 				},
 			}
+			candidate.entry.CacheWrite1hNanoUSDPerToken = catalogHourPrice(model.Cost.CacheWrite1h, name, candidate.entry.InputNanoUSDPerToken, candidate.entry.CacheWriteNanoUSDPerToken)
+			for _, t := range model.Cost.Tiers {
+				above := t.Above
+				if t.Tier.Type == "context" {
+					above = t.Tier.Size
+				}
+				if above <= 0 {
+					continue
+				}
+				inherit := func(v *float64, base int64) int64 {
+					if v == nil {
+						return base
+					}
+					if !validCatalogCost(*v) {
+						return base
+					}
+					return perMillionToNano(*v)
+				}
+				tier := Tier{Above: above, InputNanoUSDPerToken: inherit(t.Input, candidate.entry.InputNanoUSDPerToken), OutputNanoUSDPerToken: inherit(t.Output, candidate.entry.OutputNanoUSDPerToken), CachedInputNanoUSDPerToken: inherit(t.CacheRead, candidate.entry.CachedInputNanoUSDPerToken), CacheWriteNanoUSDPerToken: inherit(t.CacheWrite, candidate.entry.CacheWriteNanoUSDPerToken)}
+				tier.CacheWrite1hNanoUSDPerToken = catalogHourPrice(t.CacheWrite1h, name, tier.InputNanoUSDPerToken, tier.CacheWriteNanoUSDPerToken)
+				candidate.entry.Tiers = append(candidate.entry.Tiers, tier)
+			}
 			// Aggregators commonly expose already-qualified IDs such as
 			// "anthropic/claude-*". Without deduplication those collide with
 			// the direct Anthropic provider (and with other aggregators) when
@@ -234,4 +269,14 @@ func validCatalogCost(value float64) bool {
 func perMillionToNano(value float64) int64 {
 	// USD / 1M tokens * 1e9 nanoUSD / USD = value * 1000 nanoUSD/token.
 	return int64(math.Round(value * 1000))
+}
+
+func catalogHourPrice(value *float64, model string, input, write int64) int64 {
+	if value != nil && validCatalogCost(*value) {
+		return perMillionToNano(*value)
+	}
+	if strings.Contains(strings.ToLower(model), "claude") && write > 0 {
+		return saturatingMultiply(input, 2)
+	}
+	return write
 }

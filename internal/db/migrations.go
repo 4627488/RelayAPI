@@ -254,6 +254,24 @@ var migrations = []migration{
 			`DROP INDEX IF EXISTS request_logs_token_rate_idx`,
 		},
 	},
+	{version: 16, name: "Magpie disjoint metering with complete request history", statements: []string{
+		`UPDATE request_logs SET legacy_usage = jsonb_build_object('prompt_tokens',prompt_tokens,'total_tokens',total_tokens,'ttft_ms',ttftms)::text,
+   prompt_tokens = GREATEST(prompt_tokens-cached_tokens, 0),
+   total_tokens = GREATEST(prompt_tokens-cached_tokens, 0)+completion_tokens,
+   first_byte_ms = ttftms, ttftms = first_token_ms,
+   cache_unknown = true, metering_version = 2 WHERE metering_version = 1`,
+		`DO $$ BEGIN IF to_regclass('usage_daily_rollups') IS NOT NULL THEN
+   INSERT INTO usage_rollups_v2 (day,tenant_id,model,api_key_id,requests,errors,
+    prompt_tokens,completion_tokens,cached_tokens,cache_write_tokens,reasoning_tokens,
+    image_input_tokens,cached_image_input_tokens,image_output_tokens,total_tokens,cost_nano_usd,
+    subscription_covered_nano_usd,balance_charged_nano_usd,cache_unknown_tokens,cache_unknown_calls,updated_at)
+   SELECT (day::timestamp AT TIME ZONE 'UTC'),tenant_id,model,'',requests,errors,GREATEST(prompt_tokens-cached_tokens,0),completion_tokens,
+    cached_tokens,cache_write_tokens,reasoning_tokens,image_input_tokens,cached_image_input_tokens,image_output_tokens,
+    GREATEST(prompt_tokens-cached_tokens,0)+completion_tokens,cost_nano_usd,
+    subscription_covered_nano_usd,balance_charged_nano_usd,prompt_tokens+cache_write_tokens,requests,updated_at
+   FROM usage_daily_rollups ON CONFLICT DO NOTHING;
+   END IF; END $$`,
+	}},
 }
 
 // prepareNativeSchema renames legacy columns before AutoMigrate. Doing this

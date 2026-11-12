@@ -1,52 +1,38 @@
 package pricing
 
-import "math"
+import (
+	"github.com/4627488/RelayAPI/internal/metering"
+	"math"
+)
 
-type Usage struct {
-	Prompt, Completion, Cached, CacheWrite, Reasoning, Total int64
-	ImageInput, CachedImageInput, ImageOutput                int64
-}
+type Usage = metering.Usage
 
-// CostNanoUSD calculates a non-negative, saturating request cost. Some APIs
-// include reasoning tokens inside output tokens, while others report them
-// separately. Total disambiguates those two shapes.
+// CostNanoUSD prices disjoint input/cache buckets. Reasoning is included in
+// output, exactly as Magpie CostSplit; it is never billed a second time.
 func CostNanoUSD(price SnapshotPrice, usage Usage) int64 {
-	imageInput := min64(max64(0, usage.ImageInput), max64(0, usage.Prompt))
-	cachedInput := min64(max64(0, usage.Cached), max64(0, usage.Prompt))
-	cachedImage := min64(max64(0, usage.CachedImageInput), min64(imageInput, cachedInput))
-	textInput := max64(0, usage.Prompt-imageInput)
-	cachedText := min64(textInput, max64(0, cachedInput-cachedImage))
-	uncachedText := max64(0, textInput-cachedText)
-	uncachedImage := max64(0, imageInput-cachedImage)
-
-	imageOutput := min64(max64(0, usage.ImageOutput), max64(0, usage.Completion))
-	completion := max64(0, usage.Completion-imageOutput)
-	reasoning := max64(0, usage.Reasoning)
-	if reasoning > 0 && reasoningIncludedInCompletion(usage) {
-		completion = max64(0, completion-reasoning)
+	price.Price = price.Price.At(usage.Prompt())
+	cachedImage := min64(max64(0, usage.CachedImageInput), min64(max64(0, usage.ImageInput), max64(0, usage.CacheRead)))
+	imageInput := min64(max64(0, usage.ImageInput-cachedImage), max64(0, usage.Input))
+	imageOutput := min64(max64(0, usage.ImageOutput), max64(0, usage.Output))
+	hour := min64(max64(0, usage.CacheWrite1h), max64(0, usage.CacheWrite))
+	hourRate := price.CacheWrite1hNanoUSDPerToken
+	if hourRate == 0 {
+		hourRate = price.CacheWriteNanoUSDPerToken
 	}
-
 	result := int64(0)
 	for _, item := range [][2]int64{
-		{uncachedText, price.InputNanoUSDPerToken},
-		{cachedText, price.CachedInputNanoUSDPerToken},
-		{uncachedImage, price.ImageInputNanoUSDPerToken},
+		{max64(0, usage.Input-imageInput), price.InputNanoUSDPerToken},
+		{max64(0, usage.CacheRead-cachedImage), price.CachedInputNanoUSDPerToken},
+		{imageInput, price.ImageInputNanoUSDPerToken},
 		{cachedImage, price.CachedImageInputNanoUSDPerToken},
-		{completion, price.OutputNanoUSDPerToken},
+		{max64(0, usage.Output-imageOutput), price.OutputNanoUSDPerToken},
 		{imageOutput, price.ImageOutputNanoUSDPerToken},
-		{max64(0, usage.CacheWrite), price.CacheWriteNanoUSDPerToken},
-		{reasoning, price.ReasoningNanoUSDPerToken},
+		{max64(0, usage.CacheWrite-hour), price.CacheWriteNanoUSDPerToken},
+		{hour, hourRate},
 	} {
 		result = saturatingAdd(result, saturatingMultiply(item[0], item[1]))
 	}
 	return result
-}
-
-func reasoningIncludedInCompletion(usage Usage) bool {
-	if usage.Total <= usage.Prompt {
-		return true
-	}
-	return usage.Total-usage.Prompt <= usage.Completion
 }
 
 func saturatingMultiply(left, right int64) int64 {

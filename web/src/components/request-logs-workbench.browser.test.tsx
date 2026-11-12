@@ -22,12 +22,12 @@ const log = {
   started_at: "2026-09-07T10:20:30Z",
   status_code: 200,
   client_name: "测试客户端",
-  total_tokens: 12500,
-  prompt_tokens: 10000,
-  completion_tokens: 2500,
-  cached_tokens: 8000,
-  cache_write_tokens: 0,
-  reasoning_tokens: 0,
+  total_tokens: 4500,
+  input: 2000,
+  output: 2500,
+  cache_read: 8000,
+  cache_write: 0,
+  reasoning: 0,
   latency_ms: 12500,
   ttft_ms: 250,
   first_token_ms: 480,
@@ -48,9 +48,9 @@ function setup(admin: boolean) {
       summary: {
         requests: 1,
         errors: 0,
-        tokens: 12500,
-        prompt_tokens: 10000,
-        cached_tokens: 8000,
+        tokens: 4500,
+        input: 2000,
+        cache_read: 8000,
         cost_nano_usd: 1250000,
         latency_p50_ms: 12500,
         latency_p95_ms: 12500,
@@ -82,7 +82,7 @@ describe("responsive request logs", () => {
           <RequestLogsWorkbench admin={admin} />
         </main>
       )
-      const entry = screen.getByRole("link", { name: /查看扣费明细/ })
+      const entry = screen.getByRole("link", { name: /查看请求记录/ })
       await expect.element(entry).toBeVisible()
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width)
       expect(document.body.innerText).toContain("sk-relay-1234")

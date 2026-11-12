@@ -10,19 +10,17 @@ export function requestTokenRate(log: RequestLog): number | null {
     )
   )
     return null
-  const tokens = log.completion_tokens
-  const first = log.first_token_ms
   if (
-    first == null ||
-    !Number.isFinite(first) ||
-    first < 0 ||
-    !Number.isFinite(log.latency_ms) ||
-    log.latency_ms <= first ||
-    !Number.isFinite(tokens) ||
-    tokens <= 0
+    !Number.isFinite(log.decode_ms) ||
+    !Number.isFinite(log.decode_out) ||
+    !log.decode_ms ||
+    !log.decode_out ||
+    log.decode_ms <= 0 ||
+    log.decode_out <= 0 ||
+    log.canceled
   )
     return null
-  return (tokens * 1000) / (log.latency_ms - first)
+  return (log.decode_out * 1000) / log.decode_ms
 }
 
 export function requestTokenRateLabel(log: RequestLog) {

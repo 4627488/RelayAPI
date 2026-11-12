@@ -49,11 +49,11 @@ func TestBillingDetailAtomicityAndUnchargedOutcomes(t *testing.T) {
 	assertBills := func(id string, want int64) {
 		t.Helper()
 		var n int64
-		if err := database.Model(&db.RequestLog{}).Where("id = ? OR reservation_request_id = ?", id, id).Count(&n).Error; err != nil || n != want {
+		if err := database.Model(&db.RequestLog{}).Where("(id = ? OR reservation_request_id = ?) AND cost_nano_usd > 0", id, id).Count(&n).Error; err != nil || n != want {
 			t.Fatalf("bills=%d want=%d err=%v", n, want, err)
 		}
 	}
-	paid := LogInput{TenantID: tenantID, APIKeyID: keyID, Model: "test", Usage: Usage{Prompt: 10, Total: 10}, CostNanoUSD: int64Pointer(25), PricingComplete: true, Settled: true, Method: "POST", Path: "/v1/responses", StartedAt: time.Now(), CompletedAt: time.Now()}
+	paid := LogInput{TenantID: tenantID, APIKeyID: keyID, Model: "test", Usage: Usage{Input: 10, Total: 10}, CostNanoUSD: int64Pointer(25), PricingComplete: true, Settled: true, Method: "POST", Path: "/v1/responses", StartedAt: time.Now(), CompletedAt: time.Now()}
 	id := admit()
 	broken := paid
 	// Force the detail INSERT to fail after settlement and the summary INSERT.
@@ -109,8 +109,15 @@ func TestBillingDetailAtomicityAndUnchargedOutcomes(t *testing.T) {
 		t.Fatalf("duplicate inserted=%v err=%v", inserted, err)
 	}
 	turn.TurnID, turn.CostNanoUSD, turn.PricingComplete = "unknown", 0, false
-	if _, err := dataStore.AccrueWebSocketTurn(t.Context(), turn); err != nil {
-		t.Fatal(err)
+	if inserted, err := dataStore.AccrueWebSocketTurn(t.Context(), turn); err != nil || !inserted {
+		t.Fatalf("unknown turn not retained: %v %v", inserted, err)
+	}
+	if inserted, err := dataStore.AccrueWebSocketTurn(t.Context(), turn); err != nil || inserted {
+		t.Fatalf("zero-cost terminal replay: %v %v", inserted, err)
+	}
+	var unknown db.RequestLog
+	if err := database.First(&unknown, "id = ?", WebSocketStepID(id, "unknown")).Error; err != nil || unknown.CostNanoUSD != nil || unknown.PricingComplete {
+		t.Fatalf("unknown usage was not retained as unknown: %+v %v", unknown, err)
 	}
 	if err := dataStore.SettleRequestReservation(t.Context(), id, 25, true); err != nil {
 		t.Fatal(err)
