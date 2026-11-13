@@ -38,7 +38,7 @@ COPY .build/ /
 FROM ${BUILD_SOURCE} AS artifacts
 
 FROM alpine:3.22 AS runtime
-RUN apk add --no-cache ca-certificates && adduser -D -u 1000 relay
+RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 1000 relay
 # Independent layers keep unchanged launcher assets reusable across releases.
 COPY --link --from=artifacts /relayapi /relayapi
 COPY --link --from=artifacts /rai-bin /rai-bin
