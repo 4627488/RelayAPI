@@ -39,16 +39,16 @@ export function AuthFrame({
   footer: ReactNode
 }) {
   return (
-    <main className="flex min-h-svh items-center justify-center bg-muted/30 px-4 py-8 sm:px-6">
+    <main className="flex min-h-svh items-center justify-center bg-background px-4 py-8 sm:px-6">
       <section className="w-full max-w-md" aria-labelledby="auth-title">
-        <div className="mb-6 flex items-center gap-3 px-1">
-          <SendIcon />
+        <div className="mb-6 flex items-center justify-center gap-3 px-1">
+          <SendIcon className="text-primary" />
           <div className="leading-tight">
             <p className="text-base font-semibold">RelayAPI</p>
             <p className="text-xs text-muted-foreground">管理控制台</p>
           </div>
         </div>
-        <Card>
+        <Card className="[--card-spacing:--spacing(6)]">
           <CardHeader>
             <CardTitle>
               <h1 id="auth-title">{title}</h1>

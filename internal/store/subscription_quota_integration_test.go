@@ -88,4 +88,35 @@ func TestSubscriptionQuotasAreBoundToTenantModelsAndGeneration(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatalf("disabled=%+v err=%v", got, err)
 	}
+	// A stale parent observation cannot make an already newer child look full.
+	if err = tx.Model(&db.ParentQuotaWindow{}).Where("parent_subscription_id = ?", parentID).Update("resets_at", now.Add(30*time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.SubscriptionQuotas(ctx, key, []string{"codex-test"}, now)
+	if err != nil || len(got) != 1 || !got[0].Unavailable {
+		t.Fatalf("stale generation advertised as available: %+v %v", got, err)
+	}
+	// Cash-backed grants have no subscription meter; old child model filters are
+	// ignored in the same way as admission and active model entitlements.
+	cashParent, cashChild := identity.NewID(), identity.NewID()
+	if err = tx.Create(&db.ParentSubscription{ID: cashParent, UpstreamCredentialID: cashParent, UpstreamAuthIndex: cashParent, Name: "cash", Enabled: true, CapacityMode: db.ParentCapacityUnmetered, UpstreamModelAllowlist: []string{"codex-*"}}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Create(&db.ChildSubscription{ID: cashChild, ParentSubscriptionID: cashParent, TenantID: tenantID, Name: "cash", Enabled: true, StartsAt: now.Add(-time.Hour), AllocationPPM: 1000000, ModelAllowlist: []string{"grok-*"}}).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.SubscriptionQuotas(ctx, key, []string{"codex-test", "grok-test"}, now)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("cash grant missing: %+v %v", got, err)
+	}
+	var cash *SubscriptionQuota
+	for i := range got {
+		if got[i].ChildID == cashChild {
+			cash = &got[i]
+		}
+	}
+	if cash == nil || !cash.BalanceBilled || len(cash.Windows) != 0 || len(cash.Models) != 1 || cash.Models[0] != "codex-test" {
+		t.Fatalf("cash projection differs from admission: %+v", cash)
+	}
+
 }

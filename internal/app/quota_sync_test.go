@@ -86,7 +86,7 @@ func TestQuotaRefreshFailureIsVisibleAndRetryIsBounded(t *testing.T) {
 			refreshErr := errors.New("invalid_grant")
 			forced, probes := 0, 0
 			application := &App{nativeRuntime: quotaRefreshRuntime{refresh: func(_ context.Context, id string, force bool) ([]byte, bool, error) {
-				if id != "kimi-1" {
+				if id != "codex-1" {
 					t.Fatalf("id=%s", id)
 				}
 				if force {
@@ -97,7 +97,7 @@ func TestQuotaRefreshFailureIsVisibleAndRetryIsBounded(t *testing.T) {
 				}
 				return []byte(`{"access_token":"runtime-token"}`), force, nil
 			}}}
-			_, err := application.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{UpstreamCredentialID: "kimi-1", Provider: "kimi"}, store.UpstreamCredentialSnapshot{ID: "kimi-1", Document: []byte(`{"access_token":"old"}`)}, "", func(_ context.Context, input gateway.QuotaProbeCredential) (gateway.QuotaReport, error) {
+			_, err := application.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{UpstreamCredentialID: "codex-1", Provider: "codex"}, store.UpstreamCredentialSnapshot{ID: "codex-1", Document: []byte(`{"access_token":"old"}`)}, "", func(_ context.Context, input gateway.QuotaProbeCredential) (gateway.QuotaReport, error) {
 				probes++
 				if string(input.Document) != `{"access_token":"runtime-token"}` {
 					t.Fatal("probe used stale database document")
@@ -122,8 +122,8 @@ func TestQuotaProbeUnauthorized(t *testing.T) {
 	if quotaProbeUnauthorized(nil) {
 		t.Fatal("nil error")
 	}
-	if !quotaProbeUnauthorized(errors.New(`Kimi quota requests failed: kimi-cn-usage: upstream returned HTTP 401: {"error":{"reason":"REASON_INVALID_AUTH_TOKEN"}}`)) {
-		t.Fatal("expected kimi 401")
+	if !quotaProbeUnauthorized(errors.New(`Codex quota requests failed: codex-cn-usage: upstream returned HTTP 401: {"error":{"reason":"REASON_INVALID_AUTH_TOKEN"}}`)) {
+		t.Fatal("expected codex 401")
 	}
 	if !quotaProbeUnauthorized(errors.New("codex quota request: upstream returned HTTP 401: invalid_token")) {
 		t.Fatal("expected codex 401")
@@ -152,9 +152,9 @@ func TestRefreshQuotaCredentialDocumentUsesRuntimeToken(t *testing.T) {
 			persisted = append([]byte(nil), document...)
 		},
 	}, []upstream.Credential{{
-		ID: "kimi-1", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+		ID: "codex-1", Provider: "codex", Enabled: true, Models: []string{"codex-k2.5"},
 		Document: mustJSON(t, map[string]any{
-			"type":           "kimi",
+			"type":           "codex",
 			"access_token":   "old-access",
 			"refresh_token":  "old-refresh",
 			"expired":        time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
@@ -167,8 +167,8 @@ func TestRefreshQuotaCredentialDocumentUsesRuntimeToken(t *testing.T) {
 	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
 
 	application := &App{nativeRuntime: runtime}
-	stale := mustJSON(t, map[string]any{"type": "kimi", "access_token": "old-access", "refresh_token": "old-refresh"})
-	document, err := application.refreshQuotaCredentialDocument(t.Context(), "kimi-1", stale, false)
+	stale := mustJSON(t, map[string]any{"type": "codex", "access_token": "old-access", "refresh_token": "old-refresh"})
+	document, err := application.refreshQuotaCredentialDocument(t.Context(), "codex-1", stale, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,9 +188,9 @@ func TestProbeQuotaWithRefreshRetriesAfter401(t *testing.T) {
 	defer oauth.Close()
 
 	runtime, err := upstream.NewRuntime(upstream.Options{}, []upstream.Credential{{
-		ID: "kimi-1", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+		ID: "codex-1", Provider: "codex", Enabled: true, Models: []string{"codex-k2.5"},
 		Document: mustJSON(t, map[string]any{
-			"type":           "kimi",
+			"type":           "codex",
 			"access_token":   "still-valid-access",
 			"refresh_token":  "refresh",
 			"expired":        time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
@@ -216,17 +216,17 @@ func TestProbeQuotaWithRefreshRetriesAfter401(t *testing.T) {
 		}
 		used := 10.0
 		return gateway.QuotaReport{
-			AuthIndex: credential.AuthIndex, Provider: "kimi", Supported: true, Observed: time.Now().UTC(),
+			AuthIndex: credential.AuthIndex, Provider: "codex", Supported: true, Observed: time.Now().UTC(),
 			Windows: []gateway.QuotaWindow{{Kind: "5h", UsedPercent: &used, ResetsAt: &reset, Enforceable: true}},
 		}, nil
 	}
 
 	application := &App{nativeRuntime: runtime}
 	report, err := application.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{
-		UpstreamCredentialID: "kimi-1", Provider: "kimi",
+		UpstreamCredentialID: "codex-1", Provider: "codex",
 	}, store.UpstreamCredentialSnapshot{
-		ID: "kimi-1", Provider: "kimi",
-		Document: mustJSON(t, map[string]any{"type": "kimi", "access_token": "still-valid-access"}),
+		ID: "codex-1", Provider: "codex",
+		Document: mustJSON(t, map[string]any{"type": "codex", "access_token": "still-valid-access"}),
 	}, "", probe)
 	if err != nil || !report.Supported || len(tokens) != 2 || tokens[0] != "still-valid-access" || tokens[1] != "new-access" {
 		t.Fatalf("report = %#v tokens=%v err=%v", report, tokens, err)
@@ -240,9 +240,9 @@ func TestProbeQuotaWithRefreshRefreshesExpiredTokenBeforeFirstProbe(t *testing.T
 	defer oauth.Close()
 
 	runtime, err := upstream.NewRuntime(upstream.Options{}, []upstream.Credential{{
-		ID: "kimi-1", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+		ID: "codex-1", Provider: "codex", Enabled: true, Models: []string{"codex-k2.5"},
 		Document: mustJSON(t, map[string]any{
-			"type":           "kimi",
+			"type":           "codex",
 			"access_token":   "old-access",
 			"refresh_token":  "refresh",
 			"expired":        time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
@@ -266,8 +266,8 @@ func TestProbeQuotaWithRefreshRefreshesExpiredTokenBeforeFirstProbe(t *testing.T
 	}
 
 	application := &App{nativeRuntime: runtime}
-	_, err = application.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{UpstreamCredentialID: "kimi-1", Provider: "kimi"}, store.UpstreamCredentialSnapshot{
-		ID: "kimi-1", Document: mustJSON(t, map[string]any{"access_token": "old-access"}),
+	_, err = application.probeQuotaWithRefreshFn(t.Context(), store.ParentSubscription{UpstreamCredentialID: "codex-1", Provider: "codex"}, store.UpstreamCredentialSnapshot{
+		ID: "codex-1", Document: mustJSON(t, map[string]any{"access_token": "old-access"}),
 	}, "", probe)
 	if err != nil || len(tokens) != 1 || tokens[0] != "new-access" {
 		t.Fatalf("tokens = %v err=%v", tokens, err)
@@ -275,7 +275,7 @@ func TestProbeQuotaWithRefreshRefreshesExpiredTokenBeforeFirstProbe(t *testing.T
 }
 
 func TestProbeQuotaWithRefreshCoversCodexAndXAI(t *testing.T) {
-	for _, provider := range []string{"codex", "xai"} {
+	for _, provider := range []string{"codex"} {
 		t.Run(provider, func(t *testing.T) {
 			oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_ = r.ParseForm()

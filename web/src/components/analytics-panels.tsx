@@ -39,71 +39,107 @@ const rate = (value: number, total: number) =>
     ? `${((Math.max(0, Math.min(value, total)) / total) * 100).toFixed(1)}%`
     : "—"
 
-export function AnalyticsSummary({ report }: { report: UsageReport }) {
+export function AnalyticsSummary({
+  report,
+  overview = false,
+}: {
+  report: UsageReport
+  overview?: boolean
+}) {
   const s = report.summary
   return (
     <StatStrip
-      className="xl:grid-cols-3"
-      items={[
-        {
-          label: "请求",
-          value: compact(s.requests),
-          detail: `${report.days} 天 · ${compact(s.errors)} 次错误 · ${compact(s.canceled ?? 0)} 次取消`,
-        },
-        {
-          label: "成功率",
-          value: rate(s.requests - s.errors - (s.canceled ?? 0), s.requests),
-          detail: s.requests
-            ? `${compact(s.requests - s.errors - (s.canceled ?? 0))} 次成功`
-            : "尚无请求样本",
-        },
-        {
-          label: "模型成本",
-          value: money(s.cost_nano_usd),
-          detail: s.requests
-            ? `${money(s.cost_nano_usd / s.requests)} / 请求`
-            : "尚无计费请求",
-        },
-        {
-          label: "Tokens",
-          value: compactTokens(s.tokens),
-          detail: `${compactTokens(s.input)} 输入 · ${compactTokens(s.output)} 输出`,
-        },
-        {
-          label: "缓存命中率",
-          value: cacheHitRateLabel(
-            s.cache_read,
-            s.input,
-            s.cache_write,
-            s.cache_unknown,
-            s.cache_unknown_read
-          ),
-          detail: `${compactTokens(s.cache_read)} 缓存读取 · ${compactTokens(s.cache_write)} 缓存写入`,
-        },
-        {
-          label: "平均首 Token",
-          value: measuredMS(s.mean_ttft_ms ?? undefined),
-          detail: `${compact(s.timed ?? 0)} 个有效流式样本`,
-        },
-        {
-          label: "生成速度",
-          value:
-            s.tokens_per_second == null
-              ? "—"
-              : `${s.tokens_per_second.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} token/s`,
-          detail: `${compact(s.decode_n ?? 0)} 个有效样本 · 按输出量与解码时间加权`,
-        },
-        {
-          label: "未定价请求",
-          value: compact(s.unpriced ?? 0),
-          detail: `${compact(s.retried ?? 0)} 次重试请求 · ${compact(s.rejected ?? 0)} 次本地拒绝`,
-        },
-        {
-          label: "余额支付",
-          value: money(s.balance_charged_nano_usd),
-          detail: `订阅承担 ${money(s.subscription_covered_nano_usd)}`,
-        },
-      ]}
+      className={overview ? "xl:grid-cols-4" : "xl:grid-cols-3"}
+      items={
+        overview
+          ? [
+              {
+                label: "请求",
+                value: compact(s.requests),
+                detail: `${compact(s.errors)} 错误 · ${compact(s.canceled ?? 0)} 取消`,
+              },
+              {
+                label: "Tokens",
+                value: compactTokens(s.tokens),
+                detail: `${compactTokens(s.input)} 输入 · ${compactTokens(s.output)} 输出`,
+              },
+              {
+                label: "费用",
+                value: money(s.cost_nano_usd),
+                detail: `余额支付 ${money(s.balance_charged_nano_usd)}`,
+              },
+              {
+                label: "成功率",
+                value: rate(
+                  s.requests - s.errors - (s.canceled ?? 0),
+                  s.requests
+                ),
+              },
+            ]
+          : [
+              {
+                label: "请求",
+                value: compact(s.requests),
+                detail: `${report.days === 0 ? "全部历史" : `${report.days} 天`} · ${compact(s.errors)} 次错误 · ${compact(s.canceled ?? 0)} 次取消`,
+              },
+              {
+                label: "成功率",
+                value: rate(
+                  s.requests - s.errors - (s.canceled ?? 0),
+                  s.requests
+                ),
+                detail: s.requests
+                  ? `${compact(s.requests - s.errors - (s.canceled ?? 0))} 次成功`
+                  : "尚无请求样本",
+              },
+              {
+                label: "模型成本",
+                value: money(s.cost_nano_usd),
+                detail: s.requests
+                  ? `${money(s.cost_nano_usd / s.requests)} / 请求`
+                  : "尚无计费请求",
+              },
+              {
+                label: "Tokens",
+                value: compactTokens(s.tokens),
+                detail: `${compactTokens(s.input)} 输入 · ${compactTokens(s.output)} 输出`,
+              },
+              {
+                label: "缓存命中率",
+                value: cacheHitRateLabel(
+                  s.cache_read,
+                  s.input,
+                  s.cache_write,
+                  s.cache_unknown,
+                  s.cache_unknown_read
+                ),
+                detail: `${compactTokens(s.cache_read)} 缓存读取 · ${compactTokens(s.cache_write)} 缓存写入`,
+              },
+              {
+                label: "平均首 Token",
+                value: measuredMS(s.mean_ttft_ms ?? undefined),
+                detail: `${compact(s.timed ?? 0)} 个有效流式样本`,
+              },
+              {
+                label: "生成速度",
+                value:
+                  s.tokens_per_second == null
+                    ? "—"
+                    : `${s.tokens_per_second.toLocaleString("zh-CN", { maximumFractionDigits: 1 })} token/s`,
+                detail: `${compact(s.decode_n ?? 0)} 个有效样本 · 按输出量与解码时间加权`,
+              },
+              {
+                label: "未定价请求",
+                value: compact(s.unpriced ?? 0),
+                detail: `${compact(s.retried ?? 0)} 次重试请求 · ${compact(s.rejected ?? 0)} 次本地拒绝`,
+              },
+              {
+                label: "余额支付",
+                value: money(s.balance_charged_nano_usd),
+                detail: `订阅承担 ${money(s.subscription_covered_nano_usd)}`,
+              },
+            ]
+      }
     />
   )
 }
@@ -115,9 +151,7 @@ export function ObservationPanels({ report }: { report: UsageReport }) {
       <Card className="min-w-0">
         <CardHeader>
           <CardTitle>响应性能</CardTitle>
-          <CardDescription>
-            统计所选周期内保留的请求记录；分位数不从日汇总推算。
-          </CardDescription>
+          <CardDescription>基于所选周期内保留的请求记录。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {o ? (
@@ -188,9 +222,7 @@ export function ObservationPanels({ report }: { report: UsageReport }) {
       <Card className="min-w-0">
         <CardHeader>
           <CardTitle>失败与计费异常</CardTitle>
-          <CardDescription>
-            保留记录中出现最多的 20 组错误；相同模型、状态码和错误码归为一组。
-          </CardDescription>
+          <CardDescription>出现最多的 20 组错误。</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {o ? (
@@ -263,11 +295,9 @@ type Sort = "cost_nano_usd" | "requests" | "errors" | "tokens"
 export function AttributionPanel({
   report,
   admin = false,
-  compactView = false,
 }: {
   report: UsageReport
   admin?: boolean
-  compactView?: boolean
 }) {
   const [dimension, setDimension] = useState<Dimension>("models")
   const [sort, setSort] = useState<Sort>("cost_nano_usd")
@@ -320,11 +350,13 @@ export function AttributionPanel({
   return (
     <Card className="min-w-0">
       <CardHeader>
-        <CardTitle>{compactView ? "主要消耗与错误来源" : "用量归因"}</CardTitle>
+        <CardTitle>用量归因</CardTitle>
         <CardDescription>
           {activeDimension === "providers"
             ? "提供商归因仅覆盖保留的请求记录，不含已归档用量。"
-            : `最近 ${report.days} 天 · 选择维度与排序，定位消耗和失败来源。`}
+            : report.days === 0
+              ? "全部历史"
+              : `最近 ${report.days} 天`}
         </CardDescription>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Tabs
@@ -363,20 +395,16 @@ export function AttributionPanel({
             ))}
           </ToggleGroup>
         </div>
-        {!compactView && (
-          <SearchField
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onClear={() => setSearch("")}
-            placeholder="搜索归因名称"
-          />
-        )}
+        <SearchField
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onClear={() => setSearch("")}
+          placeholder="搜索归因名称"
+        />
       </CardHeader>
       <CardContent>
         {rows.length ? (
-          <div
-            className={compactView ? undefined : "max-h-[36rem] overflow-auto"}
-          >
+          <div className="max-h-[36rem] overflow-auto">
             <Table tabIndex={0} aria-label="用量归因明细">
               <TableHeader>
                 <TableRow>
@@ -388,7 +416,7 @@ export function AttributionPanel({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(compactView ? rows.slice(0, 5) : rows).map((x) => (
+                {rows.map((x) => (
                   <TableRow key={x.id}>
                     <TableCell className="max-w-64">
                       <p className="truncate" title={x.name}>
@@ -428,11 +456,6 @@ export function AttributionPanel({
           </div>
         ) : (
           <NoData text={search ? "没有匹配项" : "暂无归因数据"} />
-        )}
-        {compactView && rows.length > 5 && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            显示前 5 项，共 {rows.length} 项；完整数据见用量页面。
-          </p>
         )}
       </CardContent>
     </Card>

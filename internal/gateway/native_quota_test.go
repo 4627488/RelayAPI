@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -24,69 +23,6 @@ func TestProbeQuotaUsesCredentialExtensionWithoutNetwork(t *testing.T) {
 	window := report.Windows[0]
 	if window.UsedPercent == nil || *window.UsedPercent != 25 || window.RemainingPercent == nil || *window.RemainingPercent != 75 || window.ResetsAt == nil || !window.ResetsAt.Equal(reset) {
 		t.Fatalf("window = %#v", window)
-	}
-}
-
-func TestProbeKimiQuotaFallsBackAndNormalizesAmount(t *testing.T) {
-	now := time.Now().UTC()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer token" {
-			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
-		}
-		if r.Header.Get("User-Agent") != kimiQuotaUserAgent || r.Header.Get("X-Msh-Platform") != kimiQuotaPlatform {
-			t.Errorf("fingerprint headers = %q %q", r.Header.Get("User-Agent"), r.Header.Get("X-Msh-Platform"))
-		}
-		if r.URL.Path == "/primary" {
-			http.Error(w, "region", http.StatusForbidden)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"plan": "pro", "usage": map[string]any{"used": 25, "limit": 100, "reset_in": 3600}}})
-	}))
-	defer server.Close()
-	report, err := probeQuotaWithClient(context.Background(), server.Client(), quotaEndpoints{kimiUsage: server.URL + "/primary", kimiUsageFallback: server.URL + "/fallback"}, "kimi-1", "kimi", map[string]any{"access_token": "token"}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.Source != "kimi-global-usage" || report.PlanType != "pro" || len(report.Windows) != 1 {
-		t.Fatalf("report = %#v", report)
-	}
-	window := report.Windows[0]
-	if window.Kind != quotaKind7d || window.UsedPercent == nil || *window.UsedPercent != 25 || window.Remaining == nil || *window.Remaining != 75 {
-		t.Fatalf("window = %#v", window)
-	}
-}
-
-func TestProbeKimiQuotaMapsOfficialFiveHourAndWeeklyWindows(t *testing.T) {
-	now := time.Now().UTC()
-	reset7d := now.Add(48 * time.Hour).Format(time.RFC3339Nano)
-	reset5h := now.Add(2 * time.Hour).Format(time.RFC3339Nano)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Msh-Device-Id") != "device-9" {
-			t.Errorf("device id = %q", r.Header.Get("X-Msh-Device-Id"))
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"usage": map[string]any{"used": "214", "limit": "2048", "remaining": "1834", "resetTime": reset7d},
-			"limits": []any{map[string]any{
-				"window": map[string]any{"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
-				"detail": map[string]any{"used": "139", "limit": "200", "remaining": "61", "resetTime": reset5h},
-			}},
-			"user": map[string]any{"membership": map[string]any{"level": "LEVEL_INTERMEDIATE"}},
-		})
-	}))
-	defer server.Close()
-	report, err := probeQuotaWithClient(t.Context(), server.Client(), quotaEndpoints{kimiUsage: server.URL}, "kimi-1", "kimi", map[string]any{"access_token": "token", "device_id": "device-9"}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.PlanType != "INTERMEDIATE" || len(report.Windows) != 2 {
-		t.Fatalf("report = %#v", report)
-	}
-	byKind := quotaWindowsByKind(report.Windows)
-	if byKind[quotaKind5h].UsedPercent == nil || *byKind[quotaKind5h].UsedPercent != 69.5 || !byKind[quotaKind5h].Enforceable {
-		t.Fatalf("5h = %#v", byKind[quotaKind5h])
-	}
-	if byKind[quotaKind7d].UsedPercent == nil || *byKind[quotaKind7d].UsedPercent != 10.44921875 {
-		t.Fatalf("7d = %#v", byKind[quotaKind7d])
 	}
 }
 
@@ -181,110 +117,6 @@ func TestProbeCodexQuotaReadsLegacyPercentLeft(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(report.Windows) != 1 || report.Windows[0].Kind != quotaKind5h || report.Windows[0].UsedPercent == nil || math.Abs(*report.Windows[0].UsedPercent-26.6) > 1e-9 || report.Windows[0].ResetsAt == nil {
-		t.Fatalf("report = %#v", report)
-	}
-}
-
-func TestProbeXAIQuotaUsesCreditsPercentAndSubscriptionTier(t *testing.T) {
-	now := time.Now().UTC()
-	reset := now.Add(24 * time.Hour).Format(time.RFC3339)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Grok-Client-Version") != "1.0.46" || r.Header.Get("User-Agent") != "grok-pager/1.0.46 grok-shell/1.0.46" {
-			t.Errorf("outdated Grok quota client headers: %v", r.Header)
-		}
-		if r.Header.Get("X-XAI-Token-Auth") != "xai-grok-cli" {
-			t.Errorf("token auth = %q", r.Header.Get("X-XAI-Token-Auth"))
-		}
-		if r.URL.RawQuery == "format=credits" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"subscriptionTier": "grok-pro",
-				"config": map[string]any{
-					"creditUsagePercent": 12.5,
-					"currentPeriod":      map[string]any{"end": reset, "type": "USAGE_PERIOD_TYPE_WEEKLY"},
-				},
-			})
-			return
-		}
-		if r.URL.Path == "/settings" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"subscription_tier_display": "SuperGrok Heavy"})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"config": map[string]any{"used": 3000, "monthlyLimit": 15000, "billingPeriodEnd": reset},
-		})
-	}))
-	defer server.Close()
-	report, err := probeQuotaWithClient(t.Context(), server.Client(), quotaEndpoints{xaiCredits: server.URL + "?format=credits", xaiBilling: server.URL, xaiSettings: server.URL + "/settings"}, "xai-1", "xai", map[string]any{"access_token": "token"}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.PlanType != "SuperGrok Heavy" || report.Source != "xai-billing" {
-		t.Fatalf("report = %#v", report)
-	}
-	byKind := quotaWindowsByKind(report.Windows)
-	if byKind[quotaKind7d].UsedPercent == nil || *byKind[quotaKind7d].UsedPercent != 12.5 || !byKind[quotaKind7d].Enforceable {
-		t.Fatalf("7d = %#v", byKind[quotaKind7d])
-	}
-	if byKind[quotaKindMonthly].Enforceable || byKind[quotaKindMonthly].UsedPercent == nil || *byKind[quotaKindMonthly].UsedPercent != 20 {
-		t.Fatalf("monthly = %#v", byKind[quotaKindMonthly])
-	}
-}
-
-func TestProbeXAIQuotaDoesNotInferFreeFromZeroMonthlyLimit(t *testing.T) {
-	now := time.Now().UTC()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.RawQuery == "format=credits" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{
-				"creditUsagePercent": 10,
-				"currentPeriod":      map[string]any{"end": now.Add(24 * time.Hour).Format(time.RFC3339), "type": "USAGE_PERIOD_TYPE_WEEKLY"},
-			}})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{"monthlyLimit": 0}})
-	}))
-	defer server.Close()
-	report, err := probeQuotaWithClient(t.Context(), server.Client(), quotaEndpoints{xaiCredits: server.URL + "?format=credits", xaiBilling: server.URL}, "xai-1", "xai", map[string]any{"access_token": "token"}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.PlanType != "" || len(report.Windows) != 1 || report.Windows[0].Kind != quotaKind7d {
-		t.Fatalf("report = %#v", report)
-	}
-}
-
-func TestProbeXAIQuotaKeepsMonthlyIncludedPeriodMonthly(t *testing.T) {
-	now := time.Now().UTC()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.RawQuery == "format=credits" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{
-				"creditUsagePercent": 42,
-				"currentPeriod":      map[string]any{"type": "USAGE_PERIOD_TYPE_MONTHLY", "end": now.Add(20 * 24 * time.Hour).Format(time.RFC3339)},
-			}})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"config": map[string]any{}})
-	}))
-	defer server.Close()
-	report, err := probeQuotaWithClient(t.Context(), server.Client(), quotaEndpoints{xaiCredits: server.URL + "?format=credits", xaiBilling: server.URL}, "xai-1", "xai", map[string]any{"access_token": "token"}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(report.Windows) != 1 || report.Windows[0].Kind != quotaKindMonthly || report.Windows[0].Enforceable {
-		t.Fatalf("report = %#v", report)
-	}
-}
-
-func TestProbeXAIQuotaTreatsPersonalTeam412AsUnsupported(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusPreconditionFailed)
-		_, _ = w.Write([]byte(`{"error":"No personal team."}`))
-	}))
-	defer server.Close()
-	report, err := probeQuotaWithClient(t.Context(), server.Client(), quotaEndpoints{xaiCredits: server.URL + "?format=credits", xaiBilling: server.URL}, "xai-1", "xai", map[string]any{"access_token": "token"}, time.Now().UTC())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if report.Supported || len(report.Windows) != 0 {
 		t.Fatalf("report = %#v", report)
 	}
 }

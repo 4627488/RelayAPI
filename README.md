@@ -1,14 +1,8 @@
 # RelayAPI
 
-RelayAPI 是 Codex 优先的 Go 多租户模型网关。统一入口负责协议兼容、
-凭据路由、额度、计费和审计。Cursor 所需的 SDK 运行时随镜像内置并自动管理，
-无需单独部署代理服务。
+RelayAPI 是仅分发 Codex 的 Go 多租户 Responses 网关，负责加密凭据、账户调度、额度、计费和审计。执行器在进程内运行，不依赖 CPA 或本地协议转换进程。
 
-详细设计见 [docs/architecture.md](docs/architecture.md)，生图计费与生产费率见
-[docs/image-billing.md](docs/image-billing.md)，父/子订阅与严格凭据路由见
-[docs/subscriptions.md](docs/subscriptions.md)。
-
-后台日志输出为分级 JSON，由 Alloy 推送到 Loki；可选部署配置见 [docker-compose.observability.yml](docker-compose.observability.yml)。页面中的「请求记录」用于查看用量和扣费。Prometheus 指标通过 `GET /metrics` 提供，包含 Relay 和内嵌 CPA 指标；日志采集、查询、指标语义和告警示例见 [docs/observability.md](docs/observability.md)。
+客户端直接使用 OpenAI Responses；其他客户端通过本地 Magpie 转换后接入，参见 [Magpie 接入与额度说明](docs/magpie.md)。服务端不提供 Chat Completions、Messages、Gemini、Images、视频或 Realtime API。计量口径见 [请求计量与结算](docs/billing-step-logs.md)，订阅规则见 [父子订阅](docs/subscriptions.md)。
 
 ## 启动
 
@@ -64,7 +58,7 @@ WebSocket 由同一套运行时完成协议转换、凭据选择、重试和上�
 协议正确性和安全边界不提供容易误配的开关。账户模型重名请使用 API Key 模型别名或
 严格订阅绑定处理，不再维护会破坏权限命名一致性的账户级模型前缀。
 
-Codex/xAI WebSocket 支持连接内多轮 `response.create`。收到一轮终态后即使上游断开，
+Codex Responses WebSocket 支持连接内多轮 `response.create`。收到一轮终态后即使上游断开，
 客户端连接仍会保留，下一次完整请求会自动重连；`generate:false` 预热由本地直接完成。
 `RELAY_UPSTREAM_WEBSOCKETS=true` 默认启用这条链路，关闭后可统一使用 HTTP 流式接口。
 
@@ -73,159 +67,17 @@ Codex/xAI WebSocket 支持连接内多轮 `response.create`。收到一轮终态
 这些值不再依赖重启。凭据级故障隔离仍然生效；进程级全局熔断默认关闭，避免几次传输失败就把整站拦掉。
 提高并发或请求体上限时，请同步提高主机内存预算。
 
-## 客户端兼容
+## 客户端接入
 
-Cursor 上游支持直接在模型账户中填写 Cursor API Key；镜像内置并自动管理 SDK 运行时，
-不需要额外部署服务。支持模型发现、Responses、Chat Completions、Messages 和工具回传，
-部署与能力边界见 [Cursor 上游](docs/cursor-upstream.md)。
+支持 `POST /v1/responses`、`POST /v1/responses/compact`、Responses WebSocket 和 `GET /v1/models`。保留 `/openai/v1` 与 `/backend-api/codex` 命名空间供 Codex 客户端使用。
 
-Relay 的上下游接入以当前内嵌 CPA 的内置执行器和协议路由为准，覆盖 OpenAI Responses、
-Chat Completions、Claude Messages、Gemini 原生协议及图片、视频和 Realtime 入口。
-提供商、认证方式、协议端点和验证边界见 [CPA 能力对齐](docs/cpa-capabilities.md)。
-Grok/xAI、Kimi 与其他 OpenAI-compatible 模型共用 `/v1/chat/completions` 或
-`/v1/responses`，由请求中的 `model` 和内嵌 CPA
-凭据配置选择提供商。管理员可在“模型账户”中管理加密凭据，在独立“代理”页面维护和
-测试可复用代理，在“系统设置”中选择系统请求代理并热更新重试、调度和连接行为。
-CPA 负责协议转换和文本用量解释；Relay 保留用户鉴权、价格规则、额度预留和 PostgreSQL 结算。SDK 接入边界及暂时保留的内部依赖见 [CPA bridge](third_party/cpaexecutor/README.md)。CPA 的公开用量接口已增加图片等结构化字段，Relay 的图片计费仍沿用现有响应解析。
-系统代理仅用于 Models.dev 同步、系统级 OAuth 等 RelayAPI 自身请求；每个模型账户单独
-选择代理，未选择时明确直连。账户代理同时作用于推理、模型发现、令牌刷新和额度查询。
+Magpie 中将 RelayAPI 配置为 Responses 提供商：地址为 `https://你的域名/v1`，密钥为 `relay_*`。面板的 Magpie 导入链接只声明 Responses 地址和余额查询，不声明其他协议；本地 Magpie 负责客户端协议适配。
 
-模型账户使用内嵌运行时的凭据级模型目录：内置提供商使用 CPA 的受控目录；
-嵌入式 CPA 启动后立即同步远程模型定义，此后每 3 小时刷新一次。提供商目录变化时，
-Relay 自动重建凭据路由并同步父订阅模型范围。OpenAI 及
-OpenAI-compatible 凭据由原生执行器携带同一凭据、代理和自定义请求头访问上游
-`GET {base_url}/models`。模型账户不接受自由填写模型名；管理员只能从原生运行时返回的
-凭据目录中勾选公开范围，后端保存时会再次校验，避免把不存在或不兼容的模型注册进
-路由。若兼容服务不提供可枚举的模型目录，该凭据暂不能通过自动接入创建。
+仅 Codex 凭据可以新增或加载到执行器。历史其他提供商凭据和账单保留在数据库中，不参与分发。账户代理作用于推理、模型发现、Token 刷新和额度查询；未选择时明确直连。
 
-阿里云百炼作为 OpenAI-compatible 提供商接入。默认北京公共 Base URL 为
-`https://dashscope.aliyuncs.com/compatible-mode/v1`；业务空间、其他地域、Token Plan 或
-Coding Plan 必须填写与 API Key 匹配的 Base URL。客户端仍可使用 Chat Completions 或
-Responses；百炼请求会在 Responses 与 Chat Completions 之间按上游能力转换，并发送到对应兼容端点，
-随后恢复成客户端请求的协议。原生运行时通过兼容端点枚举模型；仅支持 DashScope
-专用协议的模型不在该接入范围内。
+Codex OAuth 账户使用 PKCE 登录并加密保存授权。执行前刷新过期 Token；上游明确返回 401 时只允许刷新后在同一账户再请求一次，不跨越准入时固定的账户。其他失败原样返回，避免重复提交生成。
 
-用户面板的接入指南提供一条本站下发的 `rai` 安装命令。脚本装好启动器后会对当前站点执行 `rai login`，浏览器批准即可；之后用 `rai claude` / `rai codex` / `rai opencode` 启动原来的客户端。
-
-用户总览提供最近一年的 [Token 消耗热力图](docs/token-heatmap.md)：按 UTC 日历统计所有模型，用颜色区分每日最常用模型，用深浅表示消耗。支持下载 SVG 或主动开启可撤销的公开图片链接，分享地址使用独立随机标识，不含 API Key 或用户身份。
-
-```bash
-curl -fsSL 'http://localhost:8080/rai/install.sh' | bash
-```
-
-Windows：
-
-```powershell
-irm 'http://localhost:8080/rai/install.ps1' | iex
-```
-
-`rai login` 打开浏览器，用 PKCE 设备授权取得短期 access token 和可轮换的 refresh token，写入系统钥匙串（无钥匙串时回退到 `~/.config/rai/credentials.json`，权限 0600）。自动接入不签发长期 API Key；`rai configure codex --server <url>` 可以直接完成首次登录和配置。无图形界面时加 `--no-browser`，把打印的 URL 贴到浏览器。CI 或用户明确接入静态 Key 时用 `--api-key-stdin`。`rai credential print` 供 Codex 的 command-based auth 按需续期，只输出 access token。发布镜像在构建时交叉编译各平台 `rai`，由本站 `GET /rai/download/{os}-{arch}` 下发；`rai update` 向当前登录站点拉取同一路径。
-
-Claude Code 使用 `rai claude`，或执行 `rai configure claude` 后直接运行 `claude`。未显式选模型时，优先使用授权目录中的原生 Claude，Haiku、Sonnet、Opus、Fable 按家族映射，保留完整提示词、自动工具搜索和原生输出预算。Claude Desktop 的 Chat、Code、Cowork 使用 `rai configure claude-desktop --reasoning-effort medium -y` 接入，完全退出并重开 Desktop 后生效。Desktop 使用独立的 `Claude-3p/configLibrary` 配置档和自动续期凭据助手，不依赖后台代理；`rai unconfigure claude-desktop` 恢复原选择并保留其他配置档。路径、模型选择与兼容边界见 [rai 客户端兼容性](docs/rai-client-compatibility.md)。
-
-新服务器可为 Desktop 协商自动模型发现与原生工具搜索，固定模型和旧服务器保留静态配置。网关目录声明授权模型的家族、别名目标和可信上下文；原生协议测试验证缓存、工具引用和 SSE 心跳往返。可用 `--web-search-url` 接入 Desktop 内置的自建搜索连接器，详见 [Claude Desktop 网关兼容](docs/claude-desktop-gateway.md)。
-
-服务器上可执行 `rai login --server <url> --no-browser`，在另一台设备打开终端显示的 `/rai/authorize` 入口，输入短验证码并核对设备后批准登录。验证码 10 分钟内有效，也可继续使用完整授权链接。
-
-`rai auth login --scope account --server <url>` 另行授权用户自助管理，可使用 `rai key list/create/update/delete`、`rai account quota`、`rai usage`、`rai device list/revoke`。管理授权与模型调用隔离，默认不输出 Key 明文；新建静态 Key 时显式添加 `--show-secret`。认证统一使用 `rai auth login/status/switch/refresh/logout/token`，通过 `--scope inference|account` 显式选择权限；默认仅模型调用权限。`rai auth status --json` 可供脚本检查，授权无效时返回非零退出码。`rai key/device` 默认显示可读文本，可加 `--json` 输出结构化结果；旧复数命令保留 JSON 输出。旧命令继续兼容。详细命令、安全边界和升级说明见 [rai 用户 CLI 与设备授权](docs/rai-cli.md)；各客户端的模型能力、后台续期、配置清理及真实客户端测试见 [rai 客户端兼容性](docs/rai-client-compatibility.md)。
-
-`rai quota` 显示当前配置与 API Key 可访问的订阅额度窗口，包括已用（含预占）、剩余和重置时间；可用 `rai --profile <名称> quota` 切换配置。查询使用只读 `GET /api/rai/quota`，按 Key 的租户和模型权限过滤；按余额结算的模型没有周期额度窗口。历史 Codex 0.158.0 的 `/status` 自定义 provider 显示回归不影响此命令或实际准入与计费；当前 0.163.0 的模型目录与额度协议测试已通过，TUI/Desktop 界面仍需单独验收。源码分析和改进分工见 [rai 与 Codex 互操作分析](docs/rai-codex-interoperability.md)。
-
-管理员可在「系统设置 → 运行策略 → RAI 默认模型」配置候选模型及优先顺序，初始为 `gpt-5.6-sol`、`grok-4.6`。通过 `rai use --auto` 启用站点自动模式后，每次启动从用户当前可用模型中选择首个匹配项，全部不可用时要求手动选择，不会回退到模型目录第一项。`--model` 和 `rai use <model>` 可覆盖站点默认；`rai use --auto` 恢复跟随站点配置。旧版已保存的默认模型继续保留，更新 RAI 后执行 `rai use --auto` 即可清除旧值。新登录未指定 `--model` 时，Codex 沿用客户端默认；其他客户端使用站点候选。
-
-`rai codex` 未指定模型时沿用 Codex 自身配置和默认值，不再自动选择目录中的第一个模型。在 Codex 内切换并保存模型、推理强度后，退出时 rai 自动记住变化，下次 `rai codex` 沿用该选择。配置读取遵循 `CODEX_HOME`（默认 `~/.codex`）；同步范围是用户 `config.toml` 中的模型和推理强度，其他设置仍由 Codex 原生保存。可用模型见 `rai models`，固定模型用 `rai use <模型名>`，恢复客户端默认用 `rai use default`，仅本次覆盖用 `rai codex --model <模型名>`。需要主动导入已有 Codex 偏好时可运行 `rai sync codex`。其他客户端会使用站点默认候选，候选均不可用时需用 `rai use` 或 `--model` 指定模型。
-
-永久接入 Codex Desktop 或直接运行的 `codex`：执行 `rai configure codex`，确认后在用户全局 `~/.codex/config.toml` 中配置与 `rai codex` 相同的 `auth.command` 凭据助手（设置了 `CODEX_HOME` 时使用该目录），不写入新的静态 Key。助手绑定 rai 配置目录、profile 和站点，超时 30 秒，配置刷新间隔 1 分钟；后续登录更新、退出登录在客户端下次调用助手时生效，不表示已运行会话立即失效。profile 改为其他站点时助手拒绝输出凭据，需要重新配置。请保持 rai 安装路径稳定，移动后重新配置。
-
-CLI 可使用原生配置 profile：`rai configure codex --codex-profile relay -y` 写入 `~/.codex/relay.config.toml`，然后执行 `codex --profile relay`，共享历史并保留根配置。`rai sync codex --codex-profile relay` 显式导入模型/推理偏好；`rai unconfigure codex --codex-profile relay` 恢复所选文件。通过 rai 启动时用 `rai --profile work codex -- --profile relay` 区分站点与 Codex profile。Desktop 继续使用全局 configure 流程。
-
-`rai configure codex -y` 或 `--yes` 跳过确认，`--profile <名称>` 选择指定站点。命令合并已有配置，设置 RelayAPI 为默认 provider，保留其他 provider、MCP、项目及权限设置；移除目标 provider 与助手冲突的旧认证字段和 Authorization 请求头。已保存的 rai 模型和推理强度会一并写入，未设置时保留 Codex 原值。应用后完全退出并重新打开 Desktop，新建聊天；已有聊天可能保留原 provider。
-
-撤销接入用 `rai unconfigure codex`。恢复记录保存在 `config.toml.rai-managed.json`，重复配置仍可恢复接入前的设置，保留用户后续修改；认证或服务器地址被用户改过时整组保留，避免拼接不兼容的认证字段。原文件另备份到 `config.toml.rai.bak`。TOML 会重新序列化，未经编辑时撤销会恢复原始排版。恢复记录和备份可能包含原配置中的旧 Key，请妥善保存；文件以 0600 创建（Windows 使用文件系统 ACL）。损坏的 TOML 或恢复记录不会被用于覆盖当前配置。
-
-临时接入用 `rai codex --desktop`：先完全退出 Desktop，在终端输入 `ready` 应用配置，然后从平时的快捷方式打开 Desktop 并新建聊天。使用完完全退出 Desktop，在保留的终端输入 `restore` 恢复。此命令不自动启动或关闭 Desktop，不更换 `CODEX_HOME`，沿用原历史、插件和设置；切换期间也影响使用同一配置的 CLI。终端意外关闭时，运行 `rai unconfigure codex` 恢复。临时记录保存在 `config.toml.rai-temporary.json`；在永久接入之上临时切换时，第一次撤销恢复永久配置，再次撤销恢复接入前配置。Desktop 的启动参数转发及 GUI 行为尚未实测；已使用真实 Codex app-server 验证生成配置、凭据助手及远程模型目录获取。
-
-`rai codex` 使用独立的运行时 provider（`relayapi_rai`，名称占用时自动加后缀），忽略已保存 provider 的 key，继续使用当前 rai profile 的凭据；启动不会改写本地 provider 配置。
-
-RelayAPI 内部按当前 Key 权限独立读取多个子订阅额度；向当前 Codex 输出时，只使用本次请求实际选中的子订阅，不合并 Grok、Codex 或同一服务的不同订阅。窗口周期从订阅数据解析（如 `2h`、`7d`、`14d`），按周期从短到长最多展示两个有效窗口。HTTP 使用 `X-Codex-*` 响应头，WebSocket 使用固定 `codex` 组，在连接及每轮用量持久化后更新。切换订阅时整体替换两个槽位；无订阅、失效或读取失败时发送空状态，不保留另一个订阅的额度。余额和没有明确时长的月度窗口不伪装成周期额度，上游共享账号额度消息仍被过滤。
-
-兼容策略依据：Codex 0.156.1 的推理通路只向界面通知一批更新中的最后一组，因此当前不启用多订阅同时输出。内部多订阅能力保留，原生同时展示等待客户端完整支持。WebSocket 会忽略自定义显示名称；额度归属以实际请求路由为准。
-
-Codex 接入按服务器版本化能力契约启用 WebSocket 和远程压缩；嵌入式网关可将 Responses WebSocket、compaction v2 转换到 Chat-only 上游，真实 Codex 0.163.0 已通过 HTTP/WS 压缩及续接测试。models.dev 的输入预算、上下文、工具、推理、模态与 priority 资料参与目录投影，未定价模型也保留能力；不会因资料标记而扩大调用权限。摘要适配的质量、实际 Fast/搜索与 Desktop 展示需针对真实上游验收。
-
-Codex 模型目录按字段合并资料源与「模型设置」：未填写的字段继承已有资料，明确的 `prefer_websockets=false` 会保留，关闭 WebSocket 本身不再连带关闭其他 agent 能力。空推理列表表示继承；只允许无推理时填写 `none`。目录保留明确的能力值、校正推理默认档位，并在模型覆盖内容变更或删除时更新 revision。详见 [额度与 Codex 互操作设计](docs/rai-architecture.md)。
-
-Windows 安装器会将安装目录写入用户 PATH；macOS/Linux 若目录不在 PATH，会打印可加入 shell 配置的命令。安装后打开新终端，用 `rai doctor` 检查 PATH、登录和客户端安装情况。
-
-Windows 的 `rai update` 会先将正在运行的旧程序改名为 `rai.exe.rai-old`，再安装下载完成的新程序；替换失败时恢复旧程序。仍被进程占用的备份会保留到下次更新清理。如果提示旧备份被占用，退出其他旧版 rai 进程后重试。旧版本若报 `rename ... Access is denied`，需在旧进程退出后重新运行本站安装器完成一次升级；可设置 `RAI_SKIP_LOGIN=1` 跳过重新登录，已有配置和凭据保留。
-
-浏览器授权生成的 rai 凭据在个人工作台「设备」中单独管理，不再混入手动创建的 API Key。页面仅显示有效授权，展示设备图标、名称、系统、架构、rai 版本、授权时间和相对最近使用时间。取消授权后设备立即从列表隐藏，已撤销或已过期的记录不再返回。系统信息由客户端上报，旧版未上报的字段显示为未知；`--api-key-stdin` 使用的已有 Key 仍在「API 密钥」管理。最近调用时间不代表在线状态，本地 `rai logout` 只移除本地凭据；需要停用服务端凭据时在设备页面撤销。
-
-Codex CLI 的 `~/.codex/config.toml`（`base_url` 必须包含 `/v1`）：
-
-```toml
-model = "你的-codex-模型"
-model_provider = "relay"
-
-[model_providers.relay]
-name = "RelayAPI"
-base_url = "http://localhost:8080/v1"
-env_key = "RELAY_API_KEY"
-wire_api = "responses"
-requires_openai_auth = false
-supports_websockets = true
-supports_standalone_web_search = true
-
-[features]
-apps = true
-```
-
-```bash
-export RELAY_API_KEY=relay_xxx
-```
-
-这些字段与当前 [Codex 配置参考](https://developers.openai.com/codex/config-reference)
-一致；Relay 同时透传 `/v1/responses/ws`，并在 Codex 私有模型目录中默认声明完整的
-代理、图片、搜索、Apps、Skills、Plugins、并行工具和多代理能力。不同上游的协议差异
-由 Relay 的转换层处理，不再通过降低模型元数据来牺牲 Codex 功能。
-
-OpenCode 可选择 Chat Completions 或 Responses；下面是 Chat Completions 配置：
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "relay": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "RelayAPI",
-      "options": {
-        "baseURL": "http://localhost:8080/v1",
-        "apiKey": "{env:RELAY_API_KEY}"
-      },
-      "models": {
-        "你的模型 ID": { "name": "你的模型显示名" }
-      }
-    }
-  }
-}
-```
-
-Responses 模型把 `npm` 改为 `@ai-sdk/openai`。这一区分来自
-[OpenCode provider 文档](https://opencode.ai/docs/providers)。
-未知模型默认允许调用且不扣费；
-设置 `UNPRICED_MODEL_POLICY=deny` 可改为严格模式。
-定价按“管理员覆盖 > Models.dev 在线目录 > 内置最后可用目录”解析，支持模型别名、
-Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段加图片输入、缓存图片输入、图片输出）。
-长上下文请求按上游返回的完整输入 token 数换档，达到阈值后对整次请求的各类 token
-单价应用倍率。Grok 4.3、4.5、4.6、4.7、4.20 和 grok-build-0.1 默认从 200,000 输入 token 起按 2 倍计价；
-如上游刊例价不同，可在「价格 → 多维倍率规则」用 `prompt_tokens_gte` 覆盖默认档。
-例如 `{"model":"moonshotai/kimi-k2.5","field":"prompt_tokens_gte","value":"131072","multiplier":2}`
-仅在对应 Kimi 渠道确有此规则时添加，模型名须与实际计价模型一致。
-请求日志采用分层留存：成功且定价完整的请求默认
-只抽样 1% 保存完整内容并保留 1 天，错误或定价不完整的详情保留 14 天，请求摘要
-保留 30 天。摘要过期前会原子汇总到每日用量表，因此长期用量、模型和费用报表不会
-随原始日志删除。生命周期事件、请求预留、额度观测和失效邀请也会小批量自动清理；
-完整配置见 `.env.example`。
+原生 Responses 工具和扩展字段保持原协议。ChatGPT Codex 后端要求的 `store:false`、流式传输及输入列表规范在执行边界处理；非流式 Responses 会聚合终态响应。这不是跨协议转换。
 
 ## 面板 API
 
@@ -254,13 +106,13 @@ Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段�
 - `/api/admin/subscriptions/children/*`：向租户分配、停用或回收子订阅
 
 原生凭据页和父订阅页都会展示最近一次脱敏上游额度快照。RelayAPI 启动 15 秒后首次观测，
-此后默认每 30 秒使用加密凭据观测 Codex、Kimi 和 xAI 额度；可用
+此后默认每 30 秒使用加密凭据观测 Codex 额度；可用
 `RELAY_QUOTA_SYNC_INTERVAL_SECONDS` 调整周期，最短 10 秒。探测耗时超过周期时不会并发叠加。
 额度观测不依赖外置 Relay 原生运行时或插件。自动观测模式不要求
 填写窗口名称、百分比或重置时间，管理员只填写每个已观测窗口对应的 USD 容量。
 父/子订阅的模型范围从 Relay 原生运行时 已同步的实际可用模型中多选，空选择表示继承全部模型。
 
-管理员在「模型账户 → Codex 账户详情 → 状态」可查询 Banked resets（积攒的重置次数）及每条记录的到期时间，并手动使用一次。此处的到期时间属于重置记录，区别于授权令牌或订阅到期。查询与使用复用 CPA 管理的凭据刷新和账户代理，分别请求 Codex 的 `/backend-api/wham/rate-limit-reset-credits` 和 `/consume`；实现依据 [Codex 官方客户端](https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs) 和 [官方说明](https://learn.chatgpt.com/zh-Hans/docs/app-server)。未提供数据或查询失败不会显示为零次。使用需在界面确认，同一浏览器会话内的失败重试保留请求标识，避免重复消耗；完成后刷新次数及关联父订阅的额度快照。
+管理员在「模型账户 → Codex 账户详情 → 状态」可查询 Banked resets（积攒的重置次数）及每条记录的到期时间，并手动使用一次。此处的到期时间属于重置记录，区别于授权令牌或订阅到期。查询与使用复用原生运行时的凭据刷新和账户代理，分别请求 Codex 的 `/backend-api/wham/rate-limit-reset-credits` 和 `/consume`；实现依据 [Codex 官方客户端](https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs) 和 [官方说明](https://learn.chatgpt.com/zh-Hans/docs/app-server)。未提供数据或查询失败不会显示为零次。使用需在界面确认，同一浏览器会话内的失败重试保留请求标识，避免重复消耗；完成后刷新次数及关联父订阅的额度快照。
 
 - `GET /api/admin/providers/accounts/{name}/codex-reset-credits`：实时查询可用次数和到期明细
 - `POST /api/admin/providers/accounts/{name}/codex-reset-credits/consume`：手动使用，提交 `redeem_request_id`（UUID）及可选 `credit_id`，失败重试须复用同一 UUID
@@ -278,6 +130,7 @@ Relay 原生运行时 多维倍率规则和分模态费率快照（文本五段�
 - `DELETE /api/keys/{id}`：删除个人 API Key
 - `GET /api/logs`、`GET /api/logs/{id}`：个人范围内的日志查询和详细链路
 - `GET /api/subscriptions`：个人子订阅、已用额度和上游重置时间
+- `GET /v1/usage`：使用当前 API Key 读取 sub2api 兼容的现金余额、订阅摘要和适用的原生额度窗口
 - `GET /api/rai/quota`：使用当前 RAI API Key 读取其可访问的子订阅额度窗口
 - `GET /rai/install.sh|install.ps1`：本站下发的 rai 安装脚本，从 `/rai/download/{os}-{arch}` 取与当前部署同构建的二进制，再对 PublicURL 执行 `rai login`
 - `GET /rai/download/{os}-{arch}`：本站随镜像发布的 rai 二进制（darwin/linux/windows × amd64/arm64）
@@ -293,9 +146,9 @@ API Key 与邀请不同：新 Key 同时保存用于鉴权的 SHA-256 哈希和�
 但无法恢复明文，需要新建 Key 后逐步替换。
 
 API Key 模型别名是客户端可见的附加入口。例如将 `fast` 指向
-`qwen-plus` 后，客户端可以用 `fast` 发起请求。RelayAPI 会先解析别名，
-再以实际模型执行 Key/租户权限检查、订阅准入和计费，最后交给 Relay 原生运行时 完成提供商路由
-和协议转换。空模型范围仍表示继承全部可用模型；别名不会绕过模型范围限制。
+`gpt-5.5` 后，客户端可以用 `fast` 发起请求。RelayAPI 会先解析别名，
+再以实际模型执行 Key/租户权限检查、订阅准入和计费，最后交给原生运行时
+发送 Codex Responses 请求。空模型范围仍表示继承全部可用模型；别名不会绕过模型范围限制。
 
 ## 验证
 
@@ -306,15 +159,6 @@ go vet ./...
 
 ## 原生运行时边界
 
-RelayAPI 在进程内启动自有的完整推理路由。外层负责租户鉴权、准入、计费和审计；
-内层负责协议语义、模型路由、凭据选择、重试及 WebSocket 会话状态。Relay 自有的
-`internal/upstream.Runtime` 定义稳定边界，并在提供商适配层修复 Codex 工具语义；
-例如 Grok 不原生接受的 freeform `apply_patch` 会被可逆地降级成 string-input
-function，响应再恢复成标准 `custom_tool_call`。Responses
-WebSocket 的首帧与后续帧都透明交给内层处理，Relay 只读取终态事件中的 usage 并
-按连接内所有轮次累计结算。旧的外置数据面、C-ABI bridge、兼容执行器和第三方运行时
-依赖均已移除；提供商实现不会向业务、计费或 HTTP 层泄漏内部类型。
+`internal/upstream.Runtime` 在进程内执行 Codex Responses HTTP 和 WebSocket 请求。外层负责鉴权、准入和结算，内层只允许已固定且拥有目标模型的凭据执行。没有 CPA 回环服务、第三方执行器模块或 Cursor SDK。
 
-计量使用 Magpie 的独立普通输入、缓存读取和缓存写入口径；推理已包含在输出，不重复计费。
-请求记录包含失败、取消、拒绝、免费与未定价结果。全部历史可用 `period=all` 查询，
-字段与迁移说明见 [请求计量与结算](docs/billing-step-logs.md)。
+计量使用 Magpie 的普通输入、缓存读取和缓存写入独立口径；推理包含在输出中，不重复计费。只按实际响应中完整且可信的 usage 结算，未知用量或价格不推算扣费，历史账单不会随运行时切换重算。

@@ -88,14 +88,9 @@ type nativeWebSocketSessionState struct {
 	established bool
 }
 
-func isRealtimeWebSocketPath(path string) bool {
-	path = strings.TrimRight(path, "/")
-	return path == "/v1/realtime" || strings.HasPrefix(path, "/v1/realtime/calls/") || strings.HasPrefix(path, "/v1/live/")
-}
-
 const nativeWebSocketHeartbeatInterval = 30 * time.Second
 
-var errRAIWebSocketAuthorization = errors.New("device authorization expired or was revoked; reconnect with a renewed access token")
+var errRAIWebSocketAuthorization = errors.New("API key or device authorization expired or was revoked; reconnect with valid credentials")
 
 func (a *App) handleWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string,
 	admission store.Admission, meta requestMeta, started time.Time, billable bool, logContext requestLogContext, timeline *latencyTimeline) {
@@ -288,9 +283,6 @@ func (a *App) persistNativeWebSocketTurn(ctx context.Context, r *http.Request, k
 // adaptation, reconnection and credential affinity.
 func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key store.KeyContext,
 	meta requestMeta, requestID string, logDetail *store.LogDetailInput, accounting *nativeWebSocketAccounting) (nativeWebSocketSessionState, requestMeta, error) {
-	if a.nativeCPARuntime != nil {
-		defer a.nativeCPARuntime.ReleaseRequestUsage(requestID)
-	}
 	var session nativeWebSocketSessionState
 	upgrader := websocket.Upgrader{
 		HandshakeTimeout:  30 * time.Second,
@@ -309,7 +301,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	var firstFrame []byte
 	// Realtime sends session.created before the client sends its first event.
 	// Responses instead needs the first response.create to select its model.
-	waitFirstFrame := !isRealtimeWebSocketPath(r.URL.Path)
+	waitFirstFrame := true
 	if waitFirstFrame {
 		_ = downstream.SetReadDeadline(time.Now().Add(30 * time.Second))
 		messageType, firstFrame, err = downstream.ReadMessage()
@@ -332,6 +324,15 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	captureWebSocketRequest(logDetail, firstFrame)
 	accounting.requestBytes = int64(len(firstFrame))
 	firstRequestBytes := int64(len(firstFrame))
+	if a.store.DB != nil {
+		current, authErr := a.store.ResolveKey(r.Context(), bearer(r))
+		if authErr != nil || !current.Enabled || !current.TenantEnabled || expired(current.ExpiresAt) || expired(current.TenantExpiresAt) {
+			accounting.errorHTTP, accounting.errorCode = http.StatusUnauthorized, "invalid_api_key"
+			writeNativeWebSocketError(downstream, http.StatusUnauthorized, "invalid_api_key", errRAIWebSocketAuthorization.Error())
+			return session, meta, errRAIWebSocketAuthorization
+		}
+		key = current
+	}
 	frameMeta := readRequestMeta(firstFrame, r.URL.Path)
 	if meta.Model == "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
@@ -361,7 +362,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		return session, meta, err
 	}
 	if !accounting.billable {
-		admission, price, code, admitErr := a.admitNativeWebSocket(r.Context(), key, meta, requestID, r.URL.Path)
+		admission, price, code, admitErr := a.admitNativeWebSocket(r.Context(), key, meta, requestID, r.URL.Path, firstFrame)
 		if admitErr != nil {
 			accounting.errorHTTP, accounting.errorCode = nativeWebSocketAdmissionError(code)
 			writeNativeWebSocketError(downstream, accounting.errorHTTP, code, admitErr.Error())
@@ -392,7 +393,7 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 	accounting.currentForwarded = int64(len(firstFrame))
 	accounting.currentResponse = 0
 
-	upstream, response, err := a.dialNativeRuntimeWebSocket(r.Context(), r, accounting.admission, requestID)
+	upstream, response, err := a.dialNativeRuntimeWebSocket(r.Context(), r, accounting.admission, requestID, meta.Model)
 	if err != nil {
 		status, code, message := http.StatusBadGateway, "upstream_connection_failed", err.Error()
 		if response != nil {
@@ -408,8 +409,13 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		writeNativeWebSocketError(downstream, status, code, message)
 		return session, meta, err
 	}
-	if response != nil && response.Body != nil {
-		_ = response.Body.Close()
+	if response != nil {
+		if accounting.admission.UpstreamCredentialID == "" {
+			accounting.admission.UpstreamCredentialID = response.Header.Get("X-Relay-Selected-Credential-ID")
+		}
+		if response.Body != nil {
+			_ = response.Body.Close()
+		}
 	}
 	defer upstream.Close()
 	upstream.SetReadLimit(a.maxRequestBytes())
@@ -455,6 +461,13 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			forwarded, nextMeta, startsTurn, prepareErr := a.prepareNativeWebSocketRequest(payload, r, key, accounting)
 			if prepareErr != nil {
 				accounting.errorHTTP, accounting.errorCode = http.StatusBadRequest, "invalid_request"
+				if classified := admissionUserError(prepareErr); classified.Code != "admission_internal_error" {
+					accounting.errorHTTP, accounting.errorCode = classified.Status, classified.Code
+				}
+				var limitErr *requestLimitError
+				if errors.As(prepareErr, &limitErr) {
+					accounting.errorHTTP, accounting.errorCode = http.StatusTooManyRequests, limitErr.Code
+				}
 				if errors.Is(prepareErr, errRAIWebSocketAuthorization) {
 					accounting.errorHTTP, accounting.errorCode = http.StatusUnauthorized, "invalid_api_key"
 				}
@@ -491,17 +504,13 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 			if isCodexQuotaEvent(payload) {
 				return nil, nil
 			}
+			if routeErr := a.rememberCompaction(r.Context(), key.TenantID, accounting.admission.UpstreamCredentialID, payload); routeErr != nil {
+				return nil, fmt.Errorf("persist compaction route: %w", routeErr)
+			}
 			observedAt := time.Now()
 			accounting.mu.Lock()
 			defer accounting.mu.Unlock()
-			if !accounting.currentActive && isRealtimeWebSocketPath(r.URL.Path) {
-				var event struct {
-					Type string `json:"type"`
-				}
-				if json.Unmarshal(payload, &event) == nil && event.Type == "response.created" {
-					accounting.startStep(nativeWebSocketBillingEntry{Meta: accounting.currentMeta, StartedAt: observedAt, ReadyAt: observedAt})
-				}
-			}
+
 			if !accounting.currentActive {
 				return payload, nil
 			}
@@ -520,12 +529,12 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 					billing.Merge(&combined, turn)
 					turn = combined
 				}
-				if a.nativeCPARuntime != nil && turn.RequestID == "" {
+				if turn.RequestID == "" {
 					// Without an envelope ID a WS turn cannot be correlated safely.
 					turn.Found = false
 					turn.Usage = store.Usage{}
 				} else {
-					turn = a.cpaBillingUsage(context.WithoutCancel(r.Context()), requestID, turn.RequestID, r.URL.Path, accounting.currentMeta, turn)
+					turn = nativeBillingUsage(accounting.currentMeta, turn)
 				}
 				if turn.Model == "" {
 					turn.Model = accounting.currentModel
@@ -618,6 +627,9 @@ func (a *App) serveNativeWebSocket(w http.ResponseWriter, r *http.Request, key s
 		_ = upstream.Close()
 		<-results
 	}
+	if first.source == "downstream" && accounting.errorHTTP != 0 && !clientWebSocketDisconnect(first.err) {
+		writeNativeWebSocketError(downstream, accounting.errorHTTP, accounting.errorCode, first.err.Error())
+	}
 	_ = downstream.Close()
 	_ = upstream.Close()
 	accounting.mu.Lock()
@@ -659,10 +671,16 @@ func normalizedUpstreamWebSocketClose(err error, terminalResponseSeen bool) erro
 
 func nativeWebSocketAdmissionError(code string) (int, string) {
 	switch code {
+	case "invalid_compaction_context":
+		return http.StatusBadRequest, code
+	case "compaction_account_unavailable":
+		return http.StatusConflict, code
 	case "subscription_not_assigned", "model_not_allowed":
 		return http.StatusForbidden, code
-	case "insufficient_balance", "subscription_quota_exhausted", "model_account_quota_exhausted":
+	case "insufficient_balance":
 		return http.StatusPaymentRequired, code
+	case "subscription_quota_exhausted", "model_account_quota_exhausted":
+		return http.StatusTooManyRequests, code
 	case "pricing_unavailable", "subscription_pricing_unavailable", "subscription_unavailable", "model_account_unavailable", "model_account_auth_failed":
 		return http.StatusServiceUnavailable, code
 	default:
@@ -670,50 +688,14 @@ func nativeWebSocketAdmissionError(code string) (int, string) {
 	}
 }
 
-func (a *App) dialNativeRuntimeWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (
+func (a *App) dialNativeRuntimeWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID, model string) (
 	*websocket.Conn, *http.Response, error) {
-	if client := a.inferenceCPA(); client != nil && client.BaseURL != nil {
-		return a.dialEmbeddedCPAWebSocket(ctx, r, admission, requestID)
-	}
 	if a.nativeRuntime == nil {
-		return nil, nil, fmt.Errorf("embedded CPA runtime is not available")
+		return nil, nil, fmt.Errorf("Codex runtime is not available")
 	}
 	header := nativeRuntimeWebSocketHeaders(r.Header, requestID, admission.UpstreamCredentialID)
+	header.Set("X-Relay-Upstream-Model", model)
 	return nativeruntime.DialWebSocket(ctx, a.nativeRuntime.Handler(), nativeRuntimeWebSocketPath(r.URL), header, websocket.Subprotocols(r))
-}
-
-func (a *App) dialEmbeddedCPAWebSocket(ctx context.Context, r *http.Request, admission store.Admission, requestID string) (
-	*websocket.Conn, *http.Response, error) {
-	client := a.inferenceCPA()
-	if client == nil || client.BaseURL == nil {
-		return nil, nil, fmt.Errorf("embedded CPA runtime is not available")
-	}
-	target, err := url.Parse(client.URL(nativeRuntimeWebSocketPath(r.URL)))
-	if err != nil {
-		return nil, nil, err
-	}
-	switch target.Scheme {
-	case "http":
-		target.Scheme = "ws"
-	case "https":
-		target.Scheme = "wss"
-	default:
-		return nil, nil, fmt.Errorf("embedded CPA URL uses unsupported scheme %q", target.Scheme)
-	}
-	header := nativeRuntimeWebSocketHeaders(r.Header, requestID, admission.UpstreamCredentialID)
-	header.Set("Authorization", "Bearer "+runtimeAuthorizationToken(r.Context(), client.APIKey))
-	if principal, _ := r.Context().Value(runtimePrincipalContext).(string); principal != "" {
-		header.Set("X-Relay-Principal", principal)
-	}
-	if admission.UpstreamCredentialID != "" {
-		header.Set("X-Relay-CPA-Auth-ID", admission.UpstreamCredentialID)
-	}
-	dialer := websocket.Dialer{
-		HandshakeTimeout:  30 * time.Second,
-		EnableCompression: true,
-		Subprotocols:      websocket.Subprotocols(r),
-	}
-	return dialer.DialContext(ctx, target.String(), header)
 }
 
 func nativeRuntimeWebSocketPath(requestURL *url.URL) string {
@@ -768,7 +750,7 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 	}
 	// A socket may outlive a short-lived OAuth access token. Revalidate each
 	// new generation, while allowing an already accepted stream to finish.
-	if request != nil && strings.HasPrefix(bearer(request), "rai_at_") {
+	if request != nil && a.store.DB != nil {
 		current, err := a.store.ResolveKey(request.Context(), bearer(request))
 		if err != nil || !current.Enabled || !current.TenantEnabled || expired(current.ExpiresAt) || expired(current.TenantExpiresAt) {
 			return nil, accounting.currentMeta, true, errRAIWebSocketAuthorization
@@ -782,11 +764,6 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 	}
 	if frameMeta.Model != "" {
 		resolved := resolveAPIKeyModel(frameMeta.Model, key.ModelAliases)
-		if request != nil {
-			if authorization, ok := request.Context().Value(realtimeAuthContext).(realtimeAuthorization); ok && !strings.EqualFold(resolved.Model, authorization.Model) {
-				return nil, nextMeta, true, fmt.Errorf("realtime client secret cannot change its scoped model")
-			}
-		}
 		if resolved.ModelAlias == "" {
 			resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, request, payload)
 			if !strings.EqualFold(resolved.Model, frameMeta.Model) {
@@ -810,6 +787,33 @@ func (a *App) prepareNativeWebSocketRequest(payload []byte, request *http.Reques
 		nextMeta.ReasoningEffort = frameMeta.ReasoningEffort
 	}
 	nextMeta.Stream = true
+	if !key.AllowsModel(nextMeta.Model) {
+		return nil, nextMeta, true, fmt.Errorf("API key is not allowed to use model %q", nextMeta.Model)
+	}
+	if request != nil && a.store.DB != nil && !frameMeta.Prewarm {
+		if err := a.enforceLimits(request.Context(), key); err != nil {
+			return nil, nextMeta, true, err
+		}
+		if err := a.store.CheckWebSocketTurn(request.Context(), key, accounting.admission, nextMeta.Model); err != nil {
+			return nil, nextMeta, true, err
+		}
+		if a.unpricedModelPolicy() == "deny" {
+			if _, err := a.store.ResolvePrice(request.Context(), requestPriceDimensions(key, nextMeta, request.URL.Path, admissionAuthIndex(accounting.admission), "")); err != nil {
+				return nil, nextMeta, true, store.ErrSubscriptionPrice
+			}
+		}
+	}
+	routeCtx := context.Background()
+	if request != nil {
+		routeCtx = request.Context()
+	}
+	required, routeErr := a.compactionCredential(routeCtx, key.TenantID, payload)
+	if routeErr != nil {
+		return nil, nextMeta, true, routeErr
+	}
+	if required != "" && required != accounting.admission.UpstreamCredentialID {
+		return nil, nextMeta, true, store.ErrCompactionAccount
+	}
 	// Generation intent is per frame; a real follow-up must not inherit prewarm.
 	nextMeta.Prewarm = frameMeta.Prewarm
 	forwarded := payload
@@ -926,7 +930,7 @@ func isNativeWebSocketUsageTerminalEvent(payload []byte) bool {
 	}
 }
 
-func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, meta requestMeta, requestID, endpoint string) (
+func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, meta requestMeta, requestID, endpoint string, body []byte) (
 	store.Admission, *store.ResolvedPrice, string, error) {
 	dimensions := pricing.Dimensions{APIGroupKey: key.ID, Model: meta.Model, ServiceTier: meta.ServiceTier,
 		ReasoningEffort: meta.ReasoningEffort, Endpoint: endpoint}
@@ -939,8 +943,14 @@ func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, me
 	if priceConfigured {
 		reserve = a.cfg.ReservationNanoUSD
 	}
+	required, routeErr := a.compactionCredential(ctx, key.TenantID, body)
+	if routeErr != nil {
+		classified := admissionUserError(routeErr)
+		return store.Admission{}, nil, classified.Code, routeErr
+	}
 	admission, err := a.store.AdmitRequest(ctx, store.AdmissionInput{
-		RequestID: requestID, Key: key, Model: meta.Model,
+		RequiredCredentialID: required,
+		RequestID:            requestID, Key: key, Model: meta.Model,
 		BalanceReserve: reserve, QuotaReserve: reserve, PriceConfigured: priceConfigured,
 		PriceSnapshot: store.EncodePriceSnapshot(price), ExpiresAt: time.Now().Add(24 * time.Hour),
 	})
@@ -994,7 +1004,7 @@ func writeNativeWebSocketError(conn *websocket.Conn, status int, code, message s
 		source = "upstream"
 		message = "Upstream service error: " + message
 	}
-	payload, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{
+	payload, _ := json.Marshal(map[string]any{"type": "error", "status": status, "error": map[string]any{
 		"type": errorTypeForStatus(status), "code": code, "message": message, "source": source,
 		"details": map[string]any{"retryable": defaultErrorRetryable(status, code)},
 	}})

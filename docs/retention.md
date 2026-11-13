@@ -14,6 +14,7 @@ transaction lock, `SKIP LOCKED`, bounded batches and a maximum runtime.
 | 已结算/释放/过期的请求预留 | 14 天；定价不完整记录 90 天 |
 | 父额度原始观测 | 180 天 |
 | 已使用、撤销或过期邀请 | 30 天 |
+| 原生压缩摘要路由 | 最后使用后 90 天；仅保留租户、密文摘要和上游账户 ID |
 | 手工充值和计费账本 | 不自动删除 |
 
 Request, forwarded-request and upstream-response captures are bounded and only

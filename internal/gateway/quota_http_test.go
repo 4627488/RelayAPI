@@ -27,7 +27,7 @@ func TestQuotaRetryAfter(t *testing.T) {
 }
 
 func TestQuota429PreservesRetryMetadataAndStopsFallbacks(t *testing.T) {
-	for _, provider := range []string{"claude", "codex", "kimi", "xai"} {
+	for _, provider := range []string{"codex"} {
 		t.Run(provider, func(t *testing.T) {
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -39,9 +39,7 @@ func TestQuota429PreservesRetryMetadataAndStopsFallbacks(t *testing.T) {
 			defer server.Close()
 			before := time.Now()
 			_, err := probeQuotaWithClient(t.Context(), server.Client(), quotaEndpoints{
-				claudeUsage: server.URL, codexUsage: server.URL,
-				kimiUsage: server.URL, kimiUsageFallback: server.URL,
-				xaiCredits: server.URL, xaiBilling: server.URL, xaiSettings: server.URL,
+				codexUsage: server.URL,
 			}, "credential", provider, map[string]any{"access_token": "token", "account_id": "account"}, before)
 			var upstream *QuotaHTTPError
 			if !errors.As(err, &upstream) || upstream.StatusCode != 429 || upstream.RetryAt.Before(before.Add(120*time.Second)) {

@@ -3,11 +3,15 @@ import { page } from "vitest/browser"
 import { render } from "vitest-browser-react"
 import { TenantSubscriptionsView } from "@/components/subscriptions-view"
 import { api, type TenantSubscription } from "@/lib/api"
+import { copyText } from "@/lib/clipboard"
 import { expectNoA11yViolations } from "@/test/a11y"
 
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
   api: vi.fn(),
+}))
+vi.mock("@/lib/clipboard", () => ({
+  copyText: vi.fn().mockResolvedValue(undefined),
 }))
 const now = Date.parse("2026-10-15T04:00:00Z")
 function subscription(
@@ -91,9 +95,6 @@ describe("personal shared subscriptions", () => {
       await expect
         .element(screen.getByText("剩余 2 天", { exact: true }))
         .toBeVisible()
-      await screen
-        .getByRole("button", { name: "模型与重置记录 · 1 个模型" })
-        .click()
       await expect
         .element(screen.getByText("gpt-test", { exact: true }))
         .toBeVisible()
@@ -101,7 +102,7 @@ describe("personal shared subscriptions", () => {
       expect(text).not.toContain("secret-upstream")
       expect(text).not.toContain("diagnostic@example.test")
       expect(text).not.toContain("余额私有账户")
-      expect(document.querySelector('[data-slot="card"]')).toBeNull()
+      expect(document.querySelector('[data-slot="card"]')).not.toBeNull()
       const track = document.querySelector('[data-slot="progress-track"]')!
       expect(track.getBoundingClientRect().height).toBeGreaterThanOrEqual(12)
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width)
@@ -173,5 +174,56 @@ describe("personal shared subscriptions", () => {
     await expect
       .element(screen.getByText("/ 额度待同步", { exact: true }))
       .toBeVisible()
+  })
+  it("shows models immediately, copies their IDs and expands reset history", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(now)
+    const base = subscription()
+    vi.mocked(api).mockResolvedValue({
+      items: [
+        subscription({
+          reset_history: [{ kind: "5h", reset_at: "2026-10-15T00:00:00Z" }],
+          entitlement_windows: [
+            ...base.entitlement_windows!,
+            {
+              ...base.entitlement_windows![0],
+              kind: "weekly",
+              limit_nano_usd: 100000000000,
+              remaining_nano_usd: 20000000000,
+            },
+          ],
+        }),
+      ],
+    })
+    const screen = await render(<TenantSubscriptionsView />)
+    await expect
+      .element(screen.getByText("gpt-test", { exact: true }))
+      .toBeVisible()
+    await expect.element(screen.getByText("70%", { exact: true })).toBeVisible()
+    await expect.element(screen.getByText("20%", { exact: true })).toBeVisible()
+    await screen.getByRole("button", { name: "复制模型 gpt-test" }).click()
+    expect(copyText).toHaveBeenCalledWith("gpt-test")
+    await screen.getByRole("button", { name: "重置记录 · 1" }).click()
+    await expect
+      .element(screen.getByText("5 小时额度重置", { exact: true }))
+      .toBeVisible()
+    await screen.getByRole("button", { name: "重置记录 · 1" }).click()
+    await expect
+      .element(screen.getByRole("button", { name: "重置记录 · 1" }))
+      .toHaveAttribute("aria-expanded", "false")
+  })
+  it("offers a real next step when no shared subscription is assigned", async () => {
+    vi.mocked(api).mockResolvedValue({
+      items: [
+        subscription({ capacity_mode: "unmetered", billing_mode: "balance" }),
+      ],
+    })
+    const screen = await render(<TenantSubscriptionsView />)
+    await expect
+      .element(screen.getByText("暂无共享额度订阅", { exact: true }))
+      .toBeVisible()
+    await expect
+      .element(screen.getByRole("link", { name: "查看可用模型" }))
+      .toHaveAttribute("href", "/app/models")
+    await expectNoA11yViolations()
   })
 })

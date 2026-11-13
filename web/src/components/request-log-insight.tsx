@@ -133,7 +133,7 @@ export function RequestLogInsight({
             <Facts
               rows={[
                 ["总 Tokens", count(log.total_tokens)],
-                ["输入", count(log.input)],
+                ["输入（未缓存）", count(log.input)],
                 ["输出", count(log.output)],
                 ["缓存读取", count(log.cache_read)],
                 [
@@ -146,7 +146,7 @@ export function RequestLogInsight({
                   ),
                 ],
                 ["缓存写入", count(log.cache_write)],
-                ["推理", count(log.reasoning)],
+                ["推理（已含在输出）", count(log.reasoning)],
                 ["缓存写入（1 小时）", count(log.cache_write_1h)],
                 ["缓存是否未知", log.cache_unknown ? "是" : "否"],
                 ["图片输入", count(log.image_input_tokens)],
@@ -177,6 +177,9 @@ export function RequestLogInsight({
             </p>
           </TabsContent>
           <TabsContent value="billing">
+            <p className="mb-3 text-xs text-muted-foreground">
+              推理已包含在输出中，不额外收费。单价已包含倍率；最终费用以本次结算为准。
+            </p>
             <Facts
               rows={[
                 ["费用", requestLogCost(log)],
@@ -215,7 +218,11 @@ export function RequestLogInsight({
                           "缓存写入单价",
                           log.cache_write_price_nano_usd_per_token,
                         ],
-                        ["推理单价", log.reasoning_price_nano_usd_per_token],
+                        [
+                          "缓存写入单价（1 小时）",
+                          log.cache_write_1h_nano_usd_per_token ||
+                            log.cache_write_price_nano_usd_per_token,
+                        ],
                       ] as const
                     )
                       .filter(([, value]) => value != null)

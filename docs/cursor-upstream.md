@@ -1,3 +1,5 @@
+> 当前实现仅支持 Codex Responses；本文描述的 CPA／其他提供商路径已移除。当前接入方式见 [README](../README.md)。
+
 # Cursor 上游
 
 部署 RelayAPI 镜像后，在管理端「模型账户 → 添加账户 → API Key」选择 **Cursor**，

@@ -2,7 +2,9 @@ package upstream
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -58,12 +60,10 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	trace := r.beginTrace(requestID)
 	defer r.finishTrace(requestID)
 	requestPath := canonicalInferencePath(request.URL.Path)
-	model := requestInferenceModel(body, request.Header.Get("Content-Type"))
-	if isImagesPath(requestPath) && model == "" {
-		model = defaultImagesModel
-	}
-	if canonical := canonicalImageModel(model); canonical != "" {
-		model = canonical
+	model := jsonString(body, "model")
+	if !isResponsesPath(requestPath) || request.Method != http.MethodPost {
+		writeRuntimeError(w, 404, "unsupported_endpoint", "Only Codex Responses are supported")
+		return
 	}
 	pinned := strings.TrimSpace(request.Header.Get("X-Relay-Upstream-Credential-ID"))
 	affinityKey := sessionAffinityKey(body, request.Header)
@@ -72,6 +72,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		writeRuntimeError(w, http.StatusServiceUnavailable, "model_account_unavailable", "no upstream credential can serve this model")
 		return
 	}
+	request.Header.Set("X-Relay-Selected-Credential-ID", credential.ID)
 	r.rememberAffinity(affinityKey, credential)
 	upstreamModel := credential.ModelRoutes[strings.ToLower(model)]
 	if upstreamModel == "" {
@@ -80,26 +81,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 	body = rewriteJSONModel(body, upstreamModel)
 	clientStream := jsonBool(body, "stream")
 	collectStream := false
-	responseMode := "passthrough"
-	var err error
-	var toolRestorer *toolResponseRestorer
-	if isImagesPath(requestPath) {
-		body, err = prepareImagesProviderRequest(request, credential, requestPath, body, upstreamModel)
-	} else if credential.Provider == "kimi" && isResponsesPath(requestPath) {
-		toolRestorer = newToolResponseRestorer(customToolRefsFromResponses(body))
-		body, err = responsesToChatRequest(body)
-		requestPath = "/chat/completions"
-		responseMode = "chat-to-responses"
-	} else if (credential.Provider == "codex" || credential.Provider == "aliyun-bailian") && isChatPath(requestPath) {
-		body, err = chatToResponsesRequest(body)
-		requestPath = "/responses"
-		responseMode = "responses-to-chat"
-	}
-	if err != nil {
-		writeRuntimeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	if credential.Provider == "codex" && isResponsesPath(requestPath) {
+	if credential.APIKey == "" && requestPath == "/responses" {
 		adapted, adaptErr := prepareCodexWebsiteRequest(body)
 		if adaptErr != nil {
 			writeRuntimeError(w, http.StatusBadRequest, "invalid_request", adaptErr.Error())
@@ -108,18 +90,28 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 		body = adapted.Body
 		collectStream = adapted.CollectStream
 	}
-	trace.setSelection(credential, model, responseMode)
-	if credential.Provider == "xai" && !isImagesPath(requestPath) {
-		body, toolRestorer = lowerCodexTools(body)
-	}
+	trace.setSelection(credential, model, "passthrough")
 	target := credential.upstreamURL(requestPath)
 	response, err := r.doProviderRequest(request, credential, target, requestPath, body, trace)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			credential.releaseProbe()
+			if errors.Is(err, context.Canceled) {
+				writeRuntimeError(w, 499, "client_canceled", "The request was canceled by the client.")
+			} else {
+				writeRuntimeError(w, http.StatusGatewayTimeout, "request_timeout", "The request timed out before the upstream responded.")
+			}
+			return
+		}
 		r.mu.RLock()
 		threshold, cooldown := r.settings.FailureThreshold, r.settings.FailureCooldown
 		r.mu.RUnlock()
 		credential.record(false, err.Error(), true, threshold, cooldown)
-		writeRuntimeError(w, http.StatusBadGateway, "upstream_connection_failed", err.Error())
+		if errors.Is(err, errCredentialRefresh) {
+			writeRuntimeError(w, http.StatusBadGateway, "model_account_auth_failed", "The upstream account sign-in could not be refreshed. Contact your administrator.")
+		} else {
+			writeRuntimeError(w, http.StatusBadGateway, "upstream_connection_failed", err.Error())
+		}
 		return
 	}
 	defer response.Body.Close()
@@ -158,15 +150,6 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 			writeRuntimeError(w, http.StatusBadGateway, "upstream_response_invalid", collectErr.Error())
 			return
 		}
-		switch responseMode {
-		case "chat-to-responses":
-			payload = chatToResponsesResponse(payload, model)
-		case "responses-to-chat":
-			payload = responsesToChatResponse(payload, model)
-		}
-		if toolRestorer != nil {
-			payload = toolRestorer.restore(payload)
-		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(response.StatusCode)
 		_, _ = w.Write(payload)
@@ -185,38 +168,7 @@ func (r *nativeRuntime) serveInference(w http.ResponseWriter, request *http.Requ
 			streamWriter = immediateFlushWriter{Writer: w, Flusher: flusher}
 		}
 	}
-	if response.StatusCode >= 400 || (responseMode == "passthrough" && toolRestorer == nil) {
-		_, _ = io.Copy(streamWriter, source)
-		return
-	}
-	if stream {
-		if responseMode == "passthrough" {
-			if toolRestorer != nil {
-				_ = restoreToolStream(streamWriter, source, toolRestorer)
-			}
-			return
-		}
-		destination := streamWriter
-		if toolRestorer != nil {
-			destination = toolRestoreWriter{Writer: streamWriter, restorer: toolRestorer}
-		}
-		_ = translateStream(destination, source, responseMode, model)
-		return
-	}
-	payload, readErr := io.ReadAll(io.LimitReader(source, maxProviderResponseBytes))
-	if readErr != nil {
-		return
-	}
-	switch responseMode {
-	case "chat-to-responses":
-		payload = chatToResponsesResponse(payload, model)
-	case "responses-to-chat":
-		payload = responsesToChatResponse(payload, model)
-	}
-	if toolRestorer != nil {
-		payload = toolRestorer.restore(payload)
-	}
-	_, _ = streamWriter.Write(payload)
+	_, _ = io.Copy(streamWriter, source)
 }
 
 type immediateFlushWriter struct {
@@ -305,7 +257,6 @@ func canonicalInferencePath(path string) string {
 }
 
 func isResponsesPath(path string) bool { return path == "/responses" || path == "/responses/compact" }
-func isChatPath(path string) bool      { return path == "/chat/completions" || path == "/completions" }
 
 func copyResponseHeaders(destination, source http.Header) {
 	for name, values := range source {
@@ -322,12 +273,17 @@ func copyResponseHeaders(destination, source http.Header) {
 
 func writeRuntimeError(w http.ResponseWriter, status int, code, message string) {
 	source := "relay"
-	if code == "upstream_connection_failed" || code == "upstream_response_invalid" {
+	if code == "upstream_connection_failed" || code == "upstream_response_invalid" || code == "model_account_auth_failed" {
 		source = "upstream"
 		message = "Upstream service error: " + message
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Relay-Error-Code", code)
 	w.Header().Set("X-Relay-Error-Source", source)
+	w.Header().Set("X-Should-Retry", "false")
+	if code != "model_account_auth_failed" && (status == http.StatusTooManyRequests || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
+		w.Header().Set("X-Should-Retry", "true")
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": code, "code": code, "message": message, "source": source}})
 }
@@ -376,7 +332,15 @@ func writeProviderError(w http.ResponseWriter, response *http.Response) {
 	w.Header().Del("Content-Encoding")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Relay-Error-Source", "upstream")
-	w.WriteHeader(response.StatusCode)
+	status := response.StatusCode
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		// The Relay key already passed authentication. A refused upstream
+		// account must never make a client discard that valid Relay key.
+		status = http.StatusBadGateway
+		value["upstream_status"] = response.StatusCode
+		w.Header().Set("X-Should-Retry", "false")
+	}
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(root)
 }
 

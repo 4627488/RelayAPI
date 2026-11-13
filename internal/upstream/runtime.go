@@ -76,6 +76,7 @@ type Options struct {
 	FailureThreshold      int
 	FailureCooldown       time.Duration
 	ResponseHeaderTimeout time.Duration
+	OnExecution           func(ExecutionAttempt)
 	OnCredentialUpdated   func(context.Context, string, []byte)
 	OnOAuthCredential     func(context.Context, string, string, string, []byte) error
 }

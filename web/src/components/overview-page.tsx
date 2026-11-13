@@ -11,16 +11,8 @@ import {
   type UsageReport,
 } from "@/lib/api"
 import { useAsyncResource } from "@/hooks/use-async-resource"
-import {
-  AnalyticsSummary,
-  AttributionPanel,
-  ObservationPanels,
-} from "@/components/analytics-panels"
-import {
-  UsageTrend,
-  CostBreakdown,
-  Last24HoursTokenRate,
-} from "@/components/usage-charts"
+import { AnalyticsSummary } from "@/components/analytics-panels"
+import { UsageTrend, Last24HoursTokenRate } from "@/components/usage-charts"
 import { AccountHealthPanel } from "@/components/account-health-panel"
 import { PeriodControl } from "@/components/usage-view"
 import { PageHeader } from "@/components/workspace-ui"
@@ -45,14 +37,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { dateTime, money } from "@/lib/format"
 import { routeHref, type Page } from "@/lib/routes"
 import { TokenHeatmap } from "@/components/user/token-heatmap"
 
 export function OverviewPage({
   admin = false,
-  session,
   onPageChange,
 }: {
   admin?: boolean
@@ -154,7 +144,7 @@ export function OverviewPage({
     <div className="flex min-w-0 flex-col gap-6" aria-busy={loading}>
       <PageHeader
         title={admin ? "管理总览" : "总览"}
-        description={`最近 ${data.usage.days} 天的请求、费用与性能${data.usage.generated_at ? ` · 更新于 ${dateTime(data.usage.generated_at)}` : ""}`}
+        description={`${data.usage.days === 0 ? "全部历史" : `最近 ${data.usage.days} 天`}${data.usage.generated_at ? ` · 更新于 ${dateTime(data.usage.generated_at)}` : ""}`}
         actions={
           <>
             <PeriodControl days={days} onChange={setDays} />
@@ -182,19 +172,13 @@ export function OverviewPage({
           </AlertDescription>
         </Alert>
       )}
-      <AnalyticsSummary report={data.usage} />
+      <AnalyticsSummary report={data.usage} overview />
       {admin && <Last24HoursTokenRate report={data.usage} />}
-      {!admin && <TokenHeatmap key={data.usage.generated_at} />}
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <UsageTrend report={data.usage} />
         <Card className="min-w-0">
           <CardHeader>
             <CardTitle>{admin ? "运营快照" : "我的账户"}</CardTitle>
-            <CardDescription>
-              {admin
-                ? "当前账户状态与今日请求，独立于上方统计周期。"
-                : `当前余额与访问凭据${session?.tenant.name ? ` · ${session.tenant.name}` : ""}`}
-            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             {admin ? (
@@ -283,10 +267,8 @@ export function OverviewPage({
           </CardContent>
         </Card>
       </div>
-      <ObservationPanels report={data.usage} />
-      <AttributionPanel report={data.usage} admin={admin} compactView />
-      <div className="grid min-w-0 gap-4 xl:grid-cols-2">
-        <CostBreakdown report={data.usage} />
+      {!admin && <TokenHeatmap key={data.usage.generated_at} />}
+      <div className="min-w-0">
         {admin ? (
           data.accounts ? (
             <AccountHealthPanel accounts={data.accounts.files ?? []} />
@@ -300,7 +282,7 @@ export function OverviewPage({
               </CardHeader>
             </Card>
           )
-        ) : (
+        ) : subs.length > 0 ? (
           <Card className="min-w-0">
             <CardHeader>
               <CardTitle>订阅与额度</CardTitle>
@@ -367,16 +349,10 @@ export function OverviewPage({
                     ))}
                   </TableBody>
                 </Table>
-              ) : (
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyTitle>尚未分配订阅</EmptyTitle>
-                  </EmptyHeader>
-                </Empty>
-              )}
+              ) : null}
             </CardContent>
           </Card>
-        )}
+        ) : null}
       </div>
       {data.logs && (
         <LogsTable
@@ -385,9 +361,7 @@ export function OverviewPage({
           action={action("logs", "全部日志")}
         />
       )}
-      <div className="flex justify-end">
-        {action("usage", "查看完整用量分析")}
-      </div>
+      <div className="flex justify-end">{action("usage", "查看用量分析")}</div>
     </div>
   )
 }

@@ -13,7 +13,10 @@ import (
 	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
-func (a *App) startNativeRuntime(ctx context.Context) error {
+func (a *App) startNativeRuntime(ctx context.Context, importedProxy string) error {
+	if err := a.migrateCredentialIdentity(ctx); err != nil {
+		return err
+	}
 	rows, err := a.store.ListUpstreamCredentials(ctx)
 	if err != nil {
 		return err
@@ -21,6 +24,9 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 	settings, settingsFound, legacyProxy, boundsFilled, err := a.loadNativeRuntimeSettings(ctx)
 	if err != nil {
 		return fmt.Errorf("load native runtime settings: %w", err)
+	}
+	if legacyProxy == "" && !settingsFound {
+		legacyProxy = strings.TrimSpace(importedProxy)
 	}
 	migrated, err := a.migrateLegacyProxies(ctx, rows, &settings, legacyProxy)
 	if err != nil {
@@ -64,18 +70,21 @@ func (a *App) startNativeRuntime(ctx context.Context) error {
 		FailureCooldown:       time.Duration(settings.CredentialCooldownSeconds) * time.Second,
 		ResponseHeaderTimeout: time.Duration(settings.RequestTimeoutSeconds) * time.Second,
 		OnCredentialUpdated: func(updateCtx context.Context, id string, document []byte) {
-			if persistErr := a.persistEmbeddedCredential(updateCtx, id, document); persistErr != nil {
+			persistErr := a.persistRefreshedCredential(updateCtx, id, document)
+			a.observePersistence("credential_refresh", persistErr)
+			if persistErr != nil {
 				slog.Warn("persist native runtime credential refresh", "credential_id", id, "error", persistErr)
 			}
 		},
 		OnOAuthCredential: a.captureProviderOAuthCredential,
+		OnExecution:       a.observeUpstreamExecution,
 	}, credentials)
 	if err != nil {
 		return fmt.Errorf("build native runtime: %w", err)
 	}
 	a.replaceAdmission(settings)
 	a.nativeRuntime = runtime
-	return nil
+	return a.persistExpandedCredentialModels(ctx)
 }
 
 func runtimeCredentials(rows []store.UpstreamCredentialSnapshot, upstreamWebSockets bool, proxyURLs map[string]string) []upstream.Credential {
@@ -124,7 +133,7 @@ func (a *App) reloadNativeCredentials(ctx context.Context) error {
 	return a.nativeRuntime.ReplaceCredentials(ctx, runtimeCredentials(rows, a.upstreamWebSockets(), proxyURLs))
 }
 
-func (a *App) persistEmbeddedCredential(ctx context.Context, id string, document []byte) error {
+func (a *App) persistRefreshedCredential(ctx context.Context, id string, document []byte) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}

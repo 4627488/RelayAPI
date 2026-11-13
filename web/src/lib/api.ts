@@ -143,6 +143,7 @@ export interface RequestLog {
   output_price_nano_usd_per_token?: number
   cached_input_price_nano_usd_per_token?: number
   cache_write_price_nano_usd_per_token?: number
+  cache_write_1h_nano_usd_per_token?: number
   reasoning_price_nano_usd_per_token?: number
   image_input_price_nano_usd_per_token?: number
   cached_image_input_price_nano_usd_per_token?: number

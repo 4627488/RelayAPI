@@ -3,7 +3,7 @@
 RelayAPI models every capacity-bearing encrypted upstream credential as a
 parent subscription. Administrators split a parent into child subscriptions
 assigned to tenants. RelayAPI owns encrypted credential storage and accounting;
-the native runtime owns protocol translation, retries, and routing.
+the native runtime owns Responses forwarding, credential refresh, and routing.
 
 ## Invariants
 

@@ -288,7 +288,6 @@ export function LogsTable({
       <CardHeader className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
         <div>
           <CardTitle>最近请求</CardTitle>
-          <CardDescription>按 Key 查看请求、用量、耗时和费用。</CardDescription>
         </div>
         {action}
       </CardHeader>
@@ -302,7 +301,6 @@ export function LogsTable({
                 <ClockIcon />
               </EmptyMedia>
               <EmptyTitle>暂无请求记录</EmptyTitle>
-              <EmptyDescription>API 调用记录会显示在这里。</EmptyDescription>
             </EmptyHeader>
           </Empty>
         )}

@@ -1,13 +1,7 @@
 import { useState } from "react"
-import {
-  CheckIcon,
-  ClipboardIcon,
-  TerminalIcon,
-  TriangleAlertIcon,
-} from "lucide-react"
+import { ClipboardIcon, TerminalIcon } from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -50,18 +44,11 @@ export function ConnectionGuide() {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-3">
-      <Alert>
-        <TriangleAlertIcon />
-        <AlertDescription>
-          请先安装要使用的客户端，例如 Codex CLI。rai
-          安装后会打开浏览器完成本站授权，无需复制 API Key。
-        </AlertDescription>
-      </Alert>
       <Card>
         <CardHeader>
           <CardTitle>安装并连接 rai</CardTitle>
           <CardDescription>
-            在本机终端运行，安装包从本站下载。下载失败时请联系管理员检查发布包。
+            先安装 Codex CLI，再在本机终端运行以下命令。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -80,11 +67,9 @@ export function ConnectionGuide() {
                 aria-labelledby="rai-platform-label"
               >
                 <ToggleGroupItem value="bash" className="min-w-24 flex-1">
-                  {platform === "bash" ? <CheckIcon /> : null}
                   macOS / Linux / WSL
                 </ToggleGroupItem>
                 <ToggleGroupItem value="powershell" className="min-w-24 flex-1">
-                  {platform === "powershell" ? <CheckIcon /> : null}
                   Windows
                 </ToggleGroupItem>
               </ToggleGroup>

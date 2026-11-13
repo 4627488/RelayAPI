@@ -28,7 +28,7 @@ func (a *App) revokeRAIOAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func raiAdapterNames() []string {
-	return []string{"claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent"}
+	return []string{"codex"}
 }
 
 func (a *App) createRAIAuthorization(w http.ResponseWriter, r *http.Request) {

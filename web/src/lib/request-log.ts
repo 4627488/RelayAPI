@@ -34,6 +34,72 @@ export function requestLogCost(log: RequestLog) {
   return log.pricing_complete && log.settled ? money(log.cost_nano_usd) : "—"
 }
 
+// Mirror the server's disjoint billing buckets. Input excludes cache traffic;
+// reasoning is already included in output and never forms a second charge.
+export function requestLogCostRows(
+  log: RequestLog
+): [string, number, number][] {
+  if (!log.pricing_complete || !log.price_model) return []
+  const cachedImage = Math.min(
+    Math.max(0, log.cached_image_input_tokens ?? 0),
+    Math.max(0, log.image_input_tokens ?? 0),
+    Math.max(0, log.cache_read)
+  )
+  const imageInput = Math.min(
+    Math.max(0, (log.image_input_tokens ?? 0) - cachedImage),
+    Math.max(0, log.input)
+  )
+  const imageOutput = Math.min(
+    Math.max(0, log.image_output_tokens ?? 0),
+    Math.max(0, log.output)
+  )
+  const hour = Math.min(
+    Math.max(0, log.cache_write_1h ?? 0),
+    Math.max(0, log.cache_write)
+  )
+  const rows: [string, number, number][] = [
+    [
+      "文本输入（未缓存）",
+      Math.max(0, log.input - imageInput),
+      log.input_price_nano_usd_per_token ?? 0,
+    ],
+    [
+      "文本缓存读取",
+      Math.max(0, log.cache_read - cachedImage),
+      log.cached_input_price_nano_usd_per_token ?? 0,
+    ],
+    [
+      "图片输入（未缓存）",
+      imageInput,
+      log.image_input_price_nano_usd_per_token ?? 0,
+    ],
+    [
+      "图片缓存读取",
+      cachedImage,
+      log.cached_image_input_price_nano_usd_per_token ?? 0,
+    ],
+    [
+      "缓存写入",
+      Math.max(0, log.cache_write - hour),
+      log.cache_write_price_nano_usd_per_token ?? 0,
+    ],
+    [
+      "缓存写入（1 小时）",
+      hour,
+      log.cache_write_1h_nano_usd_per_token ||
+        log.cache_write_price_nano_usd_per_token ||
+        0,
+    ],
+    [
+      "文本输出（含推理）",
+      Math.max(0, log.output - imageOutput),
+      log.output_price_nano_usd_per_token ?? 0,
+    ],
+    ["图片输出", imageOutput, log.image_output_price_nano_usd_per_token ?? 0],
+  ]
+  return rows.filter(([, tokens]) => tokens > 0)
+}
+
 export function requestLogTier(log: RequestLog) {
   if (log.log_unit === "prewarm" || log.log_unit === "connection") return null
   const actual = log.response_service_tier?.trim().toLowerCase()

@@ -29,11 +29,11 @@ func TestRuntimeCredentialsDisablesProviderWebSocketsInRelayMode(t *testing.T) {
 
 func TestRuntimeCredentialsEnablesProviderWebSocketsInRelayMode(t *testing.T) {
 	for _, original := range []string{
-		`{"type":"xai","api_key":"secret"}`,
-		`{"type":"xai","api_key":"secret","websockets":false}`,
+		`{"type":"codex","api_key":"secret"}`,
+		`{"type":"codex","api_key":"secret","websockets":false}`,
 	} {
 		rows := []store.UpstreamCredentialSnapshot{{
-			ID: "xai", Provider: "xai", Enabled: true, Document: json.RawMessage(original),
+			ID: "codex", Provider: "codex", Enabled: true, Document: json.RawMessage(original),
 		}}
 		credentials := runtimeCredentials(rows, true, nil)
 		var document map[string]any
@@ -60,8 +60,8 @@ func TestRuntimeCredentialsDropsUnsupportedProvider(t *testing.T) {
 func TestRuntimeCredentialsUsesSelectedProxyOrExplicitDirect(t *testing.T) {
 	proxyID := "proxy-1"
 	rows := []store.UpstreamCredentialSnapshot{
-		{ID: "proxied", Provider: "openai", Enabled: true, ProxyID: &proxyID, Document: json.RawMessage(`{"type":"openai"}`)},
-		{ID: "direct", Provider: "openai", Enabled: true, Document: json.RawMessage(`{"type":"openai","proxy_url":"http://legacy"}`)},
+		{ID: "proxied", Provider: "codex", Enabled: true, ProxyID: &proxyID, Document: json.RawMessage(`{"type":"codex"}`)},
+		{ID: "direct", Provider: "codex", Enabled: true, Document: json.RawMessage(`{"type":"codex","proxy_url":"http://legacy"}`)},
 	}
 	credentials := runtimeCredentials(rows, true, map[string]string{proxyID: "socks5h://proxy.test:1080"})
 	for index, want := range []string{"socks5h://proxy.test:1080", "direct"} {

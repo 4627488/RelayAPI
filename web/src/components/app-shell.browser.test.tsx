@@ -125,7 +125,10 @@ describe("application shell", () => {
     await logsLink.click()
     expect(onPageChange).toHaveBeenCalledWith("logs")
 
-    await screen.getByRole("button", { name: "进入管理员面板" }).click()
+    await screen
+      .getByRole("button", { name: /测试用户.*owner@example.com/ })
+      .click()
+    await screen.getByRole("menuitem", { name: "进入管理员面板" }).click()
     expect(onWorkspaceChange).toHaveBeenCalledWith("admin")
     await expectNoA11yViolations()
   })

@@ -1,7 +1,6 @@
 package upstream
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,7 +14,7 @@ import (
 )
 
 func TestCodexFastHTTPPassthrough(t *testing.T) {
-	for _, path := range []string{"/v1/responses", "/v1/chat/completions"} {
+	for _, path := range []string{"/v1/responses"} {
 		for _, stream := range []bool{false, true} {
 			for _, actualTier := range []string{"priority", "default"} {
 				t.Run(fmt.Sprintf("%s/stream=%v/actual=%s", path, stream, actualTier), func(t *testing.T) {
@@ -76,24 +75,6 @@ func TestCodexFastWebSocketPassthrough(t *testing.T) {
 	_, payload, err := conn.ReadMessage()
 	if err != nil || gjson.GetBytes(payload, "response.service_tier").String() != "priority" {
 		t.Fatalf("reply=%s err=%v", payload, err)
-	}
-}
-
-func TestChatToResponsesPreservesActualServiceTier(t *testing.T) {
-	for _, tier := range []string{"priority", "default"} {
-		payload := []byte(fmt.Sprintf(`{"id":"chat_1","service_tier":%q,"choices":[]}`, tier))
-		if got := gjson.GetBytes(chatToResponsesResponse(payload, "model"), "service_tier").String(); got != tier {
-			t.Fatalf("tier=%q", got)
-		}
-		var output bytes.Buffer
-		stream := fmt.Sprintf("data: {\"id\":\"chat_1\",\"service_tier\":%q,\"choices\":[]}\n\ndata: [DONE]\n\n", tier)
-		if err := translateChatStreamToResponses(&output, strings.NewReader(stream), "model"); err != nil {
-			t.Fatal(err)
-		}
-		completed := completedResponseFromPayload(output.Bytes())
-		if got := gjson.GetBytes(completed, "service_tier").String(); got != tier {
-			t.Fatalf("tier=%q stream=%s", got, output.String())
-		}
 	}
 }
 

@@ -2,58 +2,19 @@ package app
 
 import "testing"
 
-func TestNormalizeSupportedProviderMatchesCPABuiltins(t *testing.T) {
-	for input, want := range map[string]string{
-		"codex": "codex", "kimi": "kimi", "grok": "xai", "x.ai": "xai",
-		"cursor":            "cursor",
-		"openai-compatible": "openai-compatibility", "百炼": "aliyun-bailian",
-		"anthropic": "claude", "claude": "claude", "gemini": "gemini",
-		"antigravity": "antigravity", "vertex": "vertex", "aistudio": "aistudio",
-		"gemini-interactions-api-key": "gemini-interactions", "devin": "devin", "muse": "meta",
-	} {
-		got, ok := normalizeSupportedProvider(input)
-		if !ok || got != want {
-			t.Fatalf("normalizeSupportedProvider(%q) = (%q, %v), want (%q, true)", input, got, ok, want)
+func TestOnlyCodexCredentialsAccepted(t *testing.T) {
+	for _, provider := range []string{"codex", "kimi", "xai", "openai", "claude", "gemini", "cursor", "aliyun-bailian", "unknown"} {
+		_, ok := normalizeSupportedProvider(provider)
+		if ok != (provider == "codex") {
+			t.Fatalf("provider %s: %v", provider, ok)
 		}
 	}
-	for _, input := range []string{"unknown", "", "plugin-not-installed"} {
-		if got, ok := normalizeSupportedProvider(input); ok {
-			t.Fatalf("normalizeSupportedProvider(%q) = %q, want unsupported", input, got)
+	for _, document := range []string{`{"type":"claude"}`, `{"type":"openai"}`, `invalid`} {
+		if validateSupportedCredentialDocument("codex", []byte(document)) == nil {
+			t.Fatalf("accepted %s", document)
 		}
 	}
-}
-
-func TestValidateSupportedCredentialDocumentRejectsExecutorEscape(t *testing.T) {
-	valid := []struct {
-		provider string
-		document string
-	}{
-		{"codex", `{"type":"codex"}`},
-		{"cursor", `{"type":"cursor","api_key":"crsr_test"}`},
-		{"aliyun-bailian", `{"type":"openai-compatibility"}`},
-		{"aliyun-bailian", `{"type":"aliyun-bailian"}`},
-		{"openai", `{"type":"openai-compatibility"}`},
-		{"claude", `{"type":"anthropic"}`},
-		{"gemini", `{"type":"gemini-api-key"}`},
-		{"meta", `{"type":"muse"}`},
-	}
-	for _, test := range valid {
-		if err := validateSupportedCredentialDocument(test.provider, []byte(test.document)); err != nil {
-			t.Fatalf("valid %s credential rejected: %v", test.provider, err)
-		}
-	}
-	for _, test := range []struct {
-		provider string
-		document string
-	}{
-		{"codex", `{"type":"claude"}`},
-		{"xai", `{"type":"gemini"}`},
-		{"kimi", `{"type":"codex"}`},
-		{"cursor", `{"type":"cursor"}`},
-		{"cursor", `{"type":"cursor","api_key":"crsr_test","base_url":"https://example.com/v1"}`},
-	} {
-		if err := validateSupportedCredentialDocument(test.provider, []byte(test.document)); err == nil {
-			t.Fatalf("executor escape %s/%s was accepted", test.provider, test.document)
-		}
+	if err := validateSupportedCredentialDocument("codex", []byte(`{"type":"codex","access_token":"test"}`)); err != nil {
+		t.Fatal(err)
 	}
 }

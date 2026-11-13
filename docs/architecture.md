@@ -1,52 +1,20 @@
 # RelayAPI architecture
 
-RelayAPI is a Codex-first, multi-tenant policy and accounting gateway. It owns
-tenant policy, prices and durable accounting, and embeds CPA for provider
-execution for Codex, Kimi, xAI/Grok and OpenAI-compatible services such as
-Aliyun Bailian. The SDK adaptation lives in `third_party/cpaexecutor`.
+RelayAPI is a Codex-only, multi-tenant Responses gateway. The in-process runtime in `internal/upstream` owns Codex HTTP/WebSocket execution, credential refresh and model discovery. There is no embedded CPA, loopback inference server, Cursor runtime or cross-protocol translator.
 
 ## Request boundary
 
-The public layer authenticates the tenant key, resolves aliases, checks model
-policy, reserves balance/quota and strips untrusted `X-Relay-*` headers. The
-embedded CPA runtime then selects the pinned encrypted credential, translates the
-wire protocol when needed, lowers unsupported tool declarations, performs
-OAuth refresh and sends the provider request. HTTP settlement runs after the
-response boundary; WebSocket terminal turns are persisted before forwarding so
-the next turn remains subject to quota enforcement.
+The public layer authenticates tenant keys, resolves model aliases, checks grants and reserves balance/quota. It strips client credentials and untrusted Relay headers, then pins execution to the admitted credential. The runtime verifies that credential owns the selected public or resolved upstream model and never falls back to another account.
 
-Text billing consumes CPA's public structured usage plugin records, correlated
-to an execution scope and, for WebSocket, a response ID. Failed attempts and
-auxiliary model records are excluded. Delivery waits are bounded to 750ms;
-missing or incomplete usage releases the hold without a charge or billing detail.
-Unknown prices also produce no charge, and later price refreshes do not backfill bills.
-Explicit CPA `Generate=false` records are complete zero-cost prewarm outcomes.
-CPA local synthetic prewarm has no executor callback: Relay recognizes it only
-with explicit prewarm intent, the CPA `resp_prewarm_` identity and complete zero
-usage. HTTP and WebSocket share the same settlement assessment.
-Request logs are billing details: one confirmed, positive charge per generation
-step, with its actual balance or subscription source. Settlement and detail commit
-atomically for HTTP and each WebSocket turn. Prewarm, connections, interrupted
-steps and other uncharged outcomes do not create request logs. The detail API
-contains no nested turns. Statistics and new retention rollups use the same
-confirmed-step predicate; previously archived aggregates retain their historical semantics.
-Requested Priority and upstream-confirmed Priority are displayed separately. The plugin queue is in memory, while PostgreSQL
-remains the accounting ledger. CPA now exposes image modality buckets in
-the public usage SDK; Relay image accounting still uses the existing response parser.
-Relay still owns pricing rules, tenant balances and subscription quotas.
+Only Responses HTTP, Responses compact, Responses WebSocket and model discovery are supported. Chat, Messages, Gemini, Images, videos and Realtime endpoints return 404. Clients requiring those wire formats use local Magpie to translate to Responses. The Magpie import link advertises only the Responses endpoint.
 
-Supported public protocols are Responses, Chat Completions, the OpenAI Images
-API (`/v1/images/generations` and `/v1/images/edits`), the OpenAI model
-catalog, Codex-compatible paths and Responses WebSocket. Anthropic Messages and
-Gemini-native `/v1beta/*` remain intentionally unsupported.
+Codex OAuth requests receive the website backend's required Responses field defaults. Non-stream requests collect the backend's SSE terminal response into a Responses JSON object. Native tool definitions, opaque fields and response events are not translated to another protocol. Compact stays non-streaming and is passed to `/responses/compact`.
 
-Images follow the current CPA split: Codex `gpt-image-1.5` and `gpt-image-2`
-proxy the ChatGPT backend `/images/*` endpoints instead of wrapping Responses;
-xAI `grok-imagine-*` maps OpenAI `size`/`quality` onto `aspect_ratio` and
-`resolution`; OpenAI-compatible credentials pass Images through unchanged.
-Image-only slugs stay hidden in the Codex picker and are still callable on
-the Images API. The Responses wrap that older CPA builds used for
-`gpt-image-2` is not implemented.
+Expired OAuth tokens are refreshed before execution. A definitive upstream 401 permits one refresh and retry on the same admitted credential. Other errors are returned without replay. Refreshed documents are persisted to encrypted PostgreSQL storage, preserving credential IDs, grants and proxy ownership.
+
+Metering observes uncompressed JSON/SSE or WebSocket terminal envelopes directly. Only complete usage with a confirmed price may be charged. HTTP finalization captures cancellation at the response boundary; WebSocket turns settle before terminal delivery. Reservations and ledger updates remain idempotent PostgreSQL transactions. Historical records and fees are not rewritten by this runtime migration.
+
+Existing non-Codex credentials remain stored for historical audit but are excluded from runtime registration. Provider creation and OAuth accept only Codex.
 
 ## Codex interoperability
 
@@ -87,12 +55,7 @@ alone does not disable verbosity or multi-agent metadata. Catalog revisions
 include a content hash of facts and overrides, so deleting an override also
 invalidates client caches. Failed database reads retain the published snapshot.
 
-The embedded CPA runtime starts CPA's provider-model updater after its routes
-are ready. A successful remote catalog change for Codex or xAI rebuilds the
-credential routes, persists newly added models, and updates parent subscription
-model ranges. CPA's embedded definitions remain available when the remote
-catalog cannot be fetched. Tenant and key restrictions still apply to the
-expanded list.
+Codex credentials use their configured published models, with a built-in fallback for a newly added account. Explicit discovery queries the credential's own `/models` endpoint and proxy. There is no external model-catalog updater or provider registry.
 
 Quota storage supports all active child subscriptions usable by the authenticated
 key. Four batch queries project allocations against current parent generations,
@@ -148,13 +111,10 @@ added twice into the critical path.
   failures can still isolate one account without taking the whole process down.
 - Provider errors and Relay errors are returned as written and recorded on the
   request log. There is no transparent retry of 408/429/502/503/504.
-- OAuth tokens refresh proactively near expiry. A 401 still refreshes the
-  stored token for later requests but is returned as-is.
+- OAuth tokens refresh proactively near expiry. A definitive 401 refreshes and retries once on the same admitted credential.
 - HTTP, HTTPS, SOCKS5 and SOCKS5H proxies are implemented in Relay and apply to
   inference, WebSocket, discovery, OAuth, quota and system requests.
-- Provider credentials remain encrypted in PostgreSQL. CPA runs in this process
-  behind the existing private loopback listener, with a process-local API key.
-  Public traffic must pass Relay admission before it reaches that listener.
+- Provider credentials remain encrypted in PostgreSQL. Execution is in-process without a private HTTP listener or internal API key.
 - PostgreSQL row locks make reservation and settlement idempotent and atomic.
 
 ## Models and pricing

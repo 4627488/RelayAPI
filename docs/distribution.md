@@ -27,7 +27,7 @@ server on native AMD64/ARM64 runners, and build the frontend and six-platform
 launcher distribution once for both images. Module caches follow dependency
 locks. Compilation caches are isolated by job, architecture and toolchain,
 refreshed per commit, and restored across commits. The Docker build only assembles these artifacts
-and the pinned Cursor runtime (`BUILD_SOURCE=prebuilt`). Ordinary `docker build .`
+(`BUILD_SOURCE=prebuilt`). Ordinary `docker build .`
 continues to build everything from source.
 
 Launcher versions use a hash of the actual non-test source/embedded inputs for

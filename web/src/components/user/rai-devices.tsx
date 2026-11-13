@@ -148,7 +148,6 @@ export function RAIDevices() {
     <div className="mx-auto flex w-full max-w-5xl min-w-0 flex-col gap-8 py-2 md:py-4">
       <PageHeader
         title="设备"
-        description="查看你已授权的设备，管理它们对 RelayAPI 的访问权限。"
         actions={
           <>
             <Button

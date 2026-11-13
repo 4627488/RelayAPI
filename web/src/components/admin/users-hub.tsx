@@ -65,12 +65,7 @@ export function UsersHub({
 
   return (
     <div className="flex flex-col gap-6">
-      {tab === "accounts" ? (
-        <PageHeader
-          title="用户"
-          description="分配可用模型与共享订阅，管理用户余额和登录权限。"
-        />
-      ) : null}
+      {tab === "accounts" ? <PageHeader title="用户" /> : null}
       <Tabs
         value={tab}
         onValueChange={(value) => {

@@ -75,12 +75,12 @@ func TestProbeNativeAccountPinsCredentialAndReportsSuccess(t *testing.T) {
 
 	runtime, err := upstream.NewRuntime(upstream.Options{}, []upstream.Credential{
 		{
-			ID: "other", Provider: "openai", Enabled: true, Models: []string{"gpt-public"},
-			Document: json.RawMessage(`{"type":"openai","api_key":"other-key","base_url":"` + provider.URL + `"}`),
+			ID: "other", Provider: "codex", Enabled: true, Models: []string{"gpt-public"},
+			Document: json.RawMessage(`{"type":"codex","api_key":"other-key","base_url":"` + provider.URL + `"}`),
 		},
 		{
-			ID: "target", Provider: "openai", Enabled: true, Models: []string{"gpt-public"},
-			Document: json.RawMessage(`{"type":"openai","api_key":"target-key","base_url":"` + provider.URL + `"}`),
+			ID: "target", Provider: "codex", Enabled: true, Models: []string{"gpt-public"},
+			Document: json.RawMessage(`{"type":"codex","api_key":"target-key","base_url":"` + provider.URL + `"}`),
 		},
 	})
 	if err != nil {
@@ -89,7 +89,7 @@ func TestProbeNativeAccountPinsCredentialAndReportsSuccess(t *testing.T) {
 	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
 
 	result := probeNativeAccount(t.Context(), runtime, store.UpstreamCredentialSnapshot{
-		ID: "target", Provider: "openai", Enabled: true, Models: []string{"gpt-public"},
+		ID: "target", Provider: "codex", Enabled: true, Models: []string{"gpt-public"},
 	}, "gpt-public")
 	if !result.OK || result.StatusCode != http.StatusOK || result.Preview != "pong" || result.Model != "gpt-public" {
 		t.Fatalf("probe result = %+v", result)
@@ -97,7 +97,7 @@ func TestProbeNativeAccountPinsCredentialAndReportsSuccess(t *testing.T) {
 	if result.LatencyMS < 0 {
 		t.Fatalf("latency = %d", result.LatencyMS)
 	}
-	if len(seen) != 1 || !strings.Contains(seen[0], "/chat/completions") {
+	if len(seen) != 1 || !strings.Contains(seen[0], "/responses") {
 		t.Fatalf("upstream calls = %#v", seen)
 	}
 }
@@ -111,8 +111,8 @@ func TestProbeNativeAccountReturnsProviderError(t *testing.T) {
 	t.Cleanup(provider.Close)
 
 	runtime, err := upstream.NewRuntime(upstream.Options{}, []upstream.Credential{{
-		ID: "openai-1", Provider: "openai", Enabled: true, Models: []string{"gpt-public"},
-		Document: json.RawMessage(`{"type":"openai","api_key":"key","base_url":"` + provider.URL + `"}`),
+		ID: "openai-1", Provider: "codex", Enabled: true, Models: []string{"gpt-public"},
+		Document: json.RawMessage(`{"type":"codex","api_key":"key","base_url":"` + provider.URL + `"}`),
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestProbeNativeAccountReturnsProviderError(t *testing.T) {
 	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
 
 	result := probeNativeAccount(t.Context(), runtime, store.UpstreamCredentialSnapshot{
-		ID: "openai-1", Provider: "openai", Enabled: true, Models: []string{"gpt-public"},
+		ID: "openai-1", Provider: "codex", Enabled: true, Models: []string{"gpt-public"},
 	}, "gpt-public")
 	if result.OK || result.StatusCode != http.StatusTooManyRequests || result.Error != "Upstream service error: rate limited" {
 		t.Fatalf("probe result = %+v", result)
@@ -178,12 +178,12 @@ func TestProbeNativeAccountPinsAwayFromOtherCredential(t *testing.T) {
 
 	runtime, err := upstream.NewRuntime(upstream.Options{}, []upstream.Credential{
 		{
-			ID: "other", Provider: "openai", Enabled: true, Models: []string{"gpt-public"},
-			Document: json.RawMessage(`{"type":"openai","api_key":"other","base_url":"` + other.URL + `"}`),
+			ID: "other", Provider: "codex", Enabled: true, Models: []string{"gpt-public"},
+			Document: json.RawMessage(`{"type":"codex","api_key":"other","base_url":"` + other.URL + `"}`),
 		},
 		{
-			ID: "target", Provider: "openai", Enabled: true, Models: []string{"gpt-public"},
-			Document: json.RawMessage(`{"type":"openai","api_key":"target","base_url":"` + target.URL + `"}`),
+			ID: "target", Provider: "codex", Enabled: true, Models: []string{"gpt-public"},
+			Document: json.RawMessage(`{"type":"codex","api_key":"target","base_url":"` + target.URL + `"}`),
 		},
 	})
 	if err != nil {
@@ -192,7 +192,7 @@ func TestProbeNativeAccountPinsAwayFromOtherCredential(t *testing.T) {
 	t.Cleanup(func() { _ = runtime.Close(t.Context()) })
 
 	result := probeNativeAccount(t.Context(), runtime, store.UpstreamCredentialSnapshot{
-		ID: "target", Provider: "openai",
+		ID: "target", Provider: "codex",
 	}, "gpt-public")
 	if !result.OK || hitTarget != 1 || hitOther != 0 {
 		t.Fatalf("result=%+v hitTarget=%d hitOther=%d", result, hitTarget, hitOther)

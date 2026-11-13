@@ -97,6 +97,11 @@ func (events codexQuotaEvents) setHeaders(header http.Header) {
 func projectCodexSubscriptionQuotas(subscriptions []store.SubscriptionQuota, now time.Time) codexQuotaEvents {
 	events := make(codexQuotaEvents, 0)
 	for _, subscription := range subscriptions {
+		// Magpie also needs unavailable and cash-billed grants for its status
+		// summary. Neither represents a usable Codex subscription allowance.
+		if subscription.Unavailable || subscription.BalanceBilled {
+			continue
+		}
 		provider := strings.Map(func(r rune) rune {
 			if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
 				return r

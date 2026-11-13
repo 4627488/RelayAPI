@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/store"
+	"github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/felixge/httpsnoop"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
 
 var latencyBuckets = []float64{.005, .025, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120, 300, 900, 3600, 86400}
@@ -60,9 +60,9 @@ func (a *App) initMetrics() {
 	m.tokens = counter("inference_tokens_total", "Disjoint input/cache buckets; output includes reasoning; total excludes cache traffic.", "protocol", "transport", "kind")
 	m.costs = counter("billing_cost_usd_total", "Settled inference charges in USD; not an accounting ledger.", "transport")
 	m.persistence = counter("persistence_operations_total", "Request accounting/log persistence outcomes.", "operation", "outcome")
-	m.executions = counter("cpa_execution_attempts_total", "Actual CPA executor invocations, including retry attempts and token counting.", "provider", "kind", "outcome")
-	m.executionDuration = histogram("cpa_execution_duration_seconds", "CPA executor attempt duration, including streamed output.", latencyBuckets, "provider", "kind")
-	m.executionStages = histogram("cpa_execution_stage_seconds", "Observed CPA transport and response stage duration; absent stages are omitted.", latencyBuckets, "provider", "stage")
+	m.executions = counter("upstream_execution_attempts_total", "Actual Codex HTTP execution attempts.", "provider", "kind", "outcome")
+	m.executionDuration = histogram("upstream_execution_duration_seconds", "Codex HTTP response header attempt duration.", latencyBuckets, "provider", "kind")
+	m.executionStages = histogram("upstream_execution_stage_seconds", "Observed Codex transport and response stage duration; absent stages are omitted.", latencyBuckets, "provider", "stage")
 	m.jobs = counter("background_jobs_total", "Background job executions.", "task", "outcome")
 	m.jobDuration = histogram("background_job_duration_seconds", "Background job duration.", latencyBuckets, "task")
 	m.jobSuccess = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "relay_background_job_last_success_timestamp_seconds", Help: "Last successful job completion, in Unix seconds."}, []string{"task"})
@@ -203,7 +203,7 @@ func metricProvider(value string) string {
 	return "other"
 }
 
-func (a *App) observeCPAExecution(attempt relaybridge.ExecutionAttempt) {
+func (a *App) observeUpstreamExecution(attempt upstream.ExecutionAttempt) {
 	level := slog.LevelDebug
 	if attempt.Status != "complete" && attempt.Error != "request_canceled" {
 		level = slog.LevelWarn
@@ -230,7 +230,7 @@ func (a *App) observeCPAExecution(attempt relaybridge.ExecutionAttempt) {
 		"connection_wait": {attempt.GetConnAt, attempt.GotConnAt}, "dns": {attempt.DNSStartedAt, attempt.DNSCompletedAt},
 		"connect": {attempt.ConnectStartedAt, attempt.ConnectCompletedAt}, "tls": {attempt.TLSStartedAt, attempt.TLSCompletedAt},
 		"upstream_first_byte": {attempt.RequestWrittenAt, attempt.FirstResponseAt}, "headers": {attempt.StartedAt, attempt.HeadersAt},
-		"first_chunk": {attempt.StartedAt, attempt.FirstChunkAt},
+		"first_chunk": {attempt.StartedAt, attempt.FirstResponseAt},
 	} {
 		if !pair[0].IsZero() && !pair[1].IsZero() && !pair[1].Before(pair[0]) {
 			m.executionStages.WithLabelValues(provider, stage).Observe(pair[1].Sub(pair[0]).Seconds())

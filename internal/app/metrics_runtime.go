@@ -19,8 +19,8 @@ var runtimeMetricDescriptions = map[string]*prometheus.Desc{
 	"admission_retry_after_seconds":    metricDesc("admission_retry_after_seconds", "Remaining global circuit cooldown."),
 	"finalization_in_flight":           metricDesc("finalization_in_flight", "Active asynchronous response finalizers; excludes synchronous overflow."),
 	"finalization_capacity":            metricDesc("finalization_capacity", "Asynchronous finalizer capacity."),
-	"cpa_up":                           metricDesc("cpa_up", "Embedded CPA runtime is installed and has no listener error."),
-	"cpa_credentials":                  prometheus.NewDesc("relay_cpa_credentials", "CPA credential counts by provider and condition; conditions overlap.", []string{"provider", "condition"}, nil),
+	"upstream_up":                      metricDesc("upstream_up", "Codex runtime is available."),
+	"upstream_credentials":             prometheus.NewDesc("relay_upstream_credentials", "Codex credential counts by provider and condition; conditions overlap.", []string{"provider", "condition"}, nil),
 	"db_connections":                   prometheus.NewDesc("relay_db_connections", "SQL connection pool snapshot.", []string{"state"}, nil),
 	"db_max_connections":               metricDesc("db_max_connections", "SQL pool maximum open connections; zero means unlimited."),
 	"db_wait_total":                    metricDesc("db_wait_total", "SQL connection pool waits since process start."),
@@ -67,28 +67,10 @@ func (c *runtimeMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	gauge("finalization_in_flight", float64(len(a.finalizationSlots)))
 	gauge("finalization_capacity", float64(cap(a.finalizationSlots)))
 	up := 0.
-	if a.nativeCPARuntime != nil && a.nativeCPAServeErr.Load() == nil {
+	if a.nativeRuntime != nil {
 		up = 1
 	}
-	gauge("cpa_up", up)
-	// Aggregate aliases that normalize to the same bounded provider label.
-	groups := make(map[string]map[string]int)
-	if a.nativeCPARuntime != nil {
-		for _, s := range a.nativeCPARuntime.CredentialHealthSnapshot() {
-			provider := metricProvider(s.Provider)
-			if groups[provider] == nil {
-				groups[provider] = make(map[string]int)
-			}
-			for condition, count := range map[string]int{"enabled": s.Enabled, "disabled": s.Disabled, "unavailable": s.Unavailable, "quota_exceeded": s.QuotaExceeded, "cooling": s.Cooling} {
-				groups[provider][condition] += count
-			}
-		}
-	}
-	for provider, counts := range groups {
-		for condition, count := range counts {
-			emit("cpa_credentials", prometheus.GaugeValue, float64(count), provider, condition)
-		}
-	}
+	gauge("upstream_up", up)
 	if a.store.DB != nil {
 		if database, err := a.store.DB.DB(); err == nil {
 			s := database.Stats()

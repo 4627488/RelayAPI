@@ -10,7 +10,6 @@ on:
       - "cmd/**"
       - "internal/**"
       - "third_party/**"
-      - "scripts/setup-cursor-runtime.mjs"
       - "scripts/build-rai-dist.sh"
       - "web/**"
       - "go.mod"
@@ -88,16 +87,16 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/go/pkg/mod
-          key: release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}
+          key: release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Cache incremental compilation
         uses: actions/cache@v5
         with:
           path: ~/.cache/go-build
-          key: release-backend-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}-${{ github.sha }}
+          key: release-backend-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
           restore-keys: |
-            release-backend-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}-
+            release-backend-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
             release-backend-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-
       - name: Compile static server
         run: CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" -o .build/relayapi ./cmd/relayapi
@@ -125,16 +124,16 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/go/pkg/mod
-          key: release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}
+          key: release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             release-modules-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Cache incremental compilation
         uses: actions/cache@v5
         with:
           path: ~/.cache/go-build
-          key: release-rai-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}-${{ github.sha }}
+          key: release-rai-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
           restore-keys: |
-            release-rai-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum', 'third_party/cpaexecutor/go.sum') }}-
+            release-rai-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
             release-rai-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-
       - run: sh scripts/build-rai-dist.sh .build/rai-bin
       - uses: actions/upload-artifact@v7

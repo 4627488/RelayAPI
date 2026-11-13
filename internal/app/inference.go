@@ -79,15 +79,16 @@ func (c *rollingCapture) Info() ([]byte, bool, int64) {
 // runtimeWriter tees the in-process runtime onto the client and a log capture.
 // Status and body are forwarded as written; Relay does not rewrite them.
 type runtimeWriter struct {
-	firstToken *firstTokenObserver
-	client     http.ResponseWriter
-	header     http.Header
-	status     int
-	stream     bool
-	capture    *rollingCapture
-	committed  bool
-	writeErr   error
-	firstByte  func()
+	beforeWrite func([]byte) error
+	firstToken  *firstTokenObserver
+	client      http.ResponseWriter
+	header      http.Header
+	status      int
+	stream      bool
+	capture     *rollingCapture
+	committed   bool
+	writeErr    error
+	firstByte   func()
 }
 
 func (w *runtimeWriter) Header() http.Header {
@@ -112,6 +113,13 @@ func (w *runtimeWriter) Write(payload []byte) (int, error) {
 	if w.firstToken != nil {
 		w.firstToken.Write(payload, time.Now())
 	}
+	if w.beforeWrite != nil {
+		if err := w.beforeWrite(payload); err != nil {
+			w.writeErr = err
+			return 0, err
+		}
+	}
+
 	if w.status == 0 {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -206,13 +214,15 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 			firstByteAt = time.Now()
 		}
 	}}
-	if isRealtimeSecretCreation(r.URL.Path) {
-		// Temporary credentials are response secrets, not request-log content.
-		out.capture = nil
-	}
+
+	compactions := newCompactionObserver(call.meta.Stream, int(a.maxRequestBytes()), func(payload []byte) error {
+		return a.rememberCompaction(r.Context(), call.key.TenantID, firstNonEmptyString(call.admission.UpstreamCredentialID, r.Header.Get("X-Relay-Selected-Credential-ID")), payload)
+	})
+	out.beforeWrite = compactions.Write
 	runtimeStarted := time.Now()
 	if call.meta.Stream {
-		out.firstToken = &firstTokenObserver{}
+		out.firstToken = &compactions.events
+		out.beforeWrite = func([]byte) error { return compactions.err }
 	}
 	a.nativeRuntime.Serve(out, r, call.body)
 	responseReadAt := time.Now()
@@ -234,9 +244,6 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 	finalizeCtx := context.WithoutCancel(r.Context())
 	a.finalizeResponse(func() {
 		finalizeStarted := time.Now()
-		if a.nativeCPARuntime != nil {
-			defer a.nativeCPARuntime.ReleaseRequestUsage(call.requestID)
-		}
 		price := call.price
 		logContext := call.logContext
 		if out.firstToken != nil && !out.firstToken.At.IsZero() {
@@ -269,7 +276,7 @@ func (a *App) serveInference(w http.ResponseWriter, r *http.Request, call public
 		if out.firstToken != nil {
 			billing.Merge(&parsed, out.firstToken.Usage)
 		}
-		parsed = a.cpaBillingUsage(finalizeCtx, call.requestID, "", r.URL.Path, call.meta, parsed)
+		parsed = nativeBillingUsage(call.meta, parsed)
 		if parsed.Found && !parsed.NonGenerated() {
 			dimensions := requestPriceDimensions(call.key, call.meta, r.URL.Path, admissionAuthIndex(call.admission), parsed.ResponseServiceTier)
 			dimensions.PromptTokens = parsed.Usage.Prompt()
@@ -410,7 +417,6 @@ func prepareRuntimeHeaders(header http.Header, requestID, credentialID string) {
 	}
 	if credentialID != "" {
 		header.Set("X-Relay-Upstream-Credential-ID", credentialID)
-		header.Set("X-Relay-CPA-Auth-ID", credentialID)
 	}
 }
 

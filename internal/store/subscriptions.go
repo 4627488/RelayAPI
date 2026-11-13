@@ -56,14 +56,15 @@ type SubscriptionCandidate struct {
 }
 
 type AdmissionInput struct {
-	RequestID       string
-	Key             KeyContext
-	Model           string
-	BalanceReserve  int64
-	QuotaReserve    int64
-	PriceConfigured bool
-	PriceSnapshot   json.RawMessage
-	ExpiresAt       time.Time
+	RequiredCredentialID string
+	RequestID            string
+	Key                  KeyContext
+	Model                string
+	BalanceReserve       int64
+	QuotaReserve         int64
+	PriceConfigured      bool
+	PriceSnapshot        json.RawMessage
+	ExpiresAt            time.Time
 }
 
 type Admission struct {
@@ -1018,6 +1019,18 @@ func (s Store) AdmitRequest(ctx context.Context, input AdmissionInput) (Admissio
 	if err != nil {
 		return Admission{}, err
 	}
+	if input.RequiredCredentialID != "" {
+		eligible := candidates[:0]
+		for _, candidate := range candidates {
+			if candidate.Parent.UpstreamCredentialID == input.RequiredCredentialID {
+				eligible = append(eligible, candidate)
+			}
+		}
+		candidates = eligible
+		if len(candidates) == 0 && (hasModelAssignment || hasUnavailableAssignment) {
+			return Admission{}, ErrCompactionAccount
+		}
+	}
 	if len(candidates) == 0 {
 		if hasUnavailableAssignment {
 			return Admission{}, ErrSubscriptionUnavailable
@@ -1094,7 +1107,8 @@ func (s Store) reserveCandidate(ctx context.Context, input AdmissionInput, candi
 		}
 
 		reservation := RequestReservation{
-			RequestID: input.RequestID, TenantID: input.Key.TenantID, APIKeyID: input.Key.ID,
+			UpstreamCredentialID: input.RequiredCredentialID,
+			RequestID:            input.RequestID, TenantID: input.Key.TenantID, APIKeyID: input.Key.ID,
 			Model: input.Model, BalanceReservedNanoUSD: input.BalanceReserve,
 			PriceSnapshot: input.PriceSnapshot, QuotaWindows: json.RawMessage(`[]`), Status: db.ReservationActive, ExpiresAt: input.ExpiresAt,
 		}

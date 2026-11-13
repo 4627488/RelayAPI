@@ -79,7 +79,7 @@ export const pageLabels: Partial<Record<Page, string>> = {
   account: "账户设置",
   overview: "总览",
   usage: "用量",
-  keys: "API Keys",
+  keys: "API 密钥",
   "rai-devices": "设备",
   logs: "请求记录",
   guide: "接入指南",

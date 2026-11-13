@@ -36,7 +36,7 @@ func TestCredentialTokenNeedsRefresh(t *testing.T) {
 func TestRefreshCredentialRefreshesExpiredKimiToken(t *testing.T) {
 	var persisted []byte
 	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.Header.Get("X-Msh-Device-Id") != "device-1" {
+		if r.Method != http.MethodPost {
 			t.Errorf("oauth request %s device=%q", r.Method, r.Header.Get("X-Msh-Device-Id"))
 		}
 		body, _ := io.ReadAll(r.Body)
@@ -60,9 +60,9 @@ func TestRefreshCredentialRefreshesExpiredKimiToken(t *testing.T) {
 			persisted = append([]byte(nil), document...)
 		},
 	}, []Credential{{
-		ID: "kimi-1", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+		ID: "kimi-1", Provider: "codex", Enabled: true, Models: []string{"kimi-k2.5"},
 		Document: testJSON(t, map[string]any{
-			"type":           "kimi",
+			"type":           "codex",
 			"access_token":   "old-access",
 			"refresh_token":  "old-refresh",
 			"device_id":      "device-1",
@@ -97,9 +97,9 @@ func TestRefreshCredentialSkipsFreshTokenUnlessForced(t *testing.T) {
 	defer oauth.Close()
 
 	runtime, err := NewRuntime(Options{}, []Credential{{
-		ID: "kimi-1", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+		ID: "kimi-1", Provider: "codex", Enabled: true, Models: []string{"kimi-k2.5"},
 		Document: testJSON(t, map[string]any{
-			"type":           "kimi",
+			"type":           "codex",
 			"access_token":   "fresh-access",
 			"refresh_token":  "fresh-refresh",
 			"expired":        time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
@@ -136,9 +136,9 @@ func TestRefreshCredentialRefreshesWhenExpiryMissing(t *testing.T) {
 	defer oauth.Close()
 
 	runtime, err := NewRuntime(Options{}, []Credential{{
-		ID: "kimi-1", Provider: "kimi", Enabled: true, Models: []string{"kimi-k2.5"},
+		ID: "kimi-1", Provider: "codex", Enabled: true, Models: []string{"kimi-k2.5"},
 		Document: testJSON(t, map[string]any{
-			"type":           "kimi",
+			"type":           "codex",
 			"access_token":   "stale-access",
 			"refresh_token":  "keep-refresh",
 			"token_endpoint": oauth.URL,
@@ -168,7 +168,6 @@ func TestRefreshCredentialRefreshesCodexAndXAI(t *testing.T) {
 		"email":                       "user@example.com",
 		"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": "acct_refreshed"},
 	})
-	xaiJWT := testJWT(t, map[string]any{"email": "grok@example.com", "sub": "user-22", "exp": now.Add(2 * time.Hour).Unix()})
 
 	tests := []struct {
 		name     string
@@ -192,28 +191,6 @@ func TestRefreshCredentialRefreshesCodexAndXAI(t *testing.T) {
 				t.Helper()
 				if payload["access_token"] != "codex-access" || payload["account_id"] != "acct_refreshed" || payload["email"] != "user@example.com" {
 					t.Fatalf("codex payload = %#v", payload)
-				}
-			},
-		},
-		{
-			name: "xai uses default token URL and persists it",
-			id:   "xai-1", provider: "xai",
-			document: map[string]any{
-				"type": "xai", "access_token": "old-access", "refresh_token": "old-refresh",
-				"expired": now.Add(-time.Hour).UTC().Format(time.RFC3339),
-			},
-			wantForm: []string{"grant_type=refresh_token", "client_id=" + xaiClientID, "refresh_token=old-refresh"},
-			response: map[string]any{"access_token": "xai-access", "id_token": xaiJWT},
-			check: func(t *testing.T, header http.Header, payload map[string]any) {
-				t.Helper()
-				if header.Get("X-Msh-Device-Id") != "" {
-					t.Fatalf("xAI refresh sent Kimi headers: %v", header)
-				}
-				if payload["access_token"] != "xai-access" || payload["sub"] != "user-22" || payload["email"] != "grok@example.com" {
-					t.Fatalf("xai payload = %#v", payload)
-				}
-				if payload["token_endpoint"] == "" || payload["expired"] == "" {
-					t.Fatalf("xai did not persist endpoint/expiry: %#v", payload)
 				}
 			},
 		},
@@ -271,23 +248,12 @@ func TestOauthExpiryUsesExpiresInOrJWT(t *testing.T) {
 }
 
 func TestOauthTokenEndpointDefaults(t *testing.T) {
-	if got := oauthTokenEndpoint("xai", nil); got != xaiTokenURL {
-		t.Fatalf("xai default = %q", got)
-	}
-	if got := oauthTokenEndpoint("codex", map[string]any{"token_endpoint": "https://auth.example/token"}); got != "https://auth.example/token" {
-		t.Fatalf("override = %q", got)
+	if got := oauthTokenEndpoint("codex", nil); got != codexTokenURL {
+		t.Fatal(got)
 	}
 	if got := oauthRefreshForm("codex", "rt").Get("scope"); got != codexRefreshScope {
-		t.Fatalf("codex scope = %q", got)
+		t.Fatal(got)
 	}
-	if oauthRefreshForm("xai", "rt").Get("scope") != "" {
-		t.Fatal("xAI refresh should not send Codex scope")
-	}
-}
-
-func fmtString(value any) string {
-	text, _ := value.(string)
-	return text
 }
 
 func testJWT(t *testing.T, claims map[string]any) string {
@@ -301,4 +267,9 @@ func testJWT(t *testing.T, claims map[string]any) string {
 		t.Fatal(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
+}
+
+func fmtString(value any) string {
+	text, _ := value.(string)
+	return text
 }

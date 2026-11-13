@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest"
-import { page } from "vitest/browser"
+import { page, userEvent } from "vitest/browser"
 import { render } from "vitest-browser-react"
 import { OverviewPage } from "./overview-page"
 import { UsageView } from "./usage-view"
@@ -49,16 +49,20 @@ it.each([390, 1280])(
       .toBeVisible()
     await expect.element(screen.getByText(/订阅读取失败/)).toBeVisible()
     await expect
-      .element(screen.getByText("响应性能", { exact: true }))
+      .element(screen.getByText("趋势", { exact: true }))
       .toBeVisible()
+    await expect
+      .element(screen.getByText("响应性能", { exact: true }))
+      .not.toBeInTheDocument()
+    await expect
+      .element(screen.getByRole("link", { name: "查看用量分析" }))
+      .toHaveAttribute("href", "/app/usage")
     expect(
       vi.mocked(api).mock.calls.some(([p]) => p.startsWith("/api/admin"))
     ).toBe(false)
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width)
     await screen.getByRole("button", { name: "7 天", exact: true }).click()
-    await expect
-      .element(screen.getByText(/最近 7 天的请求、费用与性能/))
-      .toBeVisible()
+    await expect.element(screen.getByText(/最近 7 天/)).toBeVisible()
     await expectNoA11yViolations()
   }
 )
@@ -72,4 +76,22 @@ it("keeps the successful period labelled after a refresh failure and retries", a
   await expect.element(screen.getByText(/当前展示最近 30 天/)).toBeVisible()
   await screen.getByRole("button", { name: "刷新", exact: true }).click()
   await expect.element(screen.getByText(/当前展示最近 7 天/)).toBeVisible()
+})
+
+it("opens statistical definitions on demand and returns focus on Escape", async () => {
+  setup()
+  const screen = await render(<UsageView />)
+  const help = screen.getByRole("button", { name: "统计口径", exact: true })
+  await expect.element(help).toBeVisible()
+  await expect
+    .element(screen.getByText(/推理包含在输出中/))
+    .not.toBeInTheDocument()
+  await help.click()
+  await expect.element(screen.getByText(/推理包含在输出中/)).toBeVisible()
+  await expectNoA11yViolations()
+  await userEvent.keyboard("{Escape}")
+  await expect
+    .element(screen.getByText(/推理包含在输出中/))
+    .not.toBeInTheDocument()
+  await expect.element(help).toHaveFocus()
 })

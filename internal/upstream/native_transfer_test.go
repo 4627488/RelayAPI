@@ -21,8 +21,8 @@ func TestRuntimeCompletionIncludesResponseBody(t *testing.T) {
 	}))
 	defer provider.Close()
 	runtime := newTestRuntime(t, Credential{
-		ID: "openai", Provider: "openai", Enabled: true, Models: []string{"gpt"},
-		Document: testJSON(t, map[string]any{"type": "openai", "api_key": "key", "base_url": provider.URL}),
+		ID: "openai", Provider: "codex", Enabled: true, Models: []string{"gpt"},
+		Document: testJSON(t, map[string]any{"type": "codex", "api_key": "key", "base_url": provider.URL}),
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt","input":"hi"}`))
 	request.Header.Set("Authorization", "Bearer runtime-test-key")

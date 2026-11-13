@@ -306,10 +306,6 @@ export function TokenHeatmap() {
         )}
         {!data && loading && <Skeleton className="h-44 w-full" />}
         {data && <TokenCalendar report={data} />}
-        <p className="text-xs text-muted-foreground">
-          颜色代表当天 token 用量最高的模型，深浅按活跃日用量分级。缓存与推理
-          token 不重复累加。
-        </p>
       </CardContent>
       {data && (
         <CardFooter className="flex-col items-stretch gap-3">
@@ -317,7 +313,7 @@ export function TokenHeatmap() {
             <p className="max-w-xl text-xs text-muted-foreground">
               {path
                 ? "持有链接的人可查看每日消耗和模型。链接与 API Key 无关，可随时关闭或重置。"
-                : "公开分享默认关闭。开启后仅公开每日消耗和模型，不公开身份、API Key 或请求内容。"}
+                : "分享仅包含每日用量和模型。"}
             </p>
             <div className="flex shrink-0 flex-wrap gap-2">
               <a

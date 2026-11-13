@@ -69,46 +69,21 @@ describe("connect account dialog", () => {
       .toBeVisible()
   })
 
-  it("updates an untouched import template but preserves edited JSON", async () => {
+  it("offers only Codex imports and preserves edited credentials", async () => {
     const screen = await render(<ConnectAccountDialog open {...props} />)
     await screen.getByRole("tab", { name: /导入/ }).click()
     const document = screen.getByLabelText("凭据 JSON")
     await expect.element(document).toHaveValue('{\n  "type": "codex"\n}')
-
-    await screen.getByRole("combobox").nth(0).click()
-    await screen.getByRole("option", { name: "Kimi" }).click()
-    await expect.element(document).toHaveValue('{\n  "type": "kimi"\n}')
-
-    await document.fill('{\n  "type": "kimi",\n  "access_token": "edited"\n}')
-    await screen.getByRole("combobox").nth(0).click()
-    await screen.getByRole("option", { name: "OpenAI", exact: true }).click()
+    await document.fill('{"type":"codex","access_token":"edited"}')
     await expect
       .element(document)
-      .toHaveValue('{\n  "type": "kimi",\n  "access_token": "edited"\n}')
-  })
-
-  it("connects Cursor with only its API key and no gateway address", async () => {
-    apiMock.mockResolvedValue({})
-    const screen = await render(<ConnectAccountDialog open {...props} />)
-    await screen.getByRole("tab", { name: /API Key/ }).click()
+      .toHaveValue('{"type":"codex","access_token":"edited"}')
     await screen.getByRole("combobox").nth(0).click()
-    await screen.getByRole("option", { name: "Cursor", exact: true }).click()
-    await screen.getByLabelText("账户名称").fill("Cursor account")
-    await screen.getByPlaceholder("crsr_…").fill("crsr_test")
     await expect
-      .element(screen.getByLabelText("接口地址（可选）"))
+      .element(screen.getByRole("option", { name: "Kimi", exact: true }))
       .not.toBeInTheDocument()
-    await screen.getByRole("button", { name: "添加账户", exact: true }).click()
     await expect
-      .poll(() =>
-        apiMock.mock.calls.some(
-          ([url, options]) =>
-            url === "/api/admin/providers/accounts" &&
-            JSON.parse(options.body).provider === "cursor" &&
-            JSON.parse(options.body).api_key === "crsr_test" &&
-            JSON.parse(options.body).base_url === ""
-        )
-      )
-      .toBe(true)
+      .element(screen.getByRole("option", { name: "Cursor", exact: true }))
+      .not.toBeInTheDocument()
   })
 })

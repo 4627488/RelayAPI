@@ -132,3 +132,31 @@ func TestCodexQuotaEventsAreClientSpecific(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexQuotaExcludesUnavailableAndCashBilledGrants(t *testing.T) {
+	now := time.Now()
+	available := store.SubscriptionQuota{ChildID: "available", Provider: "codex", Name: "Available", Models: []string{"allowed-model"}, Windows: []store.ChildQuotaWindow{
+		{Kind: "5h", LimitNanoUSD: 100, SettledNanoUSD: 10, ResetsAt: now.Add(time.Hour)},
+	}}
+	unavailable := available
+	unavailable.ChildID, unavailable.Name, unavailable.Unavailable = "unavailable", "Unavailable", true
+	balanceBilled := available
+	balanceBilled.ChildID, balanceBilled.Name, balanceBilled.BalanceBilled = "cash", "Cash billed", true
+	// Stale windows on these grants must not be mistaken for available
+	// subscription allowance, even when their counters otherwise look healthy.
+	subscriptions := []store.SubscriptionQuota{unavailable, balanceBilled, available}
+	events := projectCodexSubscriptionQuotas(subscriptions, now)
+	if len(events) != 1 || events[0].LimitName != available.Name || events[0].Limits.Primary.UsedPercent != 10 {
+		t.Fatalf("unavailable/cash-billed allowance leaked: %+v", events)
+	}
+	selected := projectSelectedCodexQuota(subscriptions, available.ChildID, now)
+	if selected.Limits.Primary == nil || selected.Limits.Primary.UsedPercent != 10 {
+		t.Fatalf("available grant lost: %+v", selected)
+	}
+	for _, id := range []string{unavailable.ChildID, balanceBilled.ChildID, "another-tenant-child"} {
+		q := projectSelectedCodexQuota(subscriptions, id, now)
+		if q.LimitID != selected.LimitID || q.Limits.Primary != nil || q.Limits.Secondary != nil || q.LimitName != "RelayAPI" {
+			t.Fatalf("selected %q fell back to another grant's allowance: %+v", id, q)
+		}
+	}
+}

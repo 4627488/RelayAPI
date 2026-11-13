@@ -54,3 +54,18 @@ func TestRuntimeErrorsDistinguishRelayAndUpstream(t *testing.T) {
 		}
 	}
 }
+
+func TestUpstreamAuthenticationFailureDoesNotInvalidateRelayKey(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		w := httptest.NewRecorder()
+		writeProviderError(w, &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":"account_suspended","message":"This upstream account cannot serve the request."}}`))})
+		var root map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &root); err != nil {
+			t.Fatal(err)
+		}
+		value := root["error"].(map[string]any)
+		if w.Code != http.StatusBadGateway || value["upstream_status"] != float64(status) || value["code"] != "account_suspended" || w.Header().Get("X-Should-Retry") != "false" {
+			t.Fatalf("upstream authentication exposed as caller failure: %d %s", w.Code, w.Body.String())
+		}
+	}
+}

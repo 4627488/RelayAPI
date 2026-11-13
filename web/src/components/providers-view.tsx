@@ -371,7 +371,6 @@ export function ProvidersView() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="模型账户"
-        description="连接上游账户，管理模型、额度和用户授权。"
         actions={
           <>
             <Button variant="outline" onClick={() => setAssignmentOpen(true)}>

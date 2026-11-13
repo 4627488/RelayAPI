@@ -56,9 +56,7 @@ func requestMetadata(body []byte, r *http.Request) requestMeta {
 	if pathModel, stream := geminiPathModel(r.URL.Path, meta.Stream); pathModel != "" {
 		meta.Model, meta.Stream = pathModel, stream
 	}
-	if meta.Model == "" && (r.URL.Path == "/v1/realtime" || isRealtimeSecretCreation(r.URL.Path)) {
-		meta.Model = "gpt-realtime"
-	}
+
 	if isWebSocketUpgrade(r) {
 		meta.Stream = true
 	}

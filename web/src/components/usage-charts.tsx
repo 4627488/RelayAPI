@@ -36,10 +36,7 @@ export function Last24HoursTokenRate({ report }: { report: UsageReport }) {
     <Card>
       <CardHeader>
         <CardTitle>过去 24 小时输出 Token 吞吐量</CardTitle>
-        <CardDescription>
-          按当前时区、请求完成时间统计，每分钟输出 Token ÷
-          秒数，首尾分钟按窗口内实际秒数计算。跟随当前用户筛选；这是请求吞吐量，生成速度按有效流式样本统计。
-        </CardDescription>
+        <CardDescription>按请求完成时间聚合，单位 token/s。</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <p className="text-sm tabular-nums">
@@ -172,9 +169,6 @@ export function TokenBreakdown({ report }: { report: UsageReport }) {
     <Card>
       <CardHeader>
         <CardTitle>Token 结构</CardTitle>
-        <CardDescription>
-          普通输入、缓存读取、缓存写入分别计量；推理已包含在输出中。
-        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {items.map(([label, value]) => (
@@ -206,7 +200,6 @@ export function CostBreakdown({ report }: { report: UsageReport }) {
     <Card>
       <CardHeader>
         <CardTitle>费用来源</CardTitle>
-        <CardDescription>区分订阅容量承担与账户余额实际扣费。</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
         <div className="flex h-2 overflow-hidden bg-muted">
@@ -278,9 +271,6 @@ export function UsageTrend({ report }: { report: UsageReport }) {
       <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <CardTitle>趋势</CardTitle>
-          <CardDescription>
-            按天查看请求质量、Token 与费用变化。
-          </CardDescription>
         </div>
         <ToggleGroup
           value={[metric]}
@@ -365,14 +355,16 @@ export function UsageTrend({ report }: { report: UsageReport }) {
                     stroke="var(--color-requests)"
                     strokeWidth={2}
                   />
-                  <Area
-                    dataKey="errors"
-                    type="monotone"
-                    fill="var(--color-errors)"
-                    fillOpacity={0.08}
-                    stroke="var(--color-errors)"
-                    strokeWidth={1.5}
-                  />
+                  {data.some((item) => item.errors > 0) ? (
+                    <Area
+                      dataKey="errors"
+                      type="monotone"
+                      fill="var(--color-errors)"
+                      fillOpacity={0.08}
+                      stroke="var(--color-errors)"
+                      strokeWidth={1.5}
+                    />
+                  ) : null}
                 </>
               ) : metric === "tokens" ? (
                 <>

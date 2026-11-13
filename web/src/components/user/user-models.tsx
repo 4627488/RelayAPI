@@ -1,16 +1,12 @@
 import { useCallback, useState } from "react"
-import {
-  ArrowUpRightIcon,
-  BoxesIcon,
-  CopyIcon,
-  RefreshCwIcon,
-} from "lucide-react"
+import { BoxesIcon, CopyIcon, RefreshCwIcon } from "lucide-react"
 import { api, type TenantModel } from "@/lib/api"
 import { routeHref } from "@/lib/routes"
 import { copyText } from "@/lib/clipboard"
 import { useAsyncResource } from "@/hooks/use-async-resource"
 import { PageHeader, SearchField } from "@/components/workspace-ui"
 import { LoadErrorView } from "@/components/load-error-view"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -57,7 +53,6 @@ export function UserModels() {
     <div className="flex max-w-6xl min-w-0 flex-col gap-6">
       <PageHeader
         title="模型列表"
-        description="查看可调用的模型 ID 与结算方式；点击订阅名称可查看额度和有效期。"
         actions={
           <>
             <Button
@@ -118,8 +113,7 @@ export function UserModels() {
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            {filtered.length} 个模型。多种结算方式由系统自动匹配，API
-            密钥的模型限制仍然生效。
+            {filtered.length} 个模型
           </p>
           {filtered.length ? (
             <Table>
@@ -155,37 +149,26 @@ export function UserModels() {
                             key={`${option.mode}:${option.subscription_id ?? index}`}
                             className="flex flex-wrap items-center gap-2"
                           >
-                            <Button
-                              variant="link"
-                              nativeButton={false}
-                              role="link"
-                              size="sm"
-                              className="h-auto justify-start p-0 text-left whitespace-normal"
-                              render={
-                                <a
-                                  href={
-                                    option.mode === "subscription"
-                                      ? `${routeHref({ workspace: "user", page: "subscriptions" })}#subscription-${encodeURIComponent(option.subscription_id ?? "")}`
-                                      : routeHref({
-                                          workspace: "user",
-                                          page: "overview",
-                                        })
-                                  }
-                                />
-                              }
-                            >
-                              {option.mode === "balance"
-                                ? "余额结算"
-                                : option.subscription_name?.includes("@")
+                            {option.mode === "balance" ? (
+                              <span>余额结算</span>
+                            ) : (
+                              <Button
+                                variant="link"
+                                nativeButton={false}
+                                role="link"
+                                size="sm"
+                                className="h-auto justify-start p-0 text-left whitespace-normal"
+                                render={
+                                  <a
+                                    href={`${routeHref({ workspace: "user", page: "subscriptions" })}#subscription-${encodeURIComponent(option.subscription_id ?? "")}`}
+                                  />
+                                }
+                              >
+                                {option.subscription_name?.includes("@")
                                   ? "模型订阅"
                                   : option.subscription_name || "模型订阅"}
-                              <ArrowUpRightIcon data-icon="inline-end" />
-                            </Button>
-                            {option.mode === "subscription" ? (
-                              <span className="text-xs text-muted-foreground">
-                                订阅结算
-                              </span>
-                            ) : null}
+                              </Button>
+                            )}
                             {!option.available ? (
                               <span
                                 className="subscription-signal text-xs"
@@ -199,18 +182,17 @@ export function UserModels() {
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <span
-                        className="subscription-signal text-xs font-medium"
-                        data-tone={
+                      <Badge
+                        variant={
                           model.settlements.some((option) => option.available)
-                            ? "healthy"
-                            : "warning"
+                            ? "secondary"
+                            : "outline"
                         }
                       >
                         {model.settlements.some((option) => option.available)
                           ? "可用"
                           : "暂不可用"}
-                      </span>
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 ))}

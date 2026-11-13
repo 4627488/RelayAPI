@@ -86,19 +86,19 @@ func chooseProbeModel(requested string, published []string) (string, error) {
 func accountProbeBody(model string) []byte {
 	payload, _ := json.Marshal(map[string]any{
 		"model": model,
-		"messages": []map[string]string{{
+		"input": []map[string]string{{
 			"role":    "user",
 			"content": "Reply with the single word pong.",
 		}},
-		"max_tokens": 16,
-		"stream":     false,
+
+		"stream": false,
 	})
 	return payload
 }
 
 func probeNativeAccount(ctx context.Context, runtime upstream.Runtime, row store.UpstreamCredentialSnapshot, model string) accountProbeResult {
 	body := accountProbeBody(model)
-	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(ctx)
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body)).WithContext(ctx)
 	request.Header.Set("Content-Type", "application/json")
 	prepareRuntimeHeaders(request.Header, accountProbeRequestID, row.ID)
 	recorder := httptest.NewRecorder()
@@ -135,6 +135,14 @@ func probePreview(payload []byte) string {
 	}
 	if text := probeJSONText(parsed["output_text"]); text != "" {
 		return clipProbeText(text)
+	}
+	if output, ok := parsed["output"].([]any); ok {
+		for _, raw := range output {
+			item, _ := raw.(map[string]any)
+			if text := probeJSONText(item["content"]); text != "" {
+				return clipProbeText(text)
+			}
+		}
 	}
 	if choices, ok := parsed["choices"].([]any); ok && len(choices) > 0 {
 		if choice, ok := choices[0].(map[string]any); ok {

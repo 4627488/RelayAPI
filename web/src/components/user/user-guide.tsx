@@ -14,7 +14,6 @@ export function UserGuide() {
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
         title="接入指南"
-        description="选择客户端并复制配置，使用 API Key 调用已授权模型。"
         actions={
           <Button nativeButton={false} render={<a href="/rai/authorize" />}>
             设备验证码登录

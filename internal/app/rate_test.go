@@ -45,3 +45,30 @@ func TestRateLimiterSweepsExpiredKeys(t *testing.T) {
 		t.Fatal("expired key state was not swept")
 	}
 }
+
+func TestRateLimiterResetTracksTheAdmissionThatFreesASlot(t *testing.T) {
+	key := t.Name()
+	t.Cleanup(func() {
+		rateState.Lock()
+		delete(rateState.requests, key)
+		rateState.Unlock()
+	})
+	a := &App{}
+	now := time.Now()
+	for _, offset := range []time.Duration{0, 10 * time.Second, 20 * time.Second} {
+		if allowed, reset := a.allowRateAt(key, 3, now.Add(offset)); !allowed || !reset.IsZero() {
+			t.Fatalf("allowed admission = %v, reset=%v", allowed, reset)
+		}
+	}
+	// Lowering a limit cannot admit the next call when only the oldest of
+	// three retained calls expires: all three must age out for a limit of one.
+	wantReset := now.Add(80 * time.Second)
+	for _, offset := range []time.Duration{30 * time.Second, 50 * time.Second, 79 * time.Second} {
+		if allowed, reset := a.allowRateAt(key, 1, now.Add(offset)); allowed || !reset.Equal(wantReset) {
+			t.Fatalf("rejection at %v = %v, reset=%v want %v", offset, allowed, reset, wantReset)
+		}
+	}
+	if allowed, reset := a.allowRateAt(key, 1, wantReset); !allowed || !reset.IsZero() {
+		t.Fatalf("advertised reset did not free its slot: allowed=%v reset=%v", allowed, reset)
+	}
+}

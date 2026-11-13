@@ -21,10 +21,6 @@ const (
 	codexClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
 	codexRedirectURI  = "http://localhost:1455/auth/callback"
 	codexTokenURL     = "https://auth.openai.com/oauth/token"
-	kimiClientID      = "17e5f671-d194-4dfb-9706-5516cb48c098"
-	kimiTokenURL      = "https://auth.kimi.com/api/oauth/token"
-	xaiClientID       = "b1a00492-073a-47ea-816f-4c329264a828"
-	xaiTokenURL       = "https://auth.x.ai/oauth2/token"
 	codexRefreshScope = "openid profile email"
 )
 
@@ -98,18 +94,7 @@ func (m *oauthManager) start(ctx context.Context, provider, relaySession string)
 		m.put(session)
 		return OAuthStartResult{Status: "waiting", URL: "https://auth.openai.com/oauth/authorize?" + query.Encode(), State: state, Flow: "callback", ExpiresIn: 1800}, nil
 	}
-	device, tokenURL, err := m.startDevice(ctx, provider, state)
-	if err != nil {
-		return OAuthStartResult{}, err
-	}
-	session.deviceCode, session.tokenURL = device.DeviceCode, tokenURL
-	session.deviceID = state
-	pollCtx, cancel := context.WithCancel(context.Background())
-	session.cancel = cancel
-	m.put(session)
-	go m.pollDevice(pollCtx, session, device)
-	authURL := firstNonEmpty(device.VerificationURIComplete, device.VerificationURI)
-	return OAuthStartResult{Status: "waiting", URL: authURL, State: state, Flow: "device", UserCode: device.UserCode, ExpiresIn: device.ExpiresIn}, nil
+	return OAuthStartResult{}, fmt.Errorf("unsupported provider")
 }
 
 func (m *oauthManager) put(session *oauthRuntimeSession) {
@@ -165,90 +150,6 @@ func (m *oauthManager) submitCallback(ctx context.Context, provider, state, redi
 	document["account_id"] = firstNonEmpty(claimString(claims, "chatgpt_account_id"), nestedClaimString(claims, "https://api.openai.com/auth", "chatgpt_account_id"))
 	document["email"] = claimString(claims, "email")
 	return m.capture(ctx, session, document)
-}
-
-func (m *oauthManager) startDevice(ctx context.Context, provider, deviceID string) (deviceAuthorization, string, error) {
-	if provider == "kimi" {
-		form := url.Values{"client_id": {kimiClientID}}
-		var result deviceAuthorization
-		err := postFormJSONHeaders(ctx, m.httpClient(), "https://auth.kimi.com/api/oauth/device_authorization", form, kimiOAuthHeaders(deviceID), &result)
-		return result, kimiTokenURL, err
-	}
-	var discovery struct {
-		DeviceURL string `json:"device_authorization_endpoint"`
-		TokenURL  string `json:"token_endpoint"`
-	}
-	if err := getJSON(ctx, m.httpClient(), "https://auth.x.ai/.well-known/openid-configuration", &discovery); err != nil {
-		return deviceAuthorization{}, "", err
-	}
-	if err := validateXAIEndpoint(discovery.DeviceURL); err != nil {
-		return deviceAuthorization{}, "", err
-	}
-	if err := validateXAIEndpoint(discovery.TokenURL); err != nil {
-		return deviceAuthorization{}, "", err
-	}
-	form := url.Values{"client_id": {xaiClientID}, "scope": {"openid profile email offline_access grok-cli:access api:access"}}
-	var result deviceAuthorization
-	err := postFormJSON(ctx, m.httpClient(), discovery.DeviceURL, form, &result)
-	return result, discovery.TokenURL, err
-}
-
-func (m *oauthManager) pollDevice(ctx context.Context, session *oauthRuntimeSession, device deviceAuthorization) {
-	interval := time.Duration(device.Interval) * time.Second
-	if interval < 5*time.Second {
-		interval = 5 * time.Second
-	}
-	expires := time.Duration(device.ExpiresIn) * time.Second
-	if expires <= 0 || expires > 30*time.Minute {
-		expires = 30 * time.Minute
-	}
-	deadline := time.NewTimer(expires)
-	ticker := time.NewTicker(interval)
-	defer deadline.Stop()
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-deadline.C:
-			m.fail(session.state, fmt.Errorf("device authorization expired"))
-			return
-		case <-ticker.C:
-			clientID := kimiClientID
-			if session.provider == "xai" {
-				clientID = xaiClientID
-			}
-			form := url.Values{"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}, "device_code": {session.deviceCode}, "client_id": {clientID}}
-			var tokens map[string]any
-			var err error
-			if session.provider == "kimi" {
-				tokens, err = postOAuthFormHeaders(ctx, m.httpClient(), session.tokenURL, form, kimiOAuthHeaders(session.deviceID))
-			} else {
-				tokens, err = postOAuthForm(ctx, m.httpClient(), session.tokenURL, form)
-			}
-			if err != nil {
-				if strings.Contains(err.Error(), "authorization_pending") || strings.Contains(err.Error(), "slow_down") {
-					continue
-				}
-				m.fail(session.state, err)
-				return
-			}
-			base := "https://api.kimi.com/coding/v1"
-			if session.provider == "xai" {
-				base = "https://api.x.ai/v1"
-			}
-			document := oauthDocument(session.provider, tokens, base, session.tokenURL)
-			if session.provider == "kimi" {
-				document["device_id"] = session.deviceID
-			}
-			claims := jwtClaims(anyString(tokens["id_token"]))
-			document["email"] = claimString(claims, "email")
-			if err = m.capture(context.Background(), session, document); err != nil {
-				m.fail(session.state, err)
-			}
-			return
-		}
-	}
 }
 
 func (m *oauthManager) capture(ctx context.Context, session *oauthRuntimeSession, document map[string]any) error {
@@ -315,30 +216,10 @@ func oauthTokenEndpoint(provider string, document map[string]any) string {
 	if endpoint := firstString(document, "token_endpoint"); endpoint != "" {
 		return endpoint
 	}
-	switch provider {
-	case "codex":
-		return codexTokenURL
-	case "kimi":
-		return kimiTokenURL
-	case "xai":
-		return xaiTokenURL
-	default:
-		return ""
-	}
+	return codexTokenURL
 }
-
 func oauthRefreshForm(provider, refreshToken string) url.Values {
-	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}}
-	switch provider {
-	case "codex":
-		form.Set("client_id", codexClientID)
-		form.Set("scope", codexRefreshScope)
-	case "kimi":
-		form.Set("client_id", kimiClientID)
-	case "xai":
-		form.Set("client_id", xaiClientID)
-	}
-	return form
+	return url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "client_id": {codexClientID}, "scope": {codexRefreshScope}}
 }
 
 func applyRefreshedTokens(credential *nativeCredential, tokens map[string]any, tokenEndpoint string, now time.Time) {
@@ -361,11 +242,7 @@ func applyRefreshedTokens(credential *nativeCredential, tokens map[string]any, t
 				credential.document["account_id"] = accountID
 			}
 		}
-		if credential.Provider == "xai" {
-			if subject := claimString(claims, "sub"); subject != "" {
-				credential.document["sub"] = subject
-			}
-		}
+
 	}
 	if tokenEndpoint != "" && firstString(credential.document, "token_endpoint") == "" {
 		credential.document["token_endpoint"] = tokenEndpoint
@@ -459,14 +336,6 @@ func postFormJSONHeaders(ctx context.Context, client *http.Client, endpoint stri
 		}
 	}
 	return doJSON(client, request, target)
-}
-
-func kimiOAuthHeaders(deviceID string) http.Header {
-	return http.Header{
-		"X-Msh-Platform": {"RelayAPI"}, "X-Msh-Version": {"native"},
-		"X-Msh-Device-Name": {"RelayAPI"}, "X-Msh-Device-Model": {"server"},
-		"X-Msh-Device-Id": {strings.TrimSpace(deviceID)},
-	}
 }
 
 func getJSON(ctx context.Context, client *http.Client, endpoint string, target any) error {

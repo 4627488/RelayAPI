@@ -14,7 +14,7 @@ type affinityEntry struct {
 }
 
 func (c *nativeCredential) usesSessionAffinity() bool {
-	return c != nil && (c.Provider == "aliyun-bailian" || c.SessionAffinity)
+	return c != nil && c.SessionAffinity
 }
 
 func sessionAffinityKey(body []byte, header http.Header) string {

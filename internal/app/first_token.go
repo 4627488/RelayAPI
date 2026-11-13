@@ -3,8 +3,9 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/4627488/RelayAPI/internal/billing"
 	"time"
+
+	"github.com/4627488/RelayAPI/internal/billing"
 )
 
 // generatedContent recognizes actual text, visible reasoning, refusal and tool
@@ -64,6 +65,8 @@ type contentPoint struct {
 
 // Only a pending SSE event and bounded timing samples are retained.
 type firstTokenObserver struct {
+	eventLimit              int
+	onEvent                 func([]byte)
 	Usage                   billing.Result
 	At, TextAt, ReasoningAt time.Time
 	line, data              []byte
@@ -76,6 +79,9 @@ type firstTokenObserver struct {
 func (o *firstTokenObserver) observe(payload []byte, at time.Time) {
 	if o == nil {
 		return
+	}
+	if o.onEvent != nil {
+		o.onEvent(payload)
 	}
 	if bytes.Contains(payload, []byte(`"usage"`)) || bytes.Contains(payload, []byte(`"usageMetadata"`)) || bytes.Contains(payload, []byte(`"model"`)) {
 		billing.Merge(&o.Usage, billing.ParseResponse(payload))
@@ -132,9 +138,12 @@ func (o *firstTokenObserver) flow(reasoning bool) int64 {
 	return max64(1, int64(float64(last.Sub(first).Milliseconds())/.8))
 }
 func (o *firstTokenObserver) Write(payload []byte, at time.Time) {
-	const limit = 1 << 20
 	if o == nil {
 		return
+	}
+	limit := o.eventLimit
+	if limit <= 0 {
+		limit = 1 << 20
 	}
 	for _, v := range payload {
 		if v != '\n' {

@@ -13,7 +13,6 @@ import {
 } from "lucide-react"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -235,7 +234,6 @@ export function AppShell({
   const name = session.tenant.name || "用户"
   const subtitle = session.tenant.owner_email || ""
   const items = admin ? adminNavigation : userNavigation
-  const workspaceActionLabel = admin ? "返回个人面板" : "进入管理员面板"
   const currentPageLabel =
     (admin ? adminPageLabels : pageLabels)[navPage(page)] || "总览"
 
@@ -245,7 +243,7 @@ export function AppShell({
         跳到主内容
       </a>
       <Sidebar variant="sidebar" collapsible="icon">
-        <SidebarHeader>
+        <SidebarHeader className="h-14 justify-center border-b px-2">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -262,7 +260,7 @@ export function AppShell({
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarHeader>
-        <SidebarContent>
+        <SidebarContent className="gap-1 px-1 py-3">
           <SidebarNav
             items={items}
             workspace={workspace}
@@ -271,7 +269,7 @@ export function AppShell({
             onPageChange={onPageChange}
           />
         </SidebarContent>
-        <SidebarFooter>
+        <SidebarFooter className="border-t p-2">
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
@@ -334,7 +332,7 @@ export function AppShell({
       <SidebarInset id="main-content" tabIndex={-1} className="min-w-0">
         <header
           aria-label="当前位置"
-          className="sticky top-0 z-10 flex h-16 shrink-0 items-center justify-between gap-4 border-b bg-background px-4 md:px-6"
+          className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between gap-3 border-b bg-background px-4 md:px-6"
         >
           <div className="flex min-w-0 items-center gap-1">
             <SidebarTrigger />
@@ -352,24 +350,9 @@ export function AppShell({
               accountId={session.tenant.id}
               workspace={workspace}
             />
-            {session.is_admin ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onWorkspaceChange(admin ? "user" : "admin")}
-                aria-label={workspaceActionLabel}
-              >
-                {admin ? (
-                  <UserRoundIcon data-icon="inline-start" />
-                ) : (
-                  <ShieldCheckIcon data-icon="inline-start" />
-                )}
-                <span className="hidden sm:inline">{workspaceActionLabel}</span>
-              </Button>
-            ) : null}
           </div>
         </header>
-        <div className="flex w-full min-w-0 flex-1 flex-col p-4 md:p-6">
+        <div className="mx-auto flex w-full max-w-[1440px] min-w-0 flex-1 flex-col p-4 md:p-6 lg:p-8">
           {children}
         </div>
       </SidebarInset>

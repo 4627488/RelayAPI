@@ -24,7 +24,7 @@ const accounts: ProviderAccount[] = [
     name: "主账户",
     label: "Alice OpenAI",
     email: "alice@example.com",
-    provider: "openai",
+    provider: "codex",
     auth_kind: "api_key",
     source: "api_key",
     disabled: false,
@@ -37,7 +37,7 @@ const accounts: ProviderAccount[] = [
     id: "kimi-1",
     name: "Kimi 冷却",
     email: "bob@example.com",
-    provider: "kimi",
+    provider: "codex",
     auth_kind: "oauth",
     source: "oauth",
     disabled: false,
@@ -173,15 +173,6 @@ describe("providers view", () => {
   it("filters by provider, status, and authentication", async () => {
     setup()
     const screen = await render(<ProvidersView />)
-    await screen.getByRole("combobox").nth(0).click()
-    await screen.getByRole("option", { name: "Kimi" }).click()
-    await expect
-      .element(screen.getByText("bob@example.com", { exact: true }))
-      .toBeVisible()
-    await expect
-      .element(screen.getByText("Alice OpenAI", { exact: true }))
-      .not.toBeInTheDocument()
-
     await screen.getByRole("button", { name: "冷却 (1)" }).click()
     await expect
       .element(screen.getByText("bob@example.com", { exact: true }))

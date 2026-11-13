@@ -11,9 +11,9 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/store"
+	"github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/gorilla/websocket"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
 
 func metricsTestApp() *App {
@@ -37,7 +37,7 @@ func TestMetricsEndpointAuthAndRegistryIsolation(t *testing.T) {
 			}
 			continue
 		}
-		if w.Code != 200 || !strings.Contains(w.Body.String(), "go_goroutines") || !strings.Contains(w.Body.String(), "relay_cpa_up 0") {
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "go_goroutines") || !strings.Contains(w.Body.String(), "relay_upstream_up 0") {
 			t.Fatal(w.Body.String())
 		}
 		if strings.Contains(w.Body.String(), "scrape-secret") {
@@ -137,7 +137,7 @@ func TestMetricsInferenceUnitsAndCPAStages(t *testing.T) {
 		t.Fatal("tokens")
 	}
 	now := time.Now()
-	a.observeCPAExecution(relaybridge.ExecutionAttempt{Provider: "codex", Kind: "stream", Status: "failed", Error: "request_canceled", StartedAt: now, CompletedAt: now.Add(time.Second), GetConnAt: now, GotConnAt: now.Add(100 * time.Millisecond)})
+	a.observeUpstreamExecution(upstream.ExecutionAttempt{Provider: "codex", Kind: "stream", Status: "failed", Error: "request_canceled", StartedAt: now, CompletedAt: now.Add(time.Second), GetConnAt: now, GotConnAt: now.Add(100 * time.Millisecond)})
 	if testutil.ToFloat64(a.metrics.executions.WithLabelValues("codex", "stream", "canceled")) != 1 {
 		t.Fatal("CPA cancellation missing")
 	}

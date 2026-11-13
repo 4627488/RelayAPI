@@ -19,7 +19,7 @@ type RetentionPolicy struct {
 
 type RetentionStats struct {
 	Details, LifecycleEvents, LifecyclePayloads, Reservations, RequestLogs int64
-	QuotaObservations, Invitations, Rollups                                int64
+	QuotaObservations, Invitations, Rollups, CompactionRoutes              int64
 }
 
 // RunRetention compacts request summaries into immutable daily facts before
@@ -67,6 +67,11 @@ func (s Store) RunRetention(ctx context.Context, now time.Time, policy Retention
 				}
 				return s.deleteInvitations(ctx, now.AddDate(0, 0, -policy.InvitationDays), policy.BatchSize)
 			},
+			func() (int64, error) {
+				result := scoped(ctx, s.DB).Exec(`DELETE FROM compaction_routes WHERE (tenant_id, seal_hash) IN
+      (SELECT tenant_id, seal_hash FROM compaction_routes WHERE expires_at <= ? ORDER BY expires_at LIMIT ?)`, now, policy.BatchSize)
+				return result.RowsAffected, result.Error
+			},
 		}
 		for index, operation := range operations {
 			if time.Now().After(deadline) {
@@ -92,6 +97,8 @@ func (s Store) RunRetention(ctx context.Context, now time.Time, policy Retention
 				stats.QuotaObservations += count
 			case 7:
 				stats.Invitations += count
+			case 8:
+				stats.CompactionRoutes += count
 			}
 		}
 		if progress == 0 {

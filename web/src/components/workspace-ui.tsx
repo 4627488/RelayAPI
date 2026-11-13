@@ -5,13 +5,6 @@ import { SearchIcon, XIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
@@ -35,7 +28,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
         className
       )}
     >
@@ -43,7 +36,7 @@ export function PageHeader({
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {title ? (
-              <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+              <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
             ) : null}
             {accessory}
           </div>
@@ -81,7 +74,7 @@ export function StatStrip({
   return (
     <div
       className={cn(
-        "grid grid-cols-1 gap-4 sm:grid-cols-2",
+        "grid grid-cols-1 overflow-hidden rounded-xl border bg-card min-[360px]:grid-cols-2",
         items.length > 2 && "xl:grid-cols-4",
         className
       )}
@@ -89,26 +82,30 @@ export function StatStrip({
       aria-label="统计"
     >
       {items.map((item, index) => (
-        <Card key={index} role="listitem">
-          <CardHeader>
-            <CardDescription>{item.label}</CardDescription>
-            <CardTitle>
-              <span
-                className={cn(
-                  "text-2xl font-semibold tabular-nums",
-                  item.tone === "negative" && "text-destructive"
-                )}
-              >
-                {item.value}
-              </span>
-            </CardTitle>
-          </CardHeader>
+        <div
+          key={index}
+          role="listitem"
+          className="flex min-w-0 flex-col gap-2 bg-card p-4 shadow-[0_0_0_1px_var(--border)]"
+        >
+          <div className="text-xs font-medium text-muted-foreground">
+            {item.label}
+          </div>
+          <div>
+            <span
+              className={cn(
+                "text-2xl font-semibold tabular-nums",
+                item.tone === "negative" && "text-destructive"
+              )}
+            >
+              {item.value}
+            </span>
+          </div>
           {item.detail ? (
-            <CardContent>
-              <p className="text-sm text-muted-foreground">{item.detail}</p>
-            </CardContent>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {item.detail}
+            </p>
           ) : null}
-        </Card>
+        </div>
       ))}
     </div>
   )

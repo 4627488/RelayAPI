@@ -72,7 +72,7 @@ export function AccountSettings() {
     )
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="账户设置" description="管理登录方式与账户绑定。" />
+      <PageHeader title="账户设置" />
       <Card>
         <CardHeader>
           <CardTitle>GitHub 登录</CardTitle>

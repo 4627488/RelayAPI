@@ -27,7 +27,7 @@ func publicError(status int, code, message string) userFacingError {
 }
 
 func (a *App) rejectPublic(w http.ResponseWriter, r *http.Request, key store.KeyContext, requestID string, admission store.Admission, meta requestMeta, body []byte, started time.Time, timeline *latencyTimeline, classified userFacingError) {
-	writeUserFacingErrorForRequest(w, r, classified)
+	writeUserFacingError(w, classified)
 	a.logRejectedRequest(r, key, requestID, admission, meta, body, started, timeline, classified)
 }
 
@@ -49,6 +49,11 @@ func requestPriceDimensions(key store.KeyContext, meta requestMeta, path, authIn
 }
 
 func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
+	if !supportedCodexRequest(r) {
+		writeError(w, http.StatusNotFound, "unsupported_endpoint", "Only Codex Responses and model discovery are supported.")
+		return
+	}
+
 	started := time.Now()
 	timeline := newLatencyTimeline(started)
 	if bearer(r) == "" {
@@ -56,17 +61,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plainKey := bearer(r)
-	var realtimeAuth *realtimeAuthorization
-	if strings.HasPrefix(plainKey, realtimeSecretPrefix) {
-		authorization, err := a.openRealtimeSecret(plainKey, started)
-		if err != nil || !realtimeSecretCanAccess(r.URL.Path) {
-			writeError(w, http.StatusUnauthorized, "invalid_api_key", "The Realtime temporary credential is invalid or has expired. Create a new credential.")
-			return
-		}
-		realtimeAuth = &authorization
-		plainKey = authorization.RelayKey
-		r = r.WithContext(context.WithValue(r.Context(), realtimeAuthContext, authorization))
-	}
+
 	key, err := a.store.ResolveKey(r.Context(), plainKey)
 	if err != nil || !key.Enabled || !key.TenantEnabled || expired(key.ExpiresAt) || expired(key.TenantExpiresAt) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "The API key is invalid or disabled. Check your key or contact your administrator.")
@@ -77,8 +72,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	if op := operationalRequest(r); op != nil {
 		op.tenantID, op.keyID = key.TenantID, key.ID
 	}
-	// Query authentication is accepted by CPA/Gemini clients, but the Relay
-	// credential must not be sent to the provider or retained in URL logs.
+	// Strip legacy query credentials before forwarding or recording the URL.
 	query := r.URL.Query()
 	if query.Has("key") || query.Has("auth_token") {
 		query.Del("key")
@@ -100,7 +94,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		expectedBodyBytes = a.maxRequestBytes()
 	}
 	targetAdmission := a.admission()
-	if targetAdmission == nil || a.nativeRuntime == nil || a.inferenceCPA() == nil {
+	if targetAdmission == nil || a.nativeRuntime == nil {
 		a.rejectPublic(w, r, key, requestID, admission, requestMetadata(nil, r), nil, started, timeline,
 			publicError(http.StatusServiceUnavailable, "runtime_unavailable", "The model runtime is unavailable. Try again later."))
 		return
@@ -141,12 +135,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	originalBody := body
 	logContext := requestLogContext{requestBytes: int64(len(body))}
 	meta := requestMetadata(body, r)
-	if realtimeAuth != nil && readRequestMeta(body, r.URL.Path).Model == "" && r.URL.Query().Get("model") == "" {
-		meta.Model = realtimeAuth.Model
-		query := r.URL.Query()
-		query.Set("model", realtimeAuth.Model)
-		r.URL.RawQuery = query.Encode()
-	}
+
 	resolved := resolveAPIKeyModel(meta.Model, key.ModelAliases)
 	if resolved.ModelAlias == "" {
 		resolved.Model = a.resolveCodexReviewModel(resolved.Model, key, r, body)
@@ -160,19 +149,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	resolved.ReasoningEffort = meta.ReasoningEffort
 	resolved.ImageCount = meta.ImageCount
 	meta = resolved
-	if realtimeAuth != nil {
-		if meta.Model == "" {
-			meta.Model = realtimeAuth.Model
-		}
-		if !strings.EqualFold(meta.Model, realtimeAuth.Model) {
-			a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
-				publicError(http.StatusForbidden, "realtime_secret_scope_mismatch", "This Realtime temporary credential cannot be used with a different model."))
-			return
-		}
-	}
-	if isRealtimeSecretCreation(r.URL.Path) {
-		r = r.WithContext(context.WithValue(r.Context(), realtimeOriginContext, realtimeAuthorization{RelayKey: plainKey, Model: meta.Model}))
-	}
+
 	body, err = rewriteRequestModel(body, r.URL, meta.RequestedModel, meta.Model, r.Header.Get("Content-Type"))
 	if err != nil {
 		a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
@@ -180,6 +157,10 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	websocket := isWebSocketUpgrade(r)
+	if websocket && !a.upstreamWebSockets() {
+		a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline, publicError(http.StatusUpgradeRequired, "websocket_disabled", "WebSocket is disabled. Send this Responses request over HTTP instead."))
+		return
+	}
 	billable := meta.Model != "" && (websocket || (r.Method != http.MethodGet && r.Method != http.MethodHead))
 	if meta.Model != "" && !key.AllowsModel(meta.Model) {
 		a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline,
@@ -188,7 +169,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	}
 	timeline.Step(time.Now(), "model_resolution", "模型解析与权限", "relay", "解析别名、改写模型并检查 Key 模型权限")
 	var basePriceResult <-chan priceLookupResult
-	if billable && !isNonGenerationPath(r.URL.Path) {
+	if billable {
 		result := make(chan priceLookupResult, 1)
 		basePriceResult = result
 		dimensions := requestPriceDimensions(key, meta, r.URL.Path, "", "")
@@ -204,11 +185,15 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.enforceLimits(r.Context(), key); err != nil {
 		classified := publicError(http.StatusInternalServerError, "usage_limit_check_failed", "Relay could not check usage limits. Try again later.")
+		classified.Retryable = true
 		var limitErr *requestLimitError
 		if errors.As(err, &limitErr) {
 			classified = publicError(http.StatusTooManyRequests, limitErr.Code, limitErr.Message)
+			if wait := time.Until(limitErr.ResetsAt); wait > 0 {
+				classified.ResetsAt = limitErr.ResetsAt
+				classified.RetryAfterSeconds = int64((wait + time.Second - 1) / time.Second)
+			}
 		}
-		classified.Retryable = true
 		a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline, classified)
 		return
 	}
@@ -218,7 +203,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 	var priceSnapshot []byte
 	// Counting has a known zero price. Metered subscriptions still require
 	// admission, but no generation price or balance reservation is needed.
-	priceConfigured := isNonGenerationPath(r.URL.Path)
+	priceConfigured := false
 	var deferredAdmissionPrice <-chan priceLookupResult
 	if billable {
 		if basePriceResult != nil {
@@ -236,7 +221,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		}
 		priceSnapshot = store.EncodePriceSnapshot(price)
 		reserve := int64(0)
-		if priceConfigured && !isNonGenerationPath(r.URL.Path) {
+		if priceConfigured {
 			reserve = a.cfg.ReservationNanoUSD
 			if price.ImageOutputNanoUSDPerToken > 0 {
 				imageCount := int64(meta.ImageCount)
@@ -250,8 +235,14 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 		if websocket {
 			reservationTTL = 24 * time.Hour
 		}
+		compactionCredential, routeErr := a.compactionCredential(r.Context(), key.TenantID, body)
+		if routeErr != nil {
+			a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline, admissionUserError(routeErr))
+			return
+		}
 		admission, err = a.store.AdmitRequest(r.Context(), store.AdmissionInput{
-			RequestID: requestID, Key: key, Model: meta.Model,
+			RequiredCredentialID: compactionCredential,
+			RequestID:            requestID, Key: key, Model: meta.Model,
 			BalanceReserve: reserve, QuotaReserve: reserve, PriceConfigured: priceConfigured,
 			PriceSnapshot: priceSnapshot, ExpiresAt: time.Now().Add(reservationTTL),
 		})
@@ -259,7 +250,7 @@ func (a *App) handlePublic(w http.ResponseWriter, r *http.Request) {
 			a.rejectPublic(w, r, key, requestID, admission, meta, body, started, timeline, admissionUserError(err))
 			return
 		}
-		if priceConfigured && !isNonGenerationPath(r.URL.Path) {
+		if priceConfigured {
 			logContext.price = &price
 			admissionPriceResult := make(chan priceLookupResult, 1)
 			deferredAdmissionPrice = admissionPriceResult
@@ -315,10 +306,6 @@ func isTokenCountPath(path string) bool {
 		(strings.HasPrefix(path, "/v1beta/models/") && strings.HasSuffix(path, ":countTokens"))
 }
 
-func isNonGenerationPath(path string) bool {
-	return isTokenCountPath(path) || isRealtimeSecretCreation(path)
-}
-
 func isWebSocketUpgrade(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket")
 }
@@ -360,4 +347,21 @@ func writeAdmissionError(w http.ResponseWriter, err error, status gateway.Admiss
 		"details": details, "source": "relay",
 	}})
 	return userFacingError{Status: httpStatus, Code: code, Message: message, Retryable: retryable}
+}
+
+func supportedCodexRequest(r *http.Request) bool {
+	path := strings.TrimRight(r.URL.Path, "/")
+	for _, prefix := range []string{"/openai/v1", "/backend-api/codex", "/v1"} {
+		if strings.HasPrefix(path, prefix+"/") {
+			path = strings.TrimPrefix(path, prefix)
+			break
+		}
+	}
+	if r.Method == http.MethodGet && (path == "/models" || strings.HasPrefix(path, "/models/")) {
+		return true
+	}
+	if r.Method == http.MethodGet && isWebSocketUpgrade(r) {
+		return path == "/responses" || path == "/responses/ws"
+	}
+	return r.Method == http.MethodPost && (path == "/responses" || path == "/responses/compact")
 }

@@ -12,15 +12,31 @@ import (
 	"time"
 )
 
+var errCredentialRefresh = errors.New("upstream account sign-in could not be refreshed")
+
 func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nativeCredential, target, requestPath string, body []byte, trace *RequestTrace) (*http.Response, error) {
 	if credential.tokenNeedsRefresh() {
-		_ = r.refreshCredential(source.Context(), credential)
+		if err := r.refreshCredential(source.Context(), credential); err != nil {
+			return nil, fmt.Errorf("%w: %w", errCredentialRefresh, err)
+		}
 	}
+	response, err := r.doProviderAttempt(source, credential, target, requestPath, body, trace, 1)
+	if err != nil || response.StatusCode != http.StatusUnauthorized || !credential.hasRefreshToken() {
+		return response, err
+	}
+	response.Body.Close()
+	if err := r.refreshCredential(source.Context(), credential); err != nil {
+		return nil, fmt.Errorf("%w: %w", errCredentialRefresh, err)
+	}
+	return r.doProviderAttempt(source, credential, target, requestPath, body, trace, 2)
+}
+func (r *nativeRuntime) doProviderAttempt(source *http.Request, credential *nativeCredential, target, requestPath string, body []byte, trace *RequestTrace, number int) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(source.Context(), source.Method, target, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	copyProviderHeaders(request.Header, source.Header)
+	request.Header.Set("Accept-Encoding", "identity")
 	credential.authorize(request.Header, requestPath)
 	credential.applyCodexRoutingHint(request.Header, body)
 	clientTraceState, clientTrace := providerClientTrace()
@@ -29,7 +45,7 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 	response, err := credential.client.Do(request)
 	snapshot := clientTraceState.snapshot()
 	recorded := ExecutionAttempt{
-		Kind: "headers", Number: 1, StartedAt: attemptStarted, CompletedAt: time.Now(),
+		Kind: "headers", Number: number, StartedAt: attemptStarted, CompletedAt: time.Now(),
 		RequestWrittenAt: snapshot.wroteRequest, FirstResponseAt: snapshot.firstResponseByte,
 		GetConnAt: snapshot.getConn, GotConnAt: snapshot.gotConn,
 		DNSStartedAt: snapshot.dnsStart, DNSCompletedAt: snapshot.dnsDone,
@@ -48,14 +64,14 @@ func (r *nativeRuntime) doProviderRequest(source *http.Request, credential *nati
 		recorded.HeadersAt = snapshot.firstResponseByte
 	}
 	trace.addAttempt(recorded)
-	if err == nil && response.StatusCode == http.StatusUnauthorized && credential.hasRefreshToken() {
-		_ = r.refreshCredential(source.Context(), credential)
+	if r.options.OnExecution != nil {
+		r.options.OnExecution(recorded)
 	}
 	return response, err
 }
 
-// Derive the hint from the final body so aliases and protocol translation do
-// not leave the backend routing a different model or tier than requested.
+// Derive the hint from the final body so aliases do not leave the backend
+// routing a different model or tier than requested.
 func (c *nativeCredential) applyCodexRoutingHint(header http.Header, body []byte) {
 	if c.Provider != "codex" || c.APIKey != "" {
 		return
@@ -100,7 +116,7 @@ func (r *nativeRuntime) refreshCredential(ctx context.Context, credential *nativ
 	if credential.RefreshToken == "" {
 		return errors.New("credential has no refresh token")
 	}
-	if credential.Provider != "codex" && credential.Provider != "kimi" && credential.Provider != "xai" {
+	if credential.Provider != "codex" {
 		return errors.New("credential provider does not support token refresh")
 	}
 	endpoint := oauthTokenEndpoint(credential.Provider, credential.document)
@@ -108,13 +124,7 @@ func (r *nativeRuntime) refreshCredential(ctx context.Context, credential *nativ
 		return errors.New("credential token endpoint is missing")
 	}
 	form := oauthRefreshForm(credential.Provider, credential.RefreshToken)
-	var tokens map[string]any
-	var err error
-	if credential.Provider == "kimi" {
-		tokens, err = postOAuthFormHeaders(ctx, credential.client, endpoint, form, kimiOAuthHeaders(firstString(credential.document, "device_id")))
-	} else {
-		tokens, err = postOAuthForm(ctx, credential.client, endpoint, form)
-	}
+	tokens, err := postOAuthForm(ctx, credential.client, endpoint, form)
 	if err != nil {
 		return err
 	}
@@ -133,7 +143,7 @@ func (r *nativeRuntime) refreshCredential(ctx context.Context, credential *nativ
 func copyProviderHeaders(destination, source http.Header) {
 	for name, values := range source {
 		lower := strings.ToLower(name)
-		if strings.HasPrefix(lower, "sec-websocket-") {
+		if strings.HasPrefix(lower, "sec-websocket-") || strings.HasPrefix(lower, "x-relay-") {
 			continue
 		}
 		switch lower {

@@ -70,19 +70,16 @@ describe("user API keys", () => {
       .element(screen.getByText("生产环境", { exact: true }))
       .toBeVisible()
     await expect
-      .element(screen.getByRole("button", { name: "Add to magpie" }))
+      .element(screen.getByRole("button", { name: "连接 Magpie" }))
       .not.toBeInTheDocument()
     await screen.getByRole("button", { name: "查看 生产环境" }).click()
     await expect
-      .element(screen.getByRole("button", { name: "Add to magpie" }))
+      .element(screen.getByRole("button", { name: "连接 Magpie" }))
       .toBeVisible()
-    await expect
-      .element(screen.getByRole("img", { name: "Add to magpie" }))
-      .toHaveAttribute("src", "/magpie/add-to-magpie.svg")
     await screen.getByRole("button", { name: "隐藏 生产环境" }).click()
     await screen.getByRole("button", { name: "查看 旧测试环境" }).click()
     await expect
-      .element(screen.getByRole("button", { name: "Add to magpie" }))
+      .element(screen.getByRole("button", { name: "连接 Magpie" }))
       .not.toBeInTheDocument()
   })
 

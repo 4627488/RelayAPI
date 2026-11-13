@@ -111,11 +111,10 @@ Token 桶存在包含关系：cached 通常属于 input，reasoning 通常属于
 
 | 指标 | 类型 / 标签 | 含义 |
 | --- | --- | --- |
-| `relay_cpa_up` | Gauge | Runtime 已安装且 loopback listener 没有记录服务错误；不代表上游健康 |
-| `relay_cpa_execution_attempts_total` | Counter：provider、kind、outcome | 每次实际执行，含失败重试、轮换和 count；success / failure / canceled |
-| `relay_cpa_execution_duration_seconds` | Histogram：provider、kind | 每次 executor 执行耗时，流式请求直到输出结束 |
-| `relay_cpa_execution_stage_seconds` | Histogram：provider、stage | connection_wait / dns / connect / tls / upstream_first_byte / headers / first_chunk |
-| `relay_cpa_credentials` | Gauge：provider、condition | enabled / disabled / unavailable / quota_exceeded / cooling 的凭据数 |
+| `relay_upstream_up` | Gauge | Codex Runtime 已安装；不代表上游健康 |
+| `relay_upstream_execution_attempts_total` | Counter：provider、kind、outcome | 每次 Codex HTTP 执行尝试；success / failure / canceled |
+| `relay_upstream_execution_duration_seconds` | Histogram：provider、kind | 每次 Codex HTTP 请求等待响应头的耗时 |
+| `relay_upstream_execution_stage_seconds` | Histogram：provider、stage | connection_wait / dns / connect / tls / upstream_first_byte / headers / first_chunk |
 
 kind 为 request / stream / count；CPA 执行次数通常高于生成请求数，不能作为客户请求总数。CPA 无 request ID 的执行也能统计。传输时序仅在真实观测到首尾时间时记录；连接复用、WebSocket 或传输重放可能没有 DNS/TLS 等样本，缺失不填 0。first_chunk 不是首个生成 token，请使用 Relay 的 first_token 指标衡量生成延迟。
 
@@ -138,7 +137,7 @@ sum by (transport) (rate(relay_inference_tokens_total{kind="total"}[5m]))
 sum(increase(relay_billing_cost_usd_total[1h]))
 
 # CPA 按 provider 的失败速率
-sum by (provider) (rate(relay_cpa_execution_attempts_total{outcome="failure"}[5m]))
+sum by (provider) (rate(relay_upstream_execution_attempts_total{outcome="failure"}[5m]))
 
 # 数据库平均等待时长
 rate(relay_db_wait_duration_seconds_total[5m])

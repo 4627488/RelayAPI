@@ -158,19 +158,24 @@ func (a *App) serveModelCatalog(w http.ResponseWriter, r *http.Request, key stor
 				writeError(w, http.StatusBadGateway, "model_catalog_error", "无法生成客户端模型别名")
 				return
 			}
+			// Magpie discovers custom Responses providers through the ordinary
+			// OpenAI list, without Codex's client_version query parameter.
+			payload, err = enrichResponsesCatalog(payload, a.capabilityIndex(), key, func(model string) (store.ResolvedPrice, error) {
+				if a.store.DB == nil {
+					return store.ResolvedPrice{}, store.ErrNotFound
+				}
+				return a.store.ResolvePrice(r.Context(), pricing.Dimensions{APIGroupKey: key.ID, Model: model, Endpoint: "/v1/responses"})
+			})
+			if err != nil {
+				writeError(w, http.StatusBadGateway, "model_catalog_error", "无法生成 Responses 模型元数据")
+				return
+			}
 		}
 		clientModels := visibleClientModels(key, runtimeModels)
 		payload, err = filterModelCatalogForClient(payload, clientModels, codexCatalog)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "model_catalog_error", "无法过滤模型列表")
 			return
-		}
-		if !codexCatalog && collection == "/v1/models" {
-			payload, err = promoteClaudeCatalog(payload, a.raiModelInfo(key, clientModels))
-			if err != nil {
-				writeError(w, http.StatusBadGateway, "model_catalog_error", "无法生成 Claude 模型能力")
-				return
-			}
 		}
 		if requestedModel != "" {
 			visible := false

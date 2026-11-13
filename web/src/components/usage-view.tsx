@@ -26,8 +26,39 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverDescription,
+} from "@/components/ui/popover"
 import { LoadingView } from "@/components/loading-view"
 import { LoadErrorView } from "@/components/load-error-view"
+
+function UsageMethodology() {
+  return (
+    <Popover>
+      <PopoverTrigger render={<Button variant="ghost" size="sm" />}>
+        统计口径
+      </PopoverTrigger>
+      <PopoverContent align="end">
+        <PopoverHeader>
+          <PopoverTitle>统计口径</PopoverTitle>
+        </PopoverHeader>
+        <PopoverDescription render={<div />} className="flex flex-col gap-3">
+          <p>
+            费用与 Tokens
+            包含归档用量。延迟、提供商归因和错误明细仅统计保留的请求记录。
+          </p>
+          <p>输入、缓存读取和缓存写入独立计量；推理包含在输出中。</p>
+          <p>吞吐量按请求完成时间聚合；生成速度按有效流式样本加权。</p>
+        </PopoverDescription>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 export function PeriodControl({
   days,
@@ -112,6 +143,7 @@ export function UsageView({
         description={`当前展示${report.days === 0 ? "全部历史" : `最近 ${report.days} 天`}（${report.timezone ?? "UTC"}）${admin && report.user_id ? " · 已筛选租户" : ""}${report.generated_at ? ` · 更新于 ${dateTime(report.generated_at)}` : ""}`}
         actions={
           <>
+            <UsageMethodology />
             {admin && (
               <Select
                 value={userID}
@@ -152,7 +184,7 @@ export function UsageView({
       {error && (
         <Alert variant="destructive">
           <AlertDescription>
-            {error}。保留上次成功读取的数据，当前展示范围以页面说明为准。
+            {error}。当前显示上次成功读取的数据。
           </AlertDescription>
         </Alert>
       )}

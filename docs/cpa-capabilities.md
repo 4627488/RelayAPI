@@ -1,3 +1,5 @@
+> 当前实现仅支持 Codex Responses；本文描述的 CPA／其他提供商路径已移除。当前接入方式见 [README](../README.md)。
+
 # CPA 能力对齐
 
 Relay 使用根模块与 `third_party/cpaexecutor` 共同锁定的 CPA 版本。内置执行器、协议转换、OAuth、刷新、模型能力和上游错误语义由 CPA 实现；Relay 保留租户鉴权、模型权限、订阅准入、凭据钉住、额度、结算和日志。

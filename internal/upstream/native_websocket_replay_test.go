@@ -19,3 +19,14 @@ func TestWebSocketEOFReplayRequiresIndependentFullTurn(t *testing.T) {
 		}
 	}
 }
+
+func TestWebSocketTerminalIncludesFailedAndIncompleteTurns(t *testing.T) {
+	for _, event := range []string{"response.completed", "response.failed", "response.incomplete"} {
+		if !websocketTerminal([]byte(`{"type":"` + event + `"}`)) {
+			t.Fatalf("%s left the WebSocket turn open", event)
+		}
+	}
+	if websocketTerminal([]byte(`{"type":"response.output_item.done"}`)) {
+		t.Fatal("an output item ended the entire response")
+	}
+}

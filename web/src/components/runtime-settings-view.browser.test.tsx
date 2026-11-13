@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest"
 import { render } from "vitest-browser-react"
 import { RuntimeSettingsView } from "@/components/runtime-settings-view"
 import { api } from "@/lib/api"
+import { expectNoA11yViolations } from "@/test/a11y"
 
 vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
@@ -62,6 +63,10 @@ it("saves RAI candidate order and allows disabling automatic selection", async (
   const screen = await render(<RuntimeSettingsView />)
   const input = screen.getByRole("textbox", { name: "候选模型" })
   await expect.element(input).toHaveValue("gpt-5.6-sol\ngrok-4.6")
+  await expect
+    .element(screen.getByRole("combobox", { name: "系统代理", exact: true }))
+    .toBeVisible()
+  await expectNoA11yViolations()
   const githubProxy = screen.getByRole("combobox", { name: "GitHub 登录代理" })
   await githubProxy.click()
   await screen
@@ -86,4 +91,63 @@ it("saves RAI candidate order and allows disabling automatic selection", async (
     .not.toBeInTheDocument()
   expect(settings.rai_default_models).toEqual([])
   expect(settings.github_proxy_id).toBe("proxy-a")
+})
+
+it("disables settings while saving and preserves the draft after failure", async () => {
+  const settings = {
+    rai_default_models: ["gpt-6-sol"],
+    routing_strategy: "round-robin",
+    credential_failure_threshold: 3,
+    credential_cooldown_seconds: 60,
+    system_proxy_id: "",
+    github_proxy_id: "",
+    request_timeout_seconds: 300,
+    max_request_mib: 64,
+    request_bytes_in_flight_mib: 512,
+    memory_reclaim_threshold_mib: 1024,
+    unpriced_model_policy: "deny",
+    upstream_websockets: true,
+  }
+  vi.mocked(api).mockImplementation(async (path) =>
+    path === "/api/admin/proxies"
+      ? { items: [] }
+      : {
+          mode: "codex",
+          settings,
+          runtime: {
+            ready: true,
+            credentials: 2,
+            models: 3,
+            max_in_flight: 10,
+            max_queue: 10,
+          },
+        }
+  )
+  const screen = await render(<RuntimeSettingsView />)
+  const input = screen.getByRole("textbox", { name: "候选模型" })
+  await expect.element(input).toHaveValue("gpt-6-sol")
+  await input.fill("gpt-6-luna")
+  let failSave: (reason: Error) => void = () => {
+    throw new Error("save not started")
+  }
+  vi.mocked(api).mockImplementationOnce(
+    () =>
+      new Promise<never>((_, reject) => {
+        failSave = reject
+      })
+  )
+  const save = screen.getByRole("button", { name: "保存", exact: true })
+  await save.click()
+  await expect.element(input).toBeDisabled()
+  await expect
+    .element(screen.getByRole("combobox", { name: "系统代理", exact: true }))
+    .toBeDisabled()
+  await expect.element(save).toBeDisabled()
+  await expect
+    .element(screen.getByRole("switch", { name: "上游 WebSocket" }))
+    .toBeDisabled()
+  failSave(new Error("offline"))
+  await expect.element(input).toBeEnabled()
+  await expect.element(input).toHaveValue("gpt-6-luna")
+  await expect.element(save).toBeEnabled()
 })

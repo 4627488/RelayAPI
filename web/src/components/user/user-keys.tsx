@@ -339,7 +339,6 @@ function KeysView({
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
         title="API 密钥"
-        description="管理手动创建的 API Key。rai 自动授权的凭据请到「设备」查看。"
         actions={
           <Button onClick={openCreateDialog}>
             <PlusIcon data-icon="inline-start" />
@@ -481,7 +480,8 @@ function KeysView({
                             <div className="mt-3 flex flex-wrap items-center gap-3">
                               <MagpieImportButton keyID={key.id} />
                               <p className="text-xs text-muted-foreground">
-                                导入密钥与模型，并在 Magpie 查看余额和订阅额度。
+                                导入 Responses 配置，检查连接并在 Magpie
+                                查看额度。
                               </p>
                             </div>
                           ) : null}

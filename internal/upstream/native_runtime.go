@@ -29,8 +29,7 @@ type nativeRuntime struct {
 	traces      *requestTraceRegistry
 }
 
-// NewRuntime creates the focused Relay runtime for Codex, Kimi, xAI,
-// Aliyun Bailian and OpenAI-compatible providers.
+// NewRuntime creates the focused Relay runtime for Codex Responses.
 func NewRuntime(options Options, credentials []Credential) (Runtime, error) {
 	if options.FailureThreshold <= 0 {
 		options.FailureThreshold = 3
@@ -71,11 +70,14 @@ func (r *nativeRuntime) Models() []string {
 }
 
 func (r *nativeRuntime) ModelProvider(model string) (string, bool) {
-	credential, ok := r.selectCredential(model, "", "")
-	if !ok {
-		return "", false
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, id := range r.modelRoutes[strings.ToLower(strings.TrimSpace(model))] {
+		if c := r.credentials[id]; c != nil {
+			return c.Provider, true
+		}
 	}
-	return credential.Provider, true
+	return "", false
 }
 
 func (r *nativeRuntime) CredentialModels(id string) []string {
@@ -107,21 +109,18 @@ func (r *nativeRuntime) DiscoverCredentialModels(ctx context.Context, id string)
 	if credential == nil {
 		return nil, "", fmt.Errorf("upstream credential %q is not registered", id)
 	}
-	if credential.Provider != "kimi" {
-		models, err := credential.discoverModels(ctx)
-		if err == nil && len(models) > 0 {
-			r.mu.Lock()
-			credential.Models = models
-			r.rebuildRoutesLocked()
-			r.mu.Unlock()
-			return models, "upstream", nil
-		}
-		if len(credential.Models) == 0 {
-			return nil, "", err
-		}
-		return append([]string(nil), credential.Models...), "configured", err
+	models, err := credential.discoverModels(ctx)
+	if err == nil && len(models) > 0 {
+		r.mu.Lock()
+		credential.Models = models
+		r.rebuildRoutesLocked()
+		r.mu.Unlock()
+		return models, "upstream", nil
 	}
-	return append([]string(nil), credential.Models...), "native", nil
+	if len(credential.Models) == 0 {
+		return nil, "", err
+	}
+	return append([]string(nil), credential.Models...), "configured", err
 }
 
 func (r *nativeRuntime) ReplaceCredentials(_ context.Context, credentials []Credential) error {

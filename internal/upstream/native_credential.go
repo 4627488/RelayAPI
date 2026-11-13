@@ -73,13 +73,7 @@ func (r *nativeRuntime) rebuildRoutesLocked() {
 			r.modelRoutes[key] = appendUniqueRoute(r.modelRoutes[key], id)
 			modelSet[key] = public
 		}
-		for _, model := range implicitProviderImageModels(credential.Provider) {
-			key := strings.ToLower(model)
-			r.modelRoutes[key] = appendUniqueRoute(r.modelRoutes[key], id)
-			if _, exists := modelSet[key]; !exists {
-				modelSet[key] = model
-			}
-		}
+
 	}
 	r.models = make([]string, 0, len(modelSet))
 	for _, model := range modelSet {
@@ -93,8 +87,23 @@ func (r *nativeRuntime) selectCredential(model, pinnedID, affinityKey string) (*
 	if pinnedID != "" {
 		r.mu.RLock()
 		credential := r.credentials[pinnedID]
+		eligible := false
+		for _, id := range r.modelRoutes[strings.ToLower(strings.TrimSpace(model))] {
+			if id == pinnedID {
+				eligible = true
+				break
+			}
+		}
+		if credential != nil && !eligible {
+			for _, upstream := range credential.ModelRoutes {
+				if strings.EqualFold(upstream, model) {
+					eligible = true
+					break
+				}
+			}
+		}
 		r.mu.RUnlock()
-		return credential, credential != nil && credential.available(now)
+		return credential, eligible && credential != nil && credential.available(now)
 	}
 	if pinned := r.affinityCredential(affinityKey, model, now); pinned != nil {
 		return pinned, true
@@ -105,7 +114,7 @@ func (r *nativeRuntime) selectCredential(model, pinnedID, affinityKey string) (*
 	if len(ids) == 0 {
 		return nil, false
 	}
-	available := ids[:0]
+	available := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if credential := r.credentials[id]; credential != nil && credential.available(now) {
 			available = append(available, id)
@@ -136,9 +145,7 @@ func compileNativeCredential(source Credential, globalProxy string, headerTimeou
 	}
 	if rawType := firstString(document, "type"); rawType != "" {
 		documentProvider := canonicalProvider(rawType)
-		compatibleOpenAI := (provider == "openai" || provider == "openai-compatibility" || provider == "aliyun-bailian") &&
-			(documentProvider == "openai" || documentProvider == "openai-compatibility" || documentProvider == "aliyun-bailian")
-		if documentProvider == "" || (documentProvider != provider && !compatibleOpenAI) {
+		if documentProvider != provider {
 			return nil, fmt.Errorf("upstream credential %q type %q does not match provider %q", source.ID, rawType, source.Provider)
 		}
 	}
@@ -153,11 +160,8 @@ func compileNativeCredential(source Credential, globalProxy string, headerTimeou
 	credential.Vendor = firstString(document, "vendor")
 	if affinity, ok := document["session_affinity"].(bool); ok {
 		credential.SessionAffinity = affinity
-	} else if firstString(document, "session_affinity") == "true" || provider == "aliyun-bailian" {
+	} else if firstString(document, "session_affinity") == "true" {
 		credential.SessionAffinity = true
-	}
-	if provider == "aliyun-bailian" && credential.Vendor == "" {
-		credential.Vendor = "aliyun-bailian"
 	}
 	credential.WebSockets, _ = document["websockets"].(bool)
 	credential.BaseURL = strings.TrimRight(firstString(document, "base_url"), "/")
@@ -197,50 +201,14 @@ func compileNativeCredential(source Credential, globalProxy string, headerTimeou
 }
 
 func canonicalProvider(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "codex":
+	if strings.EqualFold(strings.TrimSpace(value), "codex") {
 		return "codex"
-	case "kimi":
-		return "kimi"
-	case "xai", "x.ai", "grok":
-		return "xai"
-	case "openai":
-		return "openai"
-	case "aliyun-bailian", "bailian":
-		return "aliyun-bailian"
-	case "openai-compatible", "openai-compatibility":
-		return "openai-compatibility"
-	default:
-		return ""
 	}
+	return ""
 }
-
-func defaultBaseURL(provider string) string {
-	switch provider {
-	case "codex":
-		return "https://chatgpt.com/backend-api/codex"
-	case "kimi":
-		return "https://api.kimi.com/coding/v1"
-	case "xai":
-		return "https://api.x.ai/v1"
-	case "aliyun-bailian":
-		return "https://dashscope.aliyuncs.com/compatible-mode/v1"
-	default:
-		return "https://api.openai.com/v1"
-	}
-}
-
+func defaultBaseURL(provider string) string { return "https://chatgpt.com/backend-api/codex" }
 func defaultModels(provider string) []string {
-	switch provider {
-	case "codex":
-		return []string{"gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2-codex"}
-	case "kimi":
-		return []string{"kimi-for-coding", "kimi-k2.5", "kimi-k2-thinking"}
-	case "xai":
-		return []string{"grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5", "grok-code-fast-1"}
-	default:
-		return nil
-	}
+	return []string{"gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"}
 }
 
 func normalizedModelList(models []string) []string {
@@ -329,26 +297,14 @@ func (c *nativeCredential) authorize(header http.Header, path string) {
 		header.Set("Authorization", "Bearer "+token)
 	}
 	if c.Provider == "codex" {
-		if header.Get("OpenAI-Beta") == "" && !isImagesPath(path) {
+		if header.Get("OpenAI-Beta") == "" {
 			header.Set("OpenAI-Beta", "responses=experimental")
 		}
 		if c.AccountID != "" {
 			header.Set("ChatGPT-Account-ID", c.AccountID)
 		}
-	} else if c.Provider == "kimi" {
-		deviceID := firstString(c.document, "device_id")
-		if deviceID == "" {
-			deviceID = c.ID
-		}
-		for name, values := range kimiOAuthHeaders(deviceID) {
-			if header.Get(name) == "" {
-				header[name] = append([]string(nil), values...)
-			}
-		}
-		if header.Get("User-Agent") == "" {
-			header.Set("User-Agent", "RelayAPI/native")
-		}
 	}
+
 }
 
 func (c *nativeCredential) hasRefreshToken() bool {
@@ -402,7 +358,7 @@ func (c *nativeCredential) upstreamURL(path string) string {
 	base := strings.TrimRight(c.BaseURL, "/")
 	if c.Provider == "codex" {
 		switch path {
-		case "/responses", "/responses/compact", "/alpha/search", "/images/generations", "/images/edits":
+		case "/responses", "/responses/compact":
 			return base + path
 		default:
 			return base + "/responses"

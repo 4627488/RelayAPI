@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/config"
-	"github.com/4627488/RelayAPI/internal/cpa"
 	"github.com/4627488/RelayAPI/internal/cpaimport"
 	"github.com/4627488/RelayAPI/internal/db"
 	"github.com/4627488/RelayAPI/internal/egress"
@@ -27,7 +26,6 @@ import (
 	"github.com/4627488/RelayAPI/internal/pricing"
 	"github.com/4627488/RelayAPI/internal/store"
 	"github.com/4627488/RelayAPI/internal/upstream"
-	"github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
 
 type App struct {
@@ -42,10 +40,6 @@ type App struct {
 	setupBox          identity.SecretBox
 	nativeAdmission   atomic.Pointer[gateway.Client]
 	nativeRuntime     upstream.Runtime
-	nativeCPA         *cpa.Client
-	nativeCPARuntime  *relaybridge.Runtime
-	nativeCPAServer   *http.Server
-	nativeCPAServeErr atomic.Value
 	providerOAuth     providerOAuthSessions
 	nativeSettings    settingsState
 	memoryReclaiming  atomic.Bool
@@ -55,6 +49,8 @@ type App struct {
 }
 
 type contextKey string
+
+const runtimePrincipalContext contextKey = "runtime_principal"
 
 const sessionKey contextKey = "session"
 const sessionCookie = "relay_session"
@@ -76,6 +72,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if finalizationCapacity < 1 {
 		finalizationCapacity = 16
 	}
+
 	importGlobalProxy := ""
 	if cfg.CPAImportAuthDir != "" || cfg.CPAImportConfigPath != "" {
 		report, importErr := cpaimport.Import(ctx, dataStore, cfg.CPAImportAuthDir, cfg.CPAImportConfigPath, false)
@@ -94,7 +91,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	if _, err = a.syncNativeParentSubscriptionRows(ctx); err != nil {
 		return nil, fmt.Errorf("synchronize native parent subscriptions: %w", err)
 	}
-	if err := a.startEmbeddedCPA(ctx, importGlobalProxy); err != nil {
+	if err := a.startNativeRuntime(ctx, importGlobalProxy); err != nil {
 		return nil, err
 	}
 	a.routes()
@@ -188,7 +185,9 @@ func (a *App) mergeCapabilityIndex(ctx context.Context, version string, fetched 
 }
 
 func (a *App) Close() {
-	a.closeEmbeddedCPA()
+	if a.nativeRuntime != nil {
+		_ = a.nativeRuntime.Close(context.Background())
+	}
 	if a.stop != nil {
 		close(a.stop)
 		a.wg.Wait()
@@ -368,6 +367,7 @@ func (a *App) routes() {
 	a.raiManagementRoutes()
 	a.mux.HandleFunc("GET /api/rai/quota", a.raiQuota)
 	a.mux.HandleFunc("GET /api/magpie/balance", a.magpieBalance)
+	a.mux.HandleFunc("GET /v1/usage", a.magpieBalance)
 	a.mux.HandleFunc("POST /api/rai/authorizations", a.createRAIAuthorization)
 	a.mux.HandleFunc("POST /api/rai/revoke", a.revokeRAIOAuth)
 	// Do not allow unknown management paths to fall through to the public landing page.
@@ -416,6 +416,7 @@ func (a *App) routes() {
 	a.mux.Handle("POST /api/keys", a.withTenant(http.HandlerFunc(a.keys)))
 	a.mux.Handle("GET /api/keys/{id}/secret", a.withTenant(http.HandlerFunc(a.keySecret)))
 	a.mux.Handle("GET /api/keys/{id}/magpie", a.withTenant(http.HandlerFunc(a.magpieImport)))
+	a.mux.Handle("POST /api/keys/{id}/magpie/check", a.withTenant(http.HandlerFunc(a.magpieCheck)))
 	a.mux.Handle("PUT /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyUpdate)))
 	a.mux.Handle("DELETE /api/keys/{id}", a.withTenant(http.HandlerFunc(a.keyDelete)))
 	a.mux.Handle("GET /api/logs", a.withTenant(http.HandlerFunc(a.logs)))
@@ -448,7 +449,6 @@ func (a *App) routes() {
 	a.mux.Handle("GET /api/admin/providers/accounts/{name}/codex-reset-credits", a.withAdmin(http.HandlerFunc(a.adminCodexResetCredits)))
 	a.mux.Handle("POST /api/admin/providers/accounts/{name}/codex-reset-credits/consume", a.withAdmin(http.HandlerFunc(a.adminCodexResetCredits)))
 	a.mux.Handle("POST /api/admin/providers/accounts/{name}/test", a.withAdmin(http.HandlerFunc(a.adminProviderAccountTest)))
-	a.mux.Handle("GET /api/admin/providers/accounts/{name}/ws", a.withAdmin(http.HandlerFunc(a.adminAIStudioChannel)))
 	a.mux.Handle("PATCH /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountUpdate)))
 	a.mux.Handle("DELETE /api/admin/providers/accounts/{name}", a.withAdmin(http.HandlerFunc(a.adminProviderAccountDelete)))
 	a.mux.Handle("POST /api/admin/providers/oauth/sessions", a.withAdmin(http.HandlerFunc(a.adminProviderOAuthStart)))
@@ -527,7 +527,7 @@ func (a *App) frontend(w http.ResponseWriter, r *http.Request) {
 func (a *App) serviceInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":        "RelayAPI",
-		"description": "multi-tenant embedded CPA gateway",
+		"description": "multi-tenant Codex Responses gateway",
 		"health":      "/healthz",
 		"models":      "/v1/models",
 	})
@@ -546,11 +546,8 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	if a.nativeRuntime == nil || a.nativeRuntime.CredentialCount() == 0 {
 		credentialErr = errors.New("no enabled runtime credentials")
 	}
-	if a.nativeCPARuntime == nil || a.nativeCPA == nil {
-		runtimeErr = errors.New("embedded CPA runtime is not available")
-	}
-	if serveErr, ok := a.nativeCPAServeErr.Load().(error); ok && serveErr != nil {
-		runtimeErr = serveErr
+	if a.nativeRuntime == nil {
+		runtimeErr = errors.New("Codex runtime is not available")
 	}
 	status := http.StatusOK
 	if err != nil || runtimeErr != nil || credentialErr != nil || subscriptionErr != nil {
@@ -561,7 +558,7 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 		admissionStatus = admission.AdmissionStatus()
 	}
 	writeJSON(w, status, map[string]any{"status": map[bool]string{true: "ok", false: "degraded"}[status == 200],
-		"database": errorText(err), "data_plane": "embedded_cpa", "runtime_credentials": errorText(credentialErr), "runtime": errorText(runtimeErr),
+		"database": errorText(err), "data_plane": "codex", "runtime_credentials": errorText(credentialErr), "runtime": errorText(runtimeErr),
 		"runtime_admission": admissionStatus, "subscriptions": errorText(subscriptionErr), "active_subscriptions": activeSubscriptions})
 }
 

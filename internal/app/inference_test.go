@@ -106,8 +106,8 @@ func TestPrepareRuntimeHeadersPinsCPAAndUpstreamCredential(t *testing.T) {
 	if header.Get("X-Relay-Upstream-Credential-ID") != "cred-9" {
 		t.Fatalf("upstream credential = %q", header.Get("X-Relay-Upstream-Credential-ID"))
 	}
-	if header.Get("X-Relay-CPA-Auth-ID") != "cred-9" {
-		t.Fatalf("cpa auth = %q", header.Get("X-Relay-CPA-Auth-ID"))
+	if header.Get("X-Relay-CPA-Auth-ID") != "" {
+		t.Fatalf("removed CPA header leaked = %q", header.Get("X-Relay-CPA-Auth-ID"))
 	}
 }
 

@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState } from "react"
 import { cn } from "cn"
-import { ChevronDownIcon, PackageOpenIcon, RefreshCwIcon } from "lucide-react"
+import {
+  ChevronDownIcon,
+  CopyIcon,
+  PackageOpenIcon,
+  RefreshCwIcon,
+} from "lucide-react"
 import { toast } from "@/components/ui/toast"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card"
+import { copyText } from "@/lib/clipboard"
 import { Button } from "@/components/ui/button"
 import {
   Collapsible,
@@ -48,14 +56,18 @@ export function TenantSubscriptionsView() {
   })
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
-    let target: string
-    try {
-      target = decodeURIComponent(window.location.hash.slice(1))
-    } catch {
-      return
+    const scrollToSubscription = () => {
+      try {
+        const target = decodeURIComponent(window.location.hash.slice(1))
+        if (target.startsWith("subscription-"))
+          document.getElementById(target)?.scrollIntoView({ block: "center" })
+      } catch {
+        /* Ignore malformed fragment identifiers. */
+      }
     }
-    if (target.startsWith("subscription-"))
-      document.getElementById(target)?.scrollIntoView({ block: "center" })
+    scrollToSubscription()
+    window.addEventListener("hashchange", scrollToSubscription)
+    return () => window.removeEventListener("hashchange", scrollToSubscription)
   }, [snapshot.items])
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
@@ -71,7 +83,6 @@ export function TenantSubscriptionsView() {
     <div className="flex max-w-6xl min-w-0 flex-col gap-6">
       <PageHeader
         title="我的订阅"
-        description="查看共享额度订阅的剩余额度、重置时间和有效期。"
         actions={
           <>
             <Button
@@ -124,7 +135,7 @@ export function TenantSubscriptionsView() {
             </p>
             <p>额度重置不延长订阅有效期</p>
           </div>
-          <div className="flex min-w-0 flex-col divide-y border-y">
+          <div className="flex min-w-0 flex-col gap-6">
             {ordered.map((item) => (
               <SubscriptionRow key={item.id} item={item} now={now} />
             ))}
@@ -138,9 +149,19 @@ export function TenantSubscriptionsView() {
             </EmptyMedia>
             <EmptyTitle>暂无共享额度订阅</EmptyTitle>
             <EmptyDescription>
-              余额付费模型与订阅可用模型均可在模型列表中查看。
+              管理员分配订阅后，额度和有效期会显示在这里。你也可以在模型列表中查看当前可用的模型与结算方式。
             </EmptyDescription>
           </EmptyHeader>
+          <Button
+            variant="outline"
+            nativeButton={false}
+            role="link"
+            render={
+              <a href={routeHref({ workspace: "user", page: "models" })} />
+            }
+          >
+            查看可用模型
+          </Button>
         </Empty>
       )}
     </div>
@@ -166,155 +187,173 @@ function SubscriptionRow({
     <article
       id={`subscription-${item.id}`}
       aria-label={name}
-      className="grid min-w-0 gap-5 py-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-8"
+      className="min-w-0 scroll-mt-6"
     >
-      <div className="flex min-w-0 flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 className="min-w-0 text-lg font-semibold break-words">{name}</h2>
-          <span
-            className="subscription-signal text-xs font-medium"
-            data-tone={state.tone}
-          >
-            {state.label}
-          </span>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {item.billing_mode === "quota" || item.capacity_mode === "observed"
-            ? "订阅额度"
-            : "余额结算"}
-        </p>
-        <dl className="flex flex-col gap-3 text-sm">
-          <div>
-            <dt className="text-xs text-muted-foreground">
-              {expires !== null && expires <= now
-                ? "已于以下时间到期"
-                : "订阅到期"}
-            </dt>
-            <dd className="mt-1">
-              {expires !== null ? (
-                <>
-                  <time dateTime={item.expires_at!}>{fullDate(expires)}</time>
-                  {expires > now ? (
-                    <p
-                      className="subscription-signal mt-1 text-xs"
-                      data-tone={
-                        expires - now <= 7 * 86400_000 ? "warning" : "muted"
-                      }
-                    >
-                      剩余 {duration(expires - now)}
-                    </p>
-                  ) : null}
-                </>
-              ) : item.expires_at ? (
-                "有效期暂不可用"
-              ) : (
-                "长期有效"
-              )}
-            </dd>
-          </div>
-          {starts !== null && starts > now ? (
-            <div>
-              <dt className="text-xs text-muted-foreground">开始生效</dt>
-              <dd className="mt-1">
-                <time dateTime={item.starts_at}>{fullDate(starts)}</time>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {duration(starts - now)}后生效
-                </p>
-              </dd>
+      <Card>
+        <CardHeader className="gap-4 border-b sm:flex sm:items-start sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="min-w-0 text-lg font-semibold break-words">
+                {name}
+              </h2>
+              <Badge
+                variant={state.tone === "critical" ? "destructive" : "outline"}
+              >
+                {state.label}
+              </Badge>
             </div>
-          ) : null}
-        </dl>
-      </div>
-      <div className="flex min-w-0 flex-col gap-5">
-        {windows.length ? (
-          <div
-            className={cn(
-              "grid min-w-0 gap-6 xl:gap-8",
-              windows.length > 1 && "sm:grid-cols-2"
-            )}
-          >
-            {windows.map((window, index) => (
-              <EntitlementWindow
-                key={`${window.kind}:${index}`}
-                window={window}
-                now={now}
-                inactive={state.order >= 3 || state.order === 1}
-                expires={expires}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2 py-1">
-            <h3 className="font-medium">
-              {item.capacity_mode === "unmetered" ||
-              item.billing_mode === "balance"
-                ? "按使用量从余额扣费"
-                : "额度暂不可用"}
-            </h3>
             <p className="text-sm text-muted-foreground">
-              {item.capacity_mode === "unmetered" ||
-              item.billing_mode === "balance"
-                ? "此订阅没有独立额度，费用从你的账户余额中扣除。"
-                : "暂时无法读取订阅额度，请稍后刷新或联系管理员。"}
+              {starts !== null ? (
+                <>
+                  <time dateTime={item.starts_at}>{fullDate(starts)}</time>{" "}
+                  起生效
+                </>
+              ) : (
+                "生效时间待同步"
+              )}
+              {starts !== null && starts > now
+                ? ` · ${duration(starts - now)}后生效`
+                : null}
             </p>
           </div>
-        )}
-        {state.label === "暂不可用" ? (
-          <p className="text-sm text-muted-foreground">
-            此订阅暂时无法使用，请稍后重试或联系管理员。
-          </p>
-        ) : null}
-        <Collapsible>
-          <CollapsibleTrigger
-            render={
-              <Button size="sm" variant="ghost" className="group -ml-2 w-fit" />
-            }
-          >
-            模型与重置记录{models.length ? ` · ${models.length} 个模型` : ""}
-            <ChevronDownIcon
-              data-icon="inline-end"
-              className="transition-transform group-aria-expanded:rotate-180"
-            />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="pt-4">
-            <div className="grid gap-5 sm:grid-cols-2">
-              <section className="flex min-w-0 flex-col gap-2">
-                <h3 className="text-sm font-medium">可用模型</h3>
-                {models.length ? (
-                  <ul className="flex flex-col gap-1 font-mono text-xs text-muted-foreground">
-                    {models.map((model) => (
-                      <li className="break-all" key={model}>
-                        {model}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    具体可用模型以模型目录为准。
-                  </p>
-                )}
-              </section>
-              <section className="flex flex-col gap-2">
-                <h3 className="text-sm font-medium">最近重置</h3>
-                {item.reset_history?.length ? (
-                  <ol className="flex flex-col gap-2 text-xs text-muted-foreground">
-                    {item.reset_history.map((reset, index) => (
-                      <li key={`${reset.kind}:${reset.reset_at}:${index}`}>
-                        {quotaWindowLabel(reset.kind)} ·{" "}
-                        <time dateTime={reset.reset_at}>
-                          {fullDate(timestamp(reset.reset_at))}
-                        </time>
-                      </li>
-                    ))}
-                  </ol>
-                ) : (
-                  <p className="text-sm text-muted-foreground">暂无重置记录</p>
-                )}
-              </section>
+          <div className="flex shrink-0 flex-col gap-1 text-sm sm:text-right">
+            <p className="font-medium">
+              {expires !== null
+                ? expires > now
+                  ? `剩余 ${duration(expires - now)}`
+                  : "订阅已结束"
+                : item.expires_at
+                  ? "有效期暂不可用"
+                  : "长期有效"}
+            </p>
+            {expires !== null ? (
+              <p className="text-xs text-muted-foreground">
+                <time dateTime={item.expires_at!}>{fullDate(expires)}</time>{" "}
+                到期
+              </p>
+            ) : null}
+          </div>
+        </CardHeader>
+        <CardContent className="flex min-w-0 flex-col gap-6">
+          {windows.length ? (
+            <div
+              className={cn(
+                "grid min-w-0 gap-6",
+                windows.length > 1 && "sm:grid-cols-2 sm:gap-8"
+              )}
+            >
+              {windows.map((window, index) => (
+                <EntitlementWindow
+                  key={`${window.kind}:${index}`}
+                  window={window}
+                  now={now}
+                  inactive={
+                    [1, 3, 4].includes(state.order) || item.available === false
+                  }
+                  expires={expires}
+                />
+              ))}
             </div>
-          </CollapsibleContent>
-        </Collapsible>
-      </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <h3 className="font-medium">额度待同步</h3>
+              <p className="text-sm text-muted-foreground">
+                暂时无法读取订阅额度，请稍后刷新或联系管理员。
+              </p>
+            </div>
+          )}
+          {state.label === "暂不可用" ? (
+            <p className="text-sm text-muted-foreground">
+              此订阅暂时无法使用，请稍后重试或联系管理员。
+            </p>
+          ) : null}
+          <section
+            className="flex min-w-0 flex-col gap-3 border-t pt-4"
+            aria-label="订阅模型"
+          >
+            <h3 className="text-sm font-medium">
+              适用模型{" "}
+              <span className="ml-1 font-normal text-muted-foreground">
+                {models.length || ""}
+              </span>
+            </h3>
+            {models.length ? (
+              <ul className="grid min-w-0 gap-x-6 gap-y-1 sm:grid-cols-2">
+                {models.map((model) => (
+                  <li
+                    key={model}
+                    className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-muted/40 py-1 pr-1 pl-3"
+                  >
+                    <code className="min-w-0 text-xs break-all">{model}</code>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`复制模型 ${model}`}
+                      onClick={async () => {
+                        try {
+                          await copyText(model)
+                          toast.add({
+                            title: "已复制模型名称",
+                            type: "success",
+                          })
+                        } catch {
+                          toast.add({
+                            title: "复制失败，请重试",
+                            type: "error",
+                          })
+                        }
+                      }}
+                    >
+                      <CopyIcon />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                具体可用模型以模型列表为准。
+              </p>
+            )}
+          </section>
+        </CardContent>
+        <CardFooter className="block bg-transparent">
+          {item.reset_history?.length ? (
+            <Collapsible>
+              <CollapsibleTrigger
+                render={
+                  <Button size="sm" variant="ghost" className="group -ml-2" />
+                }
+              >
+                重置记录 · {item.reset_history.length}
+                <ChevronDownIcon
+                  data-icon="inline-end"
+                  className="transition-transform group-aria-expanded:rotate-180"
+                />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-3">
+                <ol className="flex flex-col divide-y text-xs">
+                  {item.reset_history.map((reset, index) => (
+                    <li
+                      key={`${reset.kind}:${reset.reset_at}:${index}`}
+                      className="flex flex-wrap justify-between gap-2 py-2"
+                    >
+                      <span>{quotaWindowLabel(reset.kind)}额度重置</span>
+                      <time
+                        className="text-muted-foreground tabular-nums"
+                        dateTime={reset.reset_at}
+                      >
+                        {fullDate(timestamp(reset.reset_at))}
+                      </time>
+                    </li>
+                  ))}
+                </ol>
+              </CollapsibleContent>
+            </Collapsible>
+          ) : (
+            <p className="text-xs text-muted-foreground">暂无重置记录</p>
+          )}
+        </CardFooter>
+      </Card>
     </article>
   )
 }

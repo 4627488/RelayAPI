@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/4627488/RelayAPI/internal/store"
 )
@@ -13,11 +14,13 @@ import (
 // userFacingError is Relay's own public error contract (auth, admission,
 // policy).
 type userFacingError struct {
-	Status         int
-	Code           string
-	Message        string
-	Retryable      bool
-	UpstreamStatus int
+	Status            int
+	Code              string
+	Message           string
+	Retryable         bool
+	UpstreamStatus    int
+	RetryAfterSeconds int64
+	ResetsAt          time.Time
 }
 
 func errorTypeForStatus(status int) string {
@@ -41,7 +44,8 @@ func defaultErrorRetryable(status int, code string) bool {
 	switch code {
 	case "model_account_auth_failed", "model_account_subscription_invalid", "model_account_permission_denied", "model_account_model_unavailable",
 		"subscription_unavailable", "subscription_pricing_unavailable", "pricing_unavailable", "insufficient_balance",
-		"subscription_quota_exhausted", "model_account_quota_exhausted", "subscription_not_assigned", "model_not_allowed":
+		"subscription_quota_exhausted", "model_account_quota_exhausted", "subscription_not_assigned", "model_not_allowed",
+		"tenant_daily_token_limit_exceeded", "api_key_daily_token_limit_exceeded":
 		return false
 	default:
 		return status == http.StatusTooManyRequests || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
@@ -49,15 +53,6 @@ func defaultErrorRetryable(status int, code string) bool {
 }
 
 func writeUserFacingError(w http.ResponseWriter, value userFacingError) {
-	writeUserFacingErrorFormat(w, value, false)
-}
-
-func writeUserFacingErrorForRequest(w http.ResponseWriter, r *http.Request, value userFacingError) {
-	anthropic := r != nil && (r.URL.Path == "/v1/messages" || r.URL.Path == "/v1/messages/count_tokens")
-	writeUserFacingErrorFormat(w, value, anthropic)
-}
-
-func writeUserFacingErrorFormat(w http.ResponseWriter, value userFacingError, anthropic bool) {
 	if value.Status == 0 {
 		value.Status = http.StatusInternalServerError
 	}
@@ -65,20 +60,20 @@ func writeUserFacingErrorFormat(w http.ResponseWriter, value userFacingError, an
 	w.Header().Set("X-Relay-Error-Source", "relay")
 	w.Header().Set("X-Should-Retry", strconv.FormatBool(value.Retryable))
 	details := map[string]any{"retryable": value.Retryable}
+	if value.RetryAfterSeconds > 0 {
+		w.Header().Set("Retry-After", strconv.FormatInt(value.RetryAfterSeconds, 10))
+		details["retry_after_seconds"] = value.RetryAfterSeconds
+	}
+	if !value.ResetsAt.IsZero() {
+		details["resets_at"] = value.ResetsAt.UTC()
+	}
 	if value.UpstreamStatus > 0 {
 		details["upstream_status"] = value.UpstreamStatus
 	}
-	errorType := errorTypeForStatus(value.Status)
-	if anthropic && value.Status == http.StatusPaymentRequired {
-		errorType = "billing_error"
-	}
 	body := map[string]any{"error": map[string]any{
-		"code": value.Code, "type": errorType,
+		"code": value.Code, "type": errorTypeForStatus(value.Status),
 		"message": value.Message, "details": details, "source": "relay",
 	}}
-	if anthropic {
-		body["type"] = "error"
-	}
 	writeJSON(w, value.Status, body)
 }
 
@@ -86,6 +81,12 @@ func admissionUserError(err error) userFacingError {
 	switch {
 	case err == nil:
 		return userFacingError{}
+	case errors.Is(err, store.ErrWebSocketReconnect):
+		return userFacingError{Status: http.StatusServiceUnavailable, Code: "websocket_reconnect_required", Message: "The subscription quota window changed. Reconnect and retry this turn with its full input.", Retryable: true}
+	case errors.Is(err, store.ErrCompactionContext):
+		return userFacingError{Status: http.StatusBadRequest, Code: "invalid_compaction_context", Message: "This compaction context is unknown, expired, or belongs to another account. Start a new conversation."}
+	case errors.Is(err, store.ErrCompactionAccount):
+		return userFacingError{Status: http.StatusConflict, Code: "compaction_account_unavailable", Message: "The account that created this compaction is no longer available to you. Restore its subscription or start a new conversation."}
 	case errors.Is(err, store.ErrInsufficientBalance):
 		return userFacingError{Status: http.StatusPaymentRequired, Code: "insufficient_balance", Message: "Your account balance is insufficient. Add funds and try again."}
 	case errors.Is(err, store.ErrSubscriptionPrice):
@@ -95,7 +96,7 @@ func admissionUserError(err error) userFacingError {
 	case errors.Is(err, store.ErrSubscriptionRequired):
 		return userFacingError{Status: http.StatusForbidden, Code: "subscription_not_assigned", Message: "You do not have a subscription for this model. Contact your administrator to request access."}
 	case errors.Is(err, store.ErrSubscriptionExhausted):
-		return userFacingError{Status: http.StatusPaymentRequired, Code: "subscription_quota_exhausted", Message: "Your subscription quota is exhausted. Wait for it to reset or contact your administrator."}
+		return userFacingError{Status: http.StatusTooManyRequests, Code: "subscription_quota_exhausted", Message: "Your subscription quota is exhausted. Wait for it to reset or contact your administrator."}
 	default:
 		return userFacingError{Status: http.StatusInternalServerError, Code: "admission_internal_error", Message: "Relay could not check whether this request is allowed. Try again later. If the problem persists, contact your administrator.", Retryable: true}
 	}

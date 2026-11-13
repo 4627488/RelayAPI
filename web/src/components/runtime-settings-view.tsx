@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { CheckIcon, RotateCcwIcon, SaveIcon } from "lucide-react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react"
+import { RotateCcwIcon, SaveIcon } from "lucide-react"
 import { toast } from "@/components/ui/toast"
 
 import { Button } from "@/components/ui/button"
@@ -15,6 +21,7 @@ import {
   FieldContent,
   FieldDescription,
   FieldGroup,
+  FieldSet,
   FieldLabel,
 } from "@/components/ui/field"
 import {
@@ -32,9 +39,16 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { StatStrip } from "@/components/workspace-ui"
 import { api, type OutboundProxy } from "@/lib/api"
 
+function SettingsSection({ children }: { children: ReactNode }) {
+  return (
+    <Card className="grid items-start gap-4 rounded-none border-0 border-b last:border-b-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      {children}
+    </Card>
+  )
+}
+
 type RoutingStrategy = "round-robin" | "fill-first"
 type UnpricedPolicy = "allow" | "deny"
-type ImageGenerationMode = "enabled" | "disabled" | "chat" | "passthrough"
 
 type RuntimeSettings = {
   rai_default_models: string[]
@@ -49,18 +63,6 @@ type RuntimeSettings = {
   memory_reclaim_threshold_mib: number
   unpriced_model_policy: UnpricedPolicy
   upstream_websockets: boolean
-  request_retry: number
-  max_retry_credentials: number
-  max_retry_interval: number
-  disable_credential_cooling: boolean
-  passthrough_headers: boolean
-  image_generation_mode: ImageGenerationMode
-  gpt_image_base_model: string
-  video_result_auth_cache_ttl: string
-  force_model_prefix: boolean
-  stream_keepalive_seconds: number
-  stream_bootstrap_retries: number
-  nonstream_keepalive_interval: number
 }
 
 type RuntimeInfo = {
@@ -72,7 +74,7 @@ type RuntimeInfo = {
 }
 
 type SettingsResponse = {
-  mode: "embedded_cpa" | "native"
+  mode: "codex"
   settings: RuntimeSettings
   runtime: RuntimeInfo
 }
@@ -82,49 +84,6 @@ type Choice<T extends string | number> = { value: T; label: string }
 const routingChoices: Choice<RoutingStrategy>[] = [
   { value: "round-robin", label: "轮询" },
   { value: "fill-first", label: "固定优先级" },
-]
-
-const retryChoices: Choice<number>[] = [
-  { value: 0, label: "不重试" },
-  { value: 1, label: "1 次" },
-  { value: 2, label: "2 次" },
-  { value: 3, label: "3 次" },
-  { value: 5, label: "5 次" },
-]
-
-const retryCredentialChoices: Choice<number>[] = [
-  { value: 0, label: "不限制" },
-  { value: 2, label: "2 个" },
-  { value: 3, label: "3 个" },
-  { value: 5, label: "5 个" },
-]
-
-const retryIntervalChoices: Choice<number>[] = [
-  { value: 0, label: "立即" },
-  { value: 5, label: "5 秒" },
-  { value: 15, label: "15 秒" },
-  { value: 30, label: "30 秒" },
-  { value: 60, label: "1 分钟" },
-]
-
-const streamKeepAliveChoices: Choice<number>[] = [
-  { value: 0, label: "关闭" },
-  { value: 15, label: "15 秒" },
-  { value: 30, label: "30 秒" },
-  { value: 60, label: "1 分钟" },
-]
-
-const bootstrapRetryChoices: Choice<number>[] = [
-  { value: 0, label: "不重试" },
-  { value: 1, label: "1 次" },
-  { value: 2, label: "2 次" },
-  { value: 3, label: "3 次" },
-]
-
-const nonstreamKeepAliveChoices: Choice<number>[] = [
-  { value: 0, label: "关闭" },
-  { value: 15, label: "15 秒" },
-  { value: 30, label: "30 秒" },
 ]
 
 const timeoutChoices: Choice<number>[] = [
@@ -158,36 +117,6 @@ const reclaimChoices: Choice<number>[] = [
   { value: 8192, label: "8 GiB" },
 ]
 
-const imageModeChoices: Choice<ImageGenerationMode>[] = [
-  { value: "enabled", label: "启用" },
-  { value: "disabled", label: "禁用" },
-  { value: "chat", label: "对话除外" },
-  { value: "passthrough", label: "透传" },
-]
-
-const imageModelChoices: Choice<string>[] = [
-  { value: "gpt-5.4-mini", label: "gpt-5.4-mini" },
-  { value: "gpt-5.4", label: "gpt-5.4" },
-  { value: "gpt-5.6-luna", label: "gpt-5.6-luna" },
-  { value: "gpt-5.6-sol", label: "gpt-5.6-sol" },
-  { value: "gpt-5.6-terra", label: "gpt-5.6-terra" },
-]
-
-const videoTtlChoices: Choice<string>[] = [
-  { value: "30m", label: "30 分钟" },
-  { value: "1h", label: "1 小时" },
-  { value: "3h", label: "3 小时" },
-  { value: "6h", label: "6 小时" },
-  { value: "12h", label: "12 小时" },
-]
-
-const imageModeHelp: Record<ImageGenerationMode, string> = {
-  enabled: "对话出图工具与 /v1/images 均可用。",
-  disabled: "关闭出图工具，/v1/images 返回 404。",
-  chat: "对话不注入出图工具，/v1/images 仍可用。",
-  passthrough: "对话不增删出图工具，按客户端请求转发；/v1/images 仍可用。",
-}
-
 function withCurrent<T extends string | number>(
   options: Choice<T>[],
   current: T,
@@ -204,11 +133,6 @@ function formatSeconds(value: number) {
   if (value % 3600 === 0) return `${value / 3600} 小时`
   if (value % 60 === 0) return `${value / 60} 分钟`
   return `${value} 秒`
-}
-
-function formatCount(value: number, unit: string, zero = "不限制") {
-  if (value === 0) return zero
-  return `${value} ${unit}`
 }
 
 function formatMib(value: number) {
@@ -251,6 +175,7 @@ function ChoiceField<T extends string | number>({
           if (match) onChange(match.value)
         }}
         className="w-full flex-wrap"
+        aria-label={label}
       >
         {options.map((option) => (
           <ToggleGroupItem
@@ -258,7 +183,6 @@ function ChoiceField<T extends string | number>({
             value={String(option.value)}
             className="min-w-24 flex-1"
           >
-            {String(value) === String(option.value) ? <CheckIcon /> : null}
             {option.label}
           </ToggleGroupItem>
         ))}
@@ -273,12 +197,14 @@ function SwitchField({
   label,
   description,
   checked,
+  disabled,
   onCheckedChange,
 }: {
   id: string
   label: string
   description: string
   checked: boolean
+  disabled?: boolean
   onCheckedChange: (checked: boolean) => void
 }) {
   return (
@@ -287,7 +213,12 @@ function SwitchField({
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
         <FieldDescription>{description}</FieldDescription>
       </FieldContent>
-      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onCheckedChange}
+      />
     </Field>
   )
 }
@@ -342,7 +273,7 @@ export function RuntimeSettingsView() {
   }, [dirty])
 
   async function save() {
-    if (!value) return
+    if (!value || saving) return
     setSaving(true)
     try {
       const result = await api<SettingsResponse>(
@@ -386,23 +317,10 @@ export function RuntimeSettingsView() {
       label: `${item.name} · ${item.endpoint}`,
     })),
   ]
-  const imageModels = withCurrent(
-    imageModelChoices,
-    value.gpt_image_base_model,
-    (model) => model
-  )
   const githubProxyItems = [
     { value: "system", label: "跟随系统代理" },
     ...proxyItems,
   ]
-  const imageModes = withCurrent(
-    imageModeChoices,
-    value.image_generation_mode,
-    (mode) => mode
-  )
-  const imageModeHelpText =
-    imageModeHelp[value.image_generation_mode] ?? "当前值不在预设选项中。"
-
   return (
     <div className="flex flex-col gap-6">
       <StatStrip
@@ -423,8 +341,12 @@ export function RuntimeSettingsView() {
         ]}
       />
 
-      <div className="grid items-start gap-5 xl:grid-cols-2">
-        <Card>
+      <FieldSet
+        disabled={saving}
+        aria-label="运行策略"
+        className="gap-0 overflow-hidden rounded-xl border bg-card"
+      >
+        <SettingsSection>
           <CardHeader>
             <CardTitle>RAI 默认模型</CardTitle>
             <CardDescription>
@@ -443,7 +365,7 @@ export function RuntimeSettingsView() {
                     patch("rai_default_models", event.target.value.split("\n"))
                   }
                   rows={4}
-                  placeholder={"gpt-5.6-sol\ngrok-4.6"}
+                  placeholder={"gpt-6-sol\ngpt-6-luna"}
                 />
                 <FieldDescription id="rai-default-models-help">
                   每行一个模型
@@ -453,9 +375,9 @@ export function RuntimeSettingsView() {
               </Field>
             </FieldGroup>
           </CardContent>
-        </Card>
+        </SettingsSection>
 
-        <Card>
+        <SettingsSection>
           <CardHeader>
             <CardTitle>凭据调度</CardTitle>
             <CardDescription>同一模型有多个账户时的分流方式。</CardDescription>
@@ -473,77 +395,11 @@ export function RuntimeSettingsView() {
                 options={routingChoices}
                 onChange={(next) => patch("routing_strategy", next)}
               />
-              <SwitchField
-                id="credential-cooling"
-                label="凭据冷却"
-                description="连续失败的账户会暂时移出候选。"
-                checked={!value.disable_credential_cooling}
-                onCheckedChange={(checked) =>
-                  patch("disable_credential_cooling", !checked)
-                }
-              />
             </FieldGroup>
           </CardContent>
-        </Card>
+        </SettingsSection>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>失败重试</CardTitle>
-            <CardDescription>
-              仅在上游内部更换账户重试，不会重复提交同一请求。
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup>
-              <ChoiceField
-                label="请求重试"
-                description="适用于 403、408、500、502、503、504。"
-                value={value.request_retry}
-                options={withCurrent(
-                  retryChoices,
-                  value.request_retry,
-                  (count) => formatCount(count, "次", "不重试")
-                )}
-                onChange={(next) => patch("request_retry", next)}
-              />
-              <ChoiceField
-                label="最多尝试账户"
-                description="不限制时会尝试该模型下所有可用账户。"
-                value={value.max_retry_credentials}
-                options={withCurrent(
-                  retryCredentialChoices,
-                  value.max_retry_credentials,
-                  (count) => formatCount(count, "个")
-                )}
-                onChange={(next) => patch("max_retry_credentials", next)}
-              />
-              <ChoiceField
-                label="重试间隔上限"
-                description="两次更换账户之间的最长等待时间。"
-                value={value.max_retry_interval}
-                options={withCurrent(
-                  retryIntervalChoices,
-                  value.max_retry_interval,
-                  formatSeconds
-                )}
-                onChange={(next) => patch("max_retry_interval", next)}
-              />
-              <ChoiceField
-                label="流式启动重试"
-                description="流式响应发出首字节前，允许再换账户。"
-                value={value.stream_bootstrap_retries}
-                options={withCurrent(
-                  bootstrapRetryChoices,
-                  value.stream_bootstrap_retries,
-                  (count) => formatCount(count, "次", "不重试")
-                )}
-                onChange={(next) => patch("stream_bootstrap_retries", next)}
-              />
-            </FieldGroup>
-          </CardContent>
-        </Card>
-
-        <Card>
+        <SettingsSection>
           <CardHeader>
             <CardTitle>长连接</CardTitle>
             <CardDescription>
@@ -552,99 +408,21 @@ export function RuntimeSettingsView() {
           </CardHeader>
           <CardContent>
             <FieldGroup>
-              <ChoiceField
-                label="流式保活"
-                description="向客户端发送空行保活的间隔。"
-                value={value.stream_keepalive_seconds}
-                options={withCurrent(
-                  streamKeepAliveChoices,
-                  value.stream_keepalive_seconds,
-                  formatSeconds
-                )}
-                onChange={(next) => patch("stream_keepalive_seconds", next)}
-              />
-              <ChoiceField
-                label="非流式保活"
-                description="非流式响应等待期间的保活间隔。"
-                value={value.nonstream_keepalive_interval}
-                options={withCurrent(
-                  nonstreamKeepAliveChoices,
-                  value.nonstream_keepalive_interval,
-                  formatSeconds
-                )}
-                onChange={(next) => patch("nonstream_keepalive_interval", next)}
-              />
               <SwitchField
                 id="upstream-websockets"
                 label="上游 WebSocket"
-                description="允许 Codex / xAI 使用原生 WebSocket。关闭后目录不再推荐，客户端改走 HTTP 流式。"
+                description="允许 Codex 使用原生 WebSocket。关闭后目录不再推荐，客户端改走 HTTP 流式。"
                 checked={value.upstream_websockets}
+                disabled={saving}
                 onCheckedChange={(checked) =>
                   patch("upstream_websockets", checked)
                 }
               />
             </FieldGroup>
           </CardContent>
-        </Card>
+        </SettingsSection>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>图像与视频</CardTitle>
-            <CardDescription>出图工具与视频结果绑定。</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <FieldGroup>
-              <ChoiceField
-                label="图像生成"
-                description={imageModeHelpText}
-                value={value.image_generation_mode}
-                options={imageModes}
-                onChange={(next) => patch("image_generation_mode", next)}
-              />
-              {value.image_generation_mode === "disabled" ? null : (
-                <Field>
-                  <FieldLabel>图像基础模型</FieldLabel>
-                  <Select
-                    items={imageModels}
-                    value={value.gpt_image_base_model}
-                    onValueChange={(next) =>
-                      next && patch("gpt_image_base_model", next)
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {imageModels.map((item) => (
-                          <SelectItem key={item.value} value={item.value}>
-                            {item.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <FieldDescription>
-                    对话内出图工具使用的基础模型，须以 gpt- 开头。
-                  </FieldDescription>
-                </Field>
-              )}
-              <ChoiceField
-                label="视频结果绑定"
-                description="视频结果与创建账户的绑定时长。过期后再次获取可能切换账户。"
-                value={value.video_result_auth_cache_ttl}
-                options={withCurrent(
-                  videoTtlChoices,
-                  value.video_result_auth_cache_ttl,
-                  (ttl) => ttl
-                )}
-                onChange={(next) => patch("video_result_auth_cache_ttl", next)}
-              />
-            </FieldGroup>
-          </CardContent>
-        </Card>
-
-        <Card>
+        <SettingsSection>
           <CardHeader>
             <CardTitle>系统网络</CardTitle>
             <CardDescription>
@@ -655,7 +433,7 @@ export function RuntimeSettingsView() {
           <CardContent>
             <FieldGroup>
               <Field>
-                <FieldLabel>系统代理</FieldLabel>
+                <FieldLabel htmlFor="system-proxy">系统代理</FieldLabel>
                 <Select
                   items={proxyItems}
                   value={value.system_proxy_id || "direct"}
@@ -666,7 +444,7 @@ export function RuntimeSettingsView() {
                     )
                   }
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger id="system-proxy" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -715,29 +493,11 @@ export function RuntimeSettingsView() {
                   登录和绑定回调中的授权码交换、身份查询。默认直连，保存后生效；代理在「出站代理」中维护。
                 </FieldDescription>
               </Field>
-              <SwitchField
-                id="passthrough-headers"
-                label="转发上游响应头"
-                description="将允许转发的上游响应头交给客户端。"
-                checked={value.passthrough_headers}
-                onCheckedChange={(checked) =>
-                  patch("passthrough_headers", checked)
-                }
-              />
-              <SwitchField
-                id="force-model-prefix"
-                label="强制模型前缀"
-                description="仅接受「账户/模型」形式的模型名。"
-                checked={value.force_model_prefix}
-                onCheckedChange={(checked) =>
-                  patch("force_model_prefix", checked)
-                }
-              />
             </FieldGroup>
           </CardContent>
-        </Card>
+        </SettingsSection>
 
-        <Card>
+        <SettingsSection>
           <CardHeader>
             <CardTitle>进程边界</CardTitle>
             <CardDescription>
@@ -821,11 +581,11 @@ export function RuntimeSettingsView() {
               />
             </FieldGroup>
           </CardContent>
-        </Card>
-      </div>
+        </SettingsSection>
+      </FieldSet>
 
       {dirty ? (
-        <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 bg-background px-4 py-3">
+        <div className="sticky bottom-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 shadow-sm">
           <p className="text-sm">有未保存的更改</p>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -835,9 +595,13 @@ export function RuntimeSettingsView() {
             >
               <RotateCcwIcon data-icon="inline-start" /> 撤销
             </Button>
-            <Button disabled={saving} onClick={() => void save()}>
+            <Button
+              disabled={saving}
+              aria-busy={saving}
+              onClick={() => void save()}
+            >
               {saving ? (
-                <Spinner data-icon="inline-start" />
+                <Spinner aria-hidden="true" data-icon="inline-start" />
               ) : (
                 <SaveIcon data-icon="inline-start" />
               )}

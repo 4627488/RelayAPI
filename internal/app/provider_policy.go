@@ -4,20 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	relaybridge "github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
 )
 
 // normalizeSupportedProvider is the product boundary, not merely a UI list.
 // Keeping it centralized prevents credential JSON from re-enabling a provider
 // adapter that Relay intentionally does not expose.
 func normalizeSupportedProvider(value string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "aliyun-bailian", "bailian", "百炼":
-		return "aliyun-bailian", true
-	default:
-		return relaybridge.NormalizeProvider(value)
-	}
+	return "codex", strings.EqualFold(strings.TrimSpace(value), "codex")
 }
 
 func validateSupportedCredentialDocument(provider string, document []byte) error {
@@ -29,16 +22,6 @@ func validateSupportedCredentialDocument(provider string, document []byte) error
 	if err := json.Unmarshal(document, &value); err != nil {
 		return fmt.Errorf("凭据 JSON 无效")
 	}
-	if provider == "cursor" {
-		key, _ := value["api_key"].(string)
-		baseURL, _ := value["base_url"].(string)
-		if strings.TrimSpace(key) == "" {
-			return fmt.Errorf("Cursor API Key 必填")
-		}
-		if strings.TrimSpace(baseURL) != "" {
-			return fmt.Errorf("Cursor 接口由 Relay 管理，无需填写接口地址")
-		}
-	}
 	rawType, _ := value["type"].(string)
 	if strings.TrimSpace(rawType) == "" {
 		return nil
@@ -46,13 +29,6 @@ func validateSupportedCredentialDocument(provider string, document []byte) error
 	documentProvider, supported := normalizeSupportedProvider(rawType)
 	if !supported {
 		return fmt.Errorf("凭据类型 %q 不受支持", rawType)
-	}
-	if provider == "aliyun-bailian" && (documentProvider == "aliyun-bailian" || documentProvider == "openai-compatibility") {
-		return nil
-	}
-	if (provider == "openai" && documentProvider == "openai-compatibility") ||
-		(provider == "openai-compatibility" && documentProvider == "openai") {
-		return nil
 	}
 	if provider != documentProvider {
 		return fmt.Errorf("凭据类型 %q 与提供商 %q 不匹配", rawType, provider)

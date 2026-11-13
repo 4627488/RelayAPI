@@ -63,27 +63,9 @@ type QuotaWindow struct {
 	Remaining        *float64   `json:"remaining"`
 }
 
-type quotaEndpoints struct {
-	claudeUsage       string
-	claudeProfile     string
-	codexUsage        string
-	kimiUsage         string
-	kimiUsageFallback string
-	xaiCredits        string
-	xaiBilling        string
-	xaiSettings       string
-}
+type quotaEndpoints struct{ codexUsage string }
 
-var productionQuotaEndpoints = quotaEndpoints{
-	claudeUsage:       "https://api.anthropic.com/api/oauth/usage",
-	claudeProfile:     "https://api.anthropic.com/api/oauth/profile",
-	codexUsage:        "https://chatgpt.com/backend-api/wham/usage",
-	kimiUsage:         "https://api.kimi.com/coding/v1/usages",
-	kimiUsageFallback: "https://api.moonshot.ai/v1/usages",
-	xaiCredits:        "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
-	xaiBilling:        "https://cli-chat-proxy.grok.com/v1/billing",
-	xaiSettings:       "https://cli-chat-proxy.grok.com/v1/settings",
-}
+var productionQuotaEndpoints = quotaEndpoints{codexUsage: "https://chatgpt.com/backend-api/wham/usage"}
 
 func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaReport, error) {
 	if strings.TrimSpace(credential.AuthIndex) == "" {
@@ -109,14 +91,8 @@ func ProbeQuota(ctx context.Context, credential QuotaProbeCredential) (QuotaRepo
 
 func probeQuotaWithClient(ctx context.Context, client *http.Client, endpoints quotaEndpoints, authIndex, provider string, document map[string]any, now time.Time) (QuotaReport, error) {
 	switch provider {
-	case "claude", "anthropic":
-		return probeClaudeAccount(ctx, client, endpoints, authIndex, provider, document, now)
 	case "codex", "codex-oauth", "chatgpt":
 		return probeCodexQuota(ctx, client, endpoints.codexUsage, authIndex, provider, document, now)
-	case "kimi", "kimi-code", "moonshot":
-		return probeKimiQuota(ctx, client, endpoints, authIndex, provider, document, now)
-	case "xai", "x-ai", "grok":
-		return probeXAIQuota(ctx, client, endpoints, authIndex, provider, document, now)
 	default:
 		return QuotaReport{AuthIndex: authIndex, Provider: provider, Supported: false, Observed: now, Windows: []QuotaWindow{}}, nil
 	}

@@ -353,24 +353,13 @@ func TestModelCatalogRevisionIsStableAndPermissionScoped(t *testing.T) {
 	}
 }
 
-func TestCPAProtocolPathsRequireAuthentication(t *testing.T) {
-	for _, path := range []string{"/v1/messages", "/v1/messages/count_tokens", "/v1beta/models/gemini:generateContent"} {
-		t.Run(path, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, path, nil)
-			recorder := httptest.NewRecorder()
-			new(App).handlePublic(recorder, request)
-			if recorder.Code != http.StatusUnauthorized {
-				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
-			}
-			var payload map[string]any
-			if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-				t.Fatal(err)
-			}
-			errorObject, _ := payload["error"].(map[string]any)
-			if errorObject["code"] != "invalid_api_key" {
-				t.Fatalf("error = %#v", payload)
-			}
-		})
+func TestRemovedProtocolsReturn404(t *testing.T) {
+	for _, path := range []string{"/v1/messages", "/v1/chat/completions", "/v1/images/generations", "/v1/realtime", "/v1beta/models/gemini:generateContent"} {
+		w := httptest.NewRecorder()
+		new(App).handlePublic(w, httptest.NewRequest("POST", path, nil))
+		if w.Code != 404 {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
 	}
 }
 
@@ -459,9 +448,8 @@ func TestServeModelCatalogReturnsAuthorizedCodexCatalogAndAliases(t *testing.T) 
 	if got["private-model"] == nil || got["private-model"]["visibility"] != "hide" {
 		t.Fatal("catalog did not hide the model outside the key and tenant allowlists")
 	}
-	if got["gpt-image-2"] == nil || got["gpt-image-2"]["visibility"] != "hide" ||
-		got["gpt-image-1.5"] == nil || got["gpt-image-1.5"]["visibility"] != "hide" {
-		t.Fatal("implicit Codex image slugs must stay hidden in the picker")
+	if got["gpt-image-2"] != nil || got["gpt-image-1.5"] != nil {
+		t.Fatal("removed image endpoints advertised implicit models")
 	}
 	assertCodexModelInfoComplete(t, got["grok-4.5"])
 	assertCodexModelInfoComplete(t, got["gpt-5.6-sol"])

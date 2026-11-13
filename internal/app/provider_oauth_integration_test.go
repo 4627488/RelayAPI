@@ -15,7 +15,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/gateway"
 	"github.com/4627488/RelayAPI/internal/identity"
 	"github.com/4627488/RelayAPI/internal/store"
-	relaybridge "github.com/router-for-me/CLIProxyAPI/v8/relaybridge"
+	"github.com/4627488/RelayAPI/internal/upstream"
 )
 
 func TestOAuthFinalizeReplacesQuotaLifecycle(t *testing.T) {
@@ -35,7 +35,7 @@ func TestOAuthFinalizeReplacesQuotaLifecycle(t *testing.T) {
 	}
 	for _, failQuota := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fresh quota", true: "quota failure keeps authorization"}[failQuota], func(t *testing.T) {
-			id := "claude-" + identity.NewID()
+			id := "codex-" + identity.NewID()
 			t.Cleanup(func() {
 				if err := database.Exec("DELETE FROM parent_subscriptions WHERE upstream_credential_id = ?", id).Error; err != nil {
 					t.Error(err)
@@ -45,18 +45,17 @@ func TestOAuthFinalizeReplacesQuotaLifecycle(t *testing.T) {
 				}
 			})
 			oldExpiry := time.Now().Add(-time.Hour)
-			oldDocument := json.RawMessage(`{"type":"claude","access_token":"old","expired":"2030-01-01T00:00:00Z"}`)
-			_, err := s.UpsertUpstreamCredential(t.Context(), store.UpstreamCredentialInput{ID: id, Name: "Claude", Provider: "claude", Enabled: true, Models: []string{"claude-test"}, Source: "oauth", Document: oldDocument, ExpiresAt: &oldExpiry})
+			oldDocument := json.RawMessage(`{"type":"codex","access_token":"old","expired":"2030-01-01T00:00:00Z"}`)
+			_, err := s.UpsertUpstreamCredential(t.Context(), store.UpstreamCredentialInput{ID: id, Name: "Codex", Provider: "codex", Enabled: true, Models: []string{"codex-test"}, Source: "oauth", Document: oldDocument, ExpiresAt: &oldExpiry})
 			if err != nil {
 				t.Fatal(err)
 			}
-			runtime, err := relaybridge.NewRuntime(relaybridge.Options{APIKey: "test-key"}, nil)
+			runtime, err := upstream.NewRuntime(upstream.Options{}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = runtime.Close(context.Background()) })
-			a := &App{store: s, nativeCPARuntime: runtime, providerOAuth: newProviderOAuthSessions()}
-			a.nativeRuntime = &embeddedCPAAdapter{app: a}
+			a := &App{store: s, nativeRuntime: runtime, providerOAuth: newProviderOAuthSessions()}
 			parents, err := a.syncNativeParentSubscriptionRows(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -72,19 +71,19 @@ func TestOAuthFinalizeReplacesQuotaLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			a.quotaBackoff.begin(id, time.Now())
-			a.quotaBackoff.finish(id, time.Now(), &gateway.QuotaHTTPError{StatusCode: 401}, "claude")
+			a.quotaBackoff.finish(id, time.Now(), &gateway.QuotaHTTPError{StatusCode: 401}, "codex")
 			if failQuota {
 				a.nativeRuntime = quotaRefreshRuntime{Runtime: a.nativeRuntime, refresh: func(context.Context, string, bool) ([]byte, bool, error) {
 					return nil, false, errors.New("upstream temporarily unavailable")
 				}}
 			}
-			session := a.providerOAuth.create("claude", id)
+			session := a.providerOAuth.create("codex", id)
 			a.providerOAuth.bindState(session.ID, "state-"+id)
-			newDocument := []byte(`{"type":"claude","access_token":"new","expired":"2030-01-02T00:00:00Z","last_refresh":"2026-11-09T08:27:22Z","relay_quota":{"plan_type":"max","windows":[{"kind":"7d","used_percent":0}]}}`)
-			if err = a.providerOAuth.capture(session.ID, "claude", "Claude", newDocument); err != nil {
+			newDocument := []byte(`{"type":"codex","access_token":"new","expired":"2030-01-02T00:00:00Z","last_refresh":"2026-11-09T08:27:22Z","relay_quota":{"plan_type":"max","windows":[{"kind":"7d","used_percent":0}]}}`)
+			if err = a.providerOAuth.capture(session.ID, "codex", "Codex", newDocument); err != nil {
 				t.Fatal(err)
 			}
-			r := httptest.NewRequest(http.MethodPost, "/finalize", strings.NewReader(`{"name":"Claude"}`))
+			r := httptest.NewRequest(http.MethodPost, "/finalize", strings.NewReader(`{"name":"Codex"}`))
 			r.SetPathValue("state", "state-"+id)
 			w := httptest.NewRecorder()
 			a.adminProviderOAuthFinalize(w, r)
@@ -121,7 +120,7 @@ func TestOAuthFinalizeReplacesQuotaLifecycle(t *testing.T) {
 			if !failQuota {
 				// This batch held a parent snapshot from before reauthorization.
 				cached := a.syncParentQuota(t.Context(), parent)
-				if cached.Status != "cached" || !cached.ObservedAt.Equal(*updated.QuotaObservedAt) {
+				if cached.Status != "supported" || cached.ObservedAt.Before(*updated.QuotaObservedAt) {
 					t.Fatalf("old batch restored stale quota: %+v", cached)
 				}
 			}
