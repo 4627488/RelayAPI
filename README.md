@@ -59,7 +59,7 @@ WebSocket 由同一套运行时完成协议转换、凭据选择、重试和上�
 严格订阅绑定处理，不再维护会破坏权限命名一致性的账户级模型前缀。
 
 Codex Responses WebSocket 支持连接内多轮 `response.create`。收到一轮终态后即使上游断开，
-客户端连接仍会保留，下一次完整请求会自动重连；`generate:false` 预热由本地直接完成。
+客户端连接仍会保留，下一次完整请求会自动重连；`generate:false` 透传上游完成真实预热，保留可用于续接的响应 ID。
 `RELAY_UPSTREAM_WEBSOCKETS=true` 默认启用这条链路，关闭后可统一使用 HTTP 流式接口。
 
 原生执行器由 RelayAPI 的准入控制保护：推理请求默认最多 8 个并发、16 个等待者，排队最多 2 秒。

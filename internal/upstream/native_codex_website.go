@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 // prepareCodexWebsiteRequest rewrites a Responses body for ChatGPT's Codex
@@ -15,18 +18,48 @@ import (
 // rejected. When the client asked for a non-stream reply, CollectStream tells
 // the caller to collapse the upstream SSE into one JSON Responses object.
 func prepareCodexWebsiteRequest(body []byte) (codexWebsiteAdaptation, error) {
-	var root map[string]any
-	if err := json.Unmarshal(body, &root); err != nil {
-		return codexWebsiteAdaptation{}, fmt.Errorf("invalid Responses request: %w", err)
+	if !gjson.ValidBytes(body) {
+		return codexWebsiteAdaptation{}, fmt.Errorf("invalid Responses request: expected a JSON object")
 	}
-	clientStream := false
-	if raw, ok := root["stream"]; ok {
-		clientStream, _ = raw.(bool)
+	root := gjson.ParseBytes(body)
+	if !root.IsObject() {
+		return codexWebsiteAdaptation{}, fmt.Errorf("invalid Responses request: expected a JSON object")
 	}
-	rewriteCodexWebsiteFields(root)
-	encoded, err := json.Marshal(root)
-	if err != nil {
-		return codexWebsiteAdaptation{}, err
+	clientStream := root.Get("stream").Type == gjson.True
+	// Patch only the backend's required fields. Decoding the entire context
+	// into map[string]any allocated thousands of objects on every tool turn
+	// and rounded opaque integers through float64. Already-normalized client
+	// requests now pass through without rebuilding their input/tools trees.
+	encoded := body
+	set := func(path string, value []byte) error {
+		var err error
+		encoded, err = sjson.SetRawBytes(encoded, path, value)
+		return err
+	}
+	if input := root.Get("input"); input.Type == gjson.String {
+		wrapped := []byte(`[{"role":"user","content":[{"type":"input_text","text":` + input.Raw + `}]}]`)
+		if err := set("input", wrapped); err != nil {
+			return codexWebsiteAdaptation{}, err
+		}
+	}
+	if root.Get("store").Type != gjson.False {
+		if err := set("store", []byte("false")); err != nil {
+			return codexWebsiteAdaptation{}, err
+		}
+	}
+	if !clientStream {
+		if err := set("stream", []byte("true")); err != nil {
+			return codexWebsiteAdaptation{}, err
+		}
+	}
+	for _, field := range []string{"max_output_tokens", "max_tokens"} {
+		if root.Get(field).Exists() {
+			var err error
+			encoded, err = sjson.DeleteBytes(encoded, field)
+			if err != nil {
+				return codexWebsiteAdaptation{}, err
+			}
+		}
 	}
 	return codexWebsiteAdaptation{Body: encoded, CollectStream: !clientStream}, nil
 }
@@ -34,25 +67,6 @@ func prepareCodexWebsiteRequest(body []byte) (codexWebsiteAdaptation, error) {
 type codexWebsiteAdaptation struct {
 	Body          []byte
 	CollectStream bool
-}
-
-func rewriteCodexWebsiteFields(root map[string]any) {
-	if root == nil {
-		return
-	}
-	switch input := root["input"].(type) {
-	case string:
-		root["input"] = []any{map[string]any{
-			"role": "user",
-			"content": []any{
-				map[string]any{"type": "input_text", "text": input},
-			},
-		}}
-	}
-	root["store"] = false
-	delete(root, "max_output_tokens")
-	delete(root, "max_tokens")
-	root["stream"] = true
 }
 
 func collectResponsesSSE(r io.Reader) ([]byte, error) {

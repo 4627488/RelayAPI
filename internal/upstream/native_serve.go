@@ -11,6 +11,7 @@ import (
 
 	"github.com/4627488/RelayAPI/internal/billing"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func (r *nativeRuntime) serveHTTP(w http.ResponseWriter, request *http.Request) {
@@ -365,12 +366,11 @@ func rewriteJSONModel(payload []byte, model string) []byte {
 	if model == "" || jsonString(payload, "model") == model {
 		return payload
 	}
-	var root map[string]any
-	if json.Unmarshal(payload, &root) != nil {
+	trimmed := bytes.TrimSpace(payload)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !gjson.ValidBytes(payload) {
 		return payload
 	}
-	root["model"] = model
-	encoded, err := json.Marshal(root)
+	encoded, err := sjson.SetBytes(payload, "model", model)
 	if err != nil {
 		return payload
 	}

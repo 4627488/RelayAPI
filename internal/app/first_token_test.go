@@ -6,6 +6,26 @@ import (
 	"time"
 )
 
+func BenchmarkGeneratedResponsesDelta(b *testing.B) {
+	payload := []byte(`{"type":"response.output_text.delta","delta":"hello","response_id":"resp_test","output_index":0,"content_index":0}`)
+	b.ReportAllocs()
+	for b.Loop() {
+		generatedContent(payload)
+	}
+}
+
+func TestGeneratedResponsesDeltaRejectsInvalidJSONAndNonStringDelta(t *testing.T) {
+	for _, payload := range []string{
+		`{"type":"response.output_text.delta","delta":"hello"`,
+		`{"type":"response.output_text.delta","delta":42}`,
+		`{"type":"response.completed","response":{"output":[{"content":[{"text":"already generated"}]}]}}`,
+	} {
+		if hasGeneratedDelta([]byte(payload)) {
+			t.Fatalf("invalid or non-delta envelope became generated content: %s", payload)
+		}
+	}
+}
+
 func TestFirstTokenSkipsMetadataAndHandlesSplitSSE(t *testing.T) {
 	start := time.Now()
 	var o firstTokenObserver

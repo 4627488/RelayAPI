@@ -2,7 +2,7 @@ package upstream
 
 import (
 	"context"
-	"encoding/json"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
 )
 
 type websocketFrame struct {
@@ -203,11 +204,10 @@ func (r *nativeRuntime) serveWebSocket(w http.ResponseWriter, request *http.Requ
 }
 
 func websocketFullRequest(payload []byte) bool {
-	var event map[string]any
-	if json.Unmarshal(payload, &event) != nil || anyString(event["type"]) != "response.create" || anyString(event["previous_response_id"]) != "" {
+	if !gjson.ValidBytes(payload) || strings.TrimSpace(gjson.GetBytes(payload, "type").Str) != "response.create" || strings.TrimSpace(gjson.GetBytes(payload, "previous_response_id").Str) != "" {
 		return false
 	}
-	return event["input"] != nil
+	return gjson.GetBytes(payload, "input").Type != gjson.Null
 }
 
 func readWebSocketFrames(ctx context.Context, connection *websocket.Conn, output chan<- websocketFrame) {
@@ -225,13 +225,9 @@ func readWebSocketFrames(ctx context.Context, connection *websocket.Conn, output
 }
 
 func websocketTerminal(payload []byte) bool {
-	var event map[string]any
-	if json.Unmarshal(payload, &event) != nil {
-		return false
-	}
-	switch anyString(event["type"]) {
+	switch gjson.GetBytes(payload, "type").Str {
 	case "response.completed", "response.failed", "response.incomplete":
-		return true
+		return gjson.ValidBytes(payload)
 	default:
 		return false
 	}
@@ -273,23 +269,28 @@ func (c *nativeCredential) dialWebSocket(ctx context.Context, path string, sourc
 	if transport, ok := c.client.Transport.(*http.Transport); ok {
 		dialer.Proxy = transport.Proxy
 		dialer.NetDialContext = transport.DialContext
-		dialer.TLSClientConfig = transport.TLSClientConfig
+		if transport.TLSClientConfig != nil {
+			dialer.TLSClientConfig = transport.TLSClientConfig.Clone()
+		}
 	}
+	if dialer.TLSClientConfig == nil {
+		dialer.TLSClientConfig = &tls.Config{}
+	}
+	// Gorilla uses RFC 6455's HTTP/1.1 Upgrade, not HTTP/2 extended CONNECT.
+	// net/http may have added h2 to its TLS config after an ordinary request.
+	// Keep account trust/proxy settings, but never share or mutate HTTP's ALPN.
+	dialer.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	return dialer.DialContext(ctx, target, header)
 }
 
 func websocketModel(payload []byte) string {
-	var root map[string]any
-	if json.Unmarshal(payload, &root) != nil {
+	if !gjson.ValidBytes(payload) {
 		return ""
 	}
-	if model := anyString(root["model"]); model != "" {
+	if model := strings.TrimSpace(gjson.GetBytes(payload, "model").Str); model != "" {
 		return model
 	}
-	if response, ok := root["response"].(map[string]any); ok {
-		return anyString(response["model"])
-	}
-	return ""
+	return strings.TrimSpace(gjson.GetBytes(payload, "response.model").Str)
 }
 
 func (c *nativeCredential) websocketURL(path string) (string, error) {

@@ -5,7 +5,63 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
+
+func BenchmarkPrepareCodexWebsiteRequest(b *testing.B) {
+	message := `{"role":"user","content":[{"type":"input_text","text":"` + strings.Repeat("x", 512) + `"}]}`
+	for _, normalized := range []bool{false, true} {
+		name, fields := "adapt", `,"store":true,"max_output_tokens":100`
+		if normalized {
+			name, fields = "normalized", `,"store":false,"stream":true`
+		}
+		b.Run(name, func(b *testing.B) {
+			payload := []byte(`{"model":"gpt-test","input":[` + strings.TrimSuffix(strings.Repeat(message+",", 512), ",") + `]` + fields + `}`)
+			b.SetBytes(int64(len(payload)))
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := prepareCodexWebsiteRequest(payload); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestCodexWebsiteAdaptationPreservesOpaqueJSONAndCallerBody(t *testing.T) {
+	for _, fields := range []string{`,"store":false,"stream":true`, `,"store":true,"max_output_tokens":123`} {
+		body := []byte(`{"model":"test","input":[],"opaque":{"integer":9007199254740993,"decimal":1.2300,"seal":"a\\b\"c"}` + fields + `}`)
+		original := bytes.Clone(body)
+		adapted, err := prepareCodexWebsiteRequest(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(body, original) {
+			t.Fatal("adaptation mutated the caller's request/log buffer")
+		}
+		if gjson.GetBytes(adapted.Body, "opaque").Raw != gjson.GetBytes(original, "opaque").Raw {
+			t.Fatalf("opaque JSON was re-encoded: %s", adapted.Body)
+		}
+	}
+}
+
+func TestCodexWebsiteAdaptationRejectsNonObject(t *testing.T) {
+	for _, body := range []string{`null`, `[]`, `"hello"`, `42`} {
+		if _, err := prepareCodexWebsiteRequest([]byte(body)); err == nil {
+			t.Fatalf("accepted non-object: %s", body)
+		}
+	}
+}
+
+func TestModelRewritePreservesOpaqueJSONAndCallerBody(t *testing.T) {
+	body := []byte(`{"model":"public","input":[],"opaque":{"integer":9007199254740993,"decimal":1.2300}}`)
+	original := bytes.Clone(body)
+	got := rewriteJSONModel(body, "upstream")
+	if !bytes.Equal(body, original) || gjson.GetBytes(got, "model").Str != "upstream" || gjson.GetBytes(got, "opaque").Raw != gjson.GetBytes(original, "opaque").Raw {
+		t.Fatalf("model rewrite changed unrelated JSON or caller buffer: %s", got)
+	}
+}
 
 func TestPrepareCodexWebsiteRequestWrapsStringInputAndDropsLimits(t *testing.T) {
 	t.Parallel()

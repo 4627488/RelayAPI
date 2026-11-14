@@ -3,14 +3,37 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/4627488/RelayAPI/internal/billing"
+	"github.com/tidwall/gjson"
 )
 
 // generatedContent recognizes actual text, visible reasoning, refusal and tool
 // arguments in Responses, Chat, Messages and Gemini. Metadata is not content.
 func generatedContent(payload []byte) (text, reasoning string) {
+	// Responses deltas dominate the streaming hot path. Extract just their
+	// fields instead of allocating a map/tree for every token. Other event
+	// formats continue through their existing parser below.
+	typ := gjson.GetBytes(payload, "type").Str
+	switch typ {
+	case "response.output_text.delta", "response.refusal.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+		if gjson.ValidBytes(payload) {
+			return gjson.GetBytes(payload, "delta").Str, ""
+		}
+		return "", ""
+	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
+		if gjson.ValidBytes(payload) {
+			return "", gjson.GetBytes(payload, "delta").Str
+		}
+		return "", ""
+	}
+	if strings.HasPrefix(typ, "response.") {
+		// Created/completed/output-item envelopes may repeat the whole context
+		// or output. They are metadata, not newly generated content deltas.
+		return "", ""
+	}
 	var e map[string]any
 	if json.Unmarshal(payload, &e) != nil {
 		return
@@ -18,13 +41,7 @@ func generatedContent(payload []byte) (text, reasoning string) {
 	str := func(v any) string { s, _ := v.(string); return s }
 	obj := func(v any) map[string]any { m, _ := v.(map[string]any); return m }
 	arr := func(v any) []any { a, _ := v.([]any); return a }
-	typ := str(e["type"])
-	switch typ {
-	case "response.output_text.delta", "response.refusal.delta", "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
-		text = str(e["delta"])
-	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
-		reasoning = str(e["delta"])
-	case "content_block_delta":
+	if str(e["type"]) == "content_block_delta" {
 		d := obj(e["delta"])
 		text = str(d["text"]) + str(d["partial_json"])
 		reasoning = str(d["thinking"])

@@ -90,8 +90,8 @@ for Chat are restored on the way back.
 
 WebSocket sessions support multiple turns. A completed turn may release its
 upstream connection while retaining the downstream session; the next complete
-turn reconnects with the same credential. `generate:false` prewarm is answered
-locally without consuming provider capacity.
+turn reconnects with the same credential. `generate:false` prewarm is forwarded
+to the provider so its response ID refers to real connection-local state.
 
 Bailian credentials are first-class: Chat Completions is translated to the
 DashScope Responses path so prefix cache can attach, and requests that share

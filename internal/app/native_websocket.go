@@ -22,6 +22,7 @@ import (
 	"github.com/4627488/RelayAPI/internal/store"
 	nativeruntime "github.com/4627488/RelayAPI/internal/upstream"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
 )
 
 type nativeWebSocketAccounting struct {
@@ -886,48 +887,23 @@ func websocketCloseReason(message string) string {
 }
 
 func parseNativeWebSocketUsage(payload []byte) billing.Result {
-	var event struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(payload, &event) != nil {
-		return billing.Result{}
-	}
-	switch event.Type {
-	case "error", "response.failed", "response.completed", "response.incomplete", "response.done":
+	if isNativeWebSocketTerminalEvent(payload) {
 		return billing.ParseResponse(payload)
-	default:
-		return billing.Result{}
 	}
+	return billing.Result{}
 }
 
 func isNativeWebSocketTerminalEvent(payload []byte) bool {
-	var event struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(payload, &event) != nil {
-		return false
-	}
-	switch event.Type {
+	switch gjson.GetBytes(payload, "type").Str {
 	case "error", "response.failed", "response.completed", "response.incomplete", "response.done":
-		return true
+		return gjson.ValidBytes(payload)
 	default:
 		return false
 	}
 }
 
 func isNativeWebSocketUsageTerminalEvent(payload []byte) bool {
-	var event struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(payload, &event) != nil {
-		return false
-	}
-	switch event.Type {
-	case "error", "response.failed", "response.completed", "response.incomplete", "response.done":
-		return true
-	default:
-		return false
-	}
+	return isNativeWebSocketTerminalEvent(payload)
 }
 
 func (a *App) admitNativeWebSocket(ctx context.Context, key store.KeyContext, meta requestMeta, requestID, endpoint string, body []byte) (
