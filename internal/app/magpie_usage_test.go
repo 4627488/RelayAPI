@@ -119,3 +119,18 @@ func TestMagpieUsageCashUsesAvailableWalletWithoutSyntheticWindows(t *testing.T)
 		}
 	}
 }
+
+func TestMagpieNativeUsageSummaryDoesNotRepeatQuotaCard(t *testing.T) {
+	now := time.Now().UTC()
+	q := store.SubscriptionQuota{ChildID: "share", Name: " ChatGPT  Pro 4X\n", Models: []string{"codex"},
+		Windows: []store.ChildQuotaWindow{{Kind: "7d", LimitNanoUSD: 100e9, SettledNanoUSD: 1e9, ResetsAt: now.Add(time.Hour)}}}
+	doc := projectMagpieUsage(store.KeyContext{}, []store.SubscriptionQuota{q}, []string{"codex"}, now)
+	if doc.SubscriptionSummary != "ChatGPT Pro 4X" || len(doc.RateLimits) != 1 || doc.RateLimits[0].Remaining != 99 || len(doc.Grants[0].Models) != 1 {
+		t.Fatalf("native card summary or structured quota changed: %+v", doc)
+	}
+	q.Name = " \n"
+	doc = projectMagpieUsage(store.KeyContext{}, []store.SubscriptionQuota{q}, []string{"codex"}, now)
+	if doc.SubscriptionSummary != "订阅" {
+		t.Fatalf("missing unnamed plan label: %q", doc.SubscriptionSummary)
+	}
+}

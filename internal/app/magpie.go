@@ -123,9 +123,6 @@ func projectMagpieBalance(key store.KeyContext, quotas []store.SubscriptionQuota
 		if name == "" {
 			name = "订阅"
 		}
-		if len(quota.Models) > 0 {
-			name += " [" + strings.Join(quota.Models, ", ") + "]"
-		}
 		if quota.ExpiresAt != nil {
 			name += "（有效至 " + quota.ExpiresAt.UTC().Format("2006-01-02 15:04 UTC") + "）"
 		}

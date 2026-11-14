@@ -72,6 +72,12 @@ func projectMagpieUsage(key store.KeyContext, quotas []store.SubscriptionQuota, 
 	if windows != nil {
 		doc.RateLimits = windows
 		doc.PlanName = quotas[0].Name
+		// Magpie already renders each native window's usage and reset time.
+		// The balance expression should label the plan, not repeat that UI.
+		doc.SubscriptionSummary = strings.Join(strings.Fields(doc.PlanName), " ")
+		if doc.SubscriptionSummary == "" {
+			doc.SubscriptionSummary = "订阅"
+		}
 	}
 	// A plan has no total dollar balance: its independent window allowances
 	// cannot be added to one another or to the wallet. Older clients retain

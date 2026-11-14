@@ -32,10 +32,18 @@ func TestMagpieBalanceProjectsReservedQuotaAndStablePaths(t *testing.T) {
 	if windows["q5h"].Remaining == nil || *windows["q5h"].Remaining != .75 || !windows["q5h"].ResetsAt.Equal(reset) || windows["q5h"].ReservedUSD != 5e-9 || windows["q7d"].State != "exhausted" || windows["qunknown"].Remaining != nil || windows["qstale"].Remaining != nil {
 		t.Fatalf("incorrect remaining quota: %+v", windows)
 	}
-	for _, text := range []string{"model-a", "model-b", "75.0%", "100.0%", "重置", "UTC", "含处理中预留", "额度未知", "等待刷新"} {
+	for _, text := range []string{"75.0%", "100.0%", "重置", "UTC", "含处理中预留", "额度未知", "等待刷新"} {
 		if !strings.Contains(doc.SubscriptionSummary, text) {
 			t.Errorf("summary missing %q: %s", text, doc.SubscriptionSummary)
 		}
+	}
+	for _, model := range []string{"model-a", "model-b"} {
+		if strings.Contains(doc.SubscriptionSummary, model) {
+			t.Errorf("model list leaked into display summary: %s", doc.SubscriptionSummary)
+		}
+	}
+	if len(doc.Grants[0].Models) != 1 || doc.Grants[0].Models[0] != "model-a" {
+		t.Fatal("display simplification removed structured model scope")
 	}
 	quotas[0], quotas[1] = quotas[1], quotas[0]
 	reordered := projectMagpieBalance(store.KeyContext{}, quotas, now)
